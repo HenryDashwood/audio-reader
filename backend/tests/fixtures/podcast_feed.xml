@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>The History Hour</title>
+    <link>https://example.com/historyhour</link>
+    <description>A weekly podcast about history.</description>
+    <itunes:image href="https://example.com/historyhour/cover.jpg"/>
+    <item>
+      <title>The Fall of Constantinople</title>
+      <guid isPermaLink="false">hh-ep-103</guid>
+      <pubDate>Tue, 28 Jul 2026 05:00:00 GMT</pubDate>
+      <description>With guest Professor Maria Sharpe on the siege of 1453.</description>
+      <enclosure url="https://cdn.example.com/hh/103.mp3" length="55123456" type="audio/mpeg"/>
+      <itunes:duration>1:02:03</itunes:duration>
+    </item>
+    <item>
+      <title>The South Sea Bubble</title>
+      <guid isPermaLink="false">hh-ep-102</guid>
+      <pubDate>Tue, 21 Jul 2026 05:00:00 GMT</pubDate>
+      <description>Dominic Sandbrook joins to discuss the crash of 1720.</description>
+      <enclosure url="https://cdn.example.com/hh/102.mp3" length="41123456" type="audio/mpeg"/>
+      <itunes:duration>3125</itunes:duration>
+    </item>
+    <item>
+      <title>Trailer: Season Four</title>
+      <pubDate>Tue, 14 Jul 2026 05:00:00 GMT</pubDate>
+      <link>https://example.com/historyhour/trailer-4</link>
+      <description>What is coming this season.</description>
+      <enclosure url="https://cdn.example.com/hh/trailer4.mp3" length="2123456" type="audio/mpeg"/>
+    </item>
+  </channel>
+</rss>

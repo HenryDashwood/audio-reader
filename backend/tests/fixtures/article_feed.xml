@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Notes on Progress</title>
+    <link>https://notesonprogress.example.com</link>
+    <description>Essays on science and technology.</description>
+    <item>
+      <title>Why sewers made cities possible</title>
+      <guid isPermaLink="true">https://notesonprogress.example.com/p/sewers</guid>
+      <link>https://notesonprogress.example.com/p/sewers</link>
+      <pubDate>Mon, 27 Jul 2026 12:30:00 GMT</pubDate>
+      <description>A short history of urban sanitation.</description>
+      <content:encoded><![CDATA[<p>For most of history, cities were death traps...</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>The great stagnation in shipping</title>
+      <guid isPermaLink="true">https://notesonprogress.example.com/p/shipping</guid>
+      <link>https://notesonprogress.example.com/p/shipping</link>
+      <pubDate>Mon, 20 Jul 2026 12:30:00 GMT</pubDate>
+      <description>Container ships stopped getting faster. Why?</description>
+      <content:encoded><![CDATA[<p>In 1973, a container ship crossed the Atlantic...</p>]]></content:encoded>
+    </item>
+  </channel>
+</rss>
