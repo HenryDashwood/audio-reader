@@ -20,7 +20,10 @@ cd backend
 uv sync                       # install dependencies
 uv run alembic upgrade head   # apply migrations
 uv run pytest                 # run the test suite (no DB or network needed)
+uv run ruff check && uv run ruff format --check
+uv run ty check               # type checking
 uv run uvicorn audioreader.main:app --reload
+uv run python -m audioreader.feeds.poller   # one-shot poll of all feeds
 ```
 
 Tests run against in-memory SQLite and mocked HTTP, so they need neither the
@@ -31,3 +34,8 @@ database container nor a network connection.
 Settings come from environment variables prefixed `AUDIOREADER_` (or a
 `backend/.env` file). Defaults match the docker-compose Postgres, so local
 development needs no configuration.
+
+- `AUDIOREADER_DATABASE_URL` — Postgres connection string
+- `AUDIOREADER_POLL_INTERVAL_SECONDS` — background feed-poll interval
+  (default 900; set 0 to disable, e.g. when an external scheduler runs
+  `python -m audioreader.feeds.poller` instead)

@@ -22,6 +22,7 @@ dev = [
     "aiosqlite>=0.20",
     "respx>=0.22",
     "ruff>=0.8",
+    "ty>=0.0.66",
 ]
 
 [build-system]
@@ -30,6 +31,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/audioreader"]
+
+[tool.ty.environment]
+python = "./.venv"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -16,27 +16,36 @@ async def subscribe(session: AsyncSession, url: str) -> Feed:
         raise AlreadySubscribedError(url)
 
     parsed = parse_feed(await fetch_feed_bytes(url))
-    feed = Feed(
-        url=url,
-        title=parsed.title,
-        description=parsed.description,
-        image_url=parsed.image_url,
-        site_url=parsed.site_url,
-        last_polled_at=utcnow(),
-    )
+    feed = Feed(url=url, title=parsed.title)
+    apply_feed_metadata(feed, parsed)
+    feed.episodes.extend(new_episodes(parsed, known_guids=set()))
     session.add(feed)
-    _add_new_episodes(feed, parsed, known_guids=set())
     await session.commit()
     return feed
 
 
-def _add_new_episodes(feed: Feed, parsed: ParsedFeed, known_guids: set[str]) -> int:
-    """Attach items not already stored. Shared by subscribe and (later) the poller."""
-    added = 0
+def apply_feed_metadata(feed: Feed, parsed: ParsedFeed) -> None:
+    """Feed-level fields can change between polls (title, artwork, blurb)."""
+    feed.title = parsed.title
+    feed.description = parsed.description
+    feed.image_url = parsed.image_url
+    feed.site_url = parsed.site_url
+    feed.last_polled_at = utcnow()
+
+
+def new_episodes(parsed: ParsedFeed, known_guids: set[str]) -> list[Episode]:
+    """Build Episode rows for items we have not stored yet.
+
+    Tracks guids as it goes so a feed document that repeats a guid cannot
+    produce two rows and trip the (feed_id, guid) unique constraint.
+    """
+    seen = set(known_guids)
+    episodes: list[Episode] = []
     for item in parsed.items:
-        if item.guid in known_guids:
+        if item.guid in seen:
             continue
-        feed.episodes.append(
+        seen.add(item.guid)
+        episodes.append(
             Episode(
                 guid=item.guid,
                 title=item.title,
@@ -48,5 +57,4 @@ def _add_new_episodes(feed: Feed, parsed: ParsedFeed, known_guids: set[str]) -> 
                 link=item.link,
             )
         )
-        added += 1
-    return added
+    return episodes
