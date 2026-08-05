@@ -6,6 +6,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from audioreader.db import get_session
+from audioreader.llm.fake import FakeLLMClient
+from audioreader.llm.provider import get_llm_client
 from audioreader.main import create_app
 from audioreader.models import Base
 
@@ -25,9 +27,15 @@ async def session() -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture
-async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
+def fake_llm() -> FakeLLMClient:
+    return FakeLLMClient()
+
+
+@pytest.fixture
+async def client(session: AsyncSession, fake_llm: FakeLLMClient) -> AsyncIterator[AsyncClient]:
     app = create_app()
     app.dependency_overrides[get_session] = lambda: session
+    app.dependency_overrides[get_llm_client] = lambda: fake_llm
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client

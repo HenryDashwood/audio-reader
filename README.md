@@ -39,3 +39,24 @@ development needs no configuration.
 - `AUDIOREADER_POLL_INTERVAL_SECONDS` — background feed-poll interval
   (default 900; set 0 to disable, e.g. when an external scheduler runs
   `python -m audioreader.feeds.poller` instead)
+- `AUDIOREADER_COMMAND_CANDIDATE_LIMIT` — how many episodes the model chooses
+  between per command (default 60; the main cost dial)
+
+The test suite stubs the LLM, so no API key is needed to run it.
+
+### Choosing an LLM provider
+
+`AUDIOREADER_LLM_PROVIDER` selects the backend; the bare vendor key names
+(`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`) are read as-is from `.env`.
+
+| Provider | Key | Model setting |
+| --- | --- | --- |
+| `openrouter` (default) | `OPENROUTER_API_KEY` | `AUDIOREADER_OPENROUTER_MODEL` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `AUDIOREADER_LLM_MODEL` |
+
+The default is `deepseek/deepseek-v4-flash-0731`, which matched Claude Opus 5
+on every episode-selection query we tried at roughly 1/55 of the cost.
+
+The `openrouter` client speaks the OpenAI chat-completions format, so pointing
+`AUDIOREADER_OPENROUTER_BASE_URL` elsewhere reaches OpenAI, DeepSeek direct,
+Groq, or a local vLLM without new code.

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, HttpUrl
+from pydantic import BaseModel, ConfigDict, HttpUrl, field_validator
 
 
 class FeedCreate(BaseModel):
@@ -30,3 +30,22 @@ class EpisodeRead(BaseModel):
     duration_seconds: int | None
     published_at: datetime | None
     link: str | None
+
+
+class CommandRequest(BaseModel):
+    transcript: str
+
+    @field_validator("transcript")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        # Speech recognition can hand us whitespace when it hears nothing;
+        # that is not a command, and must not reach the model.
+        if not value.strip():
+            raise ValueError("transcript must not be blank")
+        return value.strip()
+
+
+class CommandResponse(BaseModel):
+    action: str
+    spoken_response: str
+    episode: EpisodeRead | None = None

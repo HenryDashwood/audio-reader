@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from audioreader.config import settings
 from audioreader.db import SessionMaker
 from audioreader.feeds.poller import poll_all_feeds
-from audioreader.routers import feeds
+from audioreader.routers import commands, feeds
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     app = FastAPI(title="audioreader", lifespan=lifespan)
     app.include_router(feeds.router)
+    app.include_router(commands.router)
     return app
 
 
