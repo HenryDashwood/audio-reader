@@ -16,14 +16,17 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
     private var silenceTimer: Timer?
 
-    /// How long a pause counts as "she has finished speaking".
-    private let silenceThreshold: TimeInterval = 1.5
+    private let timeouts = ListeningTimeouts()
+    /// Set once any words arrive, which switches the wait from "waiting for
+    /// her to begin" to "she has finished".
+    private var hasHeardSpeech = false
 
     init(locale: Locale = Locale(identifier: "en-GB")) {
         self.locale = locale
     }
 
     func listen() async throws -> String {
+        hasHeardSpeech = false
         try await requestMicrophonePermission()
 
         let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
@@ -60,6 +63,9 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
             group.addTask { @MainActor in
                 for try await result in transcriber.results {
                     let text = String(result.text.characters)
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        self.hasHeardSpeech = true
+                    }
                     if result.isFinal {
                         finalised += text
                         volatile = ""
@@ -92,7 +98,8 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
 
     private func restartSilenceTimer() {
         silenceTimer?.invalidate()
-        silenceTimer = Timer.scheduledTimer(withTimeInterval: silenceThreshold, repeats: false) {
+        let interval = timeouts.interval(hasHeardSpeech: hasHeardSpeech)
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) {
             [weak self] _ in
             Task { @MainActor in
                 guard let self, let pending = self.silenceContinuation else { return }

@@ -63,7 +63,8 @@ extension VoiceController {
             api: HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
             speech: canned.map(CannedSpeechRecognizer.init(transcript:)) ?? speech,
             speaker: Speaker(),
-            player: AudioPlayer())
+            player: AudioPlayer(),
+            feedback: Feedback())
     }
 }
 

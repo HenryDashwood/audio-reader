@@ -26,6 +26,7 @@ def build_llm_client() -> LLMClient:
                 base_url=settings.openrouter_base_url,
                 api_key=settings.openrouter_api_key,
                 model=settings.openrouter_model,
+                extra_payload={"reasoning": {"enabled": settings.openrouter_reasoning}},
             )
 
 

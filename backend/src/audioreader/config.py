@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     )
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str = "deepseek/deepseek-v4-flash-0731"
+    # DeepSeek V4 Flash reasons before answering by default, which cost 4-14s
+    # per command and varied wildly. Picking an episode from a labelled list
+    # does not need it: measured ~1.1s and no loss of accuracy without.
+    openrouter_reasoning: bool = False
     # How many episodes the model gets to choose between. Every candidate costs
     # input tokens on each spoken command, so this is the main cost dial.
     command_candidate_limit: int = 60

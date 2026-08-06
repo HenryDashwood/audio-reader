@@ -45,9 +45,12 @@ class OpenAICompatibleClient:
         model: str,
         app_title: str = "audioreader",
         timeout: float = 30.0,
+        extra_payload: dict[str, Any] | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        # Provider-specific request fields, e.g. OpenRouter's `reasoning`.
+        self.extra_payload = extra_payload or {}
         self._headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -59,7 +62,9 @@ class OpenAICompatibleClient:
     async def decide(
         self, *, system: str, user: str, output_model: type[BaseModel]
     ) -> dict[str, Any]:
-        payload = {
+        # Extras go first so they can never overwrite the schema or messages.
+        payload: dict[str, Any] = {
+            **self.extra_payload,
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},

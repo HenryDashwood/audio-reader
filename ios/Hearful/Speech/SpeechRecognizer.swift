@@ -18,9 +18,8 @@ final class SpeechRecognizer: SpeechRecognizing {
     private var silenceTimer: Timer?
     private var transcript = ""
 
-    /// How long a pause counts as "she has finished speaking". Long enough to
-    /// think mid-sentence, short enough not to feel unresponsive.
-    private let silenceThreshold: TimeInterval = 1.5
+    private let timeouts = ListeningTimeouts()
+    private var hasHeardSpeech = false
 
     func listen() async throws -> String {
         try await requestPermissions()
@@ -48,6 +47,7 @@ final class SpeechRecognizer: SpeechRecognizing {
     {
         cancel()
         transcript = ""
+        hasHeardSpeech = false
         try AudioSession.configureForListening()
         log.info("listening; onDevice=\(onDevice)")
 
@@ -73,6 +73,9 @@ final class SpeechRecognizer: SpeechRecognizing {
                     guard let self else { return }
                     if let result {
                         self.transcript = result.bestTranscription.formattedString
+                        if !self.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            self.hasHeardSpeech = true
+                        }
                         // Every fresh word pushes the deadline out.
                         self.restartSilenceTimer()
                         if result.isFinal { self.finish(with: .success(self.transcript)) }
@@ -107,7 +110,8 @@ final class SpeechRecognizer: SpeechRecognizing {
 
     private func restartSilenceTimer() {
         silenceTimer?.invalidate()
-        silenceTimer = Timer.scheduledTimer(withTimeInterval: silenceThreshold, repeats: false) {
+        let interval = timeouts.interval(hasHeardSpeech: hasHeardSpeech)
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) {
             [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }

@@ -26,9 +26,13 @@ to. Decide which episode she means and reply with the matching action.
 - Choose unknown when nothing matches, or when several episodes match equally
   well and guessing would be worse than asking.
 - episode_id must be copied exactly from the list. Never invent one.
-- spoken_response is read aloud to her, so keep it to one short sentence. For
-  play_episode, name the episode and show so she can tell if you got it wrong.
-  For unknown, say briefly what you need her to clarify.
+- spoken_response is read aloud to her and she waits through every word of it
+  before the episode starts, so make it as short as possible.
+  For play_episode use at most six words: enough to recognise the episode and
+  catch a wrong pick, nothing more. "Playing Diana Pasulka." or "Playing the
+  Delian League." — never the show name, episode number, guest list or topic
+  unless that is the only way to identify it.
+  For unknown, one short question naming what you need.
 """
 
 

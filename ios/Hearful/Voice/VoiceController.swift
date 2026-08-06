@@ -17,6 +17,8 @@ protocol Speaking {
 @MainActor
 protocol AudioPlaying {
     var isPlaying: Bool { get }
+    /// Starts buffering without playing, so the wait overlaps the confirmation.
+    func prepare(_ episode: Episode)
     func play(_ episode: Episode) throws
     func pause()
 }
@@ -39,15 +41,18 @@ final class VoiceController: ObservableObject {
     private let speech: SpeechRecognizing
     private let speaker: Speaking
     private let player: AudioPlaying
+    private let feedback: FeedbackPlaying
     private var isBusy = false
 
     init(
-        api: HearfulAPIProtocol, speech: SpeechRecognizing, speaker: Speaking, player: AudioPlaying
+        api: HearfulAPIProtocol, speech: SpeechRecognizing, speaker: Speaking,
+        player: AudioPlaying, feedback: FeedbackPlaying
     ) {
         self.api = api
         self.speech = speech
         self.speaker = speaker
         self.player = player
+        self.feedback = feedback
     }
 
     func beginCommand() async {
@@ -56,14 +61,18 @@ final class VoiceController: ObservableObject {
         isBusy = true
         defer { isBusy = false }
 
+        // Before anything slow happens: confirm the tap landed.
+        feedback.play(.acknowledged)
+
         // Anything playing would otherwise be transcribed as if she said it.
         if player.isPlaying { player.pause() }
 
         do {
             state = .listening
+            feedback.play(.listening)
             let transcript = try await speech.listen()
             guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                await finish(saying: "I did not hear anything. Tap and try again.")
+                await fail(saying: "I did not hear anything. Tap and try again.")
                 return
             }
 
@@ -71,9 +80,9 @@ final class VoiceController: ObservableObject {
             let response = try await api.command(transcript: transcript)
             await handle(response)
         } catch let error as APIError {
-            await finish(saying: error.spokenResponse)
+            await fail(saying: error.spokenResponse)
         } catch {
-            await finish(saying: "Sorry, I could not hear you. Please tap and try again.")
+            await fail(saying: "Sorry, I could not hear you. Please tap and try again.")
         }
     }
 
@@ -84,16 +93,19 @@ final class VoiceController: ObservableObject {
 
         case .playEpisode:
             guard let episode = response.episode, episode.audioURL != nil else {
-                await finish(saying: "Sorry, I cannot play that one yet.")
+                await fail(saying: "Sorry, I cannot play that one yet.")
                 return
             }
+            // Buffer while the confirmation is spoken, so the network wait and
+            // the sentence happen at the same time rather than back to back.
+            player.prepare(episode)
             // Confirm first and wait: overlapping speech and podcast is unusable.
             await say(response.spokenResponse)
             do {
                 try player.play(episode)
                 state = .playing(episode)
             } catch {
-                await finish(saying: "Sorry, that episode would not play.")
+                await fail(saying: "Sorry, that episode would not play.")
             }
         }
     }
@@ -106,5 +118,10 @@ final class VoiceController: ObservableObject {
     private func finish(saying text: String) async {
         await say(text)
         state = .idle
+    }
+
+    private func fail(saying text: String) async {
+        feedback.play(.failed)
+        await finish(saying: text)
     }
 }

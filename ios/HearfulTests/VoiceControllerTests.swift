@@ -8,7 +8,9 @@ import Testing
 enum Event: Equatable {
     case paused
     case spoke(String)
+    case prepared(Int)
     case played(Int)
+    case cue(Cue)
 }
 
 @MainActor
@@ -47,6 +49,9 @@ final class FakePlayer: AudioPlaying {
     var failure: Error?
     init(_ recorder: Recorder) { self.recorder = recorder }
 
+    func prepare(_ episode: Episode) {
+        recorder.events.append(.prepared(episode.id))
+    }
     func play(_ episode: Episode) throws {
         if let failure { throw failure }
         recorder.events.append(.played(episode.id))
@@ -56,6 +61,13 @@ final class FakePlayer: AudioPlaying {
         recorder.events.append(.paused)
         isPlaying = false
     }
+}
+
+@MainActor
+final class FakeFeedback: FeedbackPlaying {
+    let recorder: Recorder
+    init(_ recorder: Recorder) { self.recorder = recorder }
+    func play(_ cue: Cue) { recorder.events.append(.cue(cue)) }
 }
 
 final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
@@ -88,7 +100,8 @@ private func makeController(
     let speech = speech ?? FakeSpeech()
     let player = FakePlayer(recorder)
     let controller = VoiceController(
-        api: api, speech: speech, speaker: FakeSpeaker(recorder), player: player)
+        api: api, speech: speech, speaker: FakeSpeaker(recorder), player: player,
+        feedback: FakeFeedback(recorder))
     return (controller, recorder, speech, api, player)
 }
 
@@ -116,7 +129,40 @@ struct VoiceControllerTests {
 
         await controller.beginCommand()
 
-        #expect(recorder.events == [.spoke("Playing it."), .played(104)])
+        let meaningful = recorder.events.filter {
+            if case .cue = $0 { return false } else { return true }
+        }
+        #expect(meaningful == [.prepared(104), .spoke("Playing it."), .played(104)])
+    }
+
+    @Test func buffersTheEpisodeWhileTheConfirmationIsSpoken() async {
+        // Loading only after the confirmation would add its own delay on top;
+        // buffering during the sentence hides it entirely.
+        let (controller, recorder, _, api, _) = makeController()
+        api.response = CommandResponse(
+            action: .playEpisode, spokenResponse: "Playing it.", episode: episode())
+
+        await controller.beginCommand()
+
+        let preparedAt = recorder.events.firstIndex(of: .prepared(104))
+        let spokeAt = recorder.events.firstIndex(of: .spoke("Playing it."))
+        #expect(preparedAt != nil && spokeAt != nil && preparedAt! < spokeAt!)
+    }
+
+    @Test func acknowledgesTheTapImmediately() async {
+        // She cannot see the icon change, so silence between tapping and
+        // listening reads as "it did not hear me".
+        let (controller, recorder, _, _, _) = makeController()
+        await controller.beginCommand()
+
+        #expect(recorder.events.first == .cue(.acknowledged))
+    }
+
+    @Test func signalsWhenItStartsListening() async {
+        let (controller, recorder, _, _, _) = makeController()
+        await controller.beginCommand()
+
+        #expect(recorder.events.contains(.cue(.listening)))
     }
 
     @Test func pausesPlaybackBeforeListening() async {
@@ -127,7 +173,7 @@ struct VoiceControllerTests {
 
         await controller.beginCommand()
 
-        #expect(recorder.events.first == .paused)
+        #expect(recorder.events.contains(.paused))
     }
 
     @Test func doesNotPauseWhenNothingIsPlaying() async {

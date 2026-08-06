@@ -14,12 +14,24 @@ final class AudioPlayer: NSObject, AudioPlaying {
         wireRemoteCommands()
     }
 
+    /// Loads the item without starting it, so buffering overlaps the spoken
+    /// confirmation instead of following it.
+    func prepare(_ episode: Episode) {
+        guard let url = episode.audioURL, episode.id != currentEpisode?.id else { return }
+        try? AudioSession.configureForPlayback()
+        player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        currentEpisode = episode
+    }
+
     func play(_ episode: Episode) throws {
         guard let url = episode.audioURL else {
             throw PlaybackError.noAudio
         }
         try AudioSession.configureForPlayback()
-        player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        // Usually already loaded by prepare(); only swap if it is a new episode.
+        if currentEpisode?.id != episode.id || player.currentItem == nil {
+            player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        }
         player.play()
         currentEpisode = episode
         publishNowPlaying(episode)

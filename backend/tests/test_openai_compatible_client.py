@@ -66,6 +66,35 @@ class TestDecide:
         assert body["response_format"]["type"] == "json_schema"
         assert body["response_format"]["json_schema"]["strict"] is True
 
+    async def test_sends_extra_payload(self, respx_mock):
+        # Provider-specific knobs (e.g. OpenRouter's `reasoning`) must reach
+        # the request without every caller knowing about them.
+        client = OpenAICompatibleClient(
+            base_url=BASE_URL,
+            api_key="k",
+            model="m",
+            extra_payload={"reasoning": {"enabled": False}},
+        )
+        route = respx_mock.post(ENDPOINT).respond(
+            json=completion({"action": "unknown", "episode_id": None, "spoken_response": "?"})
+        )
+        await client.decide(system="s", user="u", output_model=ModelDecision)
+
+        body = json.loads(route.calls.last.request.content)
+        assert body["reasoning"] == {"enabled": False}
+
+    async def test_extra_payload_cannot_clobber_the_schema(self, respx_mock):
+        client = OpenAICompatibleClient(
+            base_url=BASE_URL, api_key="k", model="m", extra_payload={"response_format": "nonsense"}
+        )
+        route = respx_mock.post(ENDPOINT).respond(
+            json=completion({"action": "unknown", "episode_id": None, "spoken_response": "?"})
+        )
+        await client.decide(system="s", user="u", output_model=ModelDecision)
+
+        body = json.loads(route.calls.last.request.content)
+        assert body["response_format"]["type"] == "json_schema"
+
     async def test_sends_auth_header(self, client, respx_mock):
         route = respx_mock.post(ENDPOINT).respond(
             json=completion({"action": "unknown", "episode_id": None, "spoken_response": "?"})
