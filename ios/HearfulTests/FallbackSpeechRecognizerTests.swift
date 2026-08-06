@@ -1,0 +1,82 @@
+import Foundation
+import Testing
+
+@testable import Hearful
+
+@MainActor
+private final class ScriptedRecognizer: SpeechRecognizing {
+    var result: Result<String, Error>
+    private(set) var listenCount = 0
+    private(set) var cancelCount = 0
+
+    init(_ result: Result<String, Error>) { self.result = result }
+
+    func listen() async throws -> String {
+        listenCount += 1
+        return try result.get()
+    }
+    func cancel() { cancelCount += 1 }
+}
+
+private struct Boom: Error {}
+
+@Suite("Fallback speech recognizer")
+@MainActor
+struct FallbackSpeechRecognizerTests {
+    @Test func usesThePreferredRecognizerWhenItWorks() async throws {
+        let preferred = ScriptedRecognizer(.success("play the seashells one"))
+        let backup = ScriptedRecognizer(.success("wrong one"))
+        let recognizer = FallbackSpeechRecognizer(preferred: preferred, backup: backup)
+
+        let transcript = try await recognizer.listen()
+
+        #expect(transcript == "play the seashells one")
+        #expect(backup.listenCount == 0)  // never consulted
+    }
+
+    @Test func fallsBackWhenThePreferredOneFails() async throws {
+        // On a device with no downloaded speech models the modern analyser
+        // cannot start; the older recogniser still can.
+        let preferred = ScriptedRecognizer(.failure(Boom()))
+        let backup = ScriptedRecognizer(.success("play the seashells one"))
+        let recognizer = FallbackSpeechRecognizer(preferred: preferred, backup: backup)
+
+        let transcript = try await recognizer.listen()
+
+        #expect(transcript == "play the seashells one")
+        #expect(backup.listenCount == 1)
+    }
+
+    @Test func stopsFallingBackOnceThePreferredOneHasFailed() async throws {
+        // Retrying a recogniser that cannot initialise wastes a second or two
+        // on every command, which is a long time when you are waiting to talk.
+        let preferred = ScriptedRecognizer(.failure(Boom()))
+        let backup = ScriptedRecognizer(.success("ok"))
+        let recognizer = FallbackSpeechRecognizer(preferred: preferred, backup: backup)
+
+        _ = try await recognizer.listen()
+        _ = try await recognizer.listen()
+
+        #expect(preferred.listenCount == 1)
+        #expect(backup.listenCount == 2)
+    }
+
+    @Test func propagatesTheErrorWhenBothFail() async {
+        let recognizer = FallbackSpeechRecognizer(
+            preferred: ScriptedRecognizer(.failure(Boom())),
+            backup: ScriptedRecognizer(.failure(Boom())))
+
+        await #expect(throws: (any Error).self) {
+            _ = try await recognizer.listen()
+        }
+    }
+
+    @Test func cancelReachesBoth() async {
+        let preferred = ScriptedRecognizer(.success("a"))
+        let backup = ScriptedRecognizer(.success("b"))
+        FallbackSpeechRecognizer(preferred: preferred, backup: backup).cancel()
+
+        #expect(preferred.cancelCount == 1)
+        #expect(backup.cancelCount == 1)
+    }
+}

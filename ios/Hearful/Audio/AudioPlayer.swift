@@ -1,0 +1,77 @@
+import AVFoundation
+import MediaPlayer
+
+/// Streams episode audio and publishes it to the lock screen.
+@MainActor
+final class AudioPlayer: NSObject, AudioPlaying {
+    private let player = AVPlayer()
+    private var currentEpisode: Episode?
+
+    var isPlaying: Bool { player.timeControlStatus == .playing }
+
+    override init() {
+        super.init()
+        wireRemoteCommands()
+    }
+
+    func play(_ episode: Episode) throws {
+        guard let url = episode.audioURL else {
+            throw PlaybackError.noAudio
+        }
+        try AudioSession.configureForPlayback()
+        player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        player.play()
+        currentEpisode = episode
+        publishNowPlaying(episode)
+    }
+
+    func pause() {
+        player.pause()
+    }
+
+    func resume() {
+        try? AudioSession.configureForPlayback()
+        player.play()
+    }
+
+    func skip(by seconds: TimeInterval) {
+        let target = player.currentTime() + CMTime(seconds: seconds, preferredTimescale: 600)
+        player.seek(to: CMTimeMaximum(.zero, target))
+    }
+
+    /// Lock screen, AirPods stems and "Hey Siri, pause" all arrive here — none
+    /// of which need the app open or the screen looked at.
+    private func wireRemoteCommands() {
+        let centre = MPRemoteCommandCenter.shared()
+        centre.playCommand.addTarget { [weak self] _ in
+            self?.resume()
+            return .success
+        }
+        centre.pauseCommand.addTarget { [weak self] _ in
+            self?.pause()
+            return .success
+        }
+        centre.skipForwardCommand.preferredIntervals = [30]
+        centre.skipForwardCommand.addTarget { [weak self] _ in
+            self?.skip(by: 30)
+            return .success
+        }
+        centre.skipBackwardCommand.preferredIntervals = [15]
+        centre.skipBackwardCommand.addTarget { [weak self] _ in
+            self?.skip(by: -15)
+            return .success
+        }
+    }
+
+    private func publishNowPlaying(_ episode: Episode) {
+        var info: [String: Any] = [MPMediaItemPropertyTitle: episode.title]
+        if let duration = episode.durationSeconds {
+            info[MPMediaItemPropertyPlaybackDuration] = Double(duration)
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    enum PlaybackError: Error {
+        case noAudio
+    }
+}

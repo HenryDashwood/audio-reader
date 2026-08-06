@@ -6,3 +6,10 @@ __pycache__/
 .ruff_cache/
 uv.lock.orig
 .DS_Store
+
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist

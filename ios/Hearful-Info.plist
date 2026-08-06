@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Without this, playback stops the moment the screen locks, which would
+	     make the app useless in a pocket. Declared here rather than via
+	     INFOPLIST_KEY_UIBackgroundModes, which did not survive the build. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+	<!-- The dev backend is plain HTTP on localhost. This exemption covers
+	     loopback and .local only; it does not open up arbitrary HTTP. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

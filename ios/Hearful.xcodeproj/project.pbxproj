@@ -1,0 +1,371 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		AA00000000000000000000F3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA00000000000000000000C0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA00000000000000000000D1;
+			remoteInfo = Hearful;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		AA00000000000000000000D2 /* Hearful.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hearful.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA00000000000000000000D4 /* HearfulTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HearfulTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		AA00000000000000000000A1 /* Hearful */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Hearful;
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000A2 /* HearfulTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HearfulTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AA00000000000000000000B1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA00000000000000000000B4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AA00000000000000000000C1 = {
+			isa = PBXGroup;
+			children = (
+				AA00000000000000000000A1 /* Hearful */,
+				AA00000000000000000000A2 /* HearfulTests */,
+				AA00000000000000000000C2 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000C2 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000000000000000000D2 /* Hearful.app */,
+				AA00000000000000000000D4 /* HearfulTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AA00000000000000000000D1 /* Hearful */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA00000000000000000000E1 /* Build configuration list for PBXNativeTarget "Hearful" */;
+			buildPhases = (
+				AA00000000000000000000B2 /* Sources */,
+				AA00000000000000000000B1 /* Frameworks */,
+				AA00000000000000000000B3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				AA00000000000000000000A1 /* Hearful */,
+			);
+			name = Hearful;
+			productName = Hearful;
+			productReference = AA00000000000000000000D2 /* Hearful.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AA00000000000000000000D3 /* HearfulTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA00000000000000000000E4 /* Build configuration list for PBXNativeTarget "HearfulTests" */;
+			buildPhases = (
+				AA00000000000000000000B5 /* Sources */,
+				AA00000000000000000000B4 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA00000000000000000000F2 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AA00000000000000000000A2 /* HearfulTests */,
+			);
+			name = HearfulTests;
+			productName = HearfulTests;
+			productReference = AA00000000000000000000D4 /* HearfulTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AA00000000000000000000C0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					AA00000000000000000000D1 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					AA00000000000000000000D3 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = AA00000000000000000000D1;
+					};
+				};
+			};
+			buildConfigurationList = AA00000000000000000000E0 /* Build configuration list for PBXProject "Hearful" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AA00000000000000000000C1;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = AA00000000000000000000C2 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AA00000000000000000000D1 /* Hearful */,
+				AA00000000000000000000D3 /* HearfulTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA00000000000000000000B3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AA00000000000000000000B2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA00000000000000000000B5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AA00000000000000000000F2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA00000000000000000000D1 /* Hearful */;
+			targetProxy = AA00000000000000000000F3 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AA00000000000000000000E2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AA00000000000000000000E3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AA00000000000000000000E5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 67F2439F4X;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Hearful-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Hearful;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Hearful listens so you can ask for a podcast or article out loud.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Hearful turns what you say into a request, so you can ask for an episode without using the screen.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIBackgroundModes = audio;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA00000000000000000000E6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 67F2439F4X;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Hearful-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Hearful;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Hearful listens so you can ask for a podcast or article out loud.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Hearful turns what you say into a request, so you can ask for an episode without using the screen.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIBackgroundModes = audio;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		AA00000000000000000000E7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hearful.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hearful";
+			};
+			name = Debug;
+		};
+		AA00000000000000000000E8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hearful.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hearful";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA00000000000000000000E0 /* Build configuration list for PBXProject "Hearful" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA00000000000000000000E2 /* Debug */,
+				AA00000000000000000000E3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA00000000000000000000E1 /* Build configuration list for PBXNativeTarget "Hearful" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA00000000000000000000E5 /* Debug */,
+				AA00000000000000000000E6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA00000000000000000000E4 /* Build configuration list for PBXNativeTarget "HearfulTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA00000000000000000000E7 /* Debug */,
+				AA00000000000000000000E8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AA00000000000000000000C0 /* Project object */;
+}

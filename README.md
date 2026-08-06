@@ -8,7 +8,31 @@ backend owns feeds, search, and the LLM that turns spoken requests into actions.
 
 - `backend/` — FastAPI + SQLAlchemy 2.0 + Alembic. Feed ingestion, episode
   storage, and (soon) the voice-command endpoint.
-- `ios/` — SwiftUI app (not started yet).
+- `ios/` — SwiftUI app (`Hearful`), targeting iOS 17+.
+
+## iOS development
+
+Requires Xcode with the iOS simulator runtime
+(`xcodebuild -downloadPlatform iOS` if `xcrun simctl list runtimes` is empty).
+
+```bash
+cd ios && xcodebuild test -scheme Hearful -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
+Day to day, open `ios/Hearful.xcodeproj` and press ⌘R. The app and test targets
+use file-system synchronized groups, so files added under `ios/Hearful/` are
+picked up automatically without editing the project file.
+
+The app talks to `http://localhost:8000` by default, which the simulator can
+reach but a physical device cannot. Override with the `HEARFUL_API_URL`
+environment variable in the scheme.
+
+To exercise the network and playback path without speaking (the simulator has
+no useful microphone), launch with a canned transcript:
+
+```bash
+SIMCTL_CHILD_HEARFUL_FAKE_TRANSCRIPT="play the one about the aliens lady" xcrun simctl launch booted com.henrydashwood.hearful
+```
 
 ## Backend development
 

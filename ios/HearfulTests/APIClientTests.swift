@@ -1,0 +1,155 @@
+import Foundation
+import Testing
+
+@testable import Hearful
+
+/// A per-test transport, so parallel tests cannot tread on each other.
+final class FakeTransport: DataTransport, @unchecked Sendable {
+    private let result: Result<(Int, Data), Error>
+    private(set) var lastRequest: URLRequest?
+
+    init(status: Int = 200, json: String) {
+        result = .success((status, Data(json.utf8)))
+    }
+    init(failure: Error) {
+        result = .failure(failure)
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        lastRequest = request
+        switch result {
+        case .failure(let error):
+            throw error
+        case .success(let (status, data)):
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            return (data, response)
+        }
+    }
+}
+
+private func makeClient(_ transport: DataTransport) -> HearfulAPI {
+    HearfulAPI(baseURL: URL(string: "http://test.local")!, transport: transport)
+}
+
+private let playJSON = """
+    {
+      "action": "play_episode",
+      "spoken_response": "Playing The Congress of Vienna.",
+      "episode": {
+        "id": 104,
+        "title": "The Congress of Vienna",
+        "description": "With guests Adam Zamoyski and Kate Williams.",
+        "audio_url": "https://cdn.example.com/104.mp3",
+        "duration_seconds": 2700,
+        "published_at": "2026-08-04T00:00:00Z",
+        "link": "https://example.com/104"
+      }
+    }
+    """
+
+@Suite("Command endpoint")
+struct CommandEndpointTests {
+    @Test func decodesPlayEpisode() async throws {
+        let result = try await makeClient(FakeTransport(json: playJSON))
+            .command(transcript: "play the Vienna one")
+
+        #expect(result.action == .playEpisode)
+        #expect(result.spokenResponse == "Playing The Congress of Vienna.")
+        #expect(result.episode?.title == "The Congress of Vienna")
+        #expect(result.episode?.audioURL?.absoluteString == "https://cdn.example.com/104.mp3")
+        #expect(result.episode?.durationSeconds == 2700)
+    }
+
+    @Test func decodesPublishedDate() async throws {
+        let result = try await makeClient(FakeTransport(json: playJSON)).command(transcript: "x")
+        let expected = ISO8601DateFormatter().date(from: "2026-08-04T00:00:00Z")
+        #expect(result.episode?.publishedAt == expected)
+    }
+
+    @Test func decodesFractionalSecondDates() async throws {
+        // FastAPI emits fractional seconds for some rows; both forms must parse.
+        let json = """
+            {"action":"play_episode","spoken_response":"ok","episode":{
+              "id":1,"title":"t","description":null,"audio_url":"https://x/y.mp3",
+              "duration_seconds":null,"published_at":"2026-08-04T00:00:00.123456Z","link":null}}
+            """
+        let result = try await makeClient(FakeTransport(json: json)).command(transcript: "x")
+        #expect(result.episode?.publishedAt != nil)
+    }
+
+    @Test func decodesUnknownWithNoEpisode() async throws {
+        let json = """
+            {"action":"unknown","spoken_response":"Which show would you like?","episode":null}
+            """
+        let result = try await makeClient(FakeTransport(json: json))
+            .command(transcript: "play the thing")
+
+        #expect(result.action == .unknown)
+        #expect(result.episode == nil)
+        #expect(result.spokenResponse == "Which show would you like?")
+    }
+
+    @Test func sendsTranscriptAsJSONPost() async throws {
+        let transport = FakeTransport(json: playJSON)
+        _ = try await makeClient(transport).command(transcript: "play the Vienna one")
+
+        let request = try #require(transport.lastRequest)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/command")
+        #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
+
+        let body = try JSONDecoder().decode(
+            [String: String].self, from: try #require(request.httpBody))
+        #expect(body["transcript"] == "play the Vienna one")
+    }
+}
+
+@Suite("Command endpoint failures")
+struct CommandFailureTests {
+    @Test func serviceUnavailableSurfacesSpeakableMessage() async throws {
+        // The backend puts something sayable in the 503 body; losing it would
+        // leave the app with nothing to tell her.
+        let json = """
+            {"detail":{"spoken_response":"Sorry, I cannot reach my assistant right now.",
+            "error":"upstream timeout"}}
+            """
+        do {
+            _ = try await makeClient(FakeTransport(status: 503, json: json))
+                .command(transcript: "x")
+            Issue.record("expected a thrown error")
+        } catch let error as APIError {
+            #expect(error.spokenResponse == "Sorry, I cannot reach my assistant right now.")
+        }
+    }
+
+    @Test func plainServerErrorStillHasSomethingToSay() async throws {
+        do {
+            _ = try await makeClient(FakeTransport(status: 500, json: "internal server error"))
+                .command(transcript: "x")
+            Issue.record("expected a thrown error")
+        } catch let error as APIError {
+            #expect(!error.spokenResponse.isEmpty)
+        }
+    }
+
+    @Test func transportFailureIsSpeakable() async throws {
+        do {
+            _ = try await makeClient(FakeTransport(failure: URLError(.notConnectedToInternet)))
+                .command(transcript: "x")
+            Issue.record("expected a thrown error")
+        } catch let error as APIError {
+            #expect(!error.spokenResponse.isEmpty)
+        }
+    }
+
+    @Test func malformedBodyIsSpeakable() async throws {
+        do {
+            _ = try await makeClient(FakeTransport(json: "{\"action\": \"nonsense\"}"))
+                .command(transcript: "x")
+            Issue.record("expected a thrown error")
+        } catch let error as APIError {
+            #expect(!error.spokenResponse.isEmpty)
+        }
+    }
+}
