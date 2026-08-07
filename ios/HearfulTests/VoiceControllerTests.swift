@@ -7,6 +7,8 @@ import Testing
 
 enum Event: Equatable {
     case paused
+    case resumed
+    case skipped(TimeInterval)
     case spoke(String)
     case prepared(Int)
     case played(Int)
@@ -61,6 +63,13 @@ final class FakePlayer: AudioPlaying {
         recorder.events.append(.paused)
         isPlaying = false
     }
+    func resume() {
+        recorder.events.append(.resumed)
+        isPlaying = true
+    }
+    func skip(by seconds: TimeInterval) {
+        recorder.events.append(.skipped(seconds))
+    }
 }
 
 @MainActor
@@ -79,6 +88,18 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
         transcripts.append(transcript)
         if let error { throw error }
         return response ?? CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
+    }
+
+    func recentEpisodes(limit: Int) async throws -> [Episode] {
+        Array(episodesByID.values)
+    }
+
+    var episodesByID: [Int: Episode] = [:]
+    func episode(id: Int) async throws -> Episode {
+        guard let found = episodesByID[id] else {
+            throw APIError(underlying: "no such episode")
+        }
+        return found
     }
 }
 
@@ -226,6 +247,131 @@ struct VoiceControllerTests {
 
         #expect(recorder.playedIDs.isEmpty)
         #expect(controller.state == .idle)
+    }
+}
+
+@Suite("Transport commands never reach the network")
+@MainActor
+struct VoiceControllerTransportTests {
+    @Test func pauseIsHandledOnTheDevice() async {
+        let speech = FakeSpeech()
+        speech.transcript = "pause"
+        let (controller, recorder, _, api, player) = makeController(speech: speech)
+        player.isPlaying = true
+
+        await controller.beginCommand()
+
+        #expect(api.transcripts.isEmpty)  // no round trip
+        #expect(recorder.events.contains(.paused))
+        #expect(recorder.spoken.isEmpty)  // the silence is the confirmation
+    }
+
+    @Test func resumeIsHandledOnTheDevice() async {
+        let speech = FakeSpeech()
+        speech.transcript = "carry on"
+        let (controller, recorder, _, api, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        #expect(api.transcripts.isEmpty)
+        #expect(recorder.events.contains(.resumed))
+    }
+
+    @Test func skippingMovesForwardAndBack() async {
+        let forward = FakeSpeech()
+        forward.transcript = "skip forward"
+        let (a, recorderA, _, _, _) = makeController(speech: forward)
+        await a.beginCommand()
+
+        let back = FakeSpeech()
+        back.transcript = "go back"
+        let (b, recorderB, _, _, _) = makeController(speech: back)
+        await b.beginCommand()
+
+        #expect(recorderA.events.contains { if case .skipped(let s) = $0 { s > 0 } else { false } })
+        #expect(recorderB.events.contains { if case .skipped(let s) = $0 { s < 0 } else { false } })
+    }
+
+    @Test func aRealRequestStillGoesToTheBackend() async {
+        let speech = FakeSpeech()
+        speech.transcript = "play the one about the aliens lady"
+        let (controller, _, _, api, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        #expect(api.transcripts == ["play the one about the aliens lady"])
+    }
+
+    @Test func pausingDoesNotLeaveTheAppLookingBusy() async {
+        let speech = FakeSpeech()
+        speech.transcript = "pause"
+        let (controller, _, _, _, player) = makeController(speech: speech)
+        player.isPlaying = true
+
+        await controller.beginCommand()
+
+        #expect(controller.state == .idle)
+    }
+}
+
+@Suite("Playback survives an interruption")
+@MainActor
+struct VoiceControllerResumeTests {
+    @Test func whatWasPlayingCarriesOnAfterAnUnrecognisedRequest() async {
+        // Otherwise a misheard word silently ends her episode, and she has to
+        // work out that it stopped and ask for it again.
+        let (controller, recorder, _, api, player) = makeController()
+        player.isPlaying = true
+        api.response = CommandResponse(
+            action: .unknown, spokenResponse: "Which show?", episode: nil)
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.contains(.resumed))
+    }
+
+    @Test func carriesOnAfterAFailedRequestToo() async {
+        let (controller, recorder, _, api, player) = makeController()
+        player.isPlaying = true
+        api.error = APIError(spokenResponse: "I cannot reach the internet.", underlying: "offline")
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.contains(.resumed))
+    }
+
+    @Test func aNewEpisodeReplacesTheOldOneRatherThanResumingIt() async {
+        let (controller, recorder, _, api, player) = makeController()
+        player.isPlaying = true
+        api.response = CommandResponse(
+            action: .playEpisode, spokenResponse: "Playing it.", episode: episode())
+
+        await controller.beginCommand()
+
+        #expect(!recorder.events.contains(.resumed))
+        #expect(recorder.playedIDs == [104])
+    }
+
+    @Test func sayingPauseLeavesItPaused() async {
+        // She asked for silence; resuming would be maddening.
+        let speech = FakeSpeech()
+        speech.transcript = "pause"
+        let (controller, recorder, _, _, player) = makeController(speech: speech)
+        player.isPlaying = true
+
+        await controller.beginCommand()
+
+        #expect(!recorder.events.contains(.resumed))
+        #expect(recorder.events.contains(.paused))
+    }
+
+    @Test func nothingStartsPlayingIfNothingWasPlaying() async {
+        let (controller, recorder, _, api, _) = makeController()
+        api.response = CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
+
+        await controller.beginCommand()
+
+        #expect(!recorder.events.contains(.resumed))
     }
 }
 

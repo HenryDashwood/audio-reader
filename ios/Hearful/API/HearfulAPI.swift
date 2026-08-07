@@ -2,6 +2,8 @@ import Foundation
 
 protocol HearfulAPIProtocol: Sendable {
     func command(transcript: String) async throws -> CommandResponse
+    func episode(id: Int) async throws -> Episode
+    func recentEpisodes(limit: Int) async throws -> [Episode]
 }
 
 /// The one thing HearfulAPI needs from the network. Injecting this rather than
@@ -27,7 +29,22 @@ struct HearfulAPI: HearfulAPIProtocol {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["transcript": transcript])
+        return try await send(request)
+    }
 
+    func episode(id: Int) async throws -> Episode {
+        let url = baseURL.appendingPathComponent("episodes").appendingPathComponent("\(id)")
+        return try await send(URLRequest(url: url))
+    }
+
+    func recentEpisodes(limit: Int = 30) async throws -> [Episode] {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("episodes"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "limit", value: "\(limit)")]
+        return try await send(URLRequest(url: components.url!))
+    }
+
+    private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
         let data: Data
         let response: URLResponse
         do {
@@ -49,7 +66,7 @@ struct HearfulAPI: HearfulAPIProtocol {
         }
 
         do {
-            return try Self.decoder.decode(CommandResponse.self, from: data)
+            return try Self.decoder.decode(T.self, from: data)
         } catch {
             throw APIError(underlying: "could not decode response: \(error)")
         }

@@ -4,6 +4,10 @@ import MediaPlayer
 /// Streams episode audio and publishes it to the lock screen.
 @MainActor
 final class AudioPlayer: NSObject, AudioPlaying {
+    /// One player for the whole app. Siri intents run without any UI, so
+    /// playback cannot belong to a view that may never have been created.
+    static let shared = AudioPlayer()
+
     private let player = AVPlayer()
     private var currentEpisode: Episode?
 

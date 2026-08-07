@@ -3,6 +3,15 @@ import Foundation
 enum CommandAction: String, Decodable {
     case playEpisode = "play_episode"
     case unknown
+
+    /// The backend can add actions faster than the app gets reinstalled on her
+    /// phone. Anything unfamiliar falls back to "unknown", which just speaks
+    /// the sentence the backend sent — the right behaviour for outcomes like
+    /// "subscribed" that need no action from the app at all.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = CommandAction(rawValue: raw) ?? .unknown
+    }
 }
 
 struct Episode: Decodable, Equatable, Identifiable {

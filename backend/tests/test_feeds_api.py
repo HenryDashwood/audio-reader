@@ -68,3 +68,37 @@ class TestListEpisodes:
     async def test_unknown_feed_is_404(self, client):
         response = await client.get("/feeds/999/episodes")
         assert response.status_code == 404
+
+
+class TestSingleEpisode:
+    async def test_returns_the_episode(self, client, respx_mock, podcast_xml):
+        feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
+        episode_id = (await client.get(f"/feeds/{feed_id}/episodes")).json()[0]["id"]
+
+        response = await client.get(f"/episodes/{episode_id}")
+
+        assert response.status_code == 200
+        assert response.json()["title"] == "The Fall of Constantinople"
+        assert response.json()["audio_url"] == "https://cdn.example.com/hh/103.mp3"
+
+    async def test_unknown_episode_is_404(self, client):
+        assert (await client.get("/episodes/9999")).status_code == 404
+
+
+class TestRecentEpisodes:
+    async def test_lists_newest_across_all_feeds(self, client, respx_mock, podcast_xml):
+        await subscribe(client, respx_mock, podcast_xml)
+        response = await client.get("/episodes")
+
+        assert response.status_code == 200
+        titles = [e["title"] for e in response.json()]
+        assert titles[0] == "The Fall of Constantinople"
+
+    async def test_only_playable_episodes(self, client, respx_mock, article_xml):
+        # Siri suggestions must not offer something that cannot be played.
+        await subscribe(client, respx_mock, article_xml)
+        assert (await client.get("/episodes")).json() == []
+
+    async def test_respects_limit(self, client, respx_mock, podcast_xml):
+        await subscribe(client, respx_mock, podcast_xml)
+        assert len((await client.get("/episodes?limit=2")).json()) == 2

@@ -90,6 +90,19 @@ struct CommandEndpointTests {
         #expect(result.spokenResponse == "Which show would you like?")
     }
 
+    @Test func treatsUnrecognisedActionsAsUnknown() async throws {
+        // The backend gains actions faster than the app can be reinstalled on
+        // her phone; an unfamiliar one must degrade to "just say it", never
+        // fail the whole request.
+        let json = """
+            {"action":"subscribed","spoken_response":"Subscribed to The Rest Is History.","episode":null}
+            """
+        let result = try await makeClient(FakeTransport(json: json)).command(transcript: "x")
+
+        #expect(result.action == .unknown)
+        #expect(result.spokenResponse == "Subscribed to The Rest Is History.")
+    }
+
     @Test func sendsTranscriptAsJSONPost() async throws {
         let transport = FakeTransport(json: playJSON)
         _ = try await makeClient(transport).command(transcript: "play the Vienna one")
@@ -102,6 +115,33 @@ struct CommandEndpointTests {
         let body = try JSONDecoder().decode(
             [String: String].self, from: try #require(request.httpBody))
         #expect(body["transcript"] == "play the Vienna one")
+    }
+}
+
+@Suite("Episode lookup")
+struct EpisodeLookupTests {
+    @Test func fetchesAnEpisodeByID() async throws {
+        let json = """
+            {"id":104,"title":"The Congress of Vienna","description":null,
+             "audio_url":"https://cdn.example.com/104.mp3","duration_seconds":2700,
+             "published_at":null,"link":null}
+            """
+        let transport = FakeTransport(json: json)
+        let episode = try await makeClient(transport).episode(id: 104)
+
+        #expect(episode.title == "The Congress of Vienna")
+        #expect(transport.lastRequest?.url?.path == "/episodes/104")
+    }
+
+    @Test func missingEpisodeIsSpeakable() async {
+        do {
+            _ = try await makeClient(FakeTransport(status: 404, json: "{}")).episode(id: 9999)
+            Issue.record("expected a thrown error")
+        } catch let error as APIError {
+            #expect(!error.spokenResponse.isEmpty)
+        } catch {
+            Issue.record("wrong error type")
+        }
     }
 }
 

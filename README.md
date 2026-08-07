@@ -7,7 +7,7 @@ backend owns feeds, search, and the LLM that turns spoken requests into actions.
 ## Layout
 
 - `backend/` — FastAPI + SQLAlchemy 2.0 + Alembic. Feed ingestion, episode
-  storage, and (soon) the voice-command endpoint.
+  storage, podcast search, and the voice-command endpoint.
 - `ios/` — SwiftUI app (`Hearful`), targeting iOS 17+.
 
 ## iOS development
@@ -26,6 +26,37 @@ picked up automatically without editing the project file.
 The app talks to `http://localhost:8000` by default, which the simulator can
 reach but a physical device cannot. Override with the `HEARFUL_API_URL`
 environment variable in the scheme.
+
+### Deploying to a physical device
+
+Use **Release**, not Debug. Xcode's Debug builds split the app into a stub
+executable plus a `.debug.dylib`, and App Intents are read from the main
+binary — so Siri shortcuts silently never register from a Debug build.
+(`ENABLE_DEBUG_DYLIB = NO` is set for Debug for the same reason.)
+
+```bash
+cd ios
+xcodebuild build -scheme Hearful -configuration Release \
+  -destination 'platform=iOS,id=<device-id>' -allowProvisioningUpdates
+xcrun devicectl device install app --device <device-id> \
+  ~/Library/Developer/Xcode/DerivedData/Hearful-*/Build/Products/Release-iphoneos/Hearful.app
+xcrun devicectl device process launch --device <device-id> \
+  --environment-variables '{"HEARFUL_API_URL":"http://<mac-lan-ip>:8000"}' \
+  com.henrydashwood.hearful
+```
+
+Gotchas that cost real time, in the order they bite:
+
+- **Avoid `devicectl device uninstall`.** It revokes the developer trust *and*
+  the Local Network permission, and clears `UserDefaults` (so the saved backend
+  address is lost). Installing over the top keeps all three.
+- **Reboot the phone if Siri shortcuts do not appear** in the Shortcuts app
+  after several installs — the system shortcut index goes stale.
+- **Local Network permission** must be granted with the app in the foreground;
+  a background App Intent cannot show the prompt. Open the app and make one
+  request first.
+- **Check the Shortcuts app before debugging phrases.** If the app is not
+  listed there, nothing is registered and phrase wording is irrelevant.
 
 To exercise the network and playback path without speaking (the simulator has
 no useful microphone), launch with a canned transcript:

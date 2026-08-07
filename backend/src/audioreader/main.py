@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     app = FastAPI(title="audioreader", lifespan=lifespan)
     app.include_router(feeds.router)
+    app.include_router(feeds.episodes_router)
     app.include_router(commands.router)
     return app
 

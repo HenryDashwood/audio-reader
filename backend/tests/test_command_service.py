@@ -111,12 +111,15 @@ class TestInterpret:
         with pytest.raises(LLMError):
             await service.interpret(session, llm, transcript="play something")
 
-    async def test_empty_library_short_circuits_without_calling_llm(self, session):
+    async def test_empty_library_still_reaches_the_model(self, session):
+        # An empty library is exactly when she would say "subscribe to X", so
+        # short-circuiting here would make a fresh install impossible to use.
         llm = FakeLLMClient({"action": "play_episode", "episode_id": 1, "spoken_response": "ok"})
         result = await service.interpret(session, llm, transcript="play something")
 
+        assert llm.calls != []
         assert result.action == Action.UNKNOWN
-        assert llm.calls == []
+        assert "subscribe" in result.spoken_response.lower()
 
     async def test_articles_are_not_offered_as_playable(self, session):
         feed = Feed(url="https://blog.example.com/feed", title="Notes on Progress")

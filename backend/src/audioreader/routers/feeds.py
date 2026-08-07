@@ -67,3 +67,32 @@ async def list_episodes(feed_id: int, session: Session, limit: int = 50) -> list
         .limit(limit)
     )
     return [EpisodeRead.model_validate(episode) for episode in episodes]
+
+
+episodes_router = APIRouter(prefix="/episodes", tags=["episodes"])
+
+
+@episodes_router.get("")
+async def recent_episodes(session: Session, limit: int = 30) -> list[EpisodeRead]:
+    """Newest playable episodes across every subscription.
+
+    Siri needs a concrete list of episodes up front: its App Shortcut phrases
+    match spoken words against suggested entities, not against free text.
+    """
+    episodes = await session.scalars(
+        select(Episode)
+        .where(Episode.audio_url.is_not(None))
+        .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
+        .limit(limit)
+    )
+    return [EpisodeRead.model_validate(episode) for episode in episodes]
+
+
+@episodes_router.get("/{episode_id}")
+async def get_episode(episode_id: int, session: Session) -> EpisodeRead:
+    """Fetch one episode. Siri uses this to restore an entity it resolved
+    earlier, so it must work without any of the surrounding context."""
+    episode = await session.get(Episode, episode_id)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    return EpisodeRead.model_validate(episode)

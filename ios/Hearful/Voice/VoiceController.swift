@@ -21,6 +21,8 @@ protocol AudioPlaying {
     func prepare(_ episode: Episode)
     func play(_ episode: Episode) throws
     func pause()
+    func resume()
+    func skip(by seconds: TimeInterval)
 }
 
 enum VoiceState: Equatable {
@@ -43,6 +45,8 @@ final class VoiceController: ObservableObject {
     private let player: AudioPlaying
     private let feedback: FeedbackPlaying
     private var isBusy = false
+    /// True while an episode has been paused only so she could be heard.
+    private var interruptedPlayback = false
 
     init(
         api: HearfulAPIProtocol, speech: SpeechRecognizing, speaker: Speaking,
@@ -65,7 +69,11 @@ final class VoiceController: ObservableObject {
         feedback.play(.acknowledged)
 
         // Anything playing would otherwise be transcribed as if she said it.
+        // Remember that we interrupted it, so the episode is not silently lost
+        // when the command turns out not to start anything new.
+        interruptedPlayback = player.isPlaying
         if player.isPlaying { player.pause() }
+        defer { resumeInterruptedPlayback() }
 
         do {
             state = .listening
@@ -73,6 +81,12 @@ final class VoiceController: ObservableObject {
             let transcript = try await speech.listen()
             guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 await fail(saying: "I did not hear anything. Tap and try again.")
+                return
+            }
+
+            // Transport controls resolve here, with no network and no model.
+            if let transport = TransportCommand.match(transcript) {
+                perform(transport)
                 return
             }
 
@@ -84,6 +98,30 @@ final class VoiceController: ObservableObject {
         } catch {
             await fail(saying: "Sorry, I could not hear you. Please tap and try again.")
         }
+    }
+
+    /// Acted on immediately and silently: the audio stopping, starting or
+    /// jumping is itself the confirmation, and a spoken "paused" would only
+    /// delay the thing she asked for.
+    private func perform(_ command: TransportCommand) {
+        switch command {
+        case .pause:
+            // She asked for silence; carrying on afterwards would be maddening.
+            interruptedPlayback = false
+            player.pause()
+        case .resume: player.resume()
+        case .skipForward: player.skip(by: 30)
+        case .skipBack: player.skip(by: -15)
+        }
+        state = .idle
+    }
+
+    /// Puts back what she was listening to, unless something replaced it.
+    private func resumeInterruptedPlayback() {
+        guard interruptedPlayback else { return }
+        interruptedPlayback = false
+        if case .playing = state { return }  // a new episode took over
+        player.resume()
     }
 
     private func handle(_ response: CommandResponse) async {

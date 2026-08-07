@@ -11,18 +11,37 @@ from audioreader.models import Episode
 
 class Action(StrEnum):
     PLAY_EPISODE = "play_episode"
+    SUBSCRIBE = "subscribe"
+    UNSUBSCRIBE = "unsubscribe"
+    # Outcome actions, produced by us rather than chosen by the model.
+    SUBSCRIBED = "subscribed"
+    UNSUBSCRIBED = "unsubscribed"
     UNKNOWN = "unknown"
+
+
+#: What the model is allowed to choose. Outcomes are ours to decide.
+MODEL_ACTIONS = (
+    Action.PLAY_EPISODE,
+    Action.SUBSCRIBE,
+    Action.UNSUBSCRIBE,
+    Action.UNKNOWN,
+)
 
 
 class ModelDecision(BaseModel):
     """The schema the model is constrained to. Deliberately tiny.
 
     episode_id is only meaningful for PLAY_EPISODE, and is always checked
-    against the candidate list before we act on it.
+    against the candidate list before we act on it. search_query is only
+    meaningful for SUBSCRIBE.
     """
 
     action: Action
     episode_id: int | None = None
+    search_query: str | None = Field(
+        default=None,
+        description="For subscribe: the show's name as she said it, nothing else.",
+    )
     spoken_response: str = Field(
         description="One short sentence to read aloud, naming the episode if one was chosen."
     )

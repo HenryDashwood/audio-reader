@@ -29,12 +29,15 @@ struct ContentView: View {
         .accessibilityAddTraits(.isButton)
     }
 
+    /// Always depicts what the app is *doing*, never an action to take. A play
+    /// glyph here would promise that tapping starts or stops playback, when in
+    /// fact tapping always means "listen to me".
     private var icon: String {
         switch controller.state {
         case .idle: "mic.circle.fill"
         case .listening: "waveform.circle.fill"
         case .thinking: "ellipsis.circle.fill"
-        case .playing: "play.circle.fill"
+        case .playing: "speaker.wave.2.circle.fill"
         }
     }
 
@@ -63,7 +66,7 @@ extension VoiceController {
             api: HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
             speech: canned.map(CannedSpeechRecognizer.init(transcript:)) ?? speech,
             speaker: Speaker(),
-            player: AudioPlayer(),
+            player: AudioPlayer.shared,
             feedback: Feedback())
     }
 }
