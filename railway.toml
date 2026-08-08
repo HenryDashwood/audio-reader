@@ -1,0 +1,8 @@
+# Railway builds the backend only; the ios/ directory is not part of the service.
+[build]
+builder = "dockerfile"
+dockerfilePath = "backend/Dockerfile"
+
+[deploy]
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

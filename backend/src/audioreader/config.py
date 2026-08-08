@@ -1,12 +1,25 @@
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from audioreader.settings_types import LLMProvider
 
 # backend/src/audioreader/config.py -> repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def normalise_database_url(url: str) -> str:
+    """Give Postgres URLs the async driver SQLAlchemy needs.
+
+    Hosting providers hand out `postgresql://` (or the older `postgres://`),
+    which the async engine rejects. Rewriting here means the deployment can
+    just point AUDIOREADER_DATABASE_URL at whatever the platform provides.
+    """
+    for prefix in ("postgresql://", "postgres://"):
+        if url.startswith(prefix):
+            return "postgresql+asyncpg://" + url[len(prefix) :]
+    return url
 
 
 class Settings(BaseSettings):
@@ -18,7 +31,17 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    database_url: str = "postgresql+asyncpg://audioreader:audioreader@localhost:5432/audioreader"
+    # Also accept the platform's own DATABASE_URL, which is what Railway,
+    # Fly and Heroku all inject automatically.
+    database_url: str = Field(
+        default="postgresql+asyncpg://audioreader:audioreader@localhost:5432/audioreader",
+        validation_alias=AliasChoices("AUDIOREADER_DATABASE_URL", "DATABASE_URL"),
+    )
+
+    @field_validator("database_url")
+    @classmethod
+    def _with_async_driver(cls, value: str) -> str:
+        return normalise_database_url(value)
     poll_interval_seconds: int = 900  # 0 disables the background poller
 
     # DeepSeek V4 Flash matched Opus 5 and Haiku 4.5 on every episode-selection
