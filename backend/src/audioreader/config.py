@@ -9,6 +9,22 @@ from audioreader.settings_types import LLMProvider
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def redacted_database_url(url: str) -> str:
+    """The URL with its password removed, safe to log.
+
+    Worth logging at startup: the host alone tells you whether a deployment
+    picked up the platform's database or silently fell back to the local
+    default, which is otherwise only visible as a connection-refused stack
+    trace several seconds later.
+    """
+    scheme, separator, rest = url.partition("://")
+    if not separator or "@" not in rest:
+        return url
+    credentials, _, host = rest.rpartition("@")
+    user, _, _password = credentials.partition(":")
+    return f"{scheme}://{user}:***@{host}"
+
+
 def normalise_database_url(url: str) -> str:
     """Give Postgres URLs the async driver SQLAlchemy needs.
 

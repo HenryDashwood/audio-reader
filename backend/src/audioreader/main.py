@@ -6,11 +6,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from audioreader.config import settings
+from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
 from audioreader.feeds.poller import poll_all_feeds
 from audioreader.routers import commands, feeds
+from audioreader.settings_types import LLMProvider
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +37,18 @@ async def _poll_forever(interval_seconds: int) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # First thing in the logs, so a misconfigured deployment is obvious
+    # immediately rather than as a connection error further down.
+    logger.info(
+        "starting: database=%s llm=%s/%s poll=%ss",
+        redacted_database_url(settings.database_url),
+        settings.llm_provider,
+        settings.openrouter_model
+        if settings.llm_provider is LLMProvider.OPENROUTER
+        else settings.llm_model,
+        settings.poll_interval_seconds,
+    )
+
     poll_task = None
     if settings.poll_interval_seconds > 0:
         poll_task = asyncio.create_task(_poll_forever(settings.poll_interval_seconds))

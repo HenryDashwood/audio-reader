@@ -25,3 +25,26 @@ class TestNormaliseDatabaseURL:
         assert normalise_database_url("postgresql://u:p@host/db?sslmode=require") == (
             "postgresql+asyncpg://u:p@host/db?sslmode=require"
         )
+
+
+class TestRedactedDatabaseURL:
+    def test_hides_the_password(self):
+        from audioreader.config import redacted_database_url
+
+        out = redacted_database_url("postgresql+asyncpg://user:sekrit@db.internal:5432/app")
+        assert "sekrit" not in out
+        assert "db.internal:5432" in out
+
+    def test_keeps_enough_to_diagnose(self):
+        from audioreader.config import redacted_database_url
+
+        # The host is the whole point: it tells you instantly whether the
+        # deployment picked up the platform's database or fell back to local.
+        assert "localhost" in redacted_database_url(
+            "postgresql+asyncpg://a:b@localhost:5432/audioreader"
+        )
+
+    def test_survives_a_url_with_no_credentials(self):
+        from audioreader.config import redacted_database_url
+
+        assert redacted_database_url("sqlite+aiosqlite://") == "sqlite+aiosqlite://"
