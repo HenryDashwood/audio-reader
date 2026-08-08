@@ -68,3 +68,18 @@ struct ErrorEnvelope: Decodable {
     }
     let detail: Detail?
 }
+
+/// A podcast the user subscribes to.
+struct Show: Decodable, Identifiable, Equatable, Hashable {
+    let id: Int
+    let title: String
+    let description: String?
+    let artworkURL: URL?
+    let episodeCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, description
+        case artworkURL = "image_url"
+        case episodeCount = "episode_count"
+    }
+}

@@ -94,6 +94,10 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
         Array(episodesByID.values)
     }
 
+    var shows: [Show] = []
+    func shows() async throws -> [Show] { shows }
+    func episodes(showID: Int) async throws -> [Episode] { Array(episodesByID.values) }
+
     var episodesByID: [Int: Episode] = [:]
     func episode(id: Int) async throws -> Episode {
         guard let found = episodesByID[id] else {

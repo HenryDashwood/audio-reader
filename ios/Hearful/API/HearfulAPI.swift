@@ -4,6 +4,8 @@ protocol HearfulAPIProtocol: Sendable {
     func command(transcript: String) async throws -> CommandResponse
     func episode(id: Int) async throws -> Episode
     func recentEpisodes(limit: Int) async throws -> [Episode]
+    func shows() async throws -> [Show]
+    func episodes(showID: Int) async throws -> [Episode]
 }
 
 /// The one thing HearfulAPI needs from the network. Injecting this rather than
@@ -42,6 +44,17 @@ struct HearfulAPI: HearfulAPIProtocol {
             url: baseURL.appendingPathComponent("episodes"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "limit", value: "\(limit)")]
         return try await send(URLRequest(url: components.url!))
+    }
+
+    func shows() async throws -> [Show] {
+        try await send(URLRequest(url: baseURL.appendingPathComponent("feeds")))
+    }
+
+    func episodes(showID: Int) async throws -> [Episode] {
+        let url = baseURL.appendingPathComponent("feeds")
+            .appendingPathComponent("\(showID)")
+            .appendingPathComponent("episodes")
+        return try await send(URLRequest(url: url))
     }
 
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {

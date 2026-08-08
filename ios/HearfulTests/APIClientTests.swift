@@ -145,6 +145,57 @@ struct EpisodeLookupTests {
     }
 }
 
+@Suite("Library")
+struct LibraryTests {
+    private let showsJSON = """
+        [{"id":1,"url":"https://f/1","title":"In Our Time",
+          "description":"Essential listening.","image_url":"https://img/1.jpg","episode_count":1102},
+         {"id":2,"url":"https://f/2","title":"The Rest Is History",
+          "description":null,"image_url":null,"episode_count":712}]
+        """
+
+    @Test func decodesSubscribedShows() async throws {
+        let transport = FakeTransport(json: showsJSON)
+        let shows = try await makeClient(transport).shows()
+
+        #expect(shows.count == 2)
+        #expect(shows[0].title == "In Our Time")
+        #expect(shows[0].artworkURL?.absoluteString == "https://img/1.jpg")
+        #expect(shows[0].episodeCount == 1102)
+        #expect(transport.lastRequest?.url?.path == "/feeds")
+    }
+
+    @Test func toleratesShowsWithoutArtworkOrBlurb() async throws {
+        let shows = try await makeClient(FakeTransport(json: showsJSON)).shows()
+        #expect(shows[1].artworkURL == nil)
+        #expect(shows[1].description == nil)
+    }
+
+    @Test func fetchesEpisodesForOneShow() async throws {
+        let json = """
+            [{"id":9,"title":"Seashells","description":"On molluscs.",
+              "audio_url":"https://cdn/9.mp3","duration_seconds":3209,
+              "published_at":"2026-07-30T08:02:00Z","link":null}]
+            """
+        let transport = FakeTransport(json: json)
+        let episodes = try await makeClient(transport).episodes(showID: 1)
+
+        #expect(episodes.first?.title == "Seashells")
+        #expect(transport.lastRequest?.url?.path == "/feeds/1/episodes")
+    }
+
+    @Test func unreachableLibraryIsSpeakable() async {
+        do {
+            _ = try await makeClient(FakeTransport(failure: URLError(.timedOut))).shows()
+            Issue.record("expected a thrown error")
+        } catch let error as APIError {
+            #expect(!error.spokenResponse.isEmpty)
+        } catch {
+            Issue.record("wrong error type")
+        }
+    }
+}
+
 @Suite("Command endpoint failures")
 struct CommandFailureTests {
     @Test func serviceUnavailableSurfacesSpeakableMessage() async throws {

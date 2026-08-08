@@ -102,3 +102,29 @@ class TestRecentEpisodes:
     async def test_respects_limit(self, client, respx_mock, podcast_xml):
         await subscribe(client, respx_mock, podcast_xml)
         assert len((await client.get("/episodes?limit=2")).json()) == 2
+
+
+class TestDescriptionsAreDisplayReady:
+    async def test_feed_description_has_no_markup(self, client, respx_mock, podcast_xml):
+        # Clients should never have to parse HTML to show a show's blurb.
+        respx_mock.get(FEED_URL).respond(
+            content=podcast_xml.replace(
+                b"A weekly podcast about history.",
+                b"<p>A <em>weekly</em> podcast &amp; more.</p>",
+            )
+        )
+        await client.post("/feeds", json={"url": FEED_URL})
+
+        description = (await client.get("/feeds")).json()[0]["description"]
+        assert "<" not in description
+        assert description == "A weekly podcast & more."
+
+    async def test_episode_description_has_no_markup(self, client, respx_mock, podcast_xml):
+        feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
+        episodes = (await client.get(f"/feeds/{feed_id}/episodes")).json()
+        assert all("<" not in (e["description"] or "") for e in episodes)
+
+    async def test_a_missing_description_stays_missing(self, client, respx_mock, article_xml):
+        await subscribe(client, respx_mock, article_xml)
+        # Absent is different from empty: clients hide the row entirely.
+        assert (await client.get("/feeds")).json()[0]["description"] is not None

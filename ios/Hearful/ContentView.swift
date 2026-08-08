@@ -1,37 +1,65 @@
 import SwiftUI
 
-/// The whole screen is one button: there is no layout to learn and no target
-/// to find. Everything meaningful is announced aloud rather than shown.
 struct ContentView: View {
-    @StateObject private var controller = VoiceController.live()
+    @ObservedObject private var player = AudioPlayer.shared
+    @State private var showingVoice = false
+    @State private var showingNowPlaying = false
 
     var body: some View {
-        ZStack {
-            Color.accentColor.opacity(0.12).ignoresSafeArea()
-            VStack(spacing: 24) {
-                Image(systemName: icon)
-                    .font(.system(size: 120))
-                    .foregroundStyle(.tint)
-                    .accessibilityHidden(true)
-                Text(caption)
-                    .font(.title2)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+        VStack(spacing: 0) {
+            TabView {
+                Tab("Shows", systemImage: "square.stack") {
+                    LibraryView(showingVoice: $showingVoice)
+                }
+                Tab("Latest", systemImage: "clock") {
+                    LatestView(showingVoice: $showingVoice)
+                }
             }
+            MiniPlayer(showingNowPlaying: $showingNowPlaying)
         }
+        .sheet(isPresented: $showingNowPlaying) {
+            NowPlayingView()
+        }
+        .sheet(isPresented: $showingVoice) {
+            VoiceSheet()
+                .presentationDetents([.medium])
+        }
+    }
+}
+
+/// Voice is now one way in among several, so it lives in a sheet rather than
+/// being the whole screen. The interaction inside is unchanged: tap, speak.
+struct VoiceSheet: View {
+    @StateObject private var controller = VoiceController.live()
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Image(systemName: icon)
+                .font(.system(size: 96))
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+            Text(caption)
+                .font(.title3)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+            Spacer()
+        }
+        .padding(.top, 40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .onTapGesture { Task { await controller.beginCommand() } }
-        // One element for VoiceOver, so a swipe cannot land somewhere useless.
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Hearful")
+        .accessibilityLabel("Ask Hearful")
         .accessibilityValue(caption)
         .accessibilityHint("Double tap anywhere to ask for something to listen to")
         .accessibilityAddTraits(.isButton)
+        .onChange(of: controller.state) { _, state in
+            // Once something is playing, the sheet has done its job.
+            if case .playing = state { dismiss() }
+        }
     }
 
-    /// Always depicts what the app is *doing*, never an action to take. A play
-    /// glyph here would promise that tapping starts or stops playback, when in
-    /// fact tapping always means "listen to me".
     private var icon: String {
         switch controller.state {
         case .idle: "mic.circle.fill"
@@ -45,7 +73,8 @@ struct ContentView: View {
         switch controller.state {
         case .idle:
             controller.lastSpokenResponse.isEmpty
-                ? "Tap anywhere to talk" : controller.lastSpokenResponse
+                ? "Tap anywhere and say what you would like"
+                : controller.lastSpokenResponse
         case .listening: "Listening…"
         case .thinking: "One moment…"
         case .playing(let episode): "Playing \(episode.title)"
