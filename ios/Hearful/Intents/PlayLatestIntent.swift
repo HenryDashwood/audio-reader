@@ -24,6 +24,9 @@ struct PlayLatestIntent: AppIntent, ForegroundContinuableIntent {
         let episodes: [Episode]
         do {
             episodes = try await api.recentEpisodes(limit: 1)
+        } catch let error as APIError where error.isAuthFailure {
+            log.notice("intent ran without a valid session")
+            return .result(dialog: IntentDialog("Please open Hearful and sign in first."))
         } catch {
             log.error("could not fetch latest: \(error.localizedDescription)")
             return .result(dialog: IntentDialog("I could not reach your podcasts just now."))

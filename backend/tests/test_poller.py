@@ -17,16 +17,16 @@ def podcast_updated_xml() -> bytes:
     return (FIXTURES / "podcast_feed_updated.xml").read_bytes()
 
 
-async def subscribed_feed(session, respx_mock, xml: bytes, url: str = FEED_URL):
+async def subscribed_feed(session, user, respx_mock, xml: bytes, url: str = FEED_URL):
     respx_mock.get(url).respond(content=xml)
-    return await service.subscribe(session, url)
+    return await service.subscribe(session, url, user)
 
 
 class TestPollFeed:
     async def test_adds_only_new_episodes(
-        self, session, respx_mock, podcast_xml, podcast_updated_xml
+        self, session, user, respx_mock, podcast_xml, podcast_updated_xml
     ):
-        feed = await subscribed_feed(session, respx_mock, podcast_xml)
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
         respx_mock.get(FEED_URL).respond(content=podcast_updated_xml)
 
         added = await poll_feed(session, feed)
@@ -41,17 +41,17 @@ class TestPollFeed:
             "https://example.com/historyhour/trailer-4",
         }
 
-    async def test_unchanged_feed_adds_nothing(self, session, respx_mock, podcast_xml):
-        feed = await subscribed_feed(session, respx_mock, podcast_xml)
+    async def test_unchanged_feed_adds_nothing(self, session, user, respx_mock, podcast_xml):
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
 
         assert await poll_feed(session, feed) == 0
         assert len((await session.scalars(select(Episode))).all()) == 3
 
     async def test_advances_last_polled_at(
-        self, session, respx_mock, podcast_xml, podcast_updated_xml
+        self, session, user, respx_mock, podcast_xml, podcast_updated_xml
     ):
-        feed = await subscribed_feed(session, respx_mock, podcast_xml)
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
         subscribed_at = feed.last_polled_at
         respx_mock.get(FEED_URL).respond(content=podcast_updated_xml)
 
@@ -62,9 +62,9 @@ class TestPollFeed:
         assert feed.last_polled_at > subscribed_at
 
     async def test_refreshes_feed_metadata(
-        self, session, respx_mock, podcast_xml, podcast_updated_xml
+        self, session, user, respx_mock, podcast_xml, podcast_updated_xml
     ):
-        feed = await subscribed_feed(session, respx_mock, podcast_xml)
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
         respx_mock.get(FEED_URL).respond(content=podcast_updated_xml)
 
         await poll_feed(session, feed)
@@ -74,10 +74,10 @@ class TestPollFeed:
 
 class TestPollAllFeeds:
     async def test_polls_every_feed(
-        self, session, respx_mock, podcast_xml, article_xml, podcast_updated_xml
+        self, session, user, respx_mock, podcast_xml, article_xml, podcast_updated_xml
     ):
-        await subscribed_feed(session, respx_mock, podcast_xml)
-        await subscribed_feed(session, respx_mock, article_xml, url=OTHER_URL)
+        await subscribed_feed(session, user, respx_mock, podcast_xml)
+        await subscribed_feed(session, user, respx_mock, article_xml, url=OTHER_URL)
         respx_mock.get(FEED_URL).respond(content=podcast_updated_xml)
         respx_mock.get(OTHER_URL).respond(content=article_xml)
 
@@ -88,10 +88,10 @@ class TestPollAllFeeds:
         assert summary.episodes_added == 1
 
     async def test_one_failing_feed_does_not_block_others(
-        self, session, respx_mock, podcast_xml, article_xml
+        self, session, user, respx_mock, podcast_xml, article_xml
     ):
-        await subscribed_feed(session, respx_mock, article_xml, url=OTHER_URL)
-        await subscribed_feed(session, respx_mock, podcast_xml)
+        await subscribed_feed(session, user, respx_mock, article_xml, url=OTHER_URL)
+        await subscribed_feed(session, user, respx_mock, podcast_xml)
         respx_mock.get(OTHER_URL).respond(status_code=500)
         respx_mock.get(FEED_URL).respond(
             content=(FIXTURES / "podcast_feed_updated.xml").read_bytes()
@@ -102,3 +102,14 @@ class TestPollAllFeeds:
         assert summary.failed == 1
         assert summary.polled == 1
         assert summary.episodes_added == 1
+
+    async def test_skips_feeds_nobody_subscribes_to(self, session, user, respx_mock, podcast_xml):
+        # Unsubscribing leaves the feed in the catalog; polling it forever
+        # would be wasted work on feeds nobody is listening to.
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        await service.unsubscribe(session, feed.id, user)
+
+        summary = await poll_all_feeds(session)
+
+        assert summary.polled == 0
+        assert summary.failed == 0

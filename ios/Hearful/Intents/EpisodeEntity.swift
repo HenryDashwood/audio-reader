@@ -67,6 +67,9 @@ struct EpisodeQuery: EntityStringQuery {
     /// free text — without them, "Play X on Hearful" never matches at all and
     /// the request falls through to whatever media app iOS prefers.
     func suggestedEntities() async throws -> [EpisodeEntity] {
+        // The system calls this in the background, possibly before she has
+        // ever signed in; an empty list is right, a thrown error is noise.
+        guard HearfulAPI.tokenProvider() != nil else { return [] }
         let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
         return try await api.recentEpisodes(limit: 30).map(EpisodeEntity.init)
     }

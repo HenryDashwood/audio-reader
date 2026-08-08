@@ -14,6 +14,9 @@ struct ContentView: View {
                 Tab("Latest", systemImage: "clock") {
                     LatestView(showingVoice: $showingVoice)
                 }
+                Tab("Settings", systemImage: "gearshape") {
+                    SettingsView()
+                }
             }
             MiniPlayer(showingNowPlaying: $showingNowPlaying)
         }

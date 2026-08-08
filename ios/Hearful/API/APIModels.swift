@@ -22,12 +22,17 @@ struct Episode: Decodable, Equatable, Identifiable {
     let durationSeconds: Int?
     let publishedAt: Date?
     let link: URL?
+    /// This listener's saved playback position; nil when never played.
+    /// Optional so payloads from before the field existed still decode.
+    var positionSeconds: Double?
+    var completed: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, description, link
+        case id, title, description, link, completed
         case audioURL = "audio_url"
         case durationSeconds = "duration_seconds"
         case publishedAt = "published_at"
+        case positionSeconds = "position_seconds"
     }
 }
 
@@ -47,13 +52,21 @@ struct CommandResponse: Decodable {
 struct APIError: Error {
     let spokenResponse: String
     let underlying: String
+    /// True for a 401: the session is dead, and the caller should suggest
+    /// signing in rather than "try again in a moment".
+    let isAuthFailure: Bool
 
     static let genericSpokenResponse =
         "Sorry, something went wrong. Please try again in a moment."
 
-    init(spokenResponse: String = APIError.genericSpokenResponse, underlying: String) {
+    init(
+        spokenResponse: String = APIError.genericSpokenResponse,
+        underlying: String,
+        isAuthFailure: Bool = false
+    ) {
         self.spokenResponse = spokenResponse
         self.underlying = underlying
+        self.isAuthFailure = isAuthFailure
     }
 }
 
@@ -67,6 +80,33 @@ struct ErrorEnvelope: Decodable {
         }
     }
     let detail: Detail?
+}
+
+/// Response to a successful sign-in: our own session token, never Apple's.
+struct AuthResponse: Decodable {
+    let token: String
+    let user: UserInfo
+}
+
+struct UserInfo: Decodable, Equatable {
+    let id: String
+    let displayName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case displayName = "display_name"
+    }
+}
+
+/// Body of PUT /episodes/{id}/position.
+struct PositionUpdate: Encodable {
+    let positionSeconds: Double
+    let completed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case completed
+        case positionSeconds = "position_seconds"
+    }
 }
 
 /// A podcast the user subscribes to.

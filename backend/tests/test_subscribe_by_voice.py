@@ -27,13 +27,13 @@ def subscribe_decision(query: str) -> dict:
 
 
 class TestSubscribeByVoice:
-    async def test_subscribes_to_the_matching_show(self, session, respx_mock, podcast_xml):
+    async def test_subscribes_to_the_matching_show(self, session, user, respx_mock, podcast_xml):
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("The Rest Is History")))
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         llm = FakeLLMClient(subscribe_decision("the rest is history"))
 
         result = await service.interpret(
-            session, llm, transcript="subscribe to the rest is history"
+            session, llm, user=user, transcript="subscribe to the rest is history"
         )
 
         assert result.action == Action.SUBSCRIBED
@@ -41,70 +41,78 @@ class TestSubscribeByVoice:
         assert feed is not None
         assert feed.url == FEED_URL
 
-    async def test_says_which_show_it_added(self, session, respx_mock, podcast_xml):
+    async def test_says_which_show_it_added(self, session, user, respx_mock, podcast_xml):
         # She cannot see the screen, so the name it heard must be read back.
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("The Rest Is History")))
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         llm = FakeLLMClient(subscribe_decision("the rest is history"))
 
-        result = await service.interpret(session, llm, transcript="subscribe to it")
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to it")
 
         assert "The Rest Is History" in result.spoken_response
 
-    async def test_episodes_are_available_immediately(self, session, respx_mock, podcast_xml):
+    async def test_episodes_are_available_immediately(self, session, user, respx_mock, podcast_xml):
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("The History Hour")))
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         llm = FakeLLMClient(subscribe_decision("the history hour"))
 
-        await service.interpret(session, llm, transcript="subscribe to the history hour")
+        await service.interpret(session, llm, user=user, transcript="subscribe to the history hour")
 
-        candidates = await service.build_candidates(session)
+        candidates = await service.build_candidates(session, user)
         assert len(candidates) == 3
 
-    async def test_no_match_is_explained_not_silently_ignored(self, session, respx_mock):
+    async def test_no_match_is_explained_not_silently_ignored(self, session, user, respx_mock):
         respx_mock.get(SEARCH_URL).respond(json=itunes())
         llm = FakeLLMClient(subscribe_decision("a show that does not exist"))
 
-        result = await service.interpret(session, llm, transcript="subscribe to nonsense")
+        result = await service.interpret(
+            session, llm, user=user, transcript="subscribe to nonsense"
+        )
 
         assert result.action == Action.UNKNOWN
         assert "a show that does not exist" in result.spoken_response.lower()
 
-    async def test_already_subscribed_says_so(self, session, respx_mock, podcast_xml):
+    async def test_already_subscribed_says_so(self, session, user, respx_mock, podcast_xml):
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("The History Hour")))
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         llm = FakeLLMClient(subscribe_decision("the history hour"))
 
-        await service.interpret(session, llm, transcript="subscribe to the history hour")
-        result = await service.interpret(session, llm, transcript="subscribe to the history hour")
+        await service.interpret(session, llm, user=user, transcript="subscribe to the history hour")
+        result = await service.interpret(
+            session, llm, user=user, transcript="subscribe to the history hour"
+        )
 
         assert "already" in result.spoken_response.lower()
         assert await session.scalar(select(func.count()).select_from(Feed)) == 1
 
-    async def test_missing_query_does_not_search(self, session, respx_mock):
+    async def test_missing_query_does_not_search(self, session, user, respx_mock):
         route = respx_mock.get(SEARCH_URL).respond(json=itunes())
         llm = FakeLLMClient({"action": "subscribe", "spoken_response": "?"})
 
-        result = await service.interpret(session, llm, transcript="subscribe")
+        result = await service.interpret(session, llm, user=user, transcript="subscribe")
 
         assert result.action == Action.UNKNOWN
         assert not route.called
 
-    async def test_unreachable_feed_is_reported_aloud(self, session, respx_mock):
+    async def test_unreachable_feed_is_reported_aloud(self, session, user, respx_mock):
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("Broken Feed Show")))
         respx_mock.get(FEED_URL).respond(status_code=500)
         llm = FakeLLMClient(subscribe_decision("broken feed show"))
 
-        result = await service.interpret(session, llm, transcript="subscribe to broken feed show")
+        result = await service.interpret(
+            session, llm, user=user, transcript="subscribe to broken feed show"
+        )
 
         assert result.action == Action.UNKNOWN
         assert result.spoken_response
 
-    async def test_directory_outage_is_reported_aloud(self, session, respx_mock):
+    async def test_directory_outage_is_reported_aloud(self, session, user, respx_mock):
         respx_mock.get(SEARCH_URL).respond(status_code=503)
         llm = FakeLLMClient(subscribe_decision("anything"))
 
-        result = await service.interpret(session, llm, transcript="subscribe to anything")
+        result = await service.interpret(
+            session, llm, user=user, transcript="subscribe to anything"
+        )
 
         assert result.action == Action.UNKNOWN
         assert result.spoken_response
@@ -112,7 +120,7 @@ class TestSubscribeByVoice:
 
 class TestSubscribeDoesNotBreakPlayback:
     async def test_playing_still_works_with_the_larger_action_set(
-        self, session, respx_mock, podcast_xml
+        self, session, user, respx_mock, podcast_xml
     ):
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("The History Hour")))
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
@@ -120,13 +128,14 @@ class TestSubscribeDoesNotBreakPlayback:
             session,
             FakeLLMClient(subscribe_decision("the history hour")),
             transcript="subscribe to the history hour",
+            user=user,
         )
 
-        episodes = await service.build_candidates(session)
+        episodes = await service.build_candidates(session, user)
         play = FakeLLMClient(
             {"action": "play_episode", "episode_id": episodes[0].id, "spoken_response": "Playing."}
         )
-        result = await service.interpret(session, play, transcript="play the latest one")
+        result = await service.interpret(session, play, transcript="play the latest one", user=user)
 
         assert result.action == Action.PLAY_EPISODE
         assert result.episode is not None

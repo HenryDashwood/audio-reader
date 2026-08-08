@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from audioreader.feeds.fetcher import FeedFetchError, fetch_feed_bytes
 from audioreader.feeds.parser import FeedParseError, parse_feed
 from audioreader.feeds.service import apply_feed_metadata, new_episodes
-from audioreader.models import Episode, Feed
+from audioreader.models import Episode, Feed, Subscription
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,11 @@ async def poll_all_feeds(session: AsyncSession) -> PollSummary:
     # Iterate over plain ids, not ORM objects: a rollback for one broken feed
     # expires every object the session has loaded, so each iteration loads its
     # feed fresh instead of trusting objects fetched before the loop.
-    feed_ids = (await session.scalars(select(Feed.id))).all()
+    # Only feeds somebody still subscribes to: unsubscribing leaves the feed
+    # in the catalog, and polling those orphans forever would be wasted work.
+    feed_ids = (
+        await session.scalars(select(Feed.id).where(Feed.id.in_(select(Subscription.feed_id))))
+    ).all()
     for feed_id in feed_ids:
         feed = await session.get(Feed, feed_id)
         if feed is None:

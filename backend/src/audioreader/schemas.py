@@ -1,5 +1,6 @@
 """API request/response shapes, kept deliberately separate from the DB models."""
 
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, HttpUrl, field_validator
@@ -57,6 +58,10 @@ class EpisodeRead(BaseModel):
     duration_seconds: int | None
     published_at: datetime | None
     link: str | None
+    # The requesting user's playback position, filled in by the routers from
+    # playback_positions; None means never played.
+    position_seconds: float | None = None
+    completed: bool = False
 
     @field_validator("description")
     @classmethod
@@ -67,6 +72,34 @@ class EpisodeRead(BaseModel):
     @classmethod
     def https_only(cls, value: str | None) -> str | None:
         return secure_url(value)
+
+
+class AppleLoginRequest(BaseModel):
+    identity_token: str
+
+
+class UserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    display_name: str | None
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserRead
+
+
+class PositionUpdate(BaseModel):
+    position_seconds: float
+    completed: bool = False
+
+    @field_validator("position_seconds")
+    @classmethod
+    def non_negative(cls, value: float) -> float:
+        # A scrubber can briefly report negative time; clamp rather than 422,
+        # since the app fires these in the background and never sees the error.
+        return max(0.0, value)
 
 
 class CommandRequest(BaseModel):

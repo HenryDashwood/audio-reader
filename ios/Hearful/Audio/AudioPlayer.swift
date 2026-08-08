@@ -20,6 +20,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     private let player = AVPlayer()
     private var timeObserver: Any?
     private var statusObservation: NSKeyValueObservation?
+    private var playbackStateObservation: NSKeyValueObservation?
 
     var progress: Double {
         duration > 0 ? min(max(currentTime / duration, 0), 1) : 0
@@ -91,11 +92,19 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         // The feed's stated duration is a good enough starting value; the real
         // one arrives once the asset has loaded.
         duration = episode.durationSeconds.map(Double.init) ?? 0
+        // Resume where she left off — but not for an episode she finished,
+        // not within the first moments (starting over costs nothing), and not
+        // into the final seconds (an outro is worse than a fresh start).
+        let resumeAt = episode.completed == true ? 0 : (episode.positionSeconds ?? 0)
         statusObservation = item.observe(\.status) { [weak self] item, _ in
             guard item.status == .readyToPlay else { return }
             Task { @MainActor in
+                guard let self else { return }
                 let seconds = item.duration.seconds
-                if seconds.isFinite, seconds > 0 { self?.duration = seconds }
+                if seconds.isFinite, seconds > 0 { self.duration = seconds }
+                if resumeAt > 5, resumeAt < self.duration - 10 {
+                    self.seek(to: resumeAt)
+                }
             }
         }
     }
@@ -116,8 +125,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     private func observePlaybackState() {
         // timeControlStatus covers stalls and buffering, which a plain rate
         // check reports as "playing" while no sound is coming out.
-        statusObservation = nil
-        _ = player.observe(\.timeControlStatus) { [weak self] player, _ in
+        // The token must be retained: a discarded NSKeyValueObservation
+        // invalidates itself immediately and isPlaying never updates.
+        playbackStateObservation = player.observe(\.timeControlStatus) { [weak self] player, _ in
             Task { @MainActor in
                 self?.isPlaying = player.timeControlStatus == .playing
             }

@@ -105,6 +105,17 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
         }
         return found
     }
+
+    func login(appleIdentityToken: String) async throws -> AuthResponse {
+        AuthResponse(token: "fake-token", user: UserInfo(id: "u1", displayName: nil))
+    }
+    func logout() async throws {}
+    func me() async throws -> UserInfo { UserInfo(id: "u1", displayName: nil) }
+
+    var reportedPositions: [(episodeID: Int, seconds: Double, completed: Bool)] = []
+    func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {
+        reportedPositions.append((episodeID, seconds, completed))
+    }
 }
 
 // MARK: - Fixtures

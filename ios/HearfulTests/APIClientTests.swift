@@ -196,6 +196,103 @@ struct LibraryTests {
     }
 }
 
+@Suite("Auth and positions", .serialized)
+struct AuthAndPositionTests {
+    /// tokenProvider is process-global, so these tests run serialized and
+    /// always restore it.
+    private func withToken<T>(_ token: String?, _ body: () async throws -> T) async rethrows -> T {
+        let previous = HearfulAPI.tokenProvider
+        HearfulAPI.tokenProvider = { token }
+        defer { HearfulAPI.tokenProvider = previous }
+        return try await body()
+    }
+
+    @Test func attachesBearerTokenToRequests() async throws {
+        let transport = FakeTransport(json: "[]")
+        try await withToken("secret-token") {
+            _ = try await makeClient(transport).shows()
+        }
+        let header = transport.lastRequest?.value(forHTTPHeaderField: "Authorization")
+        #expect(header == "Bearer secret-token")
+    }
+
+    @Test func sendsNoHeaderWhenSignedOut() async throws {
+        let transport = FakeTransport(json: "[]")
+        try await withToken(nil) {
+            _ = try await makeClient(transport).shows()
+        }
+        #expect(transport.lastRequest?.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
+    @Test func unauthorizedIsFlaggedAsAuthFailure() async throws {
+        let json = #"{"detail":{"spoken_response":"Please open Hearful and sign in."}}"#
+        await withToken("stale") {
+            do {
+                _ = try await makeClient(FakeTransport(status: 401, json: json)).shows()
+                Issue.record("expected a thrown error")
+            } catch let error as APIError {
+                #expect(error.isAuthFailure)
+                #expect(error.spokenResponse == "Please open Hearful and sign in.")
+            } catch {
+                Issue.record("wrong error type")
+            }
+        }
+    }
+
+    @Test func loginPostsTheIdentityToken() async throws {
+        let json = #"{"token":"session-1","user":{"id":"u1","display_name":null}}"#
+        let transport = FakeTransport(json: json)
+        let response = try await withToken(nil) {
+            try await makeClient(transport).login(appleIdentityToken: "apple-jwt")
+        }
+
+        #expect(response.token == "session-1")
+        let request = try #require(transport.lastRequest)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/auth/apple")
+        let body = try JSONDecoder().decode(
+            [String: String].self, from: try #require(request.httpBody))
+        #expect(body["identity_token"] == "apple-jwt")
+    }
+
+    @Test func reportPositionSendsAPut() async throws {
+        let transport = FakeTransport(status: 204, json: "")
+        try await withToken("tok") {
+            try await makeClient(transport).reportPosition(
+                episodeID: 104, seconds: 125.5, completed: false)
+        }
+
+        let request = try #require(transport.lastRequest)
+        #expect(request.httpMethod == "PUT")
+        #expect(request.url?.path == "/episodes/104/position")
+        let body = try JSONSerialization.jsonObject(
+            with: try #require(request.httpBody)) as? [String: Any]
+        #expect(body?["position_seconds"] as? Double == 125.5)
+        #expect(body?["completed"] as? Bool == false)
+    }
+
+    @Test func episodeDecodesSavedPosition() async throws {
+        let json = """
+            {"id":104,"title":"t","description":null,"audio_url":"https://x/y.mp3",
+             "duration_seconds":2700,"published_at":null,"link":null,
+             "position_seconds":125.5,"completed":false}
+            """
+        let episode = try await makeClient(FakeTransport(json: json)).episode(id: 104)
+        #expect(episode.positionSeconds == 125.5)
+        #expect(episode.completed == false)
+    }
+
+    @Test func episodeWithoutPositionFieldsStillDecodes() async throws {
+        // Payload shape from before positions existed.
+        let json = """
+            {"id":104,"title":"t","description":null,"audio_url":null,
+             "duration_seconds":null,"published_at":null,"link":null}
+            """
+        let episode = try await makeClient(FakeTransport(json: json)).episode(id: 104)
+        #expect(episode.positionSeconds == nil)
+    }
+}
+
 @Suite("Command endpoint failures")
 struct CommandFailureTests {
     @Test func serviceUnavailableSurfacesSpeakableMessage() async throws {

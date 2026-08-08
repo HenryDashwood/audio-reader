@@ -14,7 +14,7 @@ from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import PodcastSearchError, matches_name, search_podcasts
 from audioreader.feeds.service import AlreadySubscribedError
-from audioreader.models import Episode, Feed
+from audioreader.models import Episode, Feed, Subscription, User
 from audioreader.text import summarise
 
 logger = logging.getLogger(__name__)
@@ -52,16 +52,20 @@ to. Decide what she wants and reply with the matching action.
 """
 
 
-async def build_candidates(session: AsyncSession, limit: int | None = None) -> list[Candidate]:
+async def build_candidates(
+    session: AsyncSession, user: User, limit: int | None = None
+) -> list[Candidate]:
     """The episodes the model may choose between, newest first.
 
-    Only episodes with audio: article text-to-speech is a later increment, so
-    offering an article here would produce an action the app cannot perform.
+    Only the user's own subscriptions, and only episodes with audio: article
+    text-to-speech is a later increment, so offering an article here would
+    produce an action the app cannot perform.
     """
     limit = limit if limit is not None else settings.command_candidate_limit
     episodes = await session.scalars(
         select(Episode)
-        .where(Episode.audio_url.is_not(None))
+        .join(Subscription, Subscription.feed_id == Episode.feed_id)
+        .where(Subscription.user_id == user.id, Episode.audio_url.is_not(None))
         .options(joinedload(Episode.feed))
         .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
         .limit(limit)
@@ -97,8 +101,8 @@ def build_prompt(transcript: str, candidates: list[Candidate]) -> str:
     return "\n".join(lines)
 
 
-async def interpret(session: AsyncSession, llm, transcript: str) -> InterpretResult:
-    candidates = await build_candidates(session)
+async def interpret(session: AsyncSession, llm, transcript: str, user: User) -> InterpretResult:
+    candidates = await build_candidates(session, user)
 
     raw = await llm.decide(
         system=SYSTEM_PROMPT,
@@ -113,10 +117,10 @@ async def interpret(session: AsyncSession, llm, transcript: str) -> InterpretRes
         return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
 
     if decision.action is Action.SUBSCRIBE:
-        return await _subscribe(session, decision.search_query)
+        return await _subscribe(session, decision.search_query, user)
 
     if decision.action is Action.UNSUBSCRIBE:
-        return await _unsubscribe(session, decision.search_query)
+        return await _unsubscribe(session, decision.search_query, user)
 
     if decision.action is not Action.PLAY_EPISODE:
         return InterpretResult(action=Action.UNKNOWN, spoken_response=decision.spoken_response)
@@ -143,7 +147,7 @@ async def interpret(session: AsyncSession, llm, transcript: str) -> InterpretRes
     )
 
 
-async def _subscribe(session: AsyncSession, query: str | None) -> InterpretResult:
+async def _subscribe(session: AsyncSession, query: str | None, user: User) -> InterpretResult:
     """Find a show by spoken name and follow it."""
     if not query or not query.strip():
         return InterpretResult(
@@ -168,7 +172,7 @@ async def _subscribe(session: AsyncSession, query: str | None) -> InterpretResul
 
     best = matches[0]
     try:
-        await feed_service.subscribe(session, best.feed_url)
+        await feed_service.subscribe(session, best.feed_url, user)
     except AlreadySubscribedError:
         return InterpretResult(
             action=Action.UNKNOWN,
@@ -187,7 +191,7 @@ async def _subscribe(session: AsyncSession, query: str | None) -> InterpretResul
     )
 
 
-async def _unsubscribe(session: AsyncSession, query: str | None) -> InterpretResult:
+async def _unsubscribe(session: AsyncSession, query: str | None, user: User) -> InterpretResult:
     """Stop following a show she already has."""
     if not query or not query.strip():
         return InterpretResult(
@@ -195,7 +199,13 @@ async def _unsubscribe(session: AsyncSession, query: str | None) -> InterpretRes
             spoken_response="Which show would you like to remove?",
         )
 
-    feeds = (await session.scalars(select(Feed))).all()
+    feeds = (
+        await session.scalars(
+            select(Feed)
+            .join(Subscription, Subscription.feed_id == Feed.id)
+            .where(Subscription.user_id == user.id)
+        )
+    ).all()
     if not feeds:
         return InterpretResult(
             action=Action.UNKNOWN,
@@ -220,8 +230,9 @@ async def _unsubscribe(session: AsyncSession, query: str | None) -> InterpretRes
 
     feed = matches[0]
     title = feed.title
-    await session.delete(feed)  # episodes cascade
-    await session.commit()
+    # Only this user's subscription goes; the feed and its episodes stay in
+    # the shared catalog for other subscribers.
+    await feed_service.unsubscribe(session, feed.id, user)
     return InterpretResult(
         action=Action.UNSUBSCRIBED,
         spoken_response=f"Unsubscribed from {title}.",

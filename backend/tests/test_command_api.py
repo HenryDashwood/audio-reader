@@ -3,11 +3,11 @@ from datetime import UTC, datetime
 import pytest
 
 from audioreader.llm.client import LLMError
-from audioreader.models import Episode, Feed
+from audioreader.models import Episode, Feed, Subscription
 
 
 @pytest.fixture
-async def library(session):
+async def library(session, user):
     feed = Feed(url="https://example.com/feed.xml", title="The History Hour")
     feed.episodes = [
         Episode(
@@ -20,6 +20,7 @@ async def library(session):
         )
     ]
     session.add(feed)
+    session.add(Subscription(user_id=user.id, feed=feed))
     await session.commit()
     return feed
 

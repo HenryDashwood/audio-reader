@@ -1,19 +1,23 @@
+from collections.abc import Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audioreader import positions
+from audioreader.auth.dependencies import get_current_user
 from audioreader.db import get_session
 from audioreader.feeds import service
 from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
-from audioreader.models import Episode, Feed
-from audioreader.schemas import EpisodeRead, FeedCreate, FeedRead
+from audioreader.models import Episode, Feed, Subscription, User
+from audioreader.schemas import EpisodeRead, FeedCreate, FeedRead, PositionUpdate
 
 router = APIRouter(prefix="/feeds", tags=["feeds"])
 
 Session = Annotated[AsyncSession, Depends(get_session)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 def _to_feed_read(feed: Feed, episode_count: int) -> FeedRead:
@@ -27,10 +31,25 @@ def _to_feed_read(feed: Feed, episode_count: int) -> FeedRead:
     )
 
 
+async def _episodes_read(
+    session: AsyncSession, user: User, episodes: Sequence[Episode]
+) -> list[EpisodeRead]:
+    """Episode payloads with the user's playback position folded in."""
+    stored = await positions.positions_for(session, user, (episode.id for episode in episodes))
+    reads = []
+    for episode in episodes:
+        read = EpisodeRead.model_validate(episode)
+        if (position := stored.get(episode.id)) is not None:
+            read.position_seconds = position.position_seconds
+            read.completed = position.completed
+        reads.append(read)
+    return reads
+
+
 @router.post("", status_code=201)
-async def subscribe(body: FeedCreate, session: Session) -> FeedRead:
+async def subscribe(body: FeedCreate, session: Session, user: CurrentUser) -> FeedRead:
     try:
-        feed = await service.subscribe(session, str(body.url))
+        feed = await service.subscribe(session, str(body.url), user)
     except service.AlreadySubscribedError as exc:
         raise HTTPException(status_code=409, detail="already subscribed to this feed") from exc
     except FeedFetchError as exc:
@@ -41,7 +60,7 @@ async def subscribe(body: FeedCreate, session: Session) -> FeedRead:
 
 
 @router.get("")
-async def list_feeds(session: Session) -> list[FeedRead]:
+async def list_feeds(session: Session, user: CurrentUser) -> list[FeedRead]:
     counts = (
         select(Episode.feed_id, func.count(Episode.id).label("count"))
         .group_by(Episode.feed_id)
@@ -49,50 +68,85 @@ async def list_feeds(session: Session) -> list[FeedRead]:
     )
     rows = await session.execute(
         select(Feed, func.coalesce(counts.c.count, 0))
+        .join(Subscription, Subscription.feed_id == Feed.id)
+        .where(Subscription.user_id == user.id)
         .outerjoin(counts, counts.c.feed_id == Feed.id)
         .order_by(Feed.title)
     )
     return [_to_feed_read(feed, count) for feed, count in rows.all()]
 
 
-@router.get("/{feed_id}/episodes")
-async def list_episodes(feed_id: int, session: Session, limit: int = 50) -> list[EpisodeRead]:
-    feed = await session.get(Feed, feed_id)
+@router.delete("/{feed_id}", status_code=204)
+async def unsubscribe(feed_id: int, session: Session, user: CurrentUser) -> None:
+    feed = await service.unsubscribe(session, feed_id, user)
     if feed is None:
-        raise HTTPException(status_code=404, detail="feed not found")
-    episodes = await session.scalars(
-        select(Episode)
-        .where(Episode.feed_id == feed_id)
-        .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
-        .limit(limit)
+        raise HTTPException(status_code=404, detail="not subscribed to this feed")
+
+
+@router.get("/{feed_id}/episodes")
+async def list_episodes(
+    feed_id: int, session: Session, user: CurrentUser, limit: int = 50
+) -> list[EpisodeRead]:
+    subscribed = await session.scalar(
+        select(Subscription).where(Subscription.user_id == user.id, Subscription.feed_id == feed_id)
     )
-    return [EpisodeRead.model_validate(episode) for episode in episodes]
+    if subscribed is None:
+        raise HTTPException(status_code=404, detail="feed not found")
+    episodes = (
+        await session.scalars(
+            select(Episode)
+            .where(Episode.feed_id == feed_id)
+            .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
+            .limit(limit)
+        )
+    ).all()
+    return await _episodes_read(session, user, episodes)
 
 
 episodes_router = APIRouter(prefix="/episodes", tags=["episodes"])
 
 
 @episodes_router.get("")
-async def recent_episodes(session: Session, limit: int = 30) -> list[EpisodeRead]:
-    """Newest playable episodes across every subscription.
+async def recent_episodes(
+    session: Session, user: CurrentUser, limit: int = 30
+) -> list[EpisodeRead]:
+    """Newest playable episodes across the user's subscriptions.
 
     Siri needs a concrete list of episodes up front: its App Shortcut phrases
     match spoken words against suggested entities, not against free text.
     """
-    episodes = await session.scalars(
-        select(Episode)
-        .where(Episode.audio_url.is_not(None))
-        .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
-        .limit(limit)
-    )
-    return [EpisodeRead.model_validate(episode) for episode in episodes]
+    episodes = (
+        await session.scalars(
+            select(Episode)
+            .join(Subscription, Subscription.feed_id == Episode.feed_id)
+            .where(Subscription.user_id == user.id, Episode.audio_url.is_not(None))
+            .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
+            .limit(limit)
+        )
+    ).all()
+    return await _episodes_read(session, user, episodes)
 
 
 @episodes_router.get("/{episode_id}")
-async def get_episode(episode_id: int, session: Session) -> EpisodeRead:
+async def get_episode(episode_id: int, session: Session, user: CurrentUser) -> EpisodeRead:
     """Fetch one episode. Siri uses this to restore an entity it resolved
-    earlier, so it must work without any of the surrounding context."""
+    earlier, so it must work without any of the surrounding context — the
+    user's token is required, but a subscription is deliberately not: the
+    entity may be from a feed she has since unsubscribed from."""
     episode = await session.get(Episode, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
-    return EpisodeRead.model_validate(episode)
+    return (await _episodes_read(session, user, [episode]))[0]
+
+
+@episodes_router.put("/{episode_id}/position", status_code=204)
+async def put_position(
+    episode_id: int, body: PositionUpdate, session: Session, user: CurrentUser
+) -> None:
+    """Record where the user is in an episode. Last write wins."""
+    episode = await session.get(Episode, episode_id)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    await positions.upsert_position(
+        session, user, episode_id, body.position_seconds, body.completed
+    )

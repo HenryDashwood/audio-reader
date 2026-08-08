@@ -1,3 +1,9 @@
+from httpx import ASGITransport, AsyncClient
+
+from audioreader.db import get_session
+from audioreader.main import create_app
+from audioreader.models import User
+
 FEED_URL = "https://example.com/feed.xml"
 
 
@@ -102,6 +108,78 @@ class TestRecentEpisodes:
     async def test_respects_limit(self, client, respx_mock, podcast_xml):
         await subscribe(client, respx_mock, podcast_xml)
         assert len((await client.get("/episodes?limit=2")).json()) == 2
+
+
+class TestUnsubscribeEndpoint:
+    async def test_removes_the_subscription(self, client, respx_mock, podcast_xml):
+        feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
+
+        assert (await client.delete(f"/feeds/{feed_id}")).status_code == 204
+        assert (await client.get("/feeds")).json() == []
+
+    async def test_not_subscribed_is_404(self, client):
+        assert (await client.delete("/feeds/999")).status_code == 404
+
+
+class TestSharedCatalog:
+    async def test_second_user_can_subscribe_to_an_existing_feed(
+        self, client, session, make_client, respx_mock, podcast_xml
+    ):
+        route = respx_mock.get(FEED_URL).respond(
+            content=podcast_xml, content_type="application/rss+xml"
+        )
+        await client.post("/feeds", json={"url": FEED_URL})
+
+        other = User(display_name="Other")
+        session.add(other)
+        await session.commit()
+        async with make_client(other) as other_client:
+            response = await other_client.post("/feeds", json={"url": FEED_URL})
+
+        # 201, not 409 — and the feed was not fetched a second time.
+        assert response.status_code == 201
+        assert route.call_count == 1
+
+    async def test_feed_lists_are_per_user(
+        self, client, session, make_client, respx_mock, podcast_xml
+    ):
+        await subscribe(client, respx_mock, podcast_xml)
+
+        other = User(display_name="Other")
+        session.add(other)
+        await session.commit()
+        async with make_client(other) as other_client:
+            assert (await other_client.get("/feeds")).json() == []
+            assert (await other_client.get("/episodes")).json() == []
+
+    async def test_unsubscribing_leaves_the_other_user_intact(
+        self, client, session, make_client, respx_mock, podcast_xml
+    ):
+        feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
+        other = User(display_name="Other")
+        session.add(other)
+        await session.commit()
+        async with make_client(other) as other_client:
+            await other_client.post("/feeds", json={"url": FEED_URL})
+            await client.delete(f"/feeds/{feed_id}")
+
+            assert (await client.get("/feeds")).json() == []
+            titles = [feed["title"] for feed in (await other_client.get("/feeds")).json()]
+        assert titles == ["The History Hour"]
+
+
+class TestAuthRequired:
+    async def test_no_token_is_401_with_spoken_error(self, session):
+        # A bare app without the get_current_user override: the real auth
+        # dependency runs, and require_auth defaults to True.
+        app = create_app()
+        app.dependency_overrides[get_session] = lambda: session
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/feeds")
+
+        assert response.status_code == 401
+        assert "spoken_response" in response.json()["detail"]
 
 
 class TestDescriptionsAreDisplayReady:
