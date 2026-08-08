@@ -1,7 +1,10 @@
 import Foundation
 
 enum AppConfiguration {
-    static let defaultBaseURL = URL(string: "http://localhost:8000")!
+    /// The deployed backend. Being the default means a fresh install works
+    /// with no configuration — which matters because the person using this
+    /// cannot be talked through setting a server address.
+    static let defaultBaseURL = URL(string: "https://audio-reader-production.up.railway.app")!
     private static let storageKey = "HearfulAPIBaseURL"
 
     /// The simulator shares the Mac's network, so localhost reaches the dev

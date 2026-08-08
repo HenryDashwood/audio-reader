@@ -9,19 +9,10 @@
 	<array>
 		<string>audio</string>
 	</array>
-	<!-- The development backend runs on a Mac on the same Wi-Fi, and iOS
-	     requires explicit permission to reach anything on the local network.
-	     Without this string the prompt never appears and the connection is
-	     simply refused. A deployed HTTPS backend would need neither this nor
-	     the exemption below. -->
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Hearful connects to your podcast server on this network to find and play episodes.</string>
-	<!-- The dev backend is plain HTTP on localhost. This exemption covers
-	     loopback and .local only; it does not open up arbitrary HTTP. -->
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
+	<!-- The backend is deployed over HTTPS, so this app needs neither an App
+	     Transport Security exemption nor local-network access. Both were here
+	     while the backend ran on a Mac on the same Wi-Fi; asking for
+	     permissions the app does not use is a needless privacy prompt and a
+	     poor look at App Store review. -->
 </dict>
 </plist>

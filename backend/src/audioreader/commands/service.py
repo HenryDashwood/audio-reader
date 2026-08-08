@@ -28,6 +28,10 @@ to. Decide what she wants and reply with the matching action.
   an episode by topic, by guest, by date ("Tuesday's one"), or by position
   ("the latest"). Prefer the most recent episode when a request is ambiguous
   between several of the same show.
+- If she names a show, only episodes from that show may be chosen. A show name
+  narrows the choice, it is not a hint: "the latest In Our Time" means the most
+  recent In Our Time episode, never a newer episode of something else. If that
+  show has no episodes in the list, choose unknown and say so.
 - Choose subscribe when she wants to follow a show she does not have yet
   ("subscribe to", "add", "start following"). Put just the show's name in
   search_query — no "subscribe to", no "the podcast", nothing else. Leave
