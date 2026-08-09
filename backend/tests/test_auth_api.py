@@ -119,19 +119,20 @@ class TestAppleLogin:
         assert first.json()["user"]["id"] == second.json()["user"]["id"]
         assert await session.scalar(select(func.count(User.id))) == 1
 
-    async def test_first_sign_in_claims_placeholder_user(
+    async def test_every_new_identity_gets_a_fresh_user(
         self, auth_client, make_identity_token, session
     ):
+        # The migration's placeholder must never be handed to a sign-in; it
+        # exists only for the require_auth=false transition fallback.
         placeholder = User(id=service.LEGACY_USER_ID, display_name="Library owner")
         session.add(placeholder)
         await session.commit()
 
         response = await login(auth_client, make_identity_token(sub="mum"))
-        assert response.json()["user"]["id"] == str(service.LEGACY_USER_ID)
+        assert response.json()["user"]["id"] != str(service.LEGACY_USER_ID)
 
-        # A second, different identity gets a brand-new user.
         other = await login(auth_client, make_identity_token(sub="henry"))
-        assert other.json()["user"]["id"] != str(service.LEGACY_USER_ID)
+        assert other.json()["user"]["id"] != response.json()["user"]["id"]
 
     async def test_wrong_audience_rejected(self, auth_client, make_identity_token):
         response = await login(auth_client, make_identity_token(aud="com.example.other"))
