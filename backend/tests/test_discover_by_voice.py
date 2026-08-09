@@ -86,6 +86,74 @@ class TestSubstackGuess:
         assert found.feed_url == FEED_URL
 
 
+class TestSpokenDomains:
+    def test_literal_domains_are_found_in_sentences(self):
+        from audioreader.feeds.discovery import spoken_domains
+
+        assert spoken_domains("subscribe to the rss feed of astralcodexten.com") == [
+            "astralcodexten.com"
+        ]
+
+    def test_spelled_out_domains_are_reassembled_longest_first(self):
+        from audioreader.feeds.discovery import spoken_domains
+
+        # "astral codex ten dot com": only "ten" touches the dot, so the
+        # preceding words are glued on, most complete candidate first.
+        domains = spoken_domains("subscribe to the rss feed of astral codex ten dot com")
+        assert domains[0] == "astralcodexten.com"
+        assert "ten.com" in domains
+
+    def test_command_words_do_not_leak_into_the_domain(self):
+        from audioreader.feeds.discovery import spoken_domains
+
+        domains = spoken_domains("play the feed of henry dashwood.com")
+        assert domains[0] == "henrydashwood.com"
+        assert not any("feed" in domain for domain in domains)
+
+    def test_plain_names_yield_nothing(self):
+        from audioreader.feeds.discovery import spoken_domains
+
+        assert spoken_domains("subscribe to the rest is history") == []
+
+
+class TestSpokenDomainBeatsTheDirectory:
+    async def test_naming_a_site_subscribes_to_its_feed_not_a_similar_podcast(
+        self, session, user, respx_mock, article_xml
+    ):
+        # The podcast directory has a plausible match — but she named the
+        # site itself, so its own article feed must win.
+        respx_mock.get(SEARCH_URL).respond(
+            json={
+                "resultCount": 1,
+                "results": [
+                    {
+                        "collectionName": "Notes on Progress Podcast",
+                        "artistName": "Someone Else",
+                        "feedUrl": "https://podcasts.example.com/notes.rss",
+                    }
+                ],
+            }
+        )
+        respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+        llm = FakeLLMClient(
+            # The model stripped the domain down to a bare name — the raw
+            # transcript still carries it.
+            subscribe_decision("notes on progress")
+        )
+
+        result = await service.interpret(
+            session,
+            llm,
+            user=user,
+            transcript="subscribe to the rss feed of notesonprogress.example.com",
+        )
+
+        assert result.action == Action.SUBSCRIBED
+        assert "Notes on Progress" in result.spoken_response
+        assert (await session.scalar(select(Feed))).url == FEED_URL
+
+
 class TestFindFeedByName:
     async def test_verifies_and_returns_the_discovered_feed(self, respx_mock, article_xml):
         respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")

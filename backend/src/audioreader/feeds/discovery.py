@@ -12,6 +12,7 @@ what she actually said before anything is trusted.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urljoin
@@ -147,6 +148,43 @@ class FeedCandidates(BaseModel):
 class DiscoveredFeed:
     feed_url: str
     title: str
+
+
+#: Words that end the run of words belonging to a spoken domain name:
+#: "subscribe to the rss feed of astral codex ten dot com" — everything
+#: before "of" is command, everything after is domain.
+_DOMAIN_STOPWORDS = {
+    "the", "a", "an", "of", "to", "at", "on", "for", "from", "and",
+    "feed", "feeds", "rss", "website", "site", "blog", "newsletter",
+    "articles", "subscribe", "unsubscribe", "play", "add", "follow",
+}  # fmt: skip
+
+
+def spoken_domains(text: str) -> list[str]:
+    """Candidate domain names heard in a sentence, most complete first.
+
+    Speech transcribes a domain either literally ("astralcodexten.com") or
+    with the name broken into words ("astral codex ten dot com" arrives as
+    "astral codex ten.com", where only "ten.com" touches the dot). Preceding
+    words are glued on one by one, stopping at command words — so both forms
+    yield "astralcodexten.com". Longest first: the most complete join is the
+    site she actually named, and callers take the first that resolves.
+    """
+    cleaned = re.sub(r"\s+dot\s+", ".", text.casefold())
+    candidates: list[str] = []
+    for match in re.finditer(r"([a-z0-9][a-z0-9-]*(?:\.[a-z]{2,})+)", cleaned):
+        base = match.group(1)
+        joins = [base]
+        joined = base
+        for word in reversed(cleaned[: match.start()].split()):
+            if word in _DOMAIN_STOPWORDS or not word.isalnum():
+                break
+            joined = word + joined
+            joins.append(joined)
+        candidates.extend(reversed(joins))
+    seen: set[str] = set()
+    unique = [c for c in candidates if not (c in seen or seen.add(c))]
+    return unique[:5]
 
 
 def substack_guesses(query: str) -> list[str]:

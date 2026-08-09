@@ -18,7 +18,7 @@ final class Speaker: NSObject, Speaking, AVSpeechSynthesizerDelegate {
         try? AudioSession.configureForPlayback()
 
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
+        utterance.voice = SpeechVoice.best
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         utterance.postUtteranceDelay = 0.1
 

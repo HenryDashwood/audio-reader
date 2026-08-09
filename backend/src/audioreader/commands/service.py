@@ -11,7 +11,12 @@ from sqlalchemy.orm import joinedload
 from audioreader.commands.intents import Action, Candidate, InterpretResult, ModelDecision
 from audioreader.config import settings
 from audioreader.feeds import service as feed_service
-from audioreader.feeds.discovery import DiscoveredFeed, find_feed_by_name
+from audioreader.feeds.discovery import (
+    DiscoveredFeed,
+    find_feed_by_name,
+    resolve_feed,
+    spoken_domains,
+)
 from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import PodcastSearchError, matches_name, search_podcasts
@@ -44,8 +49,11 @@ she subscribes to. Decide what she wants and reply with the matching action.
   ("subscribe to", "add", "start following"). Shows include blogs, newsletters
   and Substacks as well as podcasts — "subscribe to Astral Codex Ten" is a
   subscribe even though it is a blog. Put just the show's name in
-  search_query — no "subscribe to", no "the podcast", nothing else. Leave
-  spoken_response empty: the app says what was actually found.
+  search_query — no "subscribe to", no "the podcast", nothing else. If she
+  names a website ("the RSS feed of astralcodexten.com"), keep the domain in
+  search_query exactly as she said it — naming a site means she wants that
+  site's own feed. Leave spoken_response empty: the app says what was
+  actually found.
 - Choose unsubscribe when she wants to stop following a show she already has
   ("unsubscribe from", "remove", "stop following", "get rid of"). Put just the
   show's name in search_query, and leave spoken_response empty.
@@ -174,7 +182,7 @@ async def interpret(
         return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
 
     if decision.action is Action.SUBSCRIBE:
-        return await _subscribe(session, decision.search_query, user, discovery_llm)
+        return await _subscribe(session, decision.search_query, transcript, user, discovery_llm)
 
     if decision.action is Action.PLAY_FROM_SHOW:
         return await _play_from_show(
@@ -238,10 +246,24 @@ def _spoken_speed(speed: float) -> str:
     return f"{speed:g} times"
 
 
-async def _find_show(query: str, discovery_llm) -> DiscoveredFeed | None:
-    """A show or publication by spoken name: the podcast directory first
-    (fast, covers essentially every podcast), then LLM web discovery for
-    blogs and newsletters the directory does not know."""
+async def _find_show(query: str, transcript: str, discovery_llm) -> DiscoveredFeed | None:
+    """A show or publication by spoken name.
+
+    A spoken domain wins outright: "the RSS feed of astralcodexten.com"
+    names a website, and its own feed must be resolved directly — never
+    outranked by a similarly-named show in the podcast directory. The
+    transcript is checked as well as the model's extracted query, because
+    the model sometimes strips the domain down to a bare name. Otherwise:
+    the directory first (fast, covers essentially every podcast), then LLM
+    web discovery for blogs and newsletters the directory does not know.
+    """
+    for domain in spoken_domains(f"{transcript} {query}"):
+        try:
+            feed_url, parsed = await resolve_feed(f"https://{domain}")
+        except (FeedFetchError, FeedParseError):
+            continue
+        return DiscoveredFeed(feed_url=feed_url, title=parsed.title)
+
     try:
         matches = await search_podcasts(query)
     except PodcastSearchError as exc:
@@ -254,7 +276,7 @@ async def _find_show(query: str, discovery_llm) -> DiscoveredFeed | None:
 
 
 async def _subscribe(
-    session: AsyncSession, query: str | None, user: User, discovery_llm
+    session: AsyncSession, query: str | None, transcript: str, user: User, discovery_llm
 ) -> InterpretResult:
     """Find a show or publication by spoken name and follow it."""
     if not query or not query.strip():
@@ -263,7 +285,7 @@ async def _subscribe(
             spoken_response="Which show would you like to subscribe to?",
         )
 
-    found = await _find_show(query, discovery_llm)
+    found = await _find_show(query, transcript, discovery_llm)
     if found is None:
         return InterpretResult(
             action=Action.UNKNOWN,
@@ -313,7 +335,7 @@ async def _play_from_show(
             spoken_response="Which show would you like to hear?",
         )
 
-    found = await _find_show(show_query, discovery_llm)
+    found = await _find_show(show_query, transcript, discovery_llm)
     if found is None:
         return InterpretResult(
             action=Action.UNKNOWN,

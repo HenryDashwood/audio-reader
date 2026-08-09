@@ -299,7 +299,7 @@ final class ArticlePlayer: NSObject, ObservableObject {
             (error as? APIError)?.spokenResponse
             ?? "Sorry, I could not get the text of that article."
         let utterance = AVSpeechUtterance(string: message)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
+        utterance.voice = SpeechVoice.best
         try? AudioSession.configureForPlayback()
         announcer.speak(utterance)
     }
@@ -456,7 +456,7 @@ final class ArticlePlayer: NSObject, ObservableObject {
     /// the voice genuinely talks faster, it is never stretched afterwards.
     private func render(text: String) async -> [AVAudioPCMBuffer] {
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
+        utterance.voice = SpeechVoice.best
         utterance.rate = Self.utteranceRate(for: playbackRate)
         let audio = await withCheckedContinuation {
             (continuation: CheckedContinuation<RenderedAudio, Never>) in
