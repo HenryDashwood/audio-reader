@@ -10,26 +10,38 @@ class AlreadySubscribedError(Exception):
     pass
 
 
-async def subscribe(session: AsyncSession, url: str, user: User) -> Feed:
-    """Follow a feed: add it to the shared catalog if it is new, then record
-    this user's subscription. A feed another user already follows is not
-    re-fetched — only the same user subscribing twice is an error."""
+async def ensure_feed(session: AsyncSession, url: str) -> Feed:
+    """Get a feed into the shared catalog without following it.
+
+    A feed already in the catalog is not re-fetched: the poller keeps it
+    current. This is what lets a show be previewed or played before anyone
+    subscribes to it."""
     feed = await session.scalar(select(Feed).where(Feed.url == url))
-    if feed is not None:
-        existing = await session.scalar(
-            select(Subscription).where(
-                Subscription.user_id == user.id, Subscription.feed_id == feed.id
-            )
-        )
-        if existing is not None:
-            raise AlreadySubscribedError(url)
-    else:
+    if feed is None:
         parsed = parse_feed(await fetch_feed_bytes(url))
         feed = Feed(url=url, title=parsed.title)
         apply_feed_metadata(feed, parsed)
         feed.episodes.extend(new_episodes(parsed, known_guids=set()))
         session.add(feed)
+        await session.commit()
+    return feed
 
+
+async def is_subscribed(session: AsyncSession, feed_id: int, user: User) -> bool:
+    subscription = await session.scalar(
+        select(Subscription).where(Subscription.user_id == user.id, Subscription.feed_id == feed_id)
+    )
+    return subscription is not None
+
+
+async def subscribe(session: AsyncSession, url: str, user: User) -> Feed:
+    """Follow a feed: add it to the shared catalog if it is new, then record
+    this user's subscription. A feed another user already follows is not
+    re-fetched — only the same user subscribing twice is an error."""
+    feed = await session.scalar(select(Feed).where(Feed.url == url))
+    if feed is not None and await is_subscribed(session, feed.id, user):
+        raise AlreadySubscribedError(url)
+    feed = await ensure_feed(session, url)
     session.add(Subscription(user_id=user.id, feed=feed))
     await session.commit()
     return feed

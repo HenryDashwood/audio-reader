@@ -77,6 +77,29 @@ class EpisodeRead(BaseModel):
         return secure_url(value)
 
 
+class PodcastSearchResult(BaseModel):
+    """One show from the public directory, not yet in our catalog."""
+
+    title: str
+    feed_url: str
+    publisher: str | None = None
+    episode_count: int | None = None
+    artwork_url: str | None = None
+
+    @field_validator("artwork_url")
+    @classmethod
+    def https_only(cls, value: str | None) -> str | None:
+        return secure_url(value)
+
+
+class FeedPreview(BaseModel):
+    """A show's page as seen before (or after) subscribing."""
+
+    feed: FeedRead
+    episodes: list[EpisodeRead]
+    subscribed: bool
+
+
 class AppleLoginRequest(BaseModel):
     identity_token: str
 

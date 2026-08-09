@@ -123,6 +123,10 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {
         reportedPositions.append((episodeID, seconds, completed))
     }
+
+    func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
+    func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }
+    func subscribe(feedURL: URL) async throws -> Show { throw APIError(underlying: "unused") }
 }
 
 // MARK: - Fixtures

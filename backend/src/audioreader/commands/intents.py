@@ -11,6 +11,7 @@ from audioreader.models import Episode
 
 class Action(StrEnum):
     PLAY_EPISODE = "play_episode"
+    PLAY_FROM_SHOW = "play_from_show"
     SUBSCRIBE = "subscribe"
     UNSUBSCRIBE = "unsubscribe"
     SET_SPEED = "set_speed"
@@ -23,6 +24,7 @@ class Action(StrEnum):
 #: What the model is allowed to choose. Outcomes are ours to decide.
 MODEL_ACTIONS = (
     Action.PLAY_EPISODE,
+    Action.PLAY_FROM_SHOW,
     Action.SUBSCRIBE,
     Action.UNSUBSCRIBE,
     Action.SET_SPEED,
@@ -35,14 +37,21 @@ class ModelDecision(BaseModel):
 
     episode_id is only meaningful for PLAY_EPISODE, and is always checked
     against the candidate list before we act on it. search_query is only
-    meaningful for SUBSCRIBE. speed is only meaningful for SET_SPEED.
+    meaningful for SUBSCRIBE, UNSUBSCRIBE and PLAY_FROM_SHOW; episode_query
+    only for PLAY_FROM_SHOW. speed is only meaningful for SET_SPEED.
     """
 
     action: Action
     episode_id: int | None = None
     search_query: str | None = Field(
         default=None,
-        description="For subscribe: the show's name as she said it, nothing else.",
+        description="For subscribe, unsubscribe and play_from_show: the show's"
+        " name as she said it, nothing else.",
+    )
+    episode_query: str | None = Field(
+        default=None,
+        description="For play_from_show: which episode she described, or empty"
+        " for the latest.",
     )
     speed: float | None = Field(
         default=None,

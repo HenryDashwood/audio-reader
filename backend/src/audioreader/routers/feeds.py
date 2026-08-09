@@ -12,8 +12,17 @@ from audioreader.db import get_session
 from audioreader.feeds import service
 from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
+from audioreader.feeds.search import PodcastSearchError, search_podcasts
 from audioreader.models import Episode, Feed, Subscription, User
-from audioreader.schemas import EpisodeRead, FeedCreate, FeedRead, PositionUpdate, secure_url
+from audioreader.schemas import (
+    EpisodeRead,
+    FeedCreate,
+    FeedPreview,
+    FeedRead,
+    PodcastSearchResult,
+    PositionUpdate,
+    secure_url,
+)
 
 router = APIRouter(prefix="/feeds", tags=["feeds"])
 
@@ -67,6 +76,37 @@ async def subscribe(body: FeedCreate, session: Session, user: CurrentUser) -> Fe
     return _to_feed_read(feed, episode_count=len(feed.episodes))
 
 
+@router.post("/preview")
+async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> FeedPreview:
+    """A show's page before subscribing: ingest the feed into the shared
+    catalog (without following it) so its episodes have real ids and can be
+    played, resumed, and subscribed to instantly."""
+    try:
+        feed = await service.ensure_feed(session, str(body.url))
+    except FeedFetchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except FeedParseError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    episode_count = await session.scalar(
+        select(func.count()).select_from(Episode).where(Episode.feed_id == feed.id)
+    )
+    episodes = (
+        await session.scalars(
+            select(Episode)
+            .options(joinedload(Episode.feed))
+            .where(Episode.feed_id == feed.id)
+            .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
+            .limit(50)
+        )
+    ).all()
+    return FeedPreview(
+        feed=_to_feed_read(feed, episode_count=episode_count or 0),
+        episodes=await episodes_read(session, user, episodes),
+        subscribed=await service.is_subscribed(session, feed.id, user),
+    )
+
+
 @router.get("")
 async def list_feeds(session: Session, user: CurrentUser) -> list[FeedRead]:
     counts = (
@@ -110,6 +150,26 @@ async def list_episodes(
         )
     ).all()
     return await episodes_read(session, user, episodes)
+
+
+search_router = APIRouter(prefix="/search", tags=["search"])
+
+
+@search_router.get("/podcasts")
+async def search_directory(q: str, user: CurrentUser) -> list[PodcastSearchResult]:
+    """Typed search against the public podcast directory.
+
+    Unlike the voice path, no relevance guard: the results are on screen, so
+    loose matches help rather than mislead.
+    """
+    query = q.strip()
+    if not query:
+        return []
+    try:
+        matches = await search_podcasts(query, limit=25, strict=False)
+    except PodcastSearchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return [PodcastSearchResult(**match.model_dump()) for match in matches]
 
 
 episodes_router = APIRouter(prefix="/episodes", tags=["episodes"])

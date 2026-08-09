@@ -196,6 +196,88 @@ struct LibraryTests {
     }
 }
 
+@Suite("Directory search and preview")
+struct DirectorySearchTests {
+    private let resultsJSON = """
+        [{"title":"The Rest Is History","feed_url":"https://feeds.megaphone.fm/GLT4787413333",
+          "publisher":"Goalhanger","episode_count":967,
+          "artwork_url":"https://img.example.com/trih.jpg"},
+         {"title":"Sparse Show","feed_url":"https://feeds.example.com/sparse",
+          "publisher":null,"episode_count":null,"artwork_url":null}]
+        """
+
+    @Test func searchSendsTheQuery() async throws {
+        let transport = FakeTransport(json: resultsJSON)
+        let results = try await makeClient(transport).searchPodcasts(query: "rest is history")
+
+        #expect(results.count == 2)
+        #expect(results[0].title == "The Rest Is History")
+        #expect(results[0].publisher == "Goalhanger")
+        #expect(results[0].artworkURL?.absoluteString == "https://img.example.com/trih.jpg")
+        let url = try #require(transport.lastRequest?.url)
+        #expect(url.path == "/search/podcasts")
+        #expect(url.query?.contains("q=rest%20is%20history") == true)
+    }
+
+    @Test func toleratesResultsWithoutPublisherOrArtwork() async throws {
+        let results = try await makeClient(FakeTransport(json: resultsJSON))
+            .searchPodcasts(query: "x")
+        #expect(results[1].publisher == nil)
+        #expect(results[1].artworkURL == nil)
+    }
+
+    @Test func previewPostsTheFeedURL() async throws {
+        let json = """
+            {"feed":{"id":7,"url":"https://feeds.example.com/x","title":"The History Hour",
+              "description":"A weekly podcast.","image_url":null,"episode_count":3},
+             "episodes":[{"id":31,"title":"The Fall of Constantinople","description":null,
+              "audio_url":"https://cdn.example.com/hh/103.mp3","duration_seconds":3723,
+              "published_at":null,"link":null}],
+             "subscribed":false}
+            """
+        let transport = FakeTransport(json: json)
+        let preview = try await makeClient(transport)
+            .previewFeed(url: URL(string: "https://feeds.example.com/x")!)
+
+        #expect(preview.show.title == "The History Hour")
+        #expect(preview.episodes.first?.audioURL != nil)
+        #expect(preview.subscribed == false)
+        let request = try #require(transport.lastRequest)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/feeds/preview")
+        let body = try JSONDecoder().decode(
+            [String: String].self, from: try #require(request.httpBody))
+        #expect(body["url"] == "https://feeds.example.com/x")
+    }
+
+    @Test func subscribePostsToFeeds() async throws {
+        let json = """
+            {"id":7,"url":"https://feeds.example.com/x","title":"The History Hour",
+             "description":null,"image_url":null,"episode_count":3}
+            """
+        let transport = FakeTransport(status: 201, json: json)
+        let show = try await makeClient(transport)
+            .subscribe(feedURL: URL(string: "https://feeds.example.com/x")!)
+
+        #expect(show.title == "The History Hour")
+        let request = try #require(transport.lastRequest)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/feeds")
+    }
+
+    @Test func alreadySubscribedConflictIsSpeakable() async {
+        do {
+            _ = try await makeClient(FakeTransport(status: 409, json: "{}"))
+                .subscribe(feedURL: URL(string: "https://feeds.example.com/x")!)
+            Issue.record("expected a thrown error")
+        } catch let error as APIError {
+            #expect(!error.spokenResponse.isEmpty)
+        } catch {
+            Issue.record("wrong error type")
+        }
+    }
+}
+
 @Suite("Auth and positions", .serialized)
 struct AuthAndPositionTests {
     /// tokenProvider is process-global, so these tests run serialized and

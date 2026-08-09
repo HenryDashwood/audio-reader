@@ -28,6 +28,9 @@ final class RecordingAPI: HearfulAPIProtocol, @unchecked Sendable {
     }
     func logout() async throws {}
     func me() async throws -> UserInfo { UserInfo(id: "u", displayName: nil) }
+    func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
+    func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }
+    func subscribe(feedURL: URL) async throws -> Show { throw APIError(underlying: "unused") }
 }
 
 private func episode(id: Int, position: Double? = nil) -> Episode {

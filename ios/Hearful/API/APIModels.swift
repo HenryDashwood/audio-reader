@@ -130,3 +130,34 @@ nonisolated struct Show: Decodable, Identifiable, Equatable, Hashable {
         case episodeCount = "episode_count"
     }
 }
+
+/// One show from the public directory; it may not be in our catalog yet, so
+/// its identity is its feed URL rather than a database id.
+nonisolated struct PodcastResult: Decodable, Identifiable, Equatable, Hashable {
+    let title: String
+    let feedURL: URL
+    let publisher: String?
+    let episodeCount: Int?
+    let artworkURL: URL?
+
+    var id: URL { feedURL }
+
+    enum CodingKeys: String, CodingKey {
+        case title, publisher
+        case feedURL = "feed_url"
+        case episodeCount = "episode_count"
+        case artworkURL = "artwork_url"
+    }
+}
+
+/// A show's page as seen before (or after) subscribing.
+nonisolated struct FeedPreview: Decodable {
+    let show: Show
+    let episodes: [Episode]
+    let subscribed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case show = "feed"
+        case episodes, subscribed
+    }
+}

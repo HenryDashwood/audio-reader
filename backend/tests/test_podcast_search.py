@@ -70,6 +70,47 @@ class TestSearchPodcasts:
             await search_podcasts("anything")
 
 
+class TestStrictness:
+    async def test_loose_matches_survive_when_not_strict(self, respx_mock):
+        # Typed search shows its results on screen, so a loose match is
+        # useful there rather than dangerous.
+        respx_mock.get(SEARCH_URL).respond(
+            json=itunes(show("The Mortal Realms: A Warhammer Age of Sigmar Podcast"))
+        )
+        assert await search_podcasts("wibble wobble nonsense", strict=False) != []
+
+    async def test_exact_match_still_promoted_when_not_strict(self, respx_mock):
+        respx_mock.get(SEARCH_URL).respond(
+            json=itunes(show("The Rest Is History: Club"), show("The Rest Is History"))
+        )
+        results = await search_podcasts("the rest is history", strict=False)
+        assert results[0].title == "The Rest Is History"
+
+
+class TestArtwork:
+    async def test_prefers_the_large_artwork(self, respx_mock):
+        payload = show("Ancient Warfare")
+        payload["artworkUrl100"] = "https://img.example.com/100.jpg"
+        payload["artworkUrl600"] = "https://img.example.com/600.jpg"
+        respx_mock.get(SEARCH_URL).respond(json=itunes(payload))
+
+        results = await search_podcasts("ancient warfare")
+        assert results[0].artwork_url == "https://img.example.com/600.jpg"
+
+    async def test_falls_back_to_the_small_artwork(self, respx_mock):
+        payload = show("Ancient Warfare")
+        payload["artworkUrl100"] = "https://img.example.com/100.jpg"
+        respx_mock.get(SEARCH_URL).respond(json=itunes(payload))
+
+        results = await search_podcasts("ancient warfare")
+        assert results[0].artwork_url == "https://img.example.com/100.jpg"
+
+    async def test_missing_artwork_is_none(self, respx_mock):
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("Ancient Warfare")))
+        results = await search_podcasts("ancient warfare")
+        assert results[0].artwork_url is None
+
+
 class TestRanking:
     async def test_prefers_an_exact_title_match_over_search_order(self, respx_mock):
         # iTunes sometimes puts a spin-off or a discussion podcast first.

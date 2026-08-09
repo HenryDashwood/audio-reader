@@ -42,6 +42,78 @@ class TestSubscribe:
         assert response.status_code == 502
 
 
+class TestPreview:
+    async def preview(self, client, respx_mock, xml: bytes, url: str = FEED_URL):
+        respx_mock.get(url).respond(content=xml, content_type="application/rss+xml")
+        return await client.post("/feeds/preview", json={"url": url})
+
+    async def test_returns_show_and_playable_episodes(self, client, respx_mock, podcast_xml):
+        response = await self.preview(client, respx_mock, podcast_xml)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["feed"]["title"] == "The History Hour"
+        assert body["feed"]["episode_count"] == 3
+        assert body["subscribed"] is False
+        assert [e["title"] for e in body["episodes"]][0] == "The Fall of Constantinople"
+        assert body["episodes"][0]["audio_url"] == "https://cdn.example.com/hh/103.mp3"
+        assert body["episodes"][0]["id"]
+
+    async def test_previewing_does_not_subscribe(self, client, respx_mock, podcast_xml):
+        await self.preview(client, respx_mock, podcast_xml)
+        assert (await client.get("/feeds")).json() == []
+
+    async def test_a_subscribed_feed_says_so(self, client, respx_mock, podcast_xml):
+        await subscribe(client, respx_mock, podcast_xml)
+        response = await client.post("/feeds/preview", json={"url": FEED_URL})
+        assert response.json()["subscribed"] is True
+
+    async def test_a_catalogued_feed_is_not_refetched(self, client, respx_mock, podcast_xml):
+        route = respx_mock.get(FEED_URL).respond(
+            content=podcast_xml, content_type="application/rss+xml"
+        )
+        await client.post("/feeds/preview", json={"url": FEED_URL})
+        await client.post("/feeds/preview", json={"url": FEED_URL})
+        assert route.call_count == 1
+
+    async def test_subscribing_after_preview_is_instant(self, client, respx_mock, podcast_xml):
+        # The preview already ingested the feed; subscribing must not refetch.
+        route = respx_mock.get(FEED_URL).respond(
+            content=podcast_xml, content_type="application/rss+xml"
+        )
+        await client.post("/feeds/preview", json={"url": FEED_URL})
+        response = await client.post("/feeds", json={"url": FEED_URL})
+
+        assert response.status_code == 201
+        assert route.call_count == 1
+        titles = [feed["title"] for feed in (await client.get("/feeds")).json()]
+        assert titles == ["The History Hour"]
+
+    async def test_previewed_episode_is_fetchable_and_positionable(
+        self, client, respx_mock, podcast_xml
+    ):
+        # She can play from a preview, so resume must work there too.
+        body = (await self.preview(client, respx_mock, podcast_xml)).json()
+        episode_id = body["episodes"][0]["id"]
+
+        put = await client.put(
+            f"/episodes/{episode_id}/position", json={"position_seconds": 90.0}
+        )
+        assert put.status_code == 204
+        single = (await client.get(f"/episodes/{episode_id}")).json()
+        assert single["position_seconds"] == 90.0
+
+    async def test_non_feed_content_rejected(self, client, respx_mock):
+        respx_mock.get(FEED_URL).respond(content=b"<html>not a feed</html>")
+        response = await client.post("/feeds/preview", json={"url": FEED_URL})
+        assert response.status_code == 422
+
+    async def test_unreachable_feed_is_bad_gateway(self, client, respx_mock):
+        respx_mock.get(FEED_URL).respond(status_code=500)
+        response = await client.post("/feeds/preview", json={"url": FEED_URL})
+        assert response.status_code == 502
+
+
 class TestListFeeds:
     async def test_empty_at_first(self, client):
         response = await client.get("/feeds")

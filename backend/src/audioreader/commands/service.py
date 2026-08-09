@@ -1,6 +1,7 @@
 """Turn a spoken request into an action, using an LLM to pick the episode."""
 
 import logging
+import re
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -30,8 +31,12 @@ to. Decide what she wants and reply with the matching action.
   between several of the same show.
 - If she names a show, only episodes from that show may be chosen. A show name
   narrows the choice, it is not a hint: "the latest In Our Time" means the most
-  recent In Our Time episode, never a newer episode of something else. If that
-  show has no episodes in the list, choose unknown and say so.
+  recent In Our Time episode, never a newer episode of something else.
+- Choose play_from_show when she asks to hear an episode of a show that has no
+  episodes in the list — she can listen without subscribing. Put just the
+  show's name in search_query. Put what identifies the episode in
+  episode_query ("the one about Agincourt"), or leave it empty when she wants
+  the latest. Leave spoken_response empty: the app says what was found.
 - Choose subscribe when she wants to follow a show she does not have yet
   ("subscribe to", "add", "start following"). Put just the show's name in
   search_query — no "subscribe to", no "the podcast", nothing else. Leave
@@ -56,6 +61,23 @@ to. Decide what she wants and reply with the matching action.
 """
 
 
+#: The second, scoped stage of play_from_show: one show's episodes only, so
+#: the only decision left is which episode she described.
+EPISODE_PICK_PROMPT = """You help a blind listener control a podcast app by voice.
+
+She asked for an episode of one particular show. You will be given what she
+said and a numbered list of that show's episodes. Choose play_episode with the
+episode that matches what she described — by topic, by guest, or by date — or
+unknown when nothing clearly matches.
+
+- episode_id must be copied exactly from the list. Never invent one.
+- spoken_response is read aloud and she waits through every word of it before
+  the episode starts. For play_episode use at most six words, enough to catch
+  a wrong pick: "Playing the Agincourt episode."
+  For unknown, one short question naming what you need.
+"""
+
+
 async def build_candidates(
     session: AsyncSession, user: User, limit: int | None = None
 ) -> list[Candidate]:
@@ -74,6 +96,25 @@ async def build_candidates(
         .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
         .limit(limit)
     )
+    return _to_candidates(episodes)
+
+
+async def feed_candidates(
+    session: AsyncSession, feed_id: int, limit: int | None = None
+) -> list[Candidate]:
+    """One show's playable episodes, newest first, subscription not required."""
+    limit = limit if limit is not None else settings.command_candidate_limit
+    episodes = await session.scalars(
+        select(Episode)
+        .where(Episode.feed_id == feed_id, Episode.audio_url.is_not(None))
+        .options(joinedload(Episode.feed))
+        .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
+        .limit(limit)
+    )
+    return _to_candidates(episodes)
+
+
+def _to_candidates(episodes) -> list[Candidate]:
     return [
         Candidate(
             id=episode.id,
@@ -122,6 +163,11 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User) -> 
 
     if decision.action is Action.SUBSCRIBE:
         return await _subscribe(session, decision.search_query, user)
+
+    if decision.action is Action.PLAY_FROM_SHOW:
+        return await _play_from_show(
+            session, llm, transcript, decision.search_query, decision.episode_query
+        )
 
     if decision.action is Action.UNSUBSCRIBE:
         return await _unsubscribe(session, decision.search_query, user)
@@ -222,6 +268,111 @@ async def _subscribe(session: AsyncSession, query: str | None, user: User) -> In
         action=Action.SUBSCRIBED,
         spoken_response=f"Subscribed to {best.title}.",
     )
+
+
+async def _play_from_show(
+    session: AsyncSession,
+    llm,
+    transcript: str,
+    show_query: str | None,
+    episode_query: str | None,
+) -> InterpretResult:
+    """Play an episode of a show she is not subscribed to.
+
+    The show is found in the directory and ingested into the shared catalog —
+    but not subscribed to: asking to hear one episode is not asking to follow
+    the show. The common case ("the latest X") is resolved here without a
+    second model call; only a described episode needs the model again, and
+    then it only reads this one show's episodes.
+    """
+    if not show_query or not show_query.strip():
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response="Which show would you like to hear?",
+        )
+
+    try:
+        matches = await search_podcasts(show_query)
+    except PodcastSearchError as exc:
+        logger.warning("podcast search failed for %r: %s", show_query, exc)
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response="I could not search for podcasts just now. Please try again shortly.",
+        )
+
+    if not matches:
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response=f"I could not find a podcast called {show_query}.",
+        )
+
+    best = matches[0]
+    try:
+        feed = await feed_service.ensure_feed(session, best.feed_url)
+    except (FeedFetchError, FeedParseError) as exc:
+        logger.warning("could not load feed %s: %s", best.feed_url, exc)
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response=f"I found {best.title}, but could not load its episodes.",
+        )
+
+    candidates = await feed_candidates(session, feed.id)
+    if not candidates:
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response=f"{feed.title} has no episodes I can play.",
+        )
+
+    if _wants_latest(episode_query):
+        episode = await session.get(
+            Episode, candidates[0].id, options=[joinedload(Episode.feed)]
+        )
+        return InterpretResult(
+            action=Action.PLAY_EPISODE,
+            spoken_response=f"Playing the latest {feed.title}.",
+            episode=episode,
+        )
+
+    raw = await llm.decide(
+        system=EPISODE_PICK_PROMPT,
+        user=build_prompt(transcript, candidates),
+        output_model=ModelDecision,
+    )
+    try:
+        decision = ModelDecision.model_validate(raw)
+    except ValidationError as exc:
+        logger.warning("model returned an unusable episode pick (%s): %r", exc, raw)
+        return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
+
+    if (
+        decision.action is not Action.PLAY_EPISODE
+        or decision.episode_id not in {candidate.id for candidate in candidates}
+    ):
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response=decision.spoken_response
+            or f"I could not find that episode of {feed.title}.",
+        )
+
+    episode = await session.get(Episode, decision.episode_id, options=[joinedload(Episode.feed)])
+    return InterpretResult(
+        action=Action.PLAY_EPISODE,
+        spoken_response=decision.spoken_response,
+        episode=episode,
+    )
+
+
+def _wants_latest(episode_query: str | None) -> bool:
+    """Does the episode description just mean "the newest one"?
+
+    Resolving this here saves a second model call for the most common request
+    by far. Anything more specific goes to the model.
+    """
+    if episode_query is None:
+        return True
+    words = set(re.sub(r"[^a-z0-9 ]", " ", episode_query.casefold()).split())
+    words -= {"the", "one", "episode", "show", "of", "their", "her", "his"}
+    return not words or words <= {"latest", "newest", "most", "recent", "new", "last"}
 
 
 async def _unsubscribe(session: AsyncSession, query: str | None, user: User) -> InterpretResult:

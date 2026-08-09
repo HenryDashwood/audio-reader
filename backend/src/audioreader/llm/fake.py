@@ -12,10 +12,16 @@ class FakeLLMClient:
         self.response = response
         self.error = error
         self.calls: list[dict[str, Any]] = []
+        # For flows that call the model more than once (play_from_show):
+        # queued responses are consumed in order before self.response is used.
+        self.queued: list[dict[str, Any]] = []
 
     def respond_with(self, response: dict[str, Any]) -> None:
         self.response = response
         self.error = None
+
+    def queue(self, *responses: dict[str, Any]) -> None:
+        self.queued.extend(responses)
 
     def fail_with(self, error: Exception) -> None:
         self.error = error
@@ -26,6 +32,8 @@ class FakeLLMClient:
         self.calls.append({"system": system, "user": user, "output_model": output_model})
         if self.error is not None:
             raise self.error
+        if self.queued:
+            return self.queued.pop(0)
         if self.response is None:
             raise LLMError("FakeLLMClient has no configured response")
         return self.response

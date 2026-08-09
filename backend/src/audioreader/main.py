@@ -64,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(feeds.router)
     app.include_router(feeds.episodes_router)
+    app.include_router(feeds.search_router)
     app.include_router(commands.router)
     return app
 

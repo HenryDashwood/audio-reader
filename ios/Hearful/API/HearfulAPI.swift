@@ -8,6 +8,9 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func recentEpisodes(limit: Int) async throws -> [Episode]
     func shows() async throws -> [Show]
     func episodes(showID: Int) async throws -> [Episode]
+    func searchPodcasts(query: String) async throws -> [PodcastResult]
+    func previewFeed(url: URL) async throws -> FeedPreview
+    func subscribe(feedURL: URL) async throws -> Show
     func login(appleIdentityToken: String) async throws -> AuthResponse
     func logout() async throws
     func me() async throws -> UserInfo
@@ -18,6 +21,9 @@ extension Notification.Name {
     /// Posted whenever any request comes back 401: the stored session is dead
     /// (revoked, or wiped server-side) and the app should return to sign-in.
     nonisolated static let hearfulAuthRequired = Notification.Name("hearfulAuthRequired")
+    /// Posted after subscribing (or unsubscribing) so the library reloads.
+    nonisolated static let hearfulSubscriptionsChanged = Notification.Name(
+        "hearfulSubscriptionsChanged")
 }
 
 /// The one thing HearfulAPI needs from the network. Injecting this rather than
@@ -74,6 +80,29 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
             .appendingPathComponent("\(showID)")
             .appendingPathComponent("episodes")
         return try await send(URLRequest(url: url))
+    }
+
+    func searchPodcasts(query: String) async throws -> [PodcastResult] {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("search/podcasts"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        return try await send(URLRequest(url: components.url!))
+    }
+
+    func previewFeed(url: URL) async throws -> FeedPreview {
+        var request = URLRequest(url: baseURL.appendingPathComponent("feeds/preview"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["url": url])
+        return try await send(request)
+    }
+
+    func subscribe(feedURL: URL) async throws -> Show {
+        var request = URLRequest(url: baseURL.appendingPathComponent("feeds"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["url": feedURL])
+        return try await send(request)
     }
 
     func login(appleIdentityToken: String) async throws -> AuthResponse {
