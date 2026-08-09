@@ -58,8 +58,16 @@ struct PodcastPreviewView: View {
     @ViewBuilder
     private var subscribeRow: some View {
         if model.subscribed {
-            Label("Subscribed", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.secondary)
+            HStack(spacing: 14) {
+                Label("Subscribed", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.secondary)
+                Button("Unsubscribe", role: .destructive) {
+                    Task { await model.unsubscribe(title: podcast.title) }
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.subscribing)
+                .accessibilityLabel("Unsubscribe from \(podcast.title)")
+            }
         } else {
             Button {
                 Task { await model.subscribe(url: podcast.feedURL, title: podcast.title) }
@@ -120,6 +128,23 @@ final class PodcastPreviewModel: ObservableObject {
             subscribed = true
             NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
             AccessibilityNotification.Announcement("Subscribed to \(title)").post()
+        } catch let error as APIError {
+            subscribeError = error.spokenResponse
+        } catch {
+            subscribeError = "Something went wrong."
+        }
+    }
+
+    func unsubscribe(title: String) async {
+        guard subscribed, !subscribing, case .loaded(let preview) = state else { return }
+        subscribing = true
+        subscribeError = nil
+        defer { subscribing = false }
+        do {
+            try await api.unsubscribe(showID: preview.show.id)
+            subscribed = false
+            NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
+            AccessibilityNotification.Announcement("Unsubscribed from \(title)").post()
         } catch let error as APIError {
             subscribeError = error.spokenResponse
         } catch {

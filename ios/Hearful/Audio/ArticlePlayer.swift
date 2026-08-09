@@ -81,6 +81,24 @@ final class ArticlePlayer: NSObject, ObservableObject {
         // stretching rendered audio, which always smears. The time-pitch node
         // stays in the chain, inert, in case fine correction is ever wanted.
         timePitch.rate = 1.0
+        // Route changes and the recogniser borrowing the session invalidate
+        // the engine's graph; rebuild rather than trusting stale connections.
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.engineConfigurationChanged() }
+        }
+    }
+
+    /// The graph is stale: force a reconnect on next start, and if speech
+    /// was sounding, rebuild from the current chunk straight away.
+    private func engineConfigurationChanged() {
+        engineFormat = nil
+        if wantsPlayback, script != nil {
+            startPlayback(at: chunkIndex)
+        } else {
+            resetSchedule()
+        }
     }
 
     var progress: Double {
@@ -118,6 +136,11 @@ final class ArticlePlayer: NSObject, ObservableObject {
     func pause() {
         wantsPlayback = false
         playerNode.pause()
+        // Release the audio hardware, not just the node: the speech
+        // recognisers run their own engine on the microphone, and flipping
+        // the session to record mode while this engine still holds a live
+        // IO unit crashes deep in CoreAudio.
+        engine.pause()
         isPlaying = false
         stopProgressTimer()
         updateNowPlayingPosition()
@@ -133,11 +156,17 @@ final class ArticlePlayer: NSObject, ObservableObject {
         } else if scheduledThrough != nil {
             // Paused mid-chunk with the schedule intact: carry on from the
             // same word.
-            if !engine.isRunning { try? engine.start() }
-            playerNode.play()
-            isPlaying = true
-            startProgressTimer()
-            updateNowPlayingPosition()
+            do {
+                if !engine.isRunning { try engine.start() }
+                playerNode.play()
+                isPlaying = true
+                startProgressTimer()
+                updateNowPlayingPosition()
+            } catch {
+                // The graph was invalidated while paused (a phone call, the
+                // recogniser borrowing the session): rebuild cleanly.
+                startPlayback(at: chunkIndex)
+            }
         } else {
             startPlayback(at: chunkIndex)
         }

@@ -32,6 +32,7 @@ private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
     func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }
     func subscribe(feedURL: URL) async throws -> Show { throw APIError(underlying: "unused") }
+    func unsubscribe(showID: Int) async throws {}
 }
 
 private func episode(id: Int, audio: String? = "https://cdn.example.com/e.mp3") -> Episode {

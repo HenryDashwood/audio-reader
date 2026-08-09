@@ -8,6 +8,20 @@ import AppIntents
 /// people do not say the same thing twice.
 struct HearfulShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
+        // The escape hatch from every Siri limitation below: opens the app
+        // with the microphone live, and from there the request is free-form.
+        AppShortcut(
+            intent: AskHearfulIntent(),
+            phrases: [
+                "Ask \(.applicationName)",
+                "Talk to \(.applicationName)",
+                "Start a conversation with \(.applicationName)",
+                "Open the microphone on \(.applicationName)",
+                "I want to ask \(.applicationName) something",
+            ],
+            shortTitle: "Ask Hearful",
+            systemImageName: "mic.circle"
+        )
         // No parameters at all: the simplest thing Siri can match, and the
         // baseline for whether App Shortcuts are registering correctly.
         AppShortcut(

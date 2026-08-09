@@ -33,6 +33,7 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {}
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }
     func subscribe(feedURL: URL) async throws -> Show { throw APIError(underlying: "unused") }
+    func unsubscribe(showID: Int) async throws {}
 }
 
 private func result(_ title: String) -> PodcastResult {

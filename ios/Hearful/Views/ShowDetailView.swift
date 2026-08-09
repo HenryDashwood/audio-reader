@@ -5,6 +5,7 @@ struct ShowDetailView: View {
     let show: Show
     @StateObject private var model = EpisodeListModel()
     @ObservedObject private var player = PlaybackCoordinator.shared
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         List {
@@ -20,6 +21,7 @@ struct ShowDetailView: View {
                 if let description = show.description, !description.isEmpty {
                     Text(description).font(.callout).foregroundStyle(.secondary)
                 }
+                unsubscribeRow
             }
 
             Section("Episodes") {
@@ -41,6 +43,32 @@ struct ShowDetailView: View {
         .navigationTitle(show.title)
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.load(showID: show.id) }
+    }
+
+    /// The mirror of the preview page's Subscribe button. Unsubscribing is
+    /// cheap to undo — the catalog keeps the feed and her positions — so one
+    /// tap, no confirmation, same as the voice path.
+    @ViewBuilder
+    private var unsubscribeRow: some View {
+        Button(role: .destructive) {
+            Task {
+                if await model.unsubscribe(showID: show.id, title: show.title) {
+                    dismiss()
+                }
+            }
+        } label: {
+            if model.unsubscribing {
+                ProgressView()
+            } else {
+                Text("Unsubscribe")
+            }
+        }
+        .buttonStyle(.bordered)
+        .disabled(model.unsubscribing)
+        .accessibilityLabel("Unsubscribe from \(show.title)")
+        if let message = model.unsubscribeError {
+            Text(message).font(.callout).foregroundStyle(.red)
+        }
     }
 }
 
@@ -96,6 +124,8 @@ final class EpisodeListModel: ObservableObject {
     }
 
     @Published private(set) var state: State = .loading
+    @Published private(set) var unsubscribing = false
+    @Published private(set) var unsubscribeError: String?
     private let api: HearfulAPIProtocol
 
     init(api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)) {
@@ -110,5 +140,24 @@ final class EpisodeListModel: ObservableObject {
         } catch {
             state = .failed("Something went wrong.")
         }
+    }
+
+    /// True on success, so the view can pop back to the library.
+    func unsubscribe(showID: Int, title: String) async -> Bool {
+        guard !unsubscribing else { return false }
+        unsubscribing = true
+        unsubscribeError = nil
+        defer { unsubscribing = false }
+        do {
+            try await api.unsubscribe(showID: showID)
+            NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
+            AccessibilityNotification.Announcement("Unsubscribed from \(title)").post()
+            return true
+        } catch let error as APIError {
+            unsubscribeError = error.spokenResponse
+        } catch {
+            unsubscribeError = "Something went wrong."
+        }
+        return false
     }
 }

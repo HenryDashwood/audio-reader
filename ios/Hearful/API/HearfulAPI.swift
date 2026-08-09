@@ -12,6 +12,7 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func searchPodcasts(query: String) async throws -> [PodcastResult]
     func previewFeed(url: URL) async throws -> FeedPreview
     func subscribe(feedURL: URL) async throws -> Show
+    func unsubscribe(showID: Int) async throws
     func login(appleIdentityToken: String) async throws -> AuthResponse
     func logout() async throws
     func me() async throws -> UserInfo
@@ -115,6 +116,13 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["url": feedURL])
         return try await send(request)
+    }
+
+    func unsubscribe(showID: Int) async throws {
+        let url = baseURL.appendingPathComponent("feeds").appendingPathComponent("\(showID)")
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        try await perform(request)
     }
 
     func login(appleIdentityToken: String) async throws -> AuthResponse {

@@ -46,7 +46,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         self.analyzer = analyzer
         try await analyzer.start(inputSequence: stream)
 
-        try startCapture(convertingTo: format)
+        try startCapture(convertingTo: format, into: continuation)
         log.info("analyzer listening")
 
         defer { cancel() }
@@ -122,22 +122,38 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
 
     /// The microphone's native format rarely matches what the analyser wants,
     /// so every buffer is converted on the way through.
-    private func startCapture(convertingTo format: AVAudioFormat) throws {
+    private func startCapture(
+        convertingTo format: AVAudioFormat,
+        into continuation: AsyncStream<AnalyzerInput>.Continuation
+    ) throws {
         try AudioSession.configureForListening()
 
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
-        let converter = AVAudioConverter(from: inputFormat, to: format)
+        let tap = TapConversion(
+            converter: AVAudioConverter(from: inputFormat, to: format), format: format)
 
         input.removeTap(onBus: 0)
+        // @Sendable, and self deliberately NOT captured: the engine invokes
+        // this on its realtime tap queue, and a closure that is (or infers)
+        // main-actor isolation traps the moment the first buffer arrives.
+        // The stream continuation is Sendable and safe to feed from there.
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
-            [weak self] buffer, _ in
-            guard let self else { return }
-            guard let converted = Self.convert(buffer, using: converter, to: format) else { return }
-            self.inputContinuation?.yield(AnalyzerInput(buffer: converted))
+            @Sendable buffer, _ in
+            guard let converted = Self.convert(buffer, using: tap.converter, to: tap.format)
+            else { return }
+            continuation.yield(AnalyzerInput(buffer: converted))
         }
         engine.prepare()
         try engine.start()
+    }
+
+    /// The converter and target format, boxed for the tap queue. @unchecked
+    /// Sendable is honest: both are created here and then touched only from
+    /// the tap's own serial queue — the compiler just cannot see that.
+    private struct TapConversion: @unchecked Sendable {
+        let converter: AVAudioConverter?
+        let format: AVAudioFormat
     }
 
     private nonisolated static func convert(

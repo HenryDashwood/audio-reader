@@ -3,6 +3,9 @@ import SwiftUI
 struct ContentView: View {
     @State private var showingVoice = false
     @State private var showingNowPlaying = false
+    /// True when the voice sheet was opened by the Ask Hearful intent: she
+    /// said "ask Hearful" to get here, so listening starts without a tap.
+    @State private var voiceAutoStarts = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,11 +25,23 @@ struct ContentView: View {
         .sheet(isPresented: $showingNowPlaying) {
             NowPlayingView()
         }
-        .sheet(isPresented: $showingVoice) {
-            VoiceSheet()
+        .sheet(isPresented: $showingVoice, onDismiss: { voiceAutoStarts = false }) {
+            VoiceSheet(autoStart: voiceAutoStarts)
                 .presentationDetents([.medium])
         }
-        .task { await PlaybackRestore.restore() }
+        .task {
+            // The Ask Hearful intent may have run before this view existed.
+            if VoicePrompt.consume() {
+                voiceAutoStarts = true
+                showingVoice = true
+            }
+            await PlaybackRestore.restore()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulAskByVoice)) { _ in
+            _ = VoicePrompt.consume()
+            voiceAutoStarts = true
+            showingVoice = true
+        }
         // Subscribing in the app (or by voice) changes which show names Siri
         // should recognise in phrases; tell it to refetch them.
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
@@ -38,6 +53,9 @@ struct ContentView: View {
 /// Voice is now one way in among several, so it lives in a sheet rather than
 /// being the whole screen. The interaction inside is unchanged: tap, speak.
 struct VoiceSheet: View {
+    /// When true the sheet begins listening as soon as it appears — for
+    /// arrivals via Siri or the Action button, where she has already asked.
+    var autoStart = false
     @StateObject private var controller = VoiceController.live()
     @Environment(\.dismiss) private var dismiss
 
@@ -65,6 +83,9 @@ struct VoiceSheet: View {
         .onChange(of: controller.state) { _, state in
             // Once something is playing, the sheet has done its job.
             if case .playing = state { dismiss() }
+        }
+        .task {
+            if autoStart { await controller.beginCommand() }
         }
     }
 
