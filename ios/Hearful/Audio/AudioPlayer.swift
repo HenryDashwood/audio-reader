@@ -63,6 +63,15 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         replaceItem(url: url, episode: episode)
     }
 
+    /// Loads an episode paused at launch so the mini player is waiting for
+    /// her. Unlike prepare(), the audio session is left alone: activating it
+    /// here would silence whatever another app is playing, just for opening
+    /// the app. resume()/play() activate it when she actually wants sound.
+    func restore(_ episode: Episode) {
+        guard currentEpisode == nil, let url = episode.audioURL else { return }
+        replaceItem(url: url, episode: episode)
+    }
+
     func play(_ episode: Episode) throws {
         guard let url = episode.audioURL else {
             throw PlaybackError.noAudio
@@ -111,6 +120,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         item.audioTimePitchAlgorithm = .timeDomain
         player.replaceCurrentItem(with: item)
         currentEpisode = episode
+        PlaybackRestore.remember(episodeID: episode.id)
         currentTime = 0
         // The feed's stated duration is a good enough starting value; the real
         // one arrives once the asset has loaded.

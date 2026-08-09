@@ -27,6 +27,7 @@ struct ContentView: View {
             VoiceSheet()
                 .presentationDetents([.medium])
         }
+        .task { await PlaybackRestore.restore() }
     }
 }
 
