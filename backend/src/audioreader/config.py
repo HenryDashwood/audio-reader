@@ -65,10 +65,6 @@ class Settings(BaseSettings):
     # keys, with the app's bundle id as the required audience. No secret needed.
     apple_bundle_id: str = "com.henrydashwood.hearful"
     apple_jwks_url: str = "https://appleid.apple.com/auth/keys"
-    # Transition flag for rolling out auth: when False, requests without a
-    # bearer token act as the legacy pre-auth user instead of getting a 401,
-    # so the already-installed app keeps working until it is updated.
-    require_auth: bool = True
 
     # DeepSeek V4 Flash matched Opus 5 and Haiku 4.5 on every episode-selection
     # query we tried, at ~1/55 the cost of Opus. Switch back with

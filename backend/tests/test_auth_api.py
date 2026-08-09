@@ -177,12 +177,10 @@ class TestSessions:
         assert (await auth_client.post("/auth/logout", headers=headers)).status_code == 204
         assert (await auth_client.get("/me", headers=headers)).status_code == 401
 
-    async def test_legacy_fallback_when_auth_not_required(self, auth_client, session, monkeypatch):
-        placeholder = User(id=service.LEGACY_USER_ID, display_name="Library owner")
-        session.add(placeholder)
+    async def test_legacy_user_is_not_reachable_without_a_token(self, auth_client, session):
+        # The pre-auth placeholder row still exists in the deployed database;
+        # no request may reach it except through a real session token.
+        session.add(User(id=service.LEGACY_USER_ID, display_name="Library owner"))
         await session.commit()
-        monkeypatch.setattr(settings, "require_auth", False)
 
-        response = await auth_client.get("/me")
-        assert response.status_code == 200
-        assert response.json()["id"] == str(service.LEGACY_USER_ID)
+        assert (await auth_client.get("/me")).status_code == 401

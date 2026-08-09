@@ -27,6 +27,11 @@ struct ContentView: View {
                 .presentationDetents([.medium])
         }
         .task { await PlaybackRestore.restore() }
+        // Subscribing in the app (or by voice) changes which show names Siri
+        // should recognise in phrases; tell it to refetch them.
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
+            Task { await HearfulShortcuts.updateAppShortcutParameters() }
+        }
     }
 }
 

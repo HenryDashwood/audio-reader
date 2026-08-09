@@ -41,8 +41,11 @@ struct SubscribeIntent: AppIntent {
         } catch {
             return .result(dialog: IntentDialog("Sorry, that did not work. Please try again."))
         }
-        // If the app happens to be running, its library refreshes in place.
+        // If the app happens to be running, its library refreshes in place —
+        // and Siri relearns the show names it can match in spoken phrases,
+        // so "play the latest X" works for the show she just added.
         NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
+        await HearfulShortcuts.updateAppShortcutParameters()
         return .result(dialog: IntentDialog("\(response.spokenResponse)"))
     }
 }

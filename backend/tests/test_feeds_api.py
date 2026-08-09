@@ -263,8 +263,8 @@ class TestSharedCatalog:
 
 class TestAuthRequired:
     async def test_no_token_is_401_with_spoken_error(self, session):
-        # A bare app without the get_current_user override: the real auth
-        # dependency runs, and require_auth defaults to True.
+        # A bare app without the get_current_user override, so the real auth
+        # dependency runs.
         app = create_app()
         app.dependency_overrides[get_session] = lambda: session
         transport = ASGITransport(app=app)

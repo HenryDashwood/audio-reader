@@ -44,12 +44,6 @@ final class AuthController: ObservableObject {
     /// should not stare at a spinner on aeroplane mode — and validated in the
     /// background; a 401 flips the app back to sign-in via the notification.
     func bootstrap() {
-        #if DEBUG
-            if UserDefaults.standard.bool(forKey: Self.devNoAccountKey) {
-                state = .signedIn
-                return
-            }
-        #endif
         guard KeychainTokenStore.token != nil else {
             state = .signedOut
             return
@@ -89,28 +83,11 @@ final class AuthController: ObservableObject {
         }
     }
 
-    #if DEBUG
-        static let devNoAccountKey = "HearfulDevNoAccount"
-
-        /// Development escape hatch: Sign in with Apple needs a paid Apple
-        /// Developer team, which personal-team Debug builds do not have. With
-        /// AUDIOREADER_REQUIRE_AUTH=false on the backend, tokenless requests
-        /// act as the legacy user, so the rest of the app is testable.
-        func continueWithoutAccount() {
-            KeychainTokenStore.clear()
-            UserDefaults.standard.set(true, forKey: Self.devNoAccountKey)
-            state = .signedIn
-        }
-    #endif
-
     func signOut() async {
         // Best effort: revoking server-side matters less than forgetting the
         // token locally, and must not block signing out while offline.
         try? await api.logout()
         KeychainTokenStore.clear()
-        #if DEBUG
-            UserDefaults.standard.removeObject(forKey: Self.devNoAccountKey)
-        #endif
         state = .signedOut
     }
 

@@ -28,6 +28,23 @@ struct HearfulShortcuts: AppShortcutsProvider {
             systemImageName: "play.circle"
         )
         AppShortcut(
+            intent: PlayLatestFromShowIntent(),
+            phrases: [
+                // The show is matched against her subscriptions, so these
+                // work in one breath for anything she already follows.
+                "Play the latest \(\.$show) on \(.applicationName)",
+                "Play the latest from \(\.$show) on \(.applicationName)",
+                "Play the latest \(\.$show) episode on \(.applicationName)",
+                "Play the latest \(\.$show) article on \(.applicationName)",
+                "Play the latest article from \(\.$show) on \(.applicationName)",
+                "Play the newest \(\.$show) on \(.applicationName)",
+                "Read the latest \(\.$show) on \(.applicationName)",
+                "Catch up on \(\.$show) on \(.applicationName)",
+            ],
+            shortTitle: "Play a Show's Latest",
+            systemImageName: "play.square.stack"
+        )
+        AppShortcut(
             intent: SubscribeIntent(),
             phrases: [
                 // All parameterless: the show's name is free text, which Siri

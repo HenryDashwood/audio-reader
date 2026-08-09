@@ -12,6 +12,9 @@ struct EpisodeEntity: AppEntity {
     let title: String
     let audioURL: URL?
     let durationSeconds: Int?
+    /// Carried through so an article Siri resolved still routes to the
+    /// reader, not the audio player, when it comes back as an entity.
+    let hasText: Bool?
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Episode")
     static let defaultQuery = EpisodeQuery()
@@ -20,23 +23,24 @@ struct EpisodeEntity: AppEntity {
         DisplayRepresentation(title: "\(title)")
     }
 
-    init(id: Int, title: String, audioURL: URL?, durationSeconds: Int?) {
+    init(id: Int, title: String, audioURL: URL?, durationSeconds: Int?, hasText: Bool? = nil) {
         self.id = id
         self.title = title
         self.audioURL = audioURL
         self.durationSeconds = durationSeconds
+        self.hasText = hasText
     }
 
     init(_ episode: Episode) {
         self.init(
             id: episode.id, title: episode.title, audioURL: episode.audioURL,
-            durationSeconds: episode.durationSeconds)
+            durationSeconds: episode.durationSeconds, hasText: episode.hasText)
     }
 
     var episode: Episode {
         Episode(
             id: id, title: title, description: nil, audioURL: audioURL,
-            durationSeconds: durationSeconds, publishedAt: nil, link: nil)
+            durationSeconds: durationSeconds, publishedAt: nil, link: nil, hasText: hasText)
     }
 }
 
@@ -59,7 +63,9 @@ struct EpisodeQuery: EntityStringQuery {
     func entities(matching string: String) async throws -> [EpisodeEntity] {
         let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
         let response = try await api.command(transcript: "play \(string)")
-        guard let episode = response.episode, episode.audioURL != nil else { return [] }
+        guard let episode = response.episode,
+            episode.audioURL != nil || episode.hasText == true
+        else { return [] }
         return [EpisodeEntity(episode)]
     }
 

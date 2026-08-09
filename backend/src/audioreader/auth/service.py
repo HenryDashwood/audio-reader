@@ -16,9 +16,9 @@ from audioreader.auth.apple import AppleIdentity
 from audioreader.models import AuthSession, User, UserIdentity, utcnow
 
 # The pre-auth deployment had exactly one implicit user; the migration created
-# this user (same literal) and attached the then-existing feeds to it. It only
-# serves the require_auth=false fallback now — real sign-ins always get a
-# fresh user of their own.
+# this user (same literal) and attached the then-existing feeds to it. Nothing
+# hands it out any more — every sign-in gets a fresh user of its own — so it is
+# kept only to name that row, and as the guard the tests assert against.
 LEGACY_USER_ID = uuid.UUID("e1423896-70e0-4270-b809-982fc7730e21")
 
 

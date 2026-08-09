@@ -37,13 +37,6 @@ struct SignInView: View {
             .frame(height: 56)
             .padding(.horizontal, 32)
 
-            #if DEBUG
-                Button("Continue without account (dev)") {
-                    auth.continueWithoutAccount()
-                }
-                .padding(.top, 8)
-            #endif
-
             Spacer().frame(height: 48)
         }
     }
