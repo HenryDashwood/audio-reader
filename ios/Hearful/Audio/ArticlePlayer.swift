@@ -7,11 +7,17 @@ import UIKit
 /// seconds, so the scrubber, skip buttons, saved positions and lock screen
 /// behave the same as for podcast audio.
 ///
+/// Speech is always synthesised at 1× and played through a pitch-preserving
+/// time-stretch (AVAudioUnitTimePitch) — the same approach the podcast player
+/// uses for streamed audio. Raising the synthesiser's own rate instead makes
+/// the voice clip and garble; stretching rendered audio keeps it natural at
+/// any speed, and rate changes apply instantly mid-sentence.
+///
 /// If article audio is ever rendered server-side (ElevenLabs et al.), those
 /// items arrive as ordinary episodes with an audio_url and never reach this
 /// class — nothing here needs to change.
 @MainActor
-final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+final class ArticlePlayer: NSObject, ObservableObject {
     /// One player for the whole app, for the same reason as AudioPlayer: Siri
     /// intents run without any UI.
     static let shared = ArticlePlayer()
@@ -23,22 +29,42 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     @Published var isScrubbing = false
     @Published private(set) var playbackRate: Float = 1.0
 
+    /// Renders utterances to PCM buffers; never plays audio itself.
     private let synthesizer = AVSpeechSynthesizer()
+    /// Speaks failure messages aloud, separate from the rendering pipeline.
+    private let announcer = AVSpeechSynthesizer()
+
+    private let engine = AVAudioEngine()
+    private let playerNode = AVAudioPlayerNode()
+    private let timePitch = AVAudioUnitTimePitch()
+    private var engineFormat: AVAudioFormat?
+
     private let api: HearfulAPIProtocol
     private var script: ArticleScript?
     private var chunkIndex = 0
+    /// The chunk currently scheduled on the player node, if any — what lets
+    /// resume() distinguish "continue" from "start this chunk over".
+    private var scheduledIndex: Int?
     /// True once she asked for sound: speech starts as soon as text arrives.
     private var wantsPlayback = false
+    /// Bumped whenever playback restarts somewhere else (seek, new episode),
+    /// so stale render tasks and buffer-completion callbacks are ignored.
+    private var generation = 0
     private var loadTask: Task<Void, Never>?
+    private var progressTimer: Timer?
+    /// Rendered chunks, kept one ahead so transitions have no synthesis gap.
+    private var rendered: [Int: [AVAudioPCMBuffer]] = [:]
 
     init(api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)) {
         self.api = api
         super.init()
-        synthesizer.delegate = self
+        engine.attach(playerNode)
+        engine.attach(timePitch)
         // Same stored preference as AudioPlayer: her speed is her speed,
         // whether the thing playing is streamed or spoken.
         let stored = UserDefaults.standard.float(forKey: "HearfulPlaybackRate")
         playbackRate = stored > 0 ? stored : 1.0
+        timePitch.rate = playbackRate
     }
 
     var progress: Double {
@@ -67,7 +93,7 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         try? AudioSession.configureForPlayback()
         if episode.id == currentEpisode?.id, script != nil {
             wantsPlayback = true
-            speakCurrentChunk()
+            startPlayback(at: chunkIndex)
             return
         }
         load(episode, andPlay: true)
@@ -75,11 +101,9 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
 
     func pause() {
         wantsPlayback = false
-        if synthesizer.isSpeaking {
-            // .word, not .immediate: stopping mid-word sounds like a fault.
-            synthesizer.pauseSpeaking(at: .word)
-        }
+        playerNode.pause()
         isPlaying = false
+        stopProgressTimer()
         updateNowPlayingPosition()
     }
 
@@ -87,15 +111,18 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         guard let episode = currentEpisode else { return }
         try? AudioSession.configureForPlayback()
         wantsPlayback = true
-        if synthesizer.isPaused {
-            synthesizer.continueSpeaking()
-            isPlaying = true
-            updateNowPlayingPosition()
-        } else if script != nil {
-            speakCurrentChunk()
-        } else {
+        if script == nil {
             // Restored at launch: the text has not been fetched yet.
             load(episode, andPlay: true)
+        } else if scheduledIndex == chunkIndex {
+            // Paused mid-chunk: carry on from the same word.
+            if !engine.isRunning { try? engine.start() }
+            playerNode.play()
+            isPlaying = true
+            startProgressTimer()
+            updateNowPlayingPosition()
+        } else {
+            startPlayback(at: chunkIndex)
         }
     }
 
@@ -117,42 +144,47 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         chunkIndex = index
         currentTime = script.chunks[index].start
         if wantsPlayback {
-            speakCurrentChunk()
+            startPlayback(at: index)
         } else {
-            cancelUtterance()
+            generation += 1
+            if engine.isRunning { playerNode.stop() }
+            scheduledIndex = nil
             updateNowPlayingPosition()
         }
     }
 
+    /// Instant and clean at any speed: the time-stretch sits after the
+    /// synthesiser, so the voice itself is never re-rendered.
     func setPlaybackRate(_ rate: Float) {
         let clamped = min(max(rate, 0.5), 3.0)
         playbackRate = clamped
-        // An utterance's rate is fixed once queued; restart the current chunk
-        // at the new speed. Chunks are short, so the rewind is slight.
-        if wantsPlayback, script != nil {
-            speakCurrentChunk()
-        }
+        timePitch.rate = clamped
         updateNowPlayingPosition()
     }
 
     /// Called when audio playback takes over: stop making sound, keep state.
     func deactivate() {
-        if isPlaying || synthesizer.isPaused {
-            pause()
-            cancelUtterance()
+        wantsPlayback = false
+        generation += 1
+        if engine.isRunning {
+            playerNode.stop()
+            engine.pause()
         }
+        scheduledIndex = nil
+        isPlaying = false
+        stopProgressTimer()
     }
 
     // MARK: - Loading
 
     private func load(_ episode: Episode, andPlay: Bool) {
         loadTask?.cancel()
-        cancelUtterance()
-        isPlaying = false
+        deactivate()
+        wantsPlayback = andPlay
         currentEpisode = episode
         script = nil
+        rendered = [:]
         chunkIndex = 0
-        wantsPlayback = andPlay
         // Resume where she left off, same rules as audio: not if finished,
         // and not for the first few seconds.
         let resumeAt = episode.completed == true ? 0 : (episode.positionSeconds ?? 0)
@@ -192,7 +224,7 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         }
         updateNowPlayingPosition()
         if wantsPlayback {
-            speakCurrentChunk()
+            startPlayback(at: chunkIndex)
         }
     }
 
@@ -206,60 +238,71 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         let utterance = AVSpeechUtterance(string: message)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
         try? AudioSession.configureForPlayback()
-        synthesizer.speak(utterance)
+        announcer.speak(utterance)
     }
 
-    // MARK: - Speaking
+    // MARK: - Rendering and scheduling
 
-    private func speakCurrentChunk() {
-        guard let script, chunkIndex < script.chunks.count else { return }
-        cancelUtterance()
-        currentTime = script.chunks[chunkIndex].start
-        let utterance = AVSpeechUtterance(string: script.chunks[chunkIndex].text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
-        // The default utterance rate is normal speech; scale from there and
-        // clamp into what the synthesiser accepts.
-        utterance.rate = min(
-            max(
-                AVSpeechUtteranceDefaultSpeechRate * playbackRate,
-                AVSpeechUtteranceMinimumSpeechRate),
-            AVSpeechUtteranceMaximumSpeechRate)
-        utterance.postUtteranceDelay = 0.15
-        synthesizer.speak(utterance)
-        isPlaying = true
+    /// Stops whatever is sounding and plays chunk `index` from its start.
+    private func startPlayback(at index: Int) {
+        guard let script, index < script.chunks.count else { return }
+        generation += 1
+        let gen = generation
+        if engine.isRunning { playerNode.stop() }
+        scheduledIndex = nil
+        chunkIndex = index
+        currentTime = script.chunks[index].start
         updateNowPlayingPosition()
+
+        Task { [weak self] in
+            guard let self else { return }
+            guard let buffers = await self.renderedChunk(index), !buffers.isEmpty else {
+                if self.generation == gen {
+                    self.loadFailed(with: APIError(underlying: "speech rendering produced no audio"))
+                }
+                return
+            }
+            guard self.generation == gen, self.wantsPlayback else { return }
+            self.schedule(buffers, forChunk: index, generation: gen)
+        }
     }
 
-    /// Stops the synthesiser. Only didFinish advances chunks — a deliberate
-    /// stop arrives as didCancel, which is ignored — so cancelling never
-    /// double-advances playback.
-    private func cancelUtterance() {
-        guard synthesizer.isSpeaking || synthesizer.isPaused else { return }
-        synthesizer.stopSpeaking(at: .immediate)
+    private func schedule(_ buffers: [AVAudioPCMBuffer], forChunk index: Int, generation gen: Int) {
+        guard startEngine(with: buffers[0].format) else {
+            loadFailed(with: APIError(underlying: "audio engine would not start"))
+            return
+        }
+        // With the engine guaranteed running, stop() reliably clears anything
+        // stale — including buffers left scheduled while the engine slept.
+        playerNode.stop()
+        for (position, buffer) in buffers.enumerated() {
+            if position == buffers.count - 1 {
+                // .dataPlayedBack: fires when the audio has actually sounded,
+                // not merely been consumed — the right moment to move on.
+                playerNode.scheduleBuffer(
+                    buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack
+                ) { [weak self] _ in
+                    Task { @MainActor in self?.chunkPlayed(index, generation: gen) }
+                }
+            } else {
+                playerNode.scheduleBuffer(buffer)
+            }
+        }
+        scheduledIndex = index
+        playerNode.play()
+        isPlaying = true
+        startProgressTimer()
+        updateNowPlayingPosition()
+        prefetch(index + 1)
     }
 
-    // MARK: - AVSpeechSynthesizerDelegate
-
-    nonisolated func speechSynthesizer(
-        _ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance
-    ) {
-        Task { @MainActor in self.chunkFinished() }
-    }
-
-    nonisolated func speechSynthesizer(
-        _ synthesizer: AVSpeechSynthesizer,
-        willSpeakRangeOfSpeechString characterRange: NSRange,
-        utterance: AVSpeechUtterance
-    ) {
-        let fraction = Double(characterRange.location) / Double(max(utterance.speechString.count, 1))
-        Task { @MainActor in self.progressed(fraction: fraction) }
-    }
-
-    private func chunkFinished() {
-        guard wantsPlayback, let script else { return }
-        chunkIndex += 1
-        if chunkIndex < script.chunks.count {
-            speakCurrentChunk()
+    private func chunkPlayed(_ index: Int, generation gen: Int) {
+        guard generation == gen, wantsPlayback, let script else { return }
+        rendered[index] = nil
+        let next = index + 1
+        if next < script.chunks.count {
+            chunkIndex = next
+            startPlayback(at: next)
         } else {
             // The end of the article. Position lands on the full duration so
             // the position reporter records it as completed.
@@ -267,14 +310,112 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             isPlaying = false
             currentTime = duration
             chunkIndex = 0
+            scheduledIndex = nil
+            playerNode.stop()
+            stopProgressTimer()
             updateNowPlayingPosition()
         }
     }
 
-    private func progressed(fraction: Double) {
-        guard let script, chunkIndex < script.chunks.count, isPlaying, !isScrubbing else { return }
+    /// This chunk's audio, rendered at 1× — from the prefetch cache when the
+    /// previous chunk's playback already paid for it.
+    private func renderedChunk(_ index: Int) async -> [AVAudioPCMBuffer]? {
+        if let cached = rendered[index] { return cached }
+        guard let script, index < script.chunks.count else { return nil }
+        let buffers = await render(text: script.chunks[index].text)
+        rendered[index] = buffers
+        return buffers
+    }
+
+    private func prefetch(_ index: Int) {
+        guard let script, index < script.chunks.count, rendered[index] == nil else { return }
+        let gen = generation
+        Task { [weak self] in
+            guard let self else { return }
+            let buffers = await self.render(text: script.chunks[index].text)
+            guard self.generation == gen else { return }
+            self.rendered[index] = buffers
+            // Keep the cache to a working set; a long article should not
+            // accumulate its whole audio in memory.
+            self.rendered = self.rendered.filter { abs($0.key - self.chunkIndex) <= 2 }
+        }
+    }
+
+    /// Synthesises one chunk to PCM buffers at normal speed. The utterance
+    /// rate is always the default: speed is timePitch's job.
+    private func render(text: String) async -> [AVAudioPCMBuffer] {
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        let audio = await withCheckedContinuation {
+            (continuation: CheckedContinuation<RenderedAudio, Never>) in
+            let collector = RenderCollector(continuation: continuation)
+            // @Sendable because the synthesiser invokes this on its own
+            // queue; a main-actor closure would trap when it does.
+            synthesizer.write(utterance) { @Sendable buffer in
+                if let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 {
+                    collector.append(RenderedAudio(buffers: [pcm]))
+                } else {
+                    // The empty buffer is the synthesiser's end marker.
+                    collector.finish()
+                }
+            }
+        }
+        return audio.buffers
+    }
+
+    private func startEngine(with format: AVAudioFormat) -> Bool {
+        if engineFormat != format {
+            engine.connect(playerNode, to: timePitch, format: format)
+            engine.connect(timePitch, to: engine.mainMixerNode, format: format)
+            engineFormat = format
+        }
+        if !engine.isRunning {
+            engine.prepare()
+            do {
+                try engine.start()
+            } catch {
+                return false
+            }
+        }
+        return true
+    }
+
+    // MARK: - Progress
+
+    /// The player node restarts its clock at every stop(), so its sample time
+    /// is exactly "content seconds into the current chunk" — and because the
+    /// node sits before the time-stretch, this stays true at any rate.
+    private func startProgressTimer() {
+        stopProgressTimer()
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) {
+            [weak self] _ in
+            Task { @MainActor in self?.progressTicked() }
+        }
+    }
+
+    private func stopProgressTimer() {
+        progressTimer?.invalidate()
+        progressTimer = nil
+    }
+
+    private func progressTicked() {
+        guard isPlaying, !isScrubbing, let script, chunkIndex < script.chunks.count,
+            let nodeTime = playerNode.lastRenderTime,
+            let playerTime = playerNode.playerTime(forNodeTime: nodeTime)
+        else { return }
+        let played = Double(playerTime.sampleTime) / playerTime.sampleRate
         let chunk = script.chunks[chunkIndex]
+        // Real elapsed audio mapped onto the estimated timeline, so saved
+        // positions stay comparable across sessions.
+        let renderedSeconds = rendered[chunkIndex].map(Self.seconds(of:))
+        let fraction = renderedSeconds.map { min(played / max($0, 0.1), 1) } ?? 0
         currentTime = chunk.start + chunk.duration * fraction
+        updateNowPlayingPosition()
+    }
+
+    private nonisolated static func seconds(of buffers: [AVAudioPCMBuffer]) -> Double {
+        buffers.reduce(0.0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
     }
 
     // MARK: - Lock screen
@@ -316,5 +457,41 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             info[MPMediaItemPropertyPlaybackDuration] = duration
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+}
+
+/// PCM buffers boxed for a queue hop. @unchecked Sendable is honest here:
+/// each hop hands the buffers over completely — the sender keeps no
+/// reference — the compiler just cannot see that.
+private struct RenderedAudio: @unchecked Sendable {
+    let buffers: [AVAudioPCMBuffer]
+}
+
+/// Accumulates the synthesiser's rendered buffers and resumes the waiting
+/// continuation exactly once, on the empty end-marker buffer. A class rather
+/// than captured vars: the write callback arrives on the synthesiser's own
+/// queue, so the state needs a lock, not an actor.
+private final class RenderCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var collected: [AVAudioPCMBuffer] = []
+    private var continuation: CheckedContinuation<RenderedAudio, Never>?
+
+    init(continuation: CheckedContinuation<RenderedAudio, Never>) {
+        self.continuation = continuation
+    }
+
+    func append(_ piece: RenderedAudio) {
+        lock.lock()
+        defer { lock.unlock() }
+        collected.append(contentsOf: piece.buffers)
+    }
+
+    func finish() {
+        lock.lock()
+        defer { lock.unlock() }
+        let finished = collected
+        collected = []
+        continuation?.resume(returning: RenderedAudio(buffers: finished))
+        continuation = nil
     }
 }

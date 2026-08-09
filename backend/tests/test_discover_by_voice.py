@@ -4,7 +4,8 @@ from sqlalchemy import select
 
 from audioreader.commands import service
 from audioreader.commands.intents import Action
-from audioreader.feeds.discovery import DiscoveredFeed, find_feed_by_name
+from audioreader.feeds.discovery import DiscoveredFeed, find_feed_by_name, substack_guesses
+from audioreader.feeds.search import loosely_identifies
 from audioreader.llm.client import LLMError
 from audioreader.llm.fake import FakeLLMClient
 from audioreader.models import Feed
@@ -30,6 +31,59 @@ def candidates(*urls: str, publication: str = "Notes on Progress") -> dict:
 
 def subscribe_decision(query: str) -> dict:
     return {"action": "subscribe", "search_query": query, "spoken_response": ""}
+
+
+class TestLooseIdentification:
+    def test_names_glued_into_domains_match(self):
+        assert loosely_identifies(
+            "liam halligan's substack",
+            "When The Facts Change https://liamhalligan.substack.com/feed",
+        )
+
+    def test_unrelated_names_do_not_match(self):
+        assert not loosely_identifies(
+            "completely different name",
+            "When The Facts Change https://liamhalligan.substack.com/feed",
+        )
+
+    def test_all_filler_matches_nothing(self):
+        assert not loosely_identifies("the substack", "anything at all")
+
+
+class TestSubstackGuess:
+    def test_guesses_built_from_meaningful_words(self):
+        assert substack_guesses("liam halligan's substack") == [
+            "https://liamhalligan.substack.com/feed",
+            "https://liam-halligan.substack.com/feed",
+        ]
+        # No "substack" spoken: no reason to guess.
+        assert substack_guesses("the rest is history") == []
+
+    async def test_substack_phrasing_skips_the_model_entirely(self, respx_mock, article_xml):
+        xml = article_xml.replace(b"Notes on Progress", b"When The Facts Change")
+        respx_mock.get("https://liamhalligan.substack.com/feed").respond(
+            content=xml, content_type="application/rss+xml"
+        )
+        llm = FakeLLMClient()  # would raise if consulted
+
+        found = await find_feed_by_name("liam halligan's substack", llm)
+
+        assert found is not None
+        assert found.feed_url == "https://liamhalligan.substack.com/feed"
+        assert found.title == "When The Facts Change"
+        assert llm.calls == []
+
+    async def test_wrong_guess_falls_through_to_the_model(self, respx_mock, article_xml):
+        # The guessed subdomain 404s; the model's candidate still wins.
+        respx_mock.get("https://notesonprogress.substack.com/feed").respond(status_code=404)
+        respx_mock.get("https://notes-on-progress.substack.com/feed").respond(status_code=404)
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+        llm = FakeLLMClient(candidates(FEED_URL))
+
+        found = await find_feed_by_name("notes on progress substack", llm)
+
+        assert found is not None
+        assert found.feed_url == FEED_URL
 
 
 class TestFindFeedByName:

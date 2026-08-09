@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from audioreader.feeds.fetcher import FeedFetchError, fetch_feed, fetch_feed_bytes
 from audioreader.feeds.parser import FeedParseError, ParsedFeed, parse_feed
-from audioreader.feeds.search import matches_name
+from audioreader.feeds.search import loosely_identifies, meaningful_words
 from audioreader.llm.client import LLMClient, LLMError
 
 logger = logging.getLogger(__name__)
@@ -149,15 +149,43 @@ class DiscoveredFeed:
     title: str
 
 
+def substack_guesses(query: str) -> list[str]:
+    """Candidate Substack URLs for a name spoken with the word "substack".
+
+    "Liam Halligan's substack" is liamhalligan.substack.com — guessing the
+    subdomain directly resolves the most common request in about a second,
+    with no model call at all. Wrong guesses cost one failed fetch; every
+    guess still goes through fetch, parse and name verification.
+    """
+    words = meaningful_words(query)
+    if "substack" not in query.casefold() or not words:
+        return []
+    slugs = ["".join(words)]
+    if len(words) > 1:
+        slugs.append("-".join(words))
+    return [f"https://{slug}.substack.com/feed" for slug in slugs]
+
+
 async def find_feed_by_name(query: str, llm: LLMClient) -> DiscoveredFeed | None:
     """A verified feed for a spoken publication name, or None.
 
-    Every candidate the model proposes is fetched and parsed, and the feed is
-    accepted only when what she said matches its title (or the model's
-    canonical name for it, for feeds titled quirkily). Two attempts: the
+    Every candidate — guessed or model-proposed — is fetched and parsed, and
+    the feed is accepted only when what she said identifies it (its title,
+    the model's canonical name for it, or its URL). Two model attempts: the
     second reports the failed URLs so the model searches differently.
     """
     tried: list[str] = []
+    # Deterministic guesses first: cheap, instant, and they cover the
+    # "so-and-so's substack" phrasing that directories never know.
+    for guess in substack_guesses(query):
+        tried.append(guess)
+        try:
+            feed_url, parsed = await resolve_feed(guess)
+        except (FeedFetchError, FeedParseError):
+            continue
+        if loosely_identifies(query, f"{parsed.title} {feed_url}"):
+            return DiscoveredFeed(feed_url=feed_url, title=parsed.title)
+
     for _attempt in range(2):
         prompt = f'She said: "{query}"'
         if tried:
@@ -187,9 +215,10 @@ async def find_feed_by_name(query: str, llm: LLMClient) -> DiscoveredFeed | None
             except (FeedFetchError, FeedParseError):
                 continue
             # The guard against a confidently wrong model: the feed counts
-            # only if what she said identifies it.
+            # only if what she said identifies it. Loose matching, because
+            # names appear glued together in URLs ("liamhalligan").
             haystack = f"{parsed.title} {candidates.publication} {feed_url}"
-            if matches_name(query, haystack):
+            if loosely_identifies(query, haystack):
                 return DiscoveredFeed(feed_url=feed_url, title=parsed.title)
             logger.info(
                 "discovery candidate %s (%r) does not match %r", feed_url, parsed.title, query

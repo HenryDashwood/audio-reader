@@ -55,6 +55,10 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
     func command(transcript: String) async throws -> CommandResponse {
         var request = URLRequest(url: baseURL.appendingPathComponent("command"))
         request.httpMethod = "POST"
+        // Finding an unknown blog's feed is deliberately slow and thorough on
+        // the backend (web search, verification); the default 60s would give
+        // up on exactly the requests that need the time.
+        request.timeoutInterval = 300
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["transcript": transcript])
         return try await send(request)

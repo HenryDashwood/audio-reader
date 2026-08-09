@@ -84,6 +84,35 @@ def matches_name(spoken: str, name: str) -> bool:
     return bool(words) and words <= _tokens(name)
 
 
+def meaningful_words(spoken: str) -> list[str]:
+    """The words that identify a publication, in spoken order.
+
+    Filler, genre words ("substack", "blog") and possessive fragments ("s"
+    from "Halligan's") are dropped: they say what kind of thing it is, never
+    which one.
+    """
+    return [
+        word
+        for word in _normalise(spoken).split()
+        if len(word) > 1 and word not in _FILLER and word not in _GENERIC_PUBLICATION_WORDS
+    ]
+
+
+def loosely_identifies(spoken: str, haystack: str) -> bool:
+    """Does what she said identify this publication?
+
+    Looser than matches_name, for web discovery where the identifying text
+    includes URLs: words there are glued together ("liam halligan" appears as
+    "liamhalligan.substack.com"), so each meaningful spoken word need only
+    appear as a substring of the squashed haystack.
+    """
+    words = meaningful_words(spoken)
+    if not words:
+        return False
+    squashed = _normalise(haystack).replace(" ", "")
+    return all(word in squashed for word in words)
+
+
 def _is_relevant(match: PodcastMatch, query: str) -> bool:
     """Guard against confidently wrong matches.
 
@@ -111,3 +140,6 @@ def _normalise(value: str) -> str:
 
 #: Words she is likely to say that carry no identifying information.
 _FILLER = {"the", "a", "an", "podcast", "show", "to", "and", "of", "please"}
+
+#: Words that describe what kind of publication it is, not which one.
+_GENERIC_PUBLICATION_WORDS = {"substack", "blog", "newsletter", "magazine", "site", "website"}

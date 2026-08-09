@@ -28,6 +28,22 @@ struct HearfulShortcuts: AppShortcutsProvider {
             systemImageName: "play.circle"
         )
         AppShortcut(
+            intent: SubscribeIntent(),
+            phrases: [
+                // All parameterless: the show's name is free text, which Siri
+                // cannot match inside a phrase — it arrives via the intent's
+                // follow-up question instead.
+                "Subscribe on \(.applicationName)",
+                "Subscribe to a show on \(.applicationName)",
+                "Subscribe to a podcast on \(.applicationName)",
+                "Follow a show on \(.applicationName)",
+                "Add a show on \(.applicationName)",
+                "Add a podcast on \(.applicationName)",
+            ],
+            shortTitle: "Subscribe",
+            systemImageName: "plus.circle"
+        )
+        AppShortcut(
             intent: PlayEpisodeIntent(),
             phrases: [
                 // Parameterless first. Siri can only match a spoken parameter
