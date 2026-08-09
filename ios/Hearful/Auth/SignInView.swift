@@ -36,7 +36,15 @@ struct SignInView: View {
             .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
             .frame(height: 56)
             .padding(.horizontal, 32)
-            .padding(.bottom, 48)
+
+            #if DEBUG
+                Button("Continue without account (dev)") {
+                    auth.continueWithoutAccount()
+                }
+                .padding(.top, 8)
+            #endif
+
+            Spacer().frame(height: 48)
         }
     }
 }

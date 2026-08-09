@@ -13,6 +13,7 @@ enum Event: Equatable {
     case prepared(Int)
     case played(Int)
     case cue(Cue)
+    case rateSet(Float)
 }
 
 @MainActor
@@ -69,6 +70,12 @@ final class FakePlayer: AudioPlaying {
     }
     func skip(by seconds: TimeInterval) {
         recorder.events.append(.skipped(seconds))
+    }
+
+    var playbackRate: Float = 1.0
+    func setPlaybackRate(_ rate: Float) {
+        playbackRate = rate
+        recorder.events.append(.rateSet(rate))
     }
 }
 
@@ -199,6 +206,55 @@ struct VoiceControllerTests {
         await controller.beginCommand()
 
         #expect(recorder.events.contains(.cue(.listening)))
+    }
+
+    @Test func fasterNudgesTheRateLocally() async {
+        let speech = FakeSpeech()
+        speech.transcript = "faster"
+        let (controller, recorder, _, api, player) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.contains(.rateSet(1.25)))
+        #expect(player.playbackRate == 1.25)
+        #expect(api.transcripts.isEmpty)  // never left the phone
+    }
+
+    @Test func fasterStopsAtTheCeiling() async {
+        let speech = FakeSpeech()
+        speech.transcript = "faster"
+        let (controller, _, _, _, player) = makeController(speech: speech)
+        player.playbackRate = 2.0
+
+        await controller.beginCommand()
+
+        #expect(player.playbackRate == 2.0)
+    }
+
+    @Test func normalSpeedResetsTheRate() async {
+        let speech = FakeSpeech()
+        speech.transcript = "normal speed"
+        let (controller, _, _, _, player) = makeController(speech: speech)
+        player.playbackRate = 1.75
+
+        await controller.beginCommand()
+
+        #expect(player.playbackRate == 1.0)
+    }
+
+    @Test func backendSetSpeedIsAppliedAndConfirmed() async {
+        // "play at one and a half speed" is not a local phrase; the model
+        // resolves it and the app applies the multiplier it sends back.
+        let speech = FakeSpeech()
+        speech.transcript = "play at one and a half speed"
+        let (controller, recorder, _, api, player) = makeController(speech: speech)
+        api.response = CommandResponse(
+            action: .setSpeed, spokenResponse: "1.5 times speed.", episode: nil, speed: 1.5)
+
+        await controller.beginCommand()
+
+        #expect(player.playbackRate == 1.5)
+        #expect(recorder.spoken == ["1.5 times speed."])
     }
 
     @Test func pausesPlaybackBeforeListening() async {

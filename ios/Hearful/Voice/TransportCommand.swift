@@ -11,6 +11,9 @@ enum TransportCommand: Equatable {
     case resume
     case skipForward
     case skipBack
+    case faster
+    case slower
+    case normalSpeed
 
     /// Returns a command only when the whole utterance is that command.
     ///
@@ -38,6 +41,18 @@ enum TransportCommand: Equatable {
         "go back": .skipBack, "back": .skipBack, "rewind": .skipBack,
         "say that again": .skipBack, "repeat that": .skipBack, "repeat": .skipBack,
         "what was that": .skipBack, "go back a bit": .skipBack,
+
+        // Relative speed nudges resolve locally; absolute requests like
+        // "play at one and a half speed" go to the model instead.
+        // "speed it up" also lands here: normalise strips "it".
+        "faster": .faster, "speed up": .faster, "quicker": .faster,
+        "go faster": .faster, "too slow": .faster,
+
+        "slower": .slower, "slow down": .slower, "not so fast": .slower,
+        "too fast": .slower,
+
+        "normal speed": .normalSpeed, "regular speed": .normalSpeed,
+        "usual speed": .normalSpeed, "ordinary speed": .normalSpeed,
     ]
 
     /// Strips politeness and filler so "can you pause please" still counts.

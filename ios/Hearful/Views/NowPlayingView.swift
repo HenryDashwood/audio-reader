@@ -11,7 +11,7 @@ struct NowPlayingView: View {
         VStack(spacing: 28) {
             Capsule().fill(.secondary.opacity(0.4)).frame(width: 40, height: 5).padding(.top, 8)
 
-            Artwork(url: nil, size: 260)
+            Artwork(url: player.currentEpisode?.imageURL, size: 260)
                 .shadow(radius: 12, y: 6)
                 .padding(.top, 12)
 
@@ -23,6 +23,7 @@ struct NowPlayingView: View {
 
             scrubber
             transport
+            speedControl
 
             Spacer(minLength: 0)
         }
@@ -80,6 +81,41 @@ struct NowPlayingView: View {
         }
         .disabled(player.currentEpisode == nil)
     }
+
+    private var speedControl: some View {
+        Menu {
+            ForEach(AudioPlayer.playbackRates, id: \.self) { rate in
+                Button {
+                    player.setPlaybackRate(rate)
+                } label: {
+                    if rate == player.playbackRate {
+                        Label(speedLabel(rate), systemImage: "checkmark")
+                    } else {
+                        Text(speedLabel(rate))
+                    }
+                }
+            }
+        } label: {
+            Text(speedLabel(player.playbackRate))
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(.quaternary, in: Capsule())
+        }
+        .accessibilityLabel("Playback speed")
+        .accessibilityValue(spokenSpeed(player.playbackRate))
+    }
+
+    private func speedLabel(_ rate: Float) -> String {
+        // "1×", "1.5×" — trailing zeros stripped so the chip stays narrow.
+        let number = rate.truncatingRemainder(dividingBy: 1) == 0
+            ? String(Int(rate)) : String(format: "%g", rate)
+        return "\(number)×"
+    }
+
+    private func spokenSpeed(_ rate: Float) -> String {
+        rate == 1 ? "Normal speed" : "\(String(format: "%g", rate)) times speed"
+    }
 }
 
 /// The bar above the tab bar. Tapping it opens the full player.
@@ -90,7 +126,7 @@ struct MiniPlayer: View {
     var body: some View {
         if let episode = player.currentEpisode {
             HStack(spacing: 12) {
-                Artwork(url: nil, size: 40)
+                Artwork(url: episode.imageURL, size: 40)
                 Text(episode.title).font(.subheadline).lineLimit(1)
                 Spacer(minLength: 4)
                 Button { player.toggle() } label: {

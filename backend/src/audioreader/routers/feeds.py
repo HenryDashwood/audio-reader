@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from audioreader import positions
 from audioreader.auth.dependencies import get_current_user
@@ -12,7 +13,7 @@ from audioreader.feeds import service
 from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.models import Episode, Feed, Subscription, User
-from audioreader.schemas import EpisodeRead, FeedCreate, FeedRead, PositionUpdate
+from audioreader.schemas import EpisodeRead, FeedCreate, FeedRead, PositionUpdate, secure_url
 
 router = APIRouter(prefix="/feeds", tags=["feeds"])
 
@@ -31,14 +32,21 @@ def _to_feed_read(feed: Feed, episode_count: int) -> FeedRead:
     )
 
 
-async def _episodes_read(
+async def episodes_read(
     session: AsyncSession, user: User, episodes: Sequence[Episode]
 ) -> list[EpisodeRead]:
-    """Episode payloads with the user's playback position folded in."""
+    """Episode payloads with the user's playback position and artwork folded in.
+
+    Callers must load each episode's feed eagerly (joinedload): the artwork
+    fallback reads episode.feed, and a lazy load inside an async request is an
+    error, not a query.
+    """
     stored = await positions.positions_for(session, user, (episode.id for episode in episodes))
     reads = []
     for episode in episodes:
         read = EpisodeRead.model_validate(episode)
+        # Item-level artwork is the exception; most feeds only set show art.
+        read.image_url = secure_url(episode.image_url or episode.feed.image_url)
         if (position := stored.get(episode.id)) is not None:
             read.position_seconds = position.position_seconds
             read.completed = position.completed
@@ -95,12 +103,13 @@ async def list_episodes(
     episodes = (
         await session.scalars(
             select(Episode)
+            .options(joinedload(Episode.feed))
             .where(Episode.feed_id == feed_id)
             .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
             .limit(limit)
         )
     ).all()
-    return await _episodes_read(session, user, episodes)
+    return await episodes_read(session, user, episodes)
 
 
 episodes_router = APIRouter(prefix="/episodes", tags=["episodes"])
@@ -118,13 +127,14 @@ async def recent_episodes(
     episodes = (
         await session.scalars(
             select(Episode)
+            .options(joinedload(Episode.feed))
             .join(Subscription, Subscription.feed_id == Episode.feed_id)
             .where(Subscription.user_id == user.id, Episode.audio_url.is_not(None))
             .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
             .limit(limit)
         )
     ).all()
-    return await _episodes_read(session, user, episodes)
+    return await episodes_read(session, user, episodes)
 
 
 @episodes_router.get("/{episode_id}")
@@ -133,10 +143,10 @@ async def get_episode(episode_id: int, session: Session, user: CurrentUser) -> E
     earlier, so it must work without any of the surrounding context — the
     user's token is required, but a subscription is deliberately not: the
     entity may be from a feed she has since unsubscribed from."""
-    episode = await session.get(Episode, episode_id)
+    episode = await session.get(Episode, episode_id, options=[joinedload(Episode.feed)])
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
-    return (await _episodes_read(session, user, [episode]))[0]
+    return (await episodes_read(session, user, [episode]))[0]
 
 
 @episodes_router.put("/{episode_id}/position", status_code=204)

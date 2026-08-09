@@ -1,5 +1,6 @@
 import AVFoundation
 import MediaPlayer
+import UIKit
 
 /// Streams episode audio, publishes it to the lock screen, and exposes enough
 /// state for a UI to draw a scrubber.
@@ -16,6 +17,10 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     /// True while the user is dragging the scrubber, so the ticking clock does
     /// not fight the thumb they are holding.
     @Published var isScrubbing = false
+    @Published private(set) var playbackRate: Float = 1.0
+
+    static let playbackRates: [Float] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+    private static let rateKey = "HearfulPlaybackRate"
 
     private let player = AVPlayer()
     private var timeObserver: Any?
@@ -28,9 +33,24 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
 
     override init() {
         super.init()
+        let stored = UserDefaults.standard.float(forKey: Self.rateKey)
+        playbackRate = stored > 0 ? stored : 1.0
+        // defaultRate makes every play()/resume() come back at her speed
+        // without each call site having to remember it.
+        player.defaultRate = playbackRate
         wireRemoteCommands()
         observeTime()
         observePlaybackState()
+    }
+
+    /// Sets how fast episodes play, remembered across launches and episodes.
+    func setPlaybackRate(_ rate: Float) {
+        let clamped = min(max(rate, 0.5), 3.0)
+        playbackRate = clamped
+        UserDefaults.standard.set(clamped, forKey: Self.rateKey)
+        player.defaultRate = clamped
+        if isPlaying { player.rate = clamped }
+        updateNowPlayingPosition()
     }
 
     // MARK: - Playback
@@ -86,6 +106,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
 
     private func replaceItem(url: URL, episode: Episode) {
         let item = AVPlayerItem(url: url)
+        // timeDomain keeps speech natural at raised speeds; the default
+        // algorithm turns 1.5x podcasts into chipmunks-adjacent audio.
+        item.audioTimePitchAlgorithm = .timeDomain
         player.replaceCurrentItem(with: item)
         currentEpisode = episode
         currentTime = 0
@@ -174,12 +197,29 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        publishArtwork(for: episode)
+    }
+
+    /// Fetched after the text is already up: the lock screen should never
+    /// wait on an image, and a failed fetch just leaves the placeholder.
+    private func publishArtwork(for episode: Episode) {
+        guard let url = episode.imageURL else { return }
+        Task { [weak self] in
+            guard let (data, _) = try? await URLSession.shared.data(from: url),
+                let image = UIImage(data: data)
+            else { return }
+            guard self?.currentEpisode?.id == episode.id else { return }  // she moved on
+            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+            info[MPMediaItemPropertyArtwork] = artwork
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        }
     }
 
     private func updateNowPlayingPosition() {
         var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
-        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(playbackRate) : 0.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 

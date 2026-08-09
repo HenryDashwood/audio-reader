@@ -58,6 +58,9 @@ class EpisodeRead(BaseModel):
     duration_seconds: int | None
     published_at: datetime | None
     link: str | None
+    # Per-episode artwork; the routers fall back to the show's artwork when
+    # the feed does not provide item-level images.
+    image_url: str | None = None
     # The requesting user's playback position, filled in by the routers from
     # playback_positions; None means never played.
     position_seconds: float | None = None
@@ -68,7 +71,7 @@ class EpisodeRead(BaseModel):
     def plain_text(cls, value: str | None) -> str | None:
         return strip_html(value) if value else value
 
-    @field_validator("audio_url")
+    @field_validator("audio_url", "image_url")
     @classmethod
     def https_only(cls, value: str | None) -> str | None:
         return secure_url(value)
@@ -119,3 +122,5 @@ class CommandResponse(BaseModel):
     action: str
     spoken_response: str
     episode: EpisodeRead | None = None
+    # For set_speed: the playback rate multiplier the app should apply.
+    speed: float | None = None

@@ -51,6 +51,15 @@ class TestPodcastFeed:
         # so re-polling the feed does not duplicate episodes.
         assert parse_feed(podcast_xml).items[2].guid == "https://example.com/historyhour/trailer-4"
 
+    def test_item_level_artwork_is_captured(self, podcast_xml):
+        assert parse_feed(podcast_xml).items[0].image_url == (
+            "https://example.com/historyhour/ep103.jpg"
+        )
+
+    def test_item_without_artwork_is_none(self, podcast_xml):
+        # No item-level image: the API falls back to the show's artwork.
+        assert parse_feed(podcast_xml).items[1].image_url is None
+
 
 class TestArticleFeed:
     def test_items_have_no_audio(self, article_xml):

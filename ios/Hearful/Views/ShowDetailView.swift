@@ -50,6 +50,7 @@ struct EpisodeRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            Artwork(url: episode.imageURL, size: 56)
             VStack(alignment: .leading, spacing: 4) {
                 Text(episode.title)
                     .font(.body.weight(isCurrent ? .semibold : .regular))

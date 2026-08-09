@@ -17,12 +17,14 @@ protocol Speaking {
 @MainActor
 protocol AudioPlaying {
     var isPlaying: Bool { get }
+    var playbackRate: Float { get }
     /// Starts buffering without playing, so the wait overlaps the confirmation.
     func prepare(_ episode: Episode)
     func play(_ episode: Episode) throws
     func pause()
     func resume()
     func skip(by seconds: TimeInterval)
+    func setPlaybackRate(_ rate: Float)
 }
 
 enum VoiceState: Equatable {
@@ -112,6 +114,10 @@ final class VoiceController: ObservableObject {
         case .resume: player.resume()
         case .skipForward: player.skip(by: 30)
         case .skipBack: player.skip(by: -15)
+        // Quarter steps: enough to notice, small enough to nudge repeatedly.
+        case .faster: player.setPlaybackRate(min(player.playbackRate + 0.25, 2.0))
+        case .slower: player.setPlaybackRate(max(player.playbackRate - 0.25, 0.5))
+        case .normalSpeed: player.setPlaybackRate(1.0)
         }
         state = .idle
     }
@@ -127,6 +133,16 @@ final class VoiceController: ObservableObject {
     private func handle(_ response: CommandResponse) async {
         switch response.action {
         case .unknown:
+            await finish(saying: response.spokenResponse)
+
+        case .setSpeed:
+            guard let speed = response.speed else {
+                await finish(saying: response.spokenResponse)
+                return
+            }
+            player.setPlaybackRate(Float(speed))
+            // Confirm aloud: playback is paused while she speaks, so unlike
+            // pause/skip there is no audible change to hear yet.
             await finish(saying: response.spokenResponse)
 
         case .playEpisode:

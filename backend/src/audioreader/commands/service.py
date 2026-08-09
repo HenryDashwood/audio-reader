@@ -39,6 +39,10 @@ to. Decide what she wants and reply with the matching action.
 - Choose unsubscribe when she wants to stop following a show she already has
   ("unsubscribe from", "remove", "stop following", "get rid of"). Put just the
   show's name in search_query, and leave spoken_response empty.
+- Choose set_speed when she asks for a playback speed ("one and a half times",
+  "play at double speed", "half speed", "normal speed"). Put the multiplier in
+  speed: "double" is 2, "normal" is 1, "half" is 0.5. Sensible values are 0.5
+  to 3. Leave spoken_response empty: the app confirms the speed itself.
 - Choose unknown when nothing matches, or when several episodes match equally
   well and guessing would be worse than asking.
 - episode_id must be copied exactly from the list. Never invent one.
@@ -122,6 +126,9 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User) -> 
     if decision.action is Action.UNSUBSCRIBE:
         return await _unsubscribe(session, decision.search_query, user)
 
+    if decision.action is Action.SET_SPEED:
+        return _set_speed(decision.speed)
+
     if decision.action is not Action.PLAY_EPISODE:
         return InterpretResult(action=Action.UNKNOWN, spoken_response=decision.spoken_response)
 
@@ -136,7 +143,8 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User) -> 
         logger.warning("model chose episode_id %r, which was not offered", decision.episode_id)
         return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
 
-    episode = await session.get(Episode, decision.episode_id)
+    # Feed loaded eagerly: the router folds show artwork into the response.
+    episode = await session.get(Episode, decision.episode_id, options=[joinedload(Episode.feed)])
     if episode is None:
         return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
 
@@ -145,6 +153,31 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User) -> 
         spoken_response=decision.spoken_response,
         episode=episode,
     )
+
+
+def _set_speed(speed: float | None) -> InterpretResult:
+    """Hand a validated multiplier to the app; the phone applies it."""
+    if speed is None or not (0.5 <= speed <= 3.0):
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response="What speed would you like? Between half and triple speed works.",
+        )
+    # Round to the nearest quarter: the model can produce 1.499999, and "one
+    # point five times speed" must never be read out as anything stranger.
+    speed = round(speed * 4) / 4
+    return InterpretResult(
+        action=Action.SET_SPEED,
+        spoken_response=f"{_spoken_speed(speed)} speed.",
+        speed=speed,
+    )
+
+
+def _spoken_speed(speed: float) -> str:
+    if speed == 1:
+        return "Normal"
+    if speed == int(speed):
+        return f"{int(speed)} times"
+    return f"{speed:g} times"
 
 
 async def _subscribe(session: AsyncSession, query: str | None, user: User) -> InterpretResult:

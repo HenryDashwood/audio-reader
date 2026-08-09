@@ -24,6 +24,7 @@ class ParsedItem(BaseModel):
     duration_seconds: int | None = None
     published_at: datetime | None = None
     link: str | None = None
+    image_url: str | None = None
 
 
 class ParsedFeed(BaseModel):
@@ -68,6 +69,8 @@ def _parse_entry(entry: feedparser.util.FeedParserDict) -> ParsedItem | None:
         duration_seconds=_parse_duration(entry.get("itunes_duration")),
         published_at=_published_at(entry),
         link=entry.get("link"),
+        # feedparser maps a per-item <itunes:image href=…> to entry.image.href.
+        image_url=(entry.get("image") or {}).get("href"),
     )
 
 

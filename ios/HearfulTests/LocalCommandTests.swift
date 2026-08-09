@@ -32,6 +32,24 @@ struct LocalCommandTests {
         #expect(TransportCommand.match(transcript) == .skipBack)
     }
 
+    @Test(arguments: [
+        "faster", "speed up", "speed it up", "quicker", "go faster", "too slow",
+        "can you go faster please",
+    ])
+    func recognisesFaster(_ transcript: String) {
+        #expect(TransportCommand.match(transcript) == .faster)
+    }
+
+    @Test(arguments: ["slower", "slow down", "slow it down", "not so fast", "too fast"])
+    func recognisesSlower(_ transcript: String) {
+        #expect(TransportCommand.match(transcript) == .slower)
+    }
+
+    @Test(arguments: ["normal speed", "regular speed", "usual speed"])
+    func recognisesNormalSpeed(_ transcript: String) {
+        #expect(TransportCommand.match(transcript) == .normalSpeed)
+    }
+
     // The dangerous direction: a false match here would break the whole app,
     // turning a real request into a silent transport nudge.
     @Test(arguments: [
@@ -43,6 +61,8 @@ struct LocalCommandTests {
         "stop playing joe rogan and put on in our time",
         "go back to the episode about Rome",
         "skip to the one with Annie Jacobsen",
+        "play at one and a half speed",
+        "double speed",
         "",
         "   ",
     ])

@@ -71,6 +71,20 @@ class TestListEpisodes:
         assert episode["duration_seconds"] == 3723
         assert episode["published_at"].startswith("2026-07-28")
 
+    async def test_episode_artwork_prefers_item_image(self, client, respx_mock, podcast_xml):
+        feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
+        episodes = (await client.get(f"/feeds/{feed_id}/episodes")).json()
+        # First item declares its own artwork; the others inherit the show's.
+        assert episodes[0]["image_url"] == "https://example.com/historyhour/ep103.jpg"
+        assert episodes[1]["image_url"] == "https://example.com/historyhour/cover.jpg"
+
+    async def test_episode_artwork_in_recent_and_single(self, client, respx_mock, podcast_xml):
+        await subscribe(client, respx_mock, podcast_xml)
+        recent = (await client.get("/episodes")).json()
+        assert recent[0]["image_url"] == "https://example.com/historyhour/ep103.jpg"
+        single = (await client.get(f"/episodes/{recent[0]['id']}")).json()
+        assert single["image_url"] == "https://example.com/historyhour/ep103.jpg"
+
     async def test_unknown_feed_is_404(self, client):
         response = await client.get("/feeds/999/episodes")
         assert response.status_code == 404

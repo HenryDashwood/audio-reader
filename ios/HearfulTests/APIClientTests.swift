@@ -290,6 +290,27 @@ struct AuthAndPositionTests {
             """
         let episode = try await makeClient(FakeTransport(json: json)).episode(id: 104)
         #expect(episode.positionSeconds == nil)
+        #expect(episode.imageURL == nil)
+    }
+
+    @Test func episodeDecodesArtwork() async throws {
+        let json = """
+            {"id":104,"title":"t","description":null,"audio_url":null,
+             "duration_seconds":null,"published_at":null,"link":null,
+             "image_url":"https://example.com/ep104.jpg"}
+            """
+        let episode = try await makeClient(FakeTransport(json: json)).episode(id: 104)
+        #expect(episode.imageURL?.absoluteString == "https://example.com/ep104.jpg")
+    }
+
+    @Test func commandDecodesSetSpeed() async throws {
+        let json = """
+            {"action":"set_speed","spoken_response":"1.5 times speed.",
+             "episode":null,"speed":1.5}
+            """
+        let result = try await makeClient(FakeTransport(json: json)).command(transcript: "faster")
+        #expect(result.action == .setSpeed)
+        #expect(result.speed == 1.5)
     }
 }
 

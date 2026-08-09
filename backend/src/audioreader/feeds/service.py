@@ -81,6 +81,7 @@ def new_episodes(parsed: ParsedFeed, known_guids: set[str]) -> list[Episode]:
                 duration_seconds=item.duration_seconds,
                 published_at=item.published_at,
                 link=item.link,
+                image_url=item.image_url,
             )
         )
     return episodes

@@ -2,6 +2,7 @@ import Foundation
 
 enum CommandAction: String, Decodable {
     case playEpisode = "play_episode"
+    case setSpeed = "set_speed"
     case unknown
 
     /// The backend can add actions faster than the app gets reinstalled on her
@@ -22,6 +23,9 @@ struct Episode: Decodable, Equatable, Identifiable {
     let durationSeconds: Int?
     let publishedAt: Date?
     let link: URL?
+    /// Episode artwork; the backend falls back to the show's artwork, so this
+    /// is only nil for feeds with no images at all.
+    var imageURL: URL?
     /// This listener's saved playback position; nil when never played.
     /// Optional so payloads from before the field existed still decode.
     var positionSeconds: Double?
@@ -32,6 +36,7 @@ struct Episode: Decodable, Equatable, Identifiable {
         case audioURL = "audio_url"
         case durationSeconds = "duration_seconds"
         case publishedAt = "published_at"
+        case imageURL = "image_url"
         case positionSeconds = "position_seconds"
     }
 }
@@ -40,9 +45,11 @@ struct CommandResponse: Decodable {
     let action: CommandAction
     let spokenResponse: String
     let episode: Episode?
+    /// For setSpeed: the playback rate multiplier to apply.
+    var speed: Double?
 
     enum CodingKeys: String, CodingKey {
-        case action, episode
+        case action, episode, speed
         case spokenResponse = "spoken_response"
     }
 }

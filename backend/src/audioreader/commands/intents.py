@@ -13,6 +13,7 @@ class Action(StrEnum):
     PLAY_EPISODE = "play_episode"
     SUBSCRIBE = "subscribe"
     UNSUBSCRIBE = "unsubscribe"
+    SET_SPEED = "set_speed"
     # Outcome actions, produced by us rather than chosen by the model.
     SUBSCRIBED = "subscribed"
     UNSUBSCRIBED = "unsubscribed"
@@ -24,6 +25,7 @@ MODEL_ACTIONS = (
     Action.PLAY_EPISODE,
     Action.SUBSCRIBE,
     Action.UNSUBSCRIBE,
+    Action.SET_SPEED,
     Action.UNKNOWN,
 )
 
@@ -33,7 +35,7 @@ class ModelDecision(BaseModel):
 
     episode_id is only meaningful for PLAY_EPISODE, and is always checked
     against the candidate list before we act on it. search_query is only
-    meaningful for SUBSCRIBE.
+    meaningful for SUBSCRIBE. speed is only meaningful for SET_SPEED.
     """
 
     action: Action
@@ -41,6 +43,11 @@ class ModelDecision(BaseModel):
     search_query: str | None = Field(
         default=None,
         description="For subscribe: the show's name as she said it, nothing else.",
+    )
+    speed: float | None = Field(
+        default=None,
+        description="For set_speed: the playback rate multiplier, e.g. 1.5 for"
+        " one and a half times normal speed.",
     )
     spoken_response: str = Field(
         description="One short sentence to read aloud, naming the episode if one was chosen."
@@ -64,3 +71,4 @@ class InterpretResult:
     action: Action
     spoken_response: str
     episode: Episode | None = None
+    speed: float | None = None

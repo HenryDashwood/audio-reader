@@ -50,6 +50,7 @@ class Episode(Base):
     duration_seconds: Mapped[int | None]
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     link: Mapped[str | None]
+    image_url: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     feed: Mapped[Feed] = relationship(back_populates="episodes")
