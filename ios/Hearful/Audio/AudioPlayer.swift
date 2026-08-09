@@ -82,7 +82,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
             replaceItem(url: url, episode: episode)
         }
         player.play()
-        publishNowPlaying(episode)
+        updateNowPlayingPosition()
     }
 
     func pause() {
@@ -138,8 +138,14 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                 if resumeAt > 5, resumeAt < self.duration - 10 {
                     self.seek(to: resumeAt)
                 }
+                // The asset's real duration replaces the feed's estimate.
+                self.updateNowPlayingPosition()
             }
         }
+        // Published on load, not on play: an episode restored at launch and
+        // started from the mini player or the lock screen must carry its
+        // title and artwork too, not just working buttons.
+        publishNowPlaying(episode)
     }
 
     // MARK: - Observation
@@ -162,7 +168,11 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         // invalidates itself immediately and isPlaying never updates.
         playbackStateObservation = player.observe(\.timeControlStatus) { [weak self] player, _ in
             Task { @MainActor in
-                self?.isPlaying = player.timeControlStatus == .playing
+                guard let self else { return }
+                self.isPlaying = player.timeControlStatus == .playing
+                // Keep the lock screen's clock in step: it ticks on its own
+                // from the published rate, not from our elapsed-time updates.
+                self.updateNowPlayingPosition()
             }
         }
     }
@@ -201,11 +211,14 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     }
 
     private func publishNowPlaying(_ episode: Episode) {
-        var info: [String: Any] = [MPMediaItemPropertyTitle: episode.title]
-        if let duration = episode.durationSeconds {
-            info[MPMediaItemPropertyPlaybackDuration] = Double(duration)
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: episode.title,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? Double(playbackRate) : 0.0,
+        ]
+        if duration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
         }
-        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         publishArtwork(for: episode)
     }
@@ -219,7 +232,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                 let image = UIImage(data: data)
             else { return }
             guard self?.currentEpisode?.id == episode.id else { return }  // she moved on
-            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            // @Sendable, not main-actor: MediaPlayer renders the artwork on
+            // its own queue, and a main-actor closure traps when it does.
+            let artwork = MPMediaItemArtwork(boundsSize: image.size) { @Sendable _ in image }
             var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
             info[MPMediaItemPropertyArtwork] = artwork
             MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -230,6 +245,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(playbackRate) : 0.0
+        if duration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
