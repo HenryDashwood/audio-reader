@@ -17,12 +17,9 @@ enum PlaybackRestore {
     /// position, which may have moved on another device since last launch.
     static func restore(
         api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
-        player: AudioPlayer? = nil,
+        player: AudioPlayer = .shared,
         defaults: UserDefaults = .standard
     ) async {
-        // Defaulted here, not in the signature: default arguments evaluate
-        // outside the main actor, where AudioPlayer.shared is off limits.
-        let player = player ?? .shared
         guard player.currentEpisode == nil else { return }
         let id = defaults.integer(forKey: lastEpisodeKey)
         guard id > 0 else { return }

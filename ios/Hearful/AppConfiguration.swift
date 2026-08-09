@@ -1,6 +1,8 @@
 import Foundation
 
-enum AppConfiguration {
+/// nonisolated: read by App Intents off the main actor; UserDefaults and
+/// ProcessInfo are both thread-safe.
+nonisolated enum AppConfiguration {
     /// The deployed backend. Being the default means a fresh install works
     /// with no configuration — which matters because the person using this
     /// cannot be talked through setting a server address.

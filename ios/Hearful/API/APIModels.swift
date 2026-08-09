@@ -1,6 +1,6 @@
 import Foundation
 
-enum CommandAction: String, Decodable {
+nonisolated enum CommandAction: String, Decodable {
     case playEpisode = "play_episode"
     case setSpeed = "set_speed"
     case unknown
@@ -15,7 +15,7 @@ enum CommandAction: String, Decodable {
     }
 }
 
-struct Episode: Decodable, Equatable, Identifiable {
+nonisolated struct Episode: Decodable, Equatable, Identifiable {
     let id: Int
     let title: String
     let description: String?
@@ -41,7 +41,7 @@ struct Episode: Decodable, Equatable, Identifiable {
     }
 }
 
-struct CommandResponse: Decodable {
+nonisolated struct CommandResponse: Decodable {
     let action: CommandAction
     let spokenResponse: String
     let episode: Episode?
@@ -56,7 +56,7 @@ struct CommandResponse: Decodable {
 
 /// Every failure carries something the app can say out loud. A silent failure
 /// or an error tone leaves a blind listener with no idea what happened.
-struct APIError: Error {
+nonisolated struct APIError: Error {
     let spokenResponse: String
     let underlying: String
     /// True for a 401: the session is dead, and the caller should suggest
@@ -78,7 +78,7 @@ struct APIError: Error {
 }
 
 /// Shape of the backend's 503 body, which carries a sentence meant to be read out.
-struct ErrorEnvelope: Decodable {
+nonisolated struct ErrorEnvelope: Decodable {
     struct Detail: Decodable {
         let spokenResponse: String?
 
@@ -90,12 +90,12 @@ struct ErrorEnvelope: Decodable {
 }
 
 /// Response to a successful sign-in: our own session token, never Apple's.
-struct AuthResponse: Decodable {
+nonisolated struct AuthResponse: Decodable {
     let token: String
     let user: UserInfo
 }
 
-struct UserInfo: Decodable, Equatable {
+nonisolated struct UserInfo: Decodable, Equatable {
     let id: String
     let displayName: String?
 
@@ -106,7 +106,7 @@ struct UserInfo: Decodable, Equatable {
 }
 
 /// Body of PUT /episodes/{id}/position.
-struct PositionUpdate: Encodable {
+nonisolated struct PositionUpdate: Encodable {
     let positionSeconds: Double
     let completed: Bool
 
@@ -117,7 +117,7 @@ struct PositionUpdate: Encodable {
 }
 
 /// A podcast the user subscribes to.
-struct Show: Decodable, Identifiable, Equatable, Hashable {
+nonisolated struct Show: Decodable, Identifiable, Equatable, Hashable {
     let id: Int
     let title: String
     let description: String?

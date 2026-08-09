@@ -7,7 +7,9 @@ import Security
 /// Accessibility is AfterFirstUnlock, not WhenUnlocked: App Intents run in
 /// this process from the lock screen ("Hey Siri, play the latest…"), and a
 /// WhenUnlocked item would make Siri fail whenever the phone is in a pocket.
-enum KeychainTokenStore {
+/// nonisolated: the Keychain is thread-safe and this is read from App Intents
+/// and network paths that must not hop to the main actor for a token.
+nonisolated enum KeychainTokenStore {
     private static let service = "com.henrydashwood.hearful"
     private static let account = "session-token"
 

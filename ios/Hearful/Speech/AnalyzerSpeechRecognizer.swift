@@ -53,38 +53,49 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         return try await collectTranscript(from: transcriber)
     }
 
+    /// Live transcription so far. On the actor rather than captured locals:
+    /// both racing tasks below must see one serialized copy, and Swift 6's
+    /// race checker rightly rejects sharing mutable captures between tasks.
+    private var finalised = ""
+    private var volatile = ""
+
     /// Reads results until she stops speaking. Each new phrase pushes the
     /// silence deadline out, so pausing mid-sentence does not cut her off.
     private func collectTranscript(from transcriber: SpeechTranscriber) async throws -> String {
-        var finalised = ""
-        var volatile = ""
+        finalised = ""
+        volatile = ""
 
-        return try await withThrowingTaskGroup(of: String?.self) { group in
-            group.addTask { @MainActor in
-                for try await result in transcriber.results {
-                    let text = String(result.text.characters)
-                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        self.hasHeardSpeech = true
-                    }
-                    if result.isFinal {
-                        finalised += text
-                        volatile = ""
-                    } else {
-                        volatile = text
-                    }
-                    self.restartSilenceTimer()
-                }
-                return finalised + volatile
-            }
-            group.addTask { @MainActor in
-                await self.waitForSilence()
-                return nil  // silence wins: return whatever we have so far
-            }
+        return try await withThrowingTaskGroup(of: String.self) { group in
+            group.addTask { try await self.readResults(from: transcriber) }
+            group.addTask { await self.silenceFallback() }
 
-            let first = try await group.next() ?? nil
+            guard let first = try await group.next() else { return "" }
             group.cancelAll()
-            return first ?? (finalised + volatile)
+            return first
         }
+    }
+
+    private func readResults(from transcriber: SpeechTranscriber) async throws -> String {
+        for try await result in transcriber.results {
+            let text = String(result.text.characters)
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                hasHeardSpeech = true
+            }
+            if result.isFinal {
+                finalised += text
+                volatile = ""
+            } else {
+                volatile = text
+            }
+            restartSilenceTimer()
+        }
+        return finalised + volatile
+    }
+
+    /// Silence wins the race: hand back whatever she has said so far.
+    private func silenceFallback() async -> String {
+        await waitForSilence()
+        return finalised + volatile
     }
 
     private func waitForSilence() async {

@@ -26,13 +26,9 @@ final class PositionReporter {
 
     init(
         api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
-        player: AudioPlayer? = nil
+        player: AudioPlayer = .shared
     ) {
-        // The default lives here rather than in the signature: default
-        // arguments are evaluated outside the main actor, where touching
-        // AudioPlayer.shared is an error in Swift 6 mode.
         self.api = api
-        let player = player ?? .shared
         self.player = player
 
         player.$currentEpisode

@@ -1,6 +1,8 @@
 import Foundation
 
-protocol HearfulAPIProtocol: Sendable {
+// The API layer is deliberately nonisolated: it holds no mutable state and is
+// called from App Intents and background tasks as well as the UI.
+nonisolated protocol HearfulAPIProtocol: Sendable {
     func command(transcript: String) async throws -> CommandResponse
     func episode(id: Int) async throws -> Episode
     func recentEpisodes(limit: Int) async throws -> [Episode]
@@ -15,19 +17,19 @@ protocol HearfulAPIProtocol: Sendable {
 extension Notification.Name {
     /// Posted whenever any request comes back 401: the stored session is dead
     /// (revoked, or wiped server-side) and the app should return to sign-in.
-    static let hearfulAuthRequired = Notification.Name("hearfulAuthRequired")
+    nonisolated static let hearfulAuthRequired = Notification.Name("hearfulAuthRequired")
 }
 
 /// The one thing HearfulAPI needs from the network. Injecting this rather than
 /// a URLSession keeps tests free of global stubbing state, which matters
 /// because the test runner executes them in parallel.
-protocol DataTransport: Sendable {
+nonisolated protocol DataTransport: Sendable {
     func data(for request: URLRequest) async throws -> (Data, URLResponse)
 }
 
 extension URLSession: DataTransport {}
 
-struct HearfulAPI: HearfulAPIProtocol {
+nonisolated struct HearfulAPI: HearfulAPIProtocol {
     let baseURL: URL
     let transport: DataTransport
 
@@ -169,11 +171,13 @@ struct HearfulAPI: HearfulAPIProtocol {
         return decoder
     }()
 
-    private static let fractionalFormatter: ISO8601DateFormatter = {
+    // nonisolated(unsafe) is honest here: ISO8601DateFormatter is documented
+    // thread-safe (unlike DateFormatter), the compiler just cannot know that.
+    private nonisolated(unsafe) static let fractionalFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
 
-    private static let plainFormatter = ISO8601DateFormatter()
+    private nonisolated(unsafe) static let plainFormatter = ISO8601DateFormatter()
 }
