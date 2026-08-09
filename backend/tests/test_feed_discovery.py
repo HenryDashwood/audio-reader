@@ -66,6 +66,25 @@ class TestSubscribeByHomepage:
 
         assert by_feed.json()["feed"]["id"] == by_homepage.json()["feed"]["id"]
 
+    async def test_relative_feed_links_resolve_against_the_redirected_host(
+        self, client, respx_mock, article_xml
+    ):
+        # astralcodexten.com redirects to www., and its '/feed' link only
+        # exists on the www host. The relative link must resolve against
+        # where the page actually came from, not what was typed.
+        apex = "https://acx.example.com"
+        www = "https://www.acx.example.com"
+        respx_mock.get(f"{apex}/").respond(status_code=301, headers={"Location": f"{www}/"})
+        respx_mock.get(f"{www}/").respond(content=HOMEPAGE, content_type="text/html")
+        respx_mock.get(f"{www}/feed").respond(
+            content=article_xml, content_type="application/rss+xml"
+        )
+
+        response = await client.post("/feeds", json={"url": apex})
+
+        assert response.status_code == 201
+        assert response.json()["url"] == f"{www}/feed"
+
     async def test_subscribing_twice_via_homepage_conflicts(self, client, respx_mock, article_xml):
         respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
         respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")

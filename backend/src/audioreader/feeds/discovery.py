@@ -18,7 +18,7 @@ from urllib.parse import urljoin
 
 from pydantic import BaseModel, Field, ValidationError
 
-from audioreader.feeds.fetcher import FeedFetchError, fetch_feed_bytes
+from audioreader.feeds.fetcher import FeedFetchError, fetch_feed, fetch_feed_bytes
 from audioreader.feeds.parser import FeedParseError, ParsedFeed, parse_feed
 from audioreader.feeds.search import matches_name
 from audioreader.llm.client import LLMClient, LLMError
@@ -84,7 +84,7 @@ async def resolve_feed(url: str) -> tuple[str, ParsedFeed]:
     Raises FeedFetchError when the URL itself is unreachable, FeedParseError
     when it is reachable but no feed can be found through it.
     """
-    raw = await fetch_feed_bytes(url)
+    raw, final_url = await fetch_feed(url)
     html = raw.decode("utf-8", errors="ignore")
     try:
         parsed = parse_feed(raw)
@@ -96,8 +96,11 @@ async def resolve_feed(url: str) -> tuple[str, ParsedFeed]:
     except FeedParseError:
         pass
 
-    candidates = feed_links_in_html(html, base_url=url)
-    candidates += [urljoin(url, path) for path in COMMON_FEED_PATHS]
+    # Candidates resolve against where the page actually came from, not what
+    # was typed: astralcodexten.com redirects to www., and its "/feed" link
+    # only exists on the www host.
+    candidates = feed_links_in_html(html, base_url=final_url)
+    candidates += [urljoin(final_url, path) for path in COMMON_FEED_PATHS]
 
     tried: set[str] = set()
     for candidate in candidates:
