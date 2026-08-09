@@ -28,12 +28,15 @@ struct LibraryView: View {
                     .accessibilityLabel("Ask for something to listen to")
                 }
             }
-            .searchable(text: $searchText, prompt: "Search for a podcast")
-            .onSubmit(of: .search) {
-                Task { await searchModel.search(for: searchText) }
-            }
+            // Always visible: the default placement hides the field until a
+            // pull-down, which is undiscoverable — especially by VoiceOver.
+            .searchable(
+                text: $searchText,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Search for a podcast")
+            .onSubmit(of: .search) { searchModel.searchNow(for: searchText) }
             .onChange(of: searchText) { _, text in
-                if text.isEmpty { searchModel.clear() }
+                searchModel.queryChanged(text)
             }
         }
         .task { await model.load() }
@@ -78,7 +81,7 @@ struct LibraryView: View {
         case .idle:
             ContentUnavailableView(
                 "Search every podcast", systemImage: "magnifyingglass",
-                description: Text("Tap Search to look up “\(searchText)”."))
+                description: Text("Results appear as you type."))
         case .searching:
             ProgressView("Searching…")
         case .failed(let message):
@@ -179,28 +182,64 @@ final class PodcastSearchModel: ObservableObject {
 
     @Published private(set) var state: State = .idle
     private let api: HearfulAPIProtocol
+    private let debounce: Duration
+    private var pending: Task<Void, Never>?
 
-    init(api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)) {
+    /// The debounce collapses a burst of keystrokes into one request: the
+    /// iTunes directory rate-limits by IP, and every keystroke as a request
+    /// would trip that on a single fast typist.
+    init(
+        api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+        debounce: Duration = .milliseconds(350)
+    ) {
         self.api = api
+        self.debounce = debounce
     }
 
-    func search(for query: String) async {
+    /// Called on every keystroke: search after a pause in typing. Existing
+    /// results stay on screen until fresher ones replace them, so the list
+    /// updates in place rather than flickering through a spinner.
+    func queryChanged(_ query: String) {
+        schedule(query, after: debounce)
+    }
+
+    /// Called from the keyboard's Search key: no waiting.
+    func searchNow(for query: String) {
+        schedule(query, after: .zero)
+    }
+
+    func clear() {
+        pending?.cancel()
+        state = .idle
+    }
+
+    private func schedule(_ query: String, after delay: Duration) {
+        pending?.cancel()
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             state = .idle
             return
         }
-        state = .searching
-        do {
-            state = .loaded(try await api.searchPodcasts(query: query))
-        } catch let error as APIError {
-            state = .failed(error.spokenResponse)
-        } catch {
-            state = .failed("Something went wrong.")
+        if case .loaded = state {} else { state = .searching }
+        pending = Task {
+            if delay > .zero {
+                try? await Task.sleep(for: delay)
+            }
+            guard !Task.isCancelled else { return }
+            await perform(query)
         }
     }
 
-    func clear() {
-        state = .idle
+    private func perform(_ query: String) async {
+        do {
+            let results = try await api.searchPodcasts(query: query)
+            guard !Task.isCancelled else { return }
+            state = .loaded(results)
+        } catch {
+            // A newer keystroke cancelled this request; its failure is noise.
+            guard !Task.isCancelled else { return }
+            state = .failed(
+                (error as? APIError)?.spokenResponse ?? "Something went wrong.")
+        }
     }
 }
