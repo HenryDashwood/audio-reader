@@ -42,9 +42,6 @@ final class ArticlePlayer: NSObject, ObservableObject {
     private let api: HearfulAPIProtocol
     private var script: ArticleScript?
     private var chunkIndex = 0
-    /// The chunk currently scheduled on the player node, if any — what lets
-    /// resume() distinguish "continue" from "start this chunk over".
-    private var scheduledIndex: Int?
     /// True once she asked for sound: speech starts as soon as text arrives.
     private var wantsPlayback = false
     /// Bumped whenever playback restarts somewhere else (seek, new episode),
@@ -52,8 +49,23 @@ final class ArticlePlayer: NSObject, ObservableObject {
     private var generation = 0
     private var loadTask: Task<Void, Never>?
     private var progressTimer: Timer?
-    /// Rendered chunks, kept one ahead so transitions have no synthesis gap.
+    /// Rendered chunks, kept a little ahead so scheduling never waits.
     private var rendered: [Int: [AVAudioPCMBuffer]] = [:]
+    /// The speaking rate the cache was rendered at; a rate change makes
+    /// every cached chunk stale.
+    private var renderedAtRate: Float = 1.0
+
+    // Gapless schedule state. Chunks are appended to the running node ahead
+    // of time and the node is never stopped between them — stopping flushes
+    // the time-stretcher's tail and audibly clips word endings.
+    /// The highest chunk index whose audio is scheduled on the node.
+    private var scheduledThrough: Int?
+    /// Chunk indexes currently being rendered for scheduling.
+    private var scheduling: Set<Int> = []
+    /// Where each scheduled chunk starts, in the node's sample clock.
+    private var chunkStartFrames: [Int: AVAudioFramePosition] = [:]
+    private var chunkFrames: [Int: AVAudioFramePosition] = [:]
+    private var totalScheduledFrames: AVAudioFramePosition = 0
 
     init(api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)) {
         self.api = api
@@ -64,7 +76,11 @@ final class ArticlePlayer: NSObject, ObservableObject {
         // whether the thing playing is streamed or spoken.
         let stored = UserDefaults.standard.float(forKey: "HearfulPlaybackRate")
         playbackRate = stored > 0 ? stored : 1.0
-        timePitch.rate = playbackRate
+        // Speed comes from the synthesiser speaking faster (how VoiceOver and
+        // Speak Screen do it — natural prosody at any speed), not from
+        // stretching rendered audio, which always smears. The time-pitch node
+        // stays in the chain, inert, in case fine correction is ever wanted.
+        timePitch.rate = 1.0
     }
 
     var progress: Double {
@@ -114,8 +130,9 @@ final class ArticlePlayer: NSObject, ObservableObject {
         if script == nil {
             // Restored at launch: the text has not been fetched yet.
             load(episode, andPlay: true)
-        } else if scheduledIndex == chunkIndex {
-            // Paused mid-chunk: carry on from the same word.
+        } else if scheduledThrough != nil {
+            // Paused mid-chunk with the schedule intact: carry on from the
+            // same word.
             if !engine.isRunning { try? engine.start() }
             playerNode.play()
             isPlaying = true
@@ -147,30 +164,47 @@ final class ArticlePlayer: NSObject, ObservableObject {
             startPlayback(at: index)
         } else {
             generation += 1
-            if engine.isRunning { playerNode.stop() }
-            scheduledIndex = nil
+            resetSchedule()
             updateNowPlayingPosition()
         }
     }
 
-    /// Instant and clean at any speed: the time-stretch sits after the
-    /// synthesiser, so the voice itself is never re-rendered.
+    /// Re-renders upcoming speech at the new speaking rate. The current
+    /// chunk restarts so the change is heard immediately — a small rewind,
+    /// the price of the voice actually speaking faster rather than being
+    /// stretched.
     func setPlaybackRate(_ rate: Float) {
         let clamped = min(max(rate, 0.5), 3.0)
+        guard clamped != playbackRate else { return }
         playbackRate = clamped
-        timePitch.rate = clamped
+        if wantsPlayback, script != nil {
+            startPlayback(at: chunkIndex)
+        }
         updateNowPlayingPosition()
+    }
+
+    /// The synthesiser's rate knob for a listener-facing multiplier.
+    ///
+    /// The scale is nonlinear: 0.0–1.0, where 0.5 is normal speech and 1.0
+    /// is roughly four times it. Mapping the multiplier onto that quarter
+    /// slope keeps spoken speeds close to their labels; being a shade off is
+    /// fine — what matters is natural-sounding steps, not stopwatch accuracy.
+    static func utteranceRate(for multiplier: Float) -> Float {
+        if multiplier == 1 { return AVSpeechUtteranceDefaultSpeechRate }
+        if multiplier > 1 {
+            return min(0.5 + (multiplier - 1) / 4, 0.95)
+        }
+        // Below normal the same slope feels too subtle; slowing is rare and
+        // gentle steps are kinder than a crawl.
+        return max(0.5 - (1 - multiplier) * 0.3, 0.3)
     }
 
     /// Called when audio playback takes over: stop making sound, keep state.
     func deactivate() {
         wantsPlayback = false
         generation += 1
-        if engine.isRunning {
-            playerNode.stop()
-            engine.pause()
-        }
-        scheduledIndex = nil
+        resetSchedule()
+        if engine.isRunning { engine.pause() }
         isPlaying = false
         stopProgressTimer()
     }
@@ -244,12 +278,13 @@ final class ArticlePlayer: NSObject, ObservableObject {
     // MARK: - Rendering and scheduling
 
     /// Stops whatever is sounding and plays chunk `index` from its start.
+    /// The only place (besides seek and deactivate) that stops the node:
+    /// mid-article, chunks are appended to the running schedule instead.
     private func startPlayback(at index: Int) {
         guard let script, index < script.chunks.count else { return }
         generation += 1
         let gen = generation
-        if engine.isRunning { playerNode.stop() }
-        scheduledIndex = nil
+        resetSchedule()
         chunkIndex = index
         currentTime = script.chunks[index].start
         updateNowPlayingPosition()
@@ -263,90 +298,137 @@ final class ArticlePlayer: NSObject, ObservableObject {
                 return
             }
             guard self.generation == gen, self.wantsPlayback else { return }
-            self.schedule(buffers, forChunk: index, generation: gen)
+            guard self.startEngine(with: buffers[0].format) else {
+                self.loadFailed(with: APIError(underlying: "audio engine would not start"))
+                return
+            }
+            // With the engine guaranteed running, stop() reliably clears
+            // anything stale and restarts the node's sample clock at zero.
+            self.playerNode.stop()
+            self.append(buffers, chunk: index, generation: gen)
+            self.playerNode.play()
+            self.isPlaying = true
+            self.startProgressTimer()
+            self.updateNowPlayingPosition()
+            self.ensureScheduledAhead()
         }
     }
 
-    private func schedule(_ buffers: [AVAudioPCMBuffer], forChunk index: Int, generation gen: Int) {
-        guard startEngine(with: buffers[0].format) else {
-            loadFailed(with: APIError(underlying: "audio engine would not start"))
-            return
+    /// Appends one rendered chunk to the node's schedule, extending the
+    /// continuous sample timeline.
+    private func append(_ buffers: [AVAudioPCMBuffer], chunk index: Int, generation gen: Int) {
+        chunkStartFrames[index] = totalScheduledFrames
+        let frames = buffers.reduce(AVAudioFramePosition(0)) {
+            $0 + AVAudioFramePosition($1.frameLength)
         }
-        // With the engine guaranteed running, stop() reliably clears anything
-        // stale — including buffers left scheduled while the engine slept.
-        playerNode.stop()
+        chunkFrames[index] = frames
+        totalScheduledFrames += frames
         for (position, buffer) in buffers.enumerated() {
             if position == buffers.count - 1 {
-                // .dataPlayedBack: fires when the audio has actually sounded,
-                // not merely been consumed — the right moment to move on.
+                // .dataPlayedBack: fires when the audio has actually sounded.
+                // Used only for bookkeeping and end-of-article — never to
+                // stop or start audio, so its timing cannot clip anything.
                 playerNode.scheduleBuffer(
                     buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack
                 ) { [weak self] _ in
-                    Task { @MainActor in self?.chunkPlayed(index, generation: gen) }
+                    Task { @MainActor in self?.chunkBuffersPlayed(index, generation: gen) }
                 }
             } else {
                 playerNode.scheduleBuffer(buffer)
             }
         }
-        scheduledIndex = index
-        playerNode.play()
-        isPlaying = true
-        startProgressTimer()
-        updateNowPlayingPosition()
-        prefetch(index + 1)
+        scheduledThrough = index
     }
 
-    private func chunkPlayed(_ index: Int, generation gen: Int) {
-        guard generation == gen, wantsPlayback, let script else { return }
-        rendered[index] = nil
-        let next = index + 1
-        if next < script.chunks.count {
-            chunkIndex = next
-            startPlayback(at: next)
-        } else {
-            // The end of the article. Position lands on the full duration so
-            // the position reporter records it as completed.
-            wantsPlayback = false
-            isPlaying = false
-            currentTime = duration
-            chunkIndex = 0
-            scheduledIndex = nil
-            playerNode.stop()
-            stopProgressTimer()
-            updateNowPlayingPosition()
-        }
-    }
-
-    /// This chunk's audio, rendered at 1× — from the prefetch cache when the
-    /// previous chunk's playback already paid for it.
-    private func renderedChunk(_ index: Int) async -> [AVAudioPCMBuffer]? {
-        if let cached = rendered[index] { return cached }
-        guard let script, index < script.chunks.count else { return nil }
-        let buffers = await render(text: script.chunks[index].text)
-        rendered[index] = buffers
-        return buffers
-    }
-
-    private func prefetch(_ index: Int) {
-        guard let script, index < script.chunks.count, rendered[index] == nil else { return }
+    /// Keeps the node's schedule one chunk ahead of what is sounding, so the
+    /// next chunk begins seamlessly the moment the current one ends.
+    private func ensureScheduledAhead() {
+        guard wantsPlayback, let script, let through = scheduledThrough,
+            through < script.chunks.count - 1,
+            through - chunkIndex < 2,
+            !scheduling.contains(through + 1)
+        else { return }
+        let next = through + 1
+        scheduling.insert(next)
         let gen = generation
         Task { [weak self] in
             guard let self else { return }
-            let buffers = await self.render(text: script.chunks[index].text)
-            guard self.generation == gen else { return }
-            self.rendered[index] = buffers
-            // Keep the cache to a working set; a long article should not
-            // accumulate its whole audio in memory.
-            self.rendered = self.rendered.filter { abs($0.key - self.chunkIndex) <= 2 }
+            let buffers = await self.renderedChunk(next)
+            self.scheduling.remove(next)
+            guard self.generation == gen, self.scheduledThrough == through,
+                let buffers, !buffers.isEmpty
+            else { return }
+            self.append(buffers, chunk: next, generation: gen)
+            self.ensureScheduledAhead()
         }
     }
 
-    /// Synthesises one chunk to PCM buffers at normal speed. The utterance
-    /// rate is always the default: speed is timePitch's job.
+    private func chunkBuffersPlayed(_ index: Int, generation gen: Int) {
+        guard generation == gen, wantsPlayback, let script else { return }
+        rendered[index] = nil
+        if index >= script.chunks.count - 1 {
+            articleFinished()
+        } else {
+            // Bookkeeping only: the next chunk is already scheduled and the
+            // node just keeps playing into it.
+            chunkIndex = max(chunkIndex, index + 1)
+            ensureScheduledAhead()
+        }
+    }
+
+    private func articleFinished() {
+        // Position lands on the full duration so the position reporter
+        // records the article as completed.
+        wantsPlayback = false
+        isPlaying = false
+        currentTime = duration
+        chunkIndex = 0
+        stopProgressTimer()
+        updateNowPlayingPosition()
+        // The final syllables may still be draining through the stretcher;
+        // quiesce shortly afterwards rather than cutting them off.
+        let gen = generation
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard let self, self.generation == gen else { return }
+            self.resetSchedule()
+            if self.engine.isRunning { self.engine.pause() }
+        }
+    }
+
+    private func resetSchedule() {
+        if engine.isRunning { playerNode.stop() }
+        scheduledThrough = nil
+        scheduling = []
+        chunkStartFrames = [:]
+        chunkFrames = [:]
+        totalScheduledFrames = 0
+    }
+
+    /// This chunk's audio at the current speaking rate — from the cache when
+    /// an earlier prefetch already paid for it.
+    private func renderedChunk(_ index: Int) async -> [AVAudioPCMBuffer]? {
+        if renderedAtRate != playbackRate {
+            rendered = [:]
+            renderedAtRate = playbackRate
+        }
+        if let cached = rendered[index] { return cached }
+        guard let script, index < script.chunks.count else { return nil }
+        let buffers = await render(text: script.chunks[index].text)
+        guard renderedAtRate == playbackRate else { return nil }  // rate moved mid-render
+        rendered[index] = buffers
+        // Keep the cache to a working set; a long article should not
+        // accumulate its whole audio in memory.
+        rendered = rendered.filter { abs($0.key - chunkIndex) <= 2 }
+        return buffers
+    }
+
+    /// Synthesises one chunk to PCM buffers at the current speaking rate —
+    /// the voice genuinely talks faster, it is never stretched afterwards.
     private func render(text: String) async -> [AVAudioPCMBuffer] {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        utterance.rate = Self.utteranceRate(for: playbackRate)
         let audio = await withCheckedContinuation {
             (continuation: CheckedContinuation<RenderedAudio, Never>) in
             let collector = RenderCollector(continuation: continuation)
@@ -400,22 +482,29 @@ final class ArticlePlayer: NSObject, ObservableObject {
     }
 
     private func progressTicked() {
-        guard isPlaying, !isScrubbing, let script, chunkIndex < script.chunks.count,
+        guard isPlaying, !isScrubbing, let script,
             let nodeTime = playerNode.lastRenderTime,
             let playerTime = playerNode.playerTime(forNodeTime: nodeTime)
         else { return }
-        let played = Double(playerTime.sampleTime) / playerTime.sampleRate
-        let chunk = script.chunks[chunkIndex]
+        let playedFrames = playerTime.sampleTime
+        // Which scheduled chunk is actually sounding right now? The node's
+        // sample clock runs continuously across the gapless schedule, so the
+        // answer is a lookup, not a guess from callbacks.
+        guard
+            let (index, startFrame) = chunkStartFrames
+                .filter({ $0.value <= playedFrames })
+                .max(by: { $0.value < $1.value }),
+            index < script.chunks.count,
+            let frames = chunkFrames[index], frames > 0
+        else { return }
+        chunkIndex = index
+        let chunk = script.chunks[index]
         // Real elapsed audio mapped onto the estimated timeline, so saved
         // positions stay comparable across sessions.
-        let renderedSeconds = rendered[chunkIndex].map(Self.seconds(of:))
-        let fraction = renderedSeconds.map { min(played / max($0, 0.1), 1) } ?? 0
+        let fraction = min(Double(playedFrames - startFrame) / Double(frames), 1)
         currentTime = chunk.start + chunk.duration * fraction
         updateNowPlayingPosition()
-    }
-
-    private nonisolated static func seconds(of buffers: [AVAudioPCMBuffer]) -> Double {
-        buffers.reduce(0.0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
+        ensureScheduledAhead()
     }
 
     // MARK: - Lock screen

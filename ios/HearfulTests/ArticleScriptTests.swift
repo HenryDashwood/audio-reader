@@ -60,6 +60,33 @@ struct ArticleScriptTests {
     }
 }
 
+@Suite("Speaking rate curve")
+@MainActor
+struct UtteranceRateTests {
+    @Test func normalSpeedIsTheSynthesiserDefault() {
+        #expect(ArticlePlayer.utteranceRate(for: 1.0) == 0.5)
+    }
+
+    @Test func fasterMultipliersClimbTheQuarterSlope() {
+        // The synthesiser's 0–1 scale reaches ~4× at the top; the curve must
+        // never send a mild speed-up to the garbled ceiling.
+        #expect(ArticlePlayer.utteranceRate(for: 1.5) == 0.625)
+        #expect(ArticlePlayer.utteranceRate(for: 2.0) == 0.75)
+        #expect(ArticlePlayer.utteranceRate(for: 3.0) <= 0.95)
+    }
+
+    @Test func slowerMultipliersStayGentle() {
+        let slow = ArticlePlayer.utteranceRate(for: 0.75)
+        #expect(slow < 0.5 && slow >= 0.3)
+    }
+
+    @Test func curveIsMonotonic() {
+        let rates = stride(from: Float(0.5), through: 3.0, by: 0.25)
+            .map { ArticlePlayer.utteranceRate(for: $0) }
+        #expect(rates == rates.sorted())
+    }
+}
+
 @Suite("Pasted feed URL detection")
 struct PastedFeedURLTests {
     @Test func fullFeedURLsAreAccepted() {
