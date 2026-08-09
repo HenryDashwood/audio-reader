@@ -25,12 +25,12 @@ struct PlayEpisodeIntent: AppIntent, ForegroundContinuableIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let chosen = episode.episode
         do {
-            try AudioPlayer.shared.play(chosen)
+            try PlaybackCoordinator.shared.play(chosen)
         } catch {
             throw needsToContinueInForegroundError(
                 IntentDialog("Opening Hearful to play \(episode.title).")
             ) {
-                try AudioPlayer.shared.play(chosen)
+                try PlaybackCoordinator.shared.play(chosen)
             }
         }
         // Short, because Siri reads it out before the episode begins.

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from audioreader.auth.dependencies import get_current_user
 from audioreader.db import get_session
 from audioreader.llm.fake import FakeLLMClient
-from audioreader.llm.provider import get_llm_client
+from audioreader.llm.provider import get_discovery_llm_client, get_llm_client
 from audioreader.main import create_app
 from audioreader.models import Base, User
 
@@ -50,6 +50,7 @@ async def client(
     app = create_app()
     app.dependency_overrides[get_session] = lambda: session
     app.dependency_overrides[get_llm_client] = lambda: fake_llm
+    app.dependency_overrides[get_discovery_llm_client] = lambda: fake_llm
     app.dependency_overrides[get_current_user] = lambda: user
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -66,6 +67,7 @@ def make_client(session: AsyncSession, fake_llm: FakeLLMClient):
         app = create_app()
         app.dependency_overrides[get_session] = lambda: session
         app.dependency_overrides[get_llm_client] = lambda: fake_llm
+        app.dependency_overrides[get_discovery_llm_client] = lambda: fake_llm
         app.dependency_overrides[get_current_user] = lambda: as_user
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

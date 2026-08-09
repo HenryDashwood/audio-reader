@@ -4,7 +4,7 @@ import SwiftUI
 /// answered visually.
 struct LatestView: View {
     @StateObject private var model = LatestModel()
-    @ObservedObject private var player = AudioPlayer.shared
+    @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
 
     var body: some View {

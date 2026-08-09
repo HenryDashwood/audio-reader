@@ -146,7 +146,10 @@ final class VoiceController: ObservableObject {
             await finish(saying: response.spokenResponse)
 
         case .playEpisode:
-            guard let episode = response.episode, episode.audioURL != nil else {
+            // Playable means streamable audio or article text to read aloud.
+            guard let episode = response.episode,
+                episode.audioURL != nil || episode.hasText == true
+            else {
                 await fail(saying: "Sorry, I cannot play that one yet.")
                 return
             }

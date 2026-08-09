@@ -50,8 +50,7 @@ class ModelDecision(BaseModel):
     )
     episode_query: str | None = Field(
         default=None,
-        description="For play_from_show: which episode she described, or empty"
-        " for the latest.",
+        description="For play_from_show: which episode she described, or empty for the latest.",
     )
     speed: float | None = Field(
         default=None,
@@ -65,7 +64,7 @@ class ModelDecision(BaseModel):
 
 @dataclass
 class Candidate:
-    """One episode as the model sees it."""
+    """One episode or article as the model sees it."""
 
     id: int
     title: str
@@ -73,6 +72,8 @@ class Candidate:
     description: str
     published_at: datetime | None
     duration_seconds: int | None
+    # An item with no audio, read aloud by the app instead of streamed.
+    is_article: bool = False
 
 
 @dataclass

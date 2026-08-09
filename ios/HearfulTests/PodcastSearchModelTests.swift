@@ -19,6 +19,9 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
         CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
     }
     func episode(id: Int) async throws -> Episode { throw APIError(underlying: "unused") }
+    func articleText(episodeID: Int) async throws -> EpisodeText {
+        throw APIError(underlying: "unused")
+    }
     func recentEpisodes(limit: Int) async throws -> [Episode] { [] }
     func shows() async throws -> [Show] { [] }
     func episodes(showID: Int) async throws -> [Episode] { [] }

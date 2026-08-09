@@ -4,7 +4,7 @@ import SwiftUI
 struct LibraryView: View {
     @StateObject private var model = LibraryModel()
     @StateObject private var searchModel = PodcastSearchModel()
-    @ObservedObject private var player = AudioPlayer.shared
+    @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
     @State private var searchText = ""
 
@@ -33,7 +33,7 @@ struct LibraryView: View {
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search for a podcast")
+                prompt: "Search podcasts, or paste a feed URL")
             .onSubmit(of: .search) { searchModel.searchNow(for: searchText) }
             .onChange(of: searchText) { _, text in
                 searchModel.queryChanged(text)
@@ -77,27 +77,85 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var searchResults: some View {
+        // A pasted URL is its own kind of result: any RSS/Atom feed — or a
+        // site that advertises one — can be previewed and subscribed to
+        // directly, no directory involved.
+        let pastedFeed = pastedFeedURL(searchText).map { url in
+            PodcastResult(
+                title: url.host() ?? url.absoluteString,
+                feedURL: url, publisher: nil, episodeCount: nil, artworkURL: nil)
+        }
         switch searchModel.state {
-        case .idle:
+        case .idle where pastedFeed == nil:
             ContentUnavailableView(
                 "Search every podcast", systemImage: "magnifyingglass",
                 description: Text("Results appear as you type."))
-        case .searching:
+        case .searching where pastedFeed == nil:
             ProgressView("Searching…")
         case .failed(let message):
             ContentUnavailableView(
                 "Could not search", systemImage: "wifi.exclamationmark",
                 description: Text(message))
-        case .loaded(let results) where results.isEmpty:
+        case .loaded(let results) where results.isEmpty && pastedFeed == nil:
             ContentUnavailableView.search(text: searchText)
-        case .loaded(let results):
-            List(results) { result in
-                NavigationLink(value: result) {
-                    PodcastResultRow(result: result)
+        default:
+            List {
+                if let pastedFeed {
+                    Section {
+                        NavigationLink(value: pastedFeed) {
+                            OpenFeedRow(host: pastedFeed.title)
+                        }
+                    }
+                }
+                if case .loaded(let results) = searchModel.state {
+                    ForEach(results) { result in
+                        NavigationLink(value: result) {
+                            PodcastResultRow(result: result)
+                        }
+                    }
                 }
             }
             .listStyle(.plain)
         }
+    }
+}
+
+/// The search text is a web address, not a show name.
+///
+/// Accepts full feed URLs, homepages, and bare domains ("example.com"):
+/// the backend resolves a page to its advertised feed either way.
+nonisolated func pastedFeedURL(_ text: String) -> URL? {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, !trimmed.contains(" ") else { return nil }
+    let candidate =
+        trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")
+        ? trimmed : "https://\(trimmed)"
+    guard let url = URL(string: candidate),
+        let host = url.host(),
+        host.contains("."),
+        // "The History Hour." is a sentence, not a domain.
+        !host.hasSuffix(".")
+    else { return nil }
+    return url
+}
+
+private struct OpenFeedRow: View {
+    let host: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "dot.radiowaves.up.forward")
+                .font(.title3)
+                .foregroundStyle(.tint)
+                .frame(width: 44, height: 44)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Open feed").font(.headline)
+                Text(host).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Open the feed at \(host)")
     }
 }
 

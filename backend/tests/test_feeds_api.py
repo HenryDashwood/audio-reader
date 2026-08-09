@@ -33,6 +33,8 @@ class TestSubscribe:
 
     async def test_non_feed_content_rejected(self, client, respx_mock):
         respx_mock.get(FEED_URL).respond(content=b"<html>not a feed</html>")
+        # Autodiscovery probes the conventional feed paths before giving up.
+        respx_mock.route().respond(status_code=404)
         response = await client.post("/feeds", json={"url": FEED_URL})
         assert response.status_code == 422
 
@@ -96,15 +98,14 @@ class TestPreview:
         body = (await self.preview(client, respx_mock, podcast_xml)).json()
         episode_id = body["episodes"][0]["id"]
 
-        put = await client.put(
-            f"/episodes/{episode_id}/position", json={"position_seconds": 90.0}
-        )
+        put = await client.put(f"/episodes/{episode_id}/position", json={"position_seconds": 90.0})
         assert put.status_code == 204
         single = (await client.get(f"/episodes/{episode_id}")).json()
         assert single["position_seconds"] == 90.0
 
     async def test_non_feed_content_rejected(self, client, respx_mock):
         respx_mock.get(FEED_URL).respond(content=b"<html>not a feed</html>")
+        respx_mock.route().respond(status_code=404)
         response = await client.post("/feeds/preview", json={"url": FEED_URL})
         assert response.status_code == 422
 
@@ -186,10 +187,16 @@ class TestRecentEpisodes:
         titles = [e["title"] for e in response.json()]
         assert titles[0] == "The Fall of Constantinople"
 
-    async def test_only_playable_episodes(self, client, respx_mock, article_xml):
-        # Siri suggestions must not offer something that cannot be played.
+    async def test_articles_are_playable_now(self, client, respx_mock, article_xml):
+        # Articles are read aloud by the app, so they belong in Latest and in
+        # Siri's suggestions alongside audio episodes.
         await subscribe(client, respx_mock, article_xml)
-        assert (await client.get("/episodes")).json() == []
+        episodes = (await client.get("/episodes")).json()
+        assert [e["title"] for e in episodes] == [
+            "Why sewers made cities possible",
+            "The great stagnation in shipping",
+        ]
+        assert all(e["audio_url"] is None and e["has_text"] for e in episodes)
 
     async def test_respects_limit(self, client, respx_mock, podcast_xml):
         await subscribe(client, respx_mock, podcast_xml)

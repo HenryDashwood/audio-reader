@@ -37,7 +37,7 @@ struct PlayLatestIntent: AppIntent, ForegroundContinuableIntent {
         }
 
         do {
-            try AudioPlayer.shared.play(episode)
+            try PlaybackCoordinator.shared.play(episode)
         } catch {
             // iOS would not let us take the audio session from the background.
             // Ask to come forward and play there, rather than claiming success
@@ -46,7 +46,7 @@ struct PlayLatestIntent: AppIntent, ForegroundContinuableIntent {
             throw needsToContinueInForegroundError(
                 IntentDialog("Opening Hearful to play \(episode.title).")
             ) {
-                try AudioPlayer.shared.play(episode)
+                try PlaybackCoordinator.shared.play(episode)
             }
         }
 

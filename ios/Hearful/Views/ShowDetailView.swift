@@ -4,7 +4,7 @@ import SwiftUI
 struct ShowDetailView: View {
     let show: Show
     @StateObject private var model = EpisodeListModel()
-    @ObservedObject private var player = AudioPlayer.shared
+    @ObservedObject private var player = PlaybackCoordinator.shared
 
     var body: some View {
         List {
@@ -62,6 +62,10 @@ struct EpisodeRow: View {
                     if let length = formatLength(seconds: episode.durationSeconds) {
                         Text("·")
                         Text(length)
+                    } else if episode.isArticle {
+                        Text("·")
+                        Label("Article", systemImage: "doc.plaintext")
+                            .labelStyle(.titleAndIcon)
                     }
                 }
                 .font(.caption)

@@ -1,4 +1,4 @@
-from audioreader.text import for_speech, summarise
+from audioreader.text import article_paragraphs, article_text, for_speech, summarise
 
 
 class TestSummarise:
@@ -33,3 +33,36 @@ class TestForSpeech:
 
     def test_strips_html_too(self):
         assert for_speech("<p>Spoken <b>aloud</b></p>") == "Spoken aloud"
+
+
+class TestArticleText:
+    def test_paragraphs_survive(self):
+        html = "<p>First point.</p><p>Second point.</p>"
+        assert article_paragraphs(html) == ["First point.", "Second point."]
+
+    def test_headings_are_their_own_paragraph(self):
+        html = "<h2>The Delian League</h2><p>It began as an alliance.</p>"
+        assert article_paragraphs(html) == ["The Delian League", "It began as an alliance."]
+
+    def test_inline_markup_does_not_split(self):
+        html = "<p>Both <em>Athens</em> and <a href='https://x.test'>Sparta</a> agreed.</p>"
+        assert article_paragraphs(html) == ["Both Athens and Sparta agreed."]
+
+    def test_list_items_split(self):
+        html = "<ul><li>One</li><li>Two</li></ul>"
+        assert article_paragraphs(html) == ["One", "Two"]
+
+    def test_raw_urls_dropped_link_text_kept(self):
+        html = "<p>See <a href='https://x.test/paper'>the paper</a> at https://x.test/paper</p>"
+        assert article_paragraphs(html) == ["See the paper at"]
+
+    def test_script_and_style_dropped(self):
+        html = "<style>p{}</style><p>Real</p><script>var x=1</script>"
+        assert article_paragraphs(html) == ["Real"]
+
+    def test_article_text_joins_with_blank_lines(self):
+        assert article_text("<p>One</p><p>Two</p>") == "One\n\nTwo"
+
+    def test_handles_none_and_empty(self):
+        assert article_paragraphs(None) == []
+        assert article_text("") == ""

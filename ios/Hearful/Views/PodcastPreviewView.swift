@@ -5,7 +5,7 @@ import SwiftUI
 struct PodcastPreviewView: View {
     let podcast: PodcastResult
     @StateObject private var model = PodcastPreviewModel()
-    @ObservedObject private var player = AudioPlayer.shared
+    @ObservedObject private var player = PlaybackCoordinator.shared
 
     var body: some View {
         Group {

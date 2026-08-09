@@ -65,6 +65,9 @@ class EpisodeRead(BaseModel):
     # playback_positions; None means never played.
     position_seconds: float | None = None
     completed: bool = False
+    # True when the episode can be read aloud as an article — the app's cue
+    # that an item with no audio_url is still playable, via text-to-speech.
+    has_text: bool = False
 
     @field_validator("description")
     @classmethod
@@ -75,6 +78,15 @@ class EpisodeRead(BaseModel):
     @classmethod
     def https_only(cls, value: str | None) -> str | None:
         return secure_url(value)
+
+
+class EpisodeTextRead(BaseModel):
+    """An article's full text, ready to be read aloud by the app."""
+
+    episode_id: int
+    title: str
+    # Paragraphs separated by blank lines; the app chunks on these.
+    text: str
 
 
 class PodcastSearchResult(BaseModel):

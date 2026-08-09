@@ -26,6 +26,9 @@ private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
     func logout() async throws {}
     func me() async throws -> UserInfo { UserInfo(id: "u", displayName: nil) }
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {}
+    func articleText(episodeID: Int) async throws -> EpisodeText {
+        throw APIError(underlying: "unused")
+    }
     func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }
     func subscribe(feedURL: URL) async throws -> Show { throw APIError(underlying: "unused") }
@@ -53,7 +56,7 @@ struct PlaybackRestoreTests {
         PlaybackRestore.remember(episodeID: 104, defaults: defaults)
         let api = OneEpisodeAPI()
         api.stored = episode(id: 104)
-        let player = AudioPlayer()
+        let player = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api))
 
         await PlaybackRestore.restore(api: api, player: player, defaults: defaults)
 
@@ -63,7 +66,7 @@ struct PlaybackRestoreTests {
 
     @Test func nothingRememberedMeansNothingFetched() async {
         let api = OneEpisodeAPI()
-        let player = AudioPlayer()
+        let player = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api))
 
         await PlaybackRestore.restore(api: api, player: player, defaults: makeDefaults())
 
@@ -76,7 +79,7 @@ struct PlaybackRestoreTests {
         PlaybackRestore.remember(episodeID: 104, defaults: defaults)
         let api = OneEpisodeAPI()
         api.stored = episode(id: 104)
-        let player = AudioPlayer()
+        let player = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api))
         player.restore(episode(id: 205))
 
         await PlaybackRestore.restore(api: api, player: player, defaults: defaults)
@@ -89,7 +92,7 @@ struct PlaybackRestoreTests {
         let defaults = makeDefaults()
         PlaybackRestore.remember(episodeID: 104, defaults: defaults)
         let api = OneEpisodeAPI()  // stored is nil: fetch throws
-        let player = AudioPlayer()
+        let player = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api))
 
         await PlaybackRestore.restore(api: api, player: player, defaults: defaults)
 

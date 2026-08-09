@@ -79,9 +79,7 @@ class TestPlayLatest:
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         llm = FakeLLMClient(play_from_show("the history hour"))
 
-        await service.interpret(
-            session, llm, user=user, transcript="play the latest history hour"
-        )
+        await service.interpret(session, llm, user=user, transcript="play the latest history hour")
 
         assert await session.scalar(select(func.count()).select_from(Subscription)) == 0
 
@@ -191,8 +189,10 @@ class TestFailuresAreSpoken:
         assert result.action == Action.UNKNOWN
         assert "Broken Feed Show" in result.spoken_response
 
-    async def test_show_without_audio_is_reported(self, session, user, respx_mock, article_xml):
-        # An article feed matches, but there is nothing the app can play.
+    async def test_article_feeds_play_their_latest_article(
+        self, session, user, respx_mock, article_xml
+    ):
+        # A feed with no audio is still playable: the app reads articles aloud.
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("Notes on Progress")))
         respx_mock.get(FEED_URL).respond(content=article_xml)
         llm = FakeLLMClient(play_from_show("notes on progress"))
@@ -201,8 +201,10 @@ class TestFailuresAreSpoken:
             session, llm, user=user, transcript="play the latest notes on progress"
         )
 
-        assert result.action == Action.UNKNOWN
-        assert "no episodes" in result.spoken_response.lower()
+        assert result.action == Action.PLAY_EPISODE
+        assert result.episode is not None
+        assert result.episode.title == "Why sewers made cities possible"
+        assert result.episode.audio_url is None
 
     async def test_missing_show_name_asks_for_it(self, session, user, respx_mock):
         route = respx_mock.get(SEARCH_URL).respond(json=itunes())
@@ -216,8 +218,17 @@ class TestFailuresAreSpoken:
 
 class TestWantsLatest:
     def test_nothing_specific_means_latest(self):
-        for query in (None, "", "  ", "latest", "the latest", "the latest one",
-                      "newest episode", "the most recent one", "their last episode"):
+        for query in (
+            None,
+            "",
+            "  ",
+            "latest",
+            "the latest",
+            "the latest one",
+            "newest episode",
+            "the most recent one",
+            "their last episode",
+        ):
             assert service._wants_latest(query), query
 
     def test_a_described_episode_goes_to_the_model(self):

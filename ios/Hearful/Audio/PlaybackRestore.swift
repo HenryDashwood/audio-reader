@@ -17,13 +17,15 @@ enum PlaybackRestore {
     /// position, which may have moved on another device since last launch.
     static func restore(
         api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
-        player: AudioPlayer = .shared,
+        player: PlaybackCoordinator = .shared,
         defaults: UserDefaults = .standard
     ) async {
         guard player.currentEpisode == nil else { return }
         let id = defaults.integer(forKey: lastEpisodeKey)
         guard id > 0 else { return }
-        guard let episode = try? await api.episode(id: id), episode.audioURL != nil else {
+        guard let episode = try? await api.episode(id: id),
+            episode.audioURL != nil || episode.hasText == true
+        else {
             // Deleted episode, dead session, or no network: an empty player
             // is a fine fallback, never an error she has to hear about.
             return

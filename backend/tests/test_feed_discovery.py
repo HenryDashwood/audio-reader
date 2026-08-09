@@ -1,0 +1,74 @@
+"""Pasting a homepage must work as well as pasting the feed itself."""
+
+from audioreader.feeds.discovery import feed_links_in_html
+
+SITE_URL = "https://notesonprogress.example.com"
+FEED_URL = "https://notesonprogress.example.com/feed"
+
+HOMEPAGE = b"""
+<html><head>
+<title>Notes on Progress</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="alternate" type="application/rss+xml" title="RSS" href="/feed">
+</head><body>Essays.</body></html>
+"""
+
+HOMEPAGE_NO_LINK = b"<html><head><title>Notes on Progress</title></head><body>Essays.</body></html>"
+
+
+class TestFeedLinksInHtml:
+    def test_finds_and_absolutises_advertised_feeds(self):
+        links = feed_links_in_html(HOMEPAGE.decode(), base_url=SITE_URL)
+        assert links == [FEED_URL]
+
+    def test_ignores_stylesheets_and_pages_without_feeds(self):
+        assert feed_links_in_html(HOMEPAGE_NO_LINK.decode(), base_url=SITE_URL) == []
+
+    def test_atom_and_absolute_urls_accepted(self):
+        html = '<link rel="alternate" type="application/atom+xml" href="https://x.test/atom.xml">'
+        assert feed_links_in_html(html, base_url=SITE_URL) == ["https://x.test/atom.xml"]
+
+    def test_broken_markup_does_not_raise(self):
+        assert feed_links_in_html("<link rel=<<<>>", base_url=SITE_URL) == []
+
+
+class TestSubscribeByHomepage:
+    async def test_link_tag_discovery(self, client, respx_mock, article_xml):
+        respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+
+        response = await client.post("/feeds", json={"url": SITE_URL})
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["title"] == "Notes on Progress"
+        # The catalog stores the real feed URL, not the homepage.
+        assert body["url"] == FEED_URL
+
+    async def test_common_path_fallback(self, client, respx_mock, article_xml):
+        respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE_NO_LINK, content_type="text/html")
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+        respx_mock.route().respond(status_code=404)
+
+        response = await client.post("/feeds", json={"url": SITE_URL})
+
+        assert response.status_code == 201
+        assert response.json()["url"] == FEED_URL
+
+    async def test_homepage_and_feed_url_are_one_catalog_entry(
+        self, client, respx_mock, article_xml
+    ):
+        respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+
+        by_feed = await client.post("/feeds/preview", json={"url": FEED_URL})
+        by_homepage = await client.post("/feeds/preview", json={"url": SITE_URL})
+
+        assert by_feed.json()["feed"]["id"] == by_homepage.json()["feed"]["id"]
+
+    async def test_subscribing_twice_via_homepage_conflicts(self, client, respx_mock, article_xml):
+        respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+
+        assert (await client.post("/feeds", json={"url": SITE_URL})).status_code == 201
+        assert (await client.post("/feeds", json={"url": SITE_URL})).status_code == 409

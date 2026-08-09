@@ -97,5 +97,11 @@ class Settings(BaseSettings):
     # input tokens on each spoken command, so this is the main cost dial.
     command_candidate_limit: int = 60
 
+    # Finding a blog's feed from a spoken name is the one task worth being
+    # slow and thorough at: it happens once per publication, and OpenRouter's
+    # web plugin lets the model search for sites it does not know.
+    discovery_web_search: bool = True
+    discovery_timeout_seconds: float = 120.0
+
 
 settings = Settings()

@@ -5,6 +5,7 @@ import Foundation
 nonisolated protocol HearfulAPIProtocol: Sendable {
     func command(transcript: String) async throws -> CommandResponse
     func episode(id: Int) async throws -> Episode
+    func articleText(episodeID: Int) async throws -> EpisodeText
     func recentEpisodes(limit: Int) async throws -> [Episode]
     func shows() async throws -> [Show]
     func episodes(showID: Int) async throws -> [Episode]
@@ -61,6 +62,13 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
 
     func episode(id: Int) async throws -> Episode {
         let url = baseURL.appendingPathComponent("episodes").appendingPathComponent("\(id)")
+        return try await send(URLRequest(url: url))
+    }
+
+    func articleText(episodeID: Int) async throws -> EpisodeText {
+        let url = baseURL.appendingPathComponent("episodes")
+            .appendingPathComponent("\(episodeID)")
+            .appendingPathComponent("text")
         return try await send(URLRequest(url: url))
     }
 

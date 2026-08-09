@@ -1,8 +1,8 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from audioreader.feeds.fetcher import fetch_feed_bytes
-from audioreader.feeds.parser import ParsedFeed, parse_feed
+from audioreader.feeds.discovery import resolve_feed
+from audioreader.feeds.parser import ParsedFeed
 from audioreader.models import Episode, Feed, Subscription, User, utcnow
 
 
@@ -15,15 +15,22 @@ async def ensure_feed(session: AsyncSession, url: str) -> Feed:
 
     A feed already in the catalog is not re-fetched: the poller keeps it
     current. This is what lets a show be previewed or played before anyone
-    subscribes to it."""
+    subscribes to it. The URL need not be the feed itself — a homepage is
+    resolved to its advertised feed, and the feed is stored under the
+    resolved URL so both routes lead to one catalog entry."""
     feed = await session.scalar(select(Feed).where(Feed.url == url))
-    if feed is None:
-        parsed = parse_feed(await fetch_feed_bytes(url))
-        feed = Feed(url=url, title=parsed.title)
-        apply_feed_metadata(feed, parsed)
-        feed.episodes.extend(new_episodes(parsed, known_guids=set()))
-        session.add(feed)
-        await session.commit()
+    if feed is not None:
+        return feed
+    resolved_url, parsed = await resolve_feed(url)
+    if resolved_url != url:
+        feed = await session.scalar(select(Feed).where(Feed.url == resolved_url))
+        if feed is not None:
+            return feed
+    feed = Feed(url=resolved_url, title=parsed.title)
+    apply_feed_metadata(feed, parsed)
+    feed.episodes.extend(new_episodes(parsed, known_guids=set()))
+    session.add(feed)
+    await session.commit()
     return feed
 
 
@@ -37,11 +44,13 @@ async def is_subscribed(session: AsyncSession, feed_id: int, user: User) -> bool
 async def subscribe(session: AsyncSession, url: str, user: User) -> Feed:
     """Follow a feed: add it to the shared catalog if it is new, then record
     this user's subscription. A feed another user already follows is not
-    re-fetched — only the same user subscribing twice is an error."""
-    feed = await session.scalar(select(Feed).where(Feed.url == url))
-    if feed is not None and await is_subscribed(session, feed.id, user):
-        raise AlreadySubscribedError(url)
+    re-fetched — only the same user subscribing twice is an error.
+
+    The duplicate check runs after resolution, so subscribing via the
+    homepage and via the feed URL count as the same subscription."""
     feed = await ensure_feed(session, url)
+    if await is_subscribed(session, feed.id, user):
+        raise AlreadySubscribedError(url)
     session.add(Subscription(user_id=user.id, feed=feed))
     await session.commit()
     return feed

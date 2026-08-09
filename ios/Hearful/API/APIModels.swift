@@ -30,6 +30,9 @@ nonisolated struct Episode: Decodable, Equatable, Identifiable {
     /// Optional so payloads from before the field existed still decode.
     var positionSeconds: Double?
     var completed: Bool?
+    /// True when the backend can supply article text to read aloud — the cue
+    /// that an item with no audio URL is still playable, via text-to-speech.
+    var hasText: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, link, completed
@@ -38,6 +41,23 @@ nonisolated struct Episode: Decodable, Equatable, Identifiable {
         case publishedAt = "published_at"
         case imageURL = "image_url"
         case positionSeconds = "position_seconds"
+        case hasText = "has_text"
+    }
+
+    /// An item the app reads aloud rather than streams.
+    var isArticle: Bool { audioURL == nil && hasText == true }
+}
+
+/// An article's full text, fetched when it is about to be read aloud.
+nonisolated struct EpisodeText: Decodable, Equatable {
+    let episodeID: Int
+    let title: String
+    /// Paragraphs separated by blank lines; the reader chunks on these.
+    let text: String
+
+    enum CodingKeys: String, CodingKey {
+        case title, text
+        case episodeID = "episode_id"
     }
 }
 

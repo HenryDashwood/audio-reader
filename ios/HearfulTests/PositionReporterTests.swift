@@ -28,6 +28,9 @@ final class RecordingAPI: HearfulAPIProtocol, @unchecked Sendable {
     }
     func logout() async throws {}
     func me() async throws -> UserInfo { UserInfo(id: "u", displayName: nil) }
+    func articleText(episodeID: Int) async throws -> EpisodeText {
+        throw APIError(underlying: "unused")
+    }
     func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }
     func subscribe(feedURL: URL) async throws -> Show { throw APIError(underlying: "unused") }
@@ -53,9 +56,10 @@ private func settle() async {
 struct PositionReporterTests {
     private func makeReporter() -> (PositionReporter, RecordingAPI) {
         let api = RecordingAPI()
-        // A private AudioPlayer instance: idle, so its published state never
+        // Private player instances: idle, so their published state never
         // interferes with the handler calls below.
-        return (PositionReporter(api: api, player: AudioPlayer()), api)
+        let coordinator = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api))
+        return (PositionReporter(api: api, player: coordinator), api)
     }
 
     @Test func pausingReportsThePosition() async {

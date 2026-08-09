@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, MetaData, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import DateTime, ForeignKey, MetaData, Text, UniqueConstraint, Uuid, func, or_
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # Deterministic constraint names so Alembic autogenerate produces stable,
@@ -46,6 +46,9 @@ class Episode(Base):
     title: Mapped[str]
     description: Mapped[str | None] = mapped_column(Text)
     content_html: Mapped[str | None] = mapped_column(Text)
+    # Speech-ready text for an article, extracted lazily on first read and
+    # cached here so replaying does not refetch the page.
+    article_text: Mapped[str | None] = mapped_column(Text)
     audio_url: Mapped[str | None]
     duration_seconds: Mapped[int | None]
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -137,3 +140,14 @@ class PlaybackPosition(Base):
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+#: What the app can play: episode audio, or article text it reads aloud.
+#: Mirrors the has_text fallback chain in feeds/articles.py.
+PLAYABLE_EPISODE = or_(
+    Episode.audio_url.is_not(None),
+    Episode.article_text.is_not(None),
+    Episode.content_html.is_not(None),
+    Episode.link.is_not(None),
+    Episode.description.is_not(None),
+)

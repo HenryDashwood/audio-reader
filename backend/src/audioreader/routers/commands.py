@@ -7,7 +7,7 @@ from audioreader.auth.dependencies import get_current_user
 from audioreader.commands import service
 from audioreader.db import get_session
 from audioreader.llm.client import LLMClient, LLMError
-from audioreader.llm.provider import get_llm_client
+from audioreader.llm.provider import get_discovery_llm_client, get_llm_client
 from audioreader.models import User
 from audioreader.routers.feeds import episodes_read
 from audioreader.schemas import CommandRequest, CommandResponse
@@ -16,6 +16,7 @@ router = APIRouter(tags=["commands"])
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 LLM = Annotated[LLMClient, Depends(get_llm_client)]
+DiscoveryLLM = Annotated[LLMClient, Depends(get_discovery_llm_client)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 # Even failures must give the app something to say: an error tone alone tells
@@ -25,10 +26,12 @@ OUTAGE_RESPONSE = "Sorry, I cannot reach my assistant right now. Please try agai
 
 @router.post("/command")
 async def command(
-    body: CommandRequest, session: Session, llm: LLM, user: CurrentUser
+    body: CommandRequest, session: Session, llm: LLM, discovery_llm: DiscoveryLLM, user: CurrentUser
 ) -> CommandResponse:
     try:
-        result = await service.interpret(session, llm, transcript=body.transcript, user=user)
+        result = await service.interpret(
+            session, llm, transcript=body.transcript, user=user, discovery_llm=discovery_llm
+        )
     except LLMError as exc:
         raise HTTPException(
             status_code=503,

@@ -1,12 +1,14 @@
 import Combine
 import UIKit
 
-/// Watches the player and tells the backend where she is in each episode.
+/// Watches playback and tells the backend where she is in each episode.
 ///
-/// A separate observer rather than code inside AudioPlayer, so the player
-/// keeps zero network dependencies. Reports are fire-and-forget: losing one
-/// costs at most thirty seconds of position, which matters less than never
-/// blocking playback on the network.
+/// A separate observer rather than code inside the players, so they keep zero
+/// network dependencies. It observes the coordinator's mirrored state, so an
+/// article being read aloud reports its (estimated-seconds) position exactly
+/// like a streamed episode. Reports are fire-and-forget: losing one costs at
+/// most thirty seconds of position, which matters less than never blocking
+/// playback on the network.
 @MainActor
 final class PositionReporter {
     static let heartbeatInterval: TimeInterval = 30
@@ -14,7 +16,7 @@ final class PositionReporter {
     static let seekJumpThreshold: TimeInterval = 2.5
 
     private let api: HearfulAPIProtocol
-    private let player: AudioPlayer
+    private let player: PlaybackCoordinator
     private var cancellables: Set<AnyCancellable> = []
 
     private(set) var trackedEpisode: Episode?
@@ -26,7 +28,7 @@ final class PositionReporter {
 
     init(
         api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
-        player: AudioPlayer = .shared
+        player: PlaybackCoordinator = .shared
     ) {
         self.api = api
         self.player = player

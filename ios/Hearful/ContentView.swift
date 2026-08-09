@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct ContentView: View {
-    @ObservedObject private var player = AudioPlayer.shared
     @State private var showingVoice = false
     @State private var showingNowPlaying = false
 
@@ -99,7 +98,7 @@ extension VoiceController {
             api: HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
             speech: canned.map(CannedSpeechRecognizer.init(transcript:)) ?? speech,
             speaker: Speaker(),
-            player: AudioPlayer.shared,
+            player: PlaybackCoordinator.shared,
             feedback: Feedback())
     }
 }

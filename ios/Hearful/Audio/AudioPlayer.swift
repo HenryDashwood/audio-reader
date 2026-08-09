@@ -38,7 +38,6 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         // defaultRate makes every play()/resume() come back at her speed
         // without each call site having to remember it.
         player.defaultRate = playbackRate
-        wireRemoteCommands()
         observeTime()
         observePlaybackState()
     }
@@ -178,37 +177,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     }
 
     // MARK: - Lock screen
-
-    /// Lock screen, AirPods stems and "Hey Siri, pause" all arrive here — none
-    /// of which need the app open or the screen looked at.
-    private func wireRemoteCommands() {
-        let centre = MPRemoteCommandCenter.shared()
-        centre.playCommand.addTarget { [weak self] _ in
-            self?.resume()
-            return .success
-        }
-        centre.pauseCommand.addTarget { [weak self] _ in
-            self?.pause()
-            return .success
-        }
-        centre.skipForwardCommand.preferredIntervals = [30]
-        centre.skipForwardCommand.addTarget { [weak self] _ in
-            self?.skip(by: 30)
-            return .success
-        }
-        centre.skipBackwardCommand.preferredIntervals = [15]
-        centre.skipBackwardCommand.addTarget { [weak self] _ in
-            self?.skip(by: -15)
-            return .success
-        }
-        centre.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let event = event as? MPChangePlaybackPositionCommandEvent else {
-                return .commandFailed
-            }
-            self?.seek(to: event.positionTime)
-            return .success
-        }
-    }
+    // Remote commands (lock screen, AirPods stems, "Hey Siri, pause") are
+    // wired once in PlaybackCoordinator, which routes them to whichever
+    // player — audio or article — is actually live.
 
     private func publishNowPlaying(_ episode: Episode) {
         var info: [String: Any] = [

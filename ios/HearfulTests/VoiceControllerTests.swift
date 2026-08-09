@@ -124,6 +124,9 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
         reportedPositions.append((episodeID, seconds, completed))
     }
 
+    func articleText(episodeID: Int) async throws -> EpisodeText {
+        throw APIError(underlying: "unused")
+    }
     func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }
     func subscribe(feedURL: URL) async throws -> Show { throw APIError(underlying: "unused") }
@@ -312,8 +315,8 @@ struct VoiceControllerTests {
         #expect(controller.state == .idle)
     }
 
-    @Test func episodeWithoutAudioIsNotPlayed() async {
-        // Articles have no audio yet; acting on one would fail silently.
+    @Test func episodeWithNeitherAudioNorTextIsNotPlayed() async {
+        // Acting on something unplayable would fail silently.
         let (controller, recorder, _, api, _) = makeController()
         api.response = CommandResponse(
             action: .playEpisode, spokenResponse: "Playing it.", episode: episode(audio: nil))
@@ -322,6 +325,20 @@ struct VoiceControllerTests {
 
         #expect(recorder.playedIDs.isEmpty)
         #expect(controller.state == .idle)
+    }
+
+    @Test func articleWithTextIsPlayed() async {
+        // No audio URL, but the backend can supply text: the player reads it.
+        let (controller, recorder, _, api, _) = makeController()
+        var article = episode(audio: nil)
+        article.hasText = true
+        api.response = CommandResponse(
+            action: .playEpisode, spokenResponse: "Reading it.", episode: article)
+
+        await controller.beginCommand()
+
+        #expect(recorder.playedIDs == [104])
+        #expect(controller.state == .playing(article))
     }
 }
 

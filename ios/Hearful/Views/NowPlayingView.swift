@@ -3,7 +3,7 @@ import SwiftUI
 /// Full-screen player: artwork, scrubber, and the transport controls people
 /// expect from any podcast app.
 struct NowPlayingView: View {
-    @ObservedObject private var player = AudioPlayer.shared
+    @ObservedObject private var player = PlaybackCoordinator.shared
     @Environment(\.dismiss) private var dismiss
     @State private var scrubPosition: TimeInterval = 0
 
@@ -120,7 +120,7 @@ struct NowPlayingView: View {
 
 /// The bar above the tab bar. Tapping it opens the full player.
 struct MiniPlayer: View {
-    @ObservedObject private var player = AudioPlayer.shared
+    @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingNowPlaying: Bool
 
     var body: some View {

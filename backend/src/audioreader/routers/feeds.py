@@ -9,13 +9,14 @@ from sqlalchemy.orm import joinedload
 from audioreader import positions
 from audioreader.auth.dependencies import get_current_user
 from audioreader.db import get_session
-from audioreader.feeds import service
+from audioreader.feeds import articles, service
 from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import PodcastSearchError, search_podcasts
-from audioreader.models import Episode, Feed, Subscription, User
+from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User
 from audioreader.schemas import (
     EpisodeRead,
+    EpisodeTextRead,
     FeedCreate,
     FeedPreview,
     FeedRead,
@@ -56,6 +57,11 @@ async def episodes_read(
         read = EpisodeRead.model_validate(episode)
         # Item-level artwork is the exception; most feeds only set show art.
         read.image_url = secure_url(episode.image_url or episode.feed.image_url)
+        # Mirrors the fallback chain in feeds/articles.py: anything that can
+        # yield text marks the episode readable, so articles are playable.
+        read.has_text = bool(
+            episode.article_text or episode.content_html or episode.link or episode.description
+        )
         if (position := stored.get(episode.id)) is not None:
             read.position_seconds = position.position_seconds
             read.completed = position.completed
@@ -73,7 +79,13 @@ async def subscribe(body: FeedCreate, session: Session, user: CurrentUser) -> Fe
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except FeedParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _to_feed_read(feed, episode_count=len(feed.episodes))
+    # Counted with a query, never len(feed.episodes): the collection is only
+    # reliably in memory when the feed was created this request, and a lazy
+    # load outside the session's greenlet is an error, not a query.
+    count = await session.scalar(
+        select(func.count()).select_from(Episode).where(Episode.feed_id == feed.id)
+    )
+    return _to_feed_read(feed, episode_count=count or 0)
 
 
 @router.post("/preview")
@@ -179,7 +191,8 @@ episodes_router = APIRouter(prefix="/episodes", tags=["episodes"])
 async def recent_episodes(
     session: Session, user: CurrentUser, limit: int = 30
 ) -> list[EpisodeRead]:
-    """Newest playable episodes across the user's subscriptions.
+    """Newest playable items — episodes and articles — across the user's
+    subscriptions.
 
     Siri needs a concrete list of episodes up front: its App Shortcut phrases
     match spoken words against suggested entities, not against free text.
@@ -189,7 +202,7 @@ async def recent_episodes(
             select(Episode)
             .options(joinedload(Episode.feed))
             .join(Subscription, Subscription.feed_id == Episode.feed_id)
-            .where(Subscription.user_id == user.id, Episode.audio_url.is_not(None))
+            .where(Subscription.user_id == user.id, PLAYABLE_EPISODE)
             .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
             .limit(limit)
         )
@@ -207,6 +220,23 @@ async def get_episode(episode_id: int, session: Session, user: CurrentUser) -> E
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
     return (await episodes_read(session, user, [episode]))[0]
+
+
+@episodes_router.get("/{episode_id}/text")
+async def get_episode_text(episode_id: int, session: Session, user: CurrentUser) -> EpisodeTextRead:
+    """The full article text for a written episode, extracted on first request
+    and cached. Like get_episode, a subscription is deliberately not required:
+    articles can be played from previews and old voice picks."""
+    episode = await session.get(Episode, episode_id)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    text = await articles.text_for(session, episode)
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail={"spoken_response": "Sorry, I could not get the text of that article."},
+        )
+    return EpisodeTextRead(episode_id=episode.id, title=episode.title, text=text)
 
 
 @episodes_router.put("/{episode_id}/position", status_code=204)
