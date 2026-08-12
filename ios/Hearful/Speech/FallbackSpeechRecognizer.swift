@@ -17,16 +17,16 @@ final class FallbackSpeechRecognizer: SpeechRecognizing {
         self.backup = backup
     }
 
-    func listen() async throws -> String {
+    func listen(onReady: @MainActor () -> Void) async throws -> String {
         if !preferredHasFailed {
             do {
-                return try await preferred.listen()
+                return try await preferred.listen(onReady: onReady)
             } catch {
                 preferredHasFailed = true
                 log.notice("preferred recogniser failed, using backup: \(error.localizedDescription)")
             }
         }
-        return try await backup.listen()
+        return try await backup.listen(onReady: onReady)
     }
 
     func cancel() {

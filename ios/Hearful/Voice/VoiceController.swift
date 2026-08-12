@@ -3,8 +3,17 @@ import Foundation
 @MainActor
 protocol SpeechRecognizing {
     /// Listens until she stops speaking, then returns what was heard.
-    func listen() async throws -> String
+    ///
+    /// `onReady` fires when the microphone is actually capturing. What comes
+    /// before it — permission, a model download, starting the engine — can
+    /// take seconds, and anything said during that is simply lost, so the
+    /// go-ahead she hears must wait for this rather than for the tap.
+    func listen(onReady: @MainActor () -> Void) async throws -> String
     func cancel()
+}
+
+extension SpeechRecognizing {
+    func listen() async throws -> String { try await listen(onReady: {}) }
 }
 
 @MainActor
@@ -38,6 +47,10 @@ enum VoiceState: Equatable {
 /// of its own, so every rule below is exercised by tests rather than by ear.
 @MainActor
 final class VoiceController: ObservableObject {
+    /// How long a wait may go unexplained. Long enough that a prompt answer
+    /// arrives on its own, short enough that the silence never feels broken.
+    static let noticeAfter = Duration.milliseconds(600)
+
     @Published private(set) var state: VoiceState = .idle
     @Published private(set) var lastSpokenResponse = ""
 
@@ -67,7 +80,8 @@ final class VoiceController: ObservableObject {
         isBusy = true
         defer { isBusy = false }
 
-        // Before anything slow happens: confirm the tap landed.
+        // Before anything slow happens: confirm we are on it — whether she got
+        // here by tapping the sheet or by the sheet opening and starting itself.
         feedback.play(.acknowledged)
 
         // Anything playing would otherwise be transcribed as if she said it.
@@ -79,8 +93,14 @@ final class VoiceController: ObservableObject {
 
         do {
             state = .listening
-            feedback.play(.listening)
-            let transcript = try await speech.listen()
+            // A recogniser may start capture more than once — the older one
+            // retries server-side — but she should be told to speak only once.
+            var announced = false
+            let transcript = try await speech.listen {
+                guard !announced else { return }
+                announced = true
+                self.feedback.play(.listening)
+            }
             guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 await fail(saying: "I did not hear anything. Tap and try again.")
                 return
@@ -93,7 +113,9 @@ final class VoiceController: ObservableObject {
             }
 
             state = .thinking
-            let response = try await api.command(transcript: transcript)
+            let response = try await announcingDelay {
+                try await self.api.command(transcript: transcript)
+            }
             await handle(response)
         } catch let error as APIError {
             await fail(saying: error.spokenResponse)
@@ -165,6 +187,38 @@ final class VoiceController: ObservableObject {
                 await fail(saying: "Sorry, that episode would not play.")
             }
         }
+    }
+
+    /// Runs `work`, saying "one moment" aloud if it turns out to be slow.
+    ///
+    /// Waiting on the model is the one long silence in the interaction, and a
+    /// silence she cannot see the cause of is indistinguishable from the app
+    /// having missed her, or died. Nothing is said about a quick answer: the
+    /// filler would only push the real reply further away.
+    private func announcingDelay<T>(_ work: () async throws -> T) async throws -> T {
+        let notice = Task {
+            try? await Task.sleep(for: Self.noticeAfter)
+            guard !Task.isCancelled else { return }
+            // Deliberately not `say`: this is a holding line, not an answer,
+            // so it should not become the caption she is left looking at.
+            await self.speaker.speak("One moment.")
+        }
+        defer { notice.cancel() }
+        do {
+            let result = try await work()
+            await settle(notice)
+            return result
+        } catch {
+            await settle(notice)
+            throw error
+        }
+    }
+
+    /// Stops the holding line, but lets one already under way finish rather
+    /// than cutting it off mid-word.
+    private func settle(_ notice: Task<Void, Never>) async {
+        notice.cancel()
+        await notice.value
     }
 
     private func say(_ text: String) async {

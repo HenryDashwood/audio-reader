@@ -22,7 +22,7 @@ struct LibraryView: View {
             .navigationDestination(for: PodcastResult.self) { PodcastPreviewView(podcast: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingVoice = true } label: {
+                    Button { openVoiceSheet($showingVoice) } label: {
                         Image(systemName: "mic.fill")
                     }
                     .accessibilityLabel("Ask for something to listen to")
@@ -62,7 +62,7 @@ struct LibraryView: View {
                     "Tap the microphone and say the name of a podcast, or search for one above."
                 )
             } actions: {
-                Button("Add a show by voice") { showingVoice = true }
+                Button("Add a show by voice") { openVoiceSheet($showingVoice) }
             }
         case .loaded(let shows):
             List(shows) { show in

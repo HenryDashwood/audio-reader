@@ -34,7 +34,7 @@ struct LatestView: View {
             .navigationTitle("Latest")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingVoice = true } label: {
+                    Button { openVoiceSheet($showingVoice) } label: {
                         Image(systemName: "mic.fill")
                     }
                     .accessibilityLabel("Ask for something to listen to")

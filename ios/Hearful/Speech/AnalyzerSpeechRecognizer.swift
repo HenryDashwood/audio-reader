@@ -25,7 +25,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         self.locale = locale
     }
 
-    func listen() async throws -> String {
+    func listen(onReady: @MainActor () -> Void) async throws -> String {
         hasHeardSpeech = false
         try await requestMicrophonePermission()
 
@@ -48,6 +48,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
 
         try startCapture(convertingTo: format, into: continuation)
         log.info("analyzer listening")
+        onReady()
 
         defer { cancel() }
         return try await collectTranscript(from: transcriber)

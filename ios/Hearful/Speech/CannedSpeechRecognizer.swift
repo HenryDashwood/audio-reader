@@ -12,8 +12,9 @@ final class CannedSpeechRecognizer: SpeechRecognizing {
         self.transcript = transcript
     }
 
-    func listen() async throws -> String {
+    func listen(onReady: @MainActor () -> Void) async throws -> String {
         try? await Task.sleep(nanoseconds: 300_000_000)  // feel like real capture
+        onReady()
         return transcript
     }
 

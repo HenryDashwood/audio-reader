@@ -29,9 +29,10 @@ final class FakeSpeech: SpeechRecognizing {
     var error: Error?
     var listenCount = 0
 
-    func listen() async throws -> String {
+    func listen(onReady: @MainActor () -> Void) async throws -> String {
         listenCount += 1
         if let error { throw error }
+        onReady()
         return transcript
     }
     func cancel() {}
@@ -90,9 +91,12 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     var response: CommandResponse?
     var error: Error?
     var transcripts: [String] = []
+    /// How long the backend takes to answer.
+    var delay: Duration = .zero
 
     func command(transcript: String) async throws -> CommandResponse {
         transcripts.append(transcript)
+        if delay > .zero { try? await Task.sleep(for: delay) }
         if let error { throw error }
         return response ?? CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
     }
@@ -216,6 +220,18 @@ struct VoiceControllerTests {
         #expect(recorder.events.contains(.cue(.listening)))
     }
 
+    @Test func theGoAheadWaitsForTheMicrophone() async {
+        // Told to speak before the mic is capturing, her first words are lost —
+        // and setting up can mean a permission prompt or a model download.
+        let speech = FakeSpeech()
+        speech.error = URLError(.cancelled)  // never reaches capture
+        let (controller, recorder, _, _, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        #expect(!recorder.events.contains(.cue(.listening)))
+    }
+
     @Test func fasterNudgesTheRateLocally() async {
         let speech = FakeSpeech()
         speech.transcript = "faster"
@@ -326,6 +342,41 @@ struct VoiceControllerTests {
 
         #expect(recorder.playedIDs.isEmpty)
         #expect(controller.state == .idle)
+    }
+
+    @Test func saysOneMomentWhileASlowAnswerIsFetched() async {
+        // An unexplained silence is indistinguishable from being ignored.
+        let (controller, recorder, _, api, _) = makeController()
+        api.delay = VoiceController.noticeAfter + .milliseconds(400)
+        api.response = CommandResponse(
+            action: .unknown, spokenResponse: "Which show?", episode: nil)
+
+        await controller.beginCommand()
+
+        #expect(recorder.spoken == ["One moment.", "Which show?"])
+    }
+
+    @Test func aPromptAnswerIsNotDelayedByFiller() async {
+        let (controller, recorder, _, api, _) = makeController()
+        api.response = CommandResponse(
+            action: .unknown, spokenResponse: "Which show?", episode: nil)
+
+        await controller.beginCommand()
+
+        #expect(recorder.spoken == ["Which show?"])
+    }
+
+    @Test func theHoldingLineIsNotLeftAsTheCaption() async {
+        // It answers "is it still there?", not "what did you ask for?" — the
+        // idle screen should show her the real reply.
+        let (controller, _, _, api, _) = makeController()
+        api.delay = VoiceController.noticeAfter + .milliseconds(400)
+        api.response = CommandResponse(
+            action: .unknown, spokenResponse: "Which show?", episode: nil)
+
+        await controller.beginCommand()
+
+        #expect(controller.lastSpokenResponse == "Which show?")
     }
 
     @Test func articleWithTextIsPlayed() async {

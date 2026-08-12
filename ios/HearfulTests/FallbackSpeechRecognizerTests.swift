@@ -11,9 +11,11 @@ private final class ScriptedRecognizer: SpeechRecognizing {
 
     init(_ result: Result<String, Error>) { self.result = result }
 
-    func listen() async throws -> String {
+    func listen(onReady: @MainActor () -> Void) async throws -> String {
         listenCount += 1
-        return try result.get()
+        let transcript = try result.get()
+        onReady()
+        return transcript
     }
     func cancel() { cancelCount += 1 }
 }
@@ -69,6 +71,19 @@ struct FallbackSpeechRecognizerTests {
         await #expect(throws: (any Error).self) {
             _ = try await recognizer.listen()
         }
+    }
+
+    @Test func theGoAheadComesFromWhicheverRecognizerActuallyStarts() async throws {
+        // The tone means "speak now", so it must come from the recogniser that
+        // is listening — not from the one that failed on the way there.
+        let recognizer = FallbackSpeechRecognizer(
+            preferred: ScriptedRecognizer(.failure(Boom())),
+            backup: ScriptedRecognizer(.success("play the seashells one")))
+
+        var readyCount = 0
+        _ = try await recognizer.listen { readyCount += 1 }
+
+        #expect(readyCount == 1)
     }
 
     @Test func cancelReachesBoth() async {

@@ -21,7 +21,7 @@ final class SpeechRecognizer: SpeechRecognizing {
     private let timeouts = ListeningTimeouts()
     private var hasHeardSpeech = false
 
-    func listen() async throws -> String {
+    func listen(onReady: @MainActor () -> Void) async throws -> String {
         try await requestPermissions()
         guard let recognizer else {
             log.error("no recogniser for this locale")
@@ -34,17 +34,18 @@ final class SpeechRecognizer: SpeechRecognizing {
 
         let preferOnDevice = recognizer.supportsOnDeviceRecognition
         do {
-            return try await recognise(using: recognizer, onDevice: preferOnDevice)
+            return try await recognise(
+                using: recognizer, onDevice: preferOnDevice, onReady: onReady)
         } catch SpeechError.recognitionFailed where preferOnDevice {
             // The device claims on-device support but has no models installed.
             log.notice("on-device recognition failed; retrying server-based")
-            return try await recognise(using: recognizer, onDevice: false)
+            return try await recognise(using: recognizer, onDevice: false, onReady: onReady)
         }
     }
 
-    private func recognise(using recognizer: SFSpeechRecognizer, onDevice: Bool) async throws
-        -> String
-    {
+    private func recognise(
+        using recognizer: SFSpeechRecognizer, onDevice: Bool, onReady: @MainActor () -> Void
+    ) async throws -> String {
         cancel()
         transcript = ""
         hasHeardSpeech = false
@@ -64,6 +65,7 @@ final class SpeechRecognizer: SpeechRecognizing {
         }
         engine.prepare()
         try engine.start()
+        onReady()
 
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
