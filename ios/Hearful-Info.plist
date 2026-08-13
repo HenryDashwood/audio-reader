@@ -14,5 +14,11 @@
 	     while the backend ran on a Mac on the same Wi-Fi; asking for
 	     permissions the app does not use is a needless privacy prompt and a
 	     poor look at App Store review. -->
+
+	<!-- The only cryptography here is HTTPS, which is exempt from export
+	     compliance. Declaring it up front means App Store Connect stops
+	     asking the same question on every single upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
