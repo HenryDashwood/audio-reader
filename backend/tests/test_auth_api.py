@@ -13,13 +13,19 @@ from datetime import timedelta
 import jwt
 import pytest
 import respx
+from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.auth import service
-from audioreader.auth.apple import APPLE_ISSUER, AppleTokenVerifier, get_verifier
+from audioreader.auth.apple import (
+    APPLE_ISSUER,
+    AppleTokenVerifier,
+    get_revoker,
+    get_verifier,
+)
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.main import create_app
@@ -253,6 +259,174 @@ class TestSessions:
 
     async def test_deletion_needs_a_token(self, auth_client):
         assert (await auth_client.delete("/me")).status_code == 401
+
+
+class FakeRevoker:
+    """Stands in for Apple. Records what it was asked to do."""
+
+    def __init__(self, refresh_token: str | None = "r.abc", revoke_succeeds: bool = True) -> None:
+        self.refresh_token = refresh_token
+        self.revoke_succeeds = revoke_succeeds
+        self.exchanged: list[str] = []
+        self.revoked: list[str] = []
+
+    async def exchange_code(self, authorization_code: str) -> str | None:
+        self.exchanged.append(authorization_code)
+        return self.refresh_token
+
+    async def revoke(self, refresh_token: str) -> bool:
+        self.revoked.append(refresh_token)
+        return self.revoke_succeeds
+
+
+@pytest.fixture
+def revoker():
+    return FakeRevoker()
+
+
+@pytest.fixture
+async def revoking_client(session: AsyncSession, apple_keys, revoker) -> AsyncIterator[AsyncClient]:
+    """Like auth_client, but with Apple revocation configured."""
+    _, jwks = apple_keys
+    app = create_app()
+    app.dependency_overrides[get_session] = lambda: session
+    verifier = AppleTokenVerifier(audience=settings.apple_bundle_id, jwks_url=JWKS_URL)
+    app.dependency_overrides[get_verifier] = lambda: verifier
+    app.dependency_overrides[get_revoker] = lambda: revoker
+    transport = ASGITransport(app=app)
+    with respx.mock:
+        respx.get(JWKS_URL).mock(return_value=Response(200, json=jwks))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+
+
+class TestAppleRevocation:
+    async def test_the_authorization_code_is_exchanged_at_sign_in(
+        self, revoking_client, make_identity_token, revoker
+    ):
+        await revoking_client.post(
+            "/auth/apple",
+            json={"identity_token": make_identity_token(), "authorization_code": "code-123"},
+        )
+        assert revoker.exchanged == ["code-123"]
+
+    async def test_the_refresh_token_is_not_stored_in_the_clear(
+        self, revoking_client, make_identity_token, session, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "apple_token_encryption_key", Fernet.generate_key().decode())
+        await revoking_client.post(
+            "/auth/apple",
+            json={"identity_token": make_identity_token(), "authorization_code": "code-123"},
+        )
+
+        identity = await session.scalar(select(UserIdentity))
+        assert identity.refresh_token != "r.abc"
+        assert "r.abc" not in identity.refresh_token
+
+    async def test_deleting_revokes_with_apple_first(
+        self, revoking_client, make_identity_token, revoker
+    ):
+        token = (
+            await revoking_client.post(
+                "/auth/apple",
+                json={"identity_token": make_identity_token(), "authorization_code": "code-123"},
+            )
+        ).json()["token"]
+
+        await revoking_client.delete("/me", headers={"Authorization": f"Bearer {token}"})
+
+        assert revoker.revoked == ["r.abc"]
+
+    async def test_deletion_succeeds_even_when_apple_refuses(
+        self, revoking_client, make_identity_token, revoker, session
+    ):
+        # Her data goes either way. An un-revoked grant is a loose end, not
+        # a reason to keep the account alive.
+        revoker.revoke_succeeds = False
+        token = (
+            await revoking_client.post(
+                "/auth/apple",
+                json={"identity_token": make_identity_token(), "authorization_code": "code-123"},
+            )
+        ).json()["token"]
+
+        response = await revoking_client.delete("/me", headers={"Authorization": f"Bearer {token}"})
+
+        assert response.status_code == 204
+        assert await session.scalar(select(func.count(User.id))) == 0
+
+    async def test_signing_in_without_a_code_still_works(
+        self, revoking_client, make_identity_token, revoker
+    ):
+        # An older build of the app, which does not send one.
+        response = await revoking_client.post(
+            "/auth/apple", json={"identity_token": make_identity_token()}
+        )
+
+        assert response.status_code == 200
+        assert revoker.exchanged == []
+
+    async def test_a_failed_exchange_does_not_fail_the_sign_in(
+        self, revoking_client, make_identity_token, revoker
+    ):
+        revoker.refresh_token = None
+        response = await revoking_client.post(
+            "/auth/apple",
+            json={"identity_token": make_identity_token(), "authorization_code": "stale"},
+        )
+        assert response.status_code == 200
+
+    async def test_deleting_an_account_with_no_token_still_works(
+        self, revoking_client, make_identity_token, revoker, session
+    ):
+        # Signed in before the app began sending codes: nothing to revoke.
+        revoker.refresh_token = None
+        token = (
+            await revoking_client.post(
+                "/auth/apple", json={"identity_token": make_identity_token()}
+            )
+        ).json()["token"]
+
+        response = await revoking_client.delete("/me", headers={"Authorization": f"Bearer {token}"})
+
+        assert response.status_code == 204
+        assert revoker.revoked == []
+
+    async def test_a_later_sign_in_without_a_code_keeps_the_stored_token(
+        self, revoking_client, make_identity_token, revoker
+    ):
+        # Losing a usable token in exchange for nothing would be worse than
+        # keeping a slightly older one, which revokes just as well.
+        await revoking_client.post(
+            "/auth/apple",
+            json={"identity_token": make_identity_token(sub="mum"), "authorization_code": "c1"},
+        )
+        revoker.refresh_token = None
+        token = (
+            await revoking_client.post(
+                "/auth/apple", json={"identity_token": make_identity_token(sub="mum")}
+            )
+        ).json()["token"]
+
+        await revoking_client.delete("/me", headers={"Authorization": f"Bearer {token}"})
+
+        assert revoker.revoked == ["r.abc"]
+
+    async def test_an_unconfigured_deployment_simply_skips_it(
+        self, auth_client, make_identity_token, session
+    ):
+        # The default everywhere without an Apple key: deletion still works.
+        token = (
+            await auth_client.post(
+                "/auth/apple",
+                json={"identity_token": make_identity_token(), "authorization_code": "code-123"},
+            )
+        ).json()["token"]
+
+        response = await auth_client.delete("/me", headers={"Authorization": f"Bearer {token}"})
+
+        assert response.status_code == 204
+        assert await session.scalar(select(func.count(User.id))) == 0
 
     async def test_an_idle_session_expires(self, auth_client, make_identity_token, session):
         token = (await login(auth_client, make_identity_token())).json()["token"]

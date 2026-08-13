@@ -1,8 +1,12 @@
-"""Verification of Sign in with Apple identity tokens.
+"""Sign in with Apple: verifying identities, and revoking them.
 
-The app hands us the JWT Apple issued on-device; we check its signature
-against Apple's published keys and its audience against our bundle id.
-There is no Apple-side secret involved.
+Signing in needs no secret of ours. The app hands us the JWT Apple issued
+on-device; we check its signature against Apple's published keys and its
+audience against our bundle id.
+
+Revoking does need one — a JWT signed with a Sign in with Apple private key —
+which is why the second half of this module is inert unless the deployment has
+been given that key. Signing in works either way.
 """
 
 import logging
@@ -92,6 +96,135 @@ class AppleTokenVerifier:
                 logger.warning("skipping unusable Apple JWK entry")
         self._keys = keys
         self._fetched_at = time.monotonic()
+
+
+#: Apple caps client secrets at six months. Ours are minted per request and
+#: thrown away, so this only has to outlive the call it is made for.
+CLIENT_SECRET_TTL_SECONDS = 300
+
+
+class AppleRevoker:
+    """Tells Apple when an account has gone.
+
+    Guideline 5.1.1(v) asks that deleting an account also revokes the Sign in
+    with Apple grant. That takes a token, which takes an authorization code
+    exchanged at sign-in — so this class covers both ends of that.
+
+    Nothing here is allowed to raise into a request. Sign-in must not fail
+    because the exchange did, and deletion must not fail because Apple was
+    unreachable: her data goes either way, and an un-revoked grant is a loose
+    end to retry, not a reason to keep her account alive.
+    """
+
+    def __init__(
+        self,
+        *,
+        client_id: str,
+        team_id: str,
+        key_id: str,
+        private_key: str,
+        token_url: str,
+        revoke_url: str,
+    ) -> None:
+        self.client_id = client_id
+        self.team_id = team_id
+        self.key_id = key_id
+        self.private_key = private_key
+        self.token_url = token_url
+        self.revoke_url = revoke_url
+
+    def client_secret(self, now: int | None = None) -> str:
+        """The short-lived JWT Apple accepts in place of a client secret.
+
+        Signed ES256 with the .p8, which is why the key itself is what the
+        deployment holds rather than a pre-made secret: these expire.
+        """
+        issued = now if now is not None else int(time.time())
+        return jwt.encode(
+            {
+                "iss": self.team_id,
+                "iat": issued,
+                "exp": issued + CLIENT_SECRET_TTL_SECONDS,
+                "aud": APPLE_ISSUER,
+                "sub": self.client_id,
+            },
+            self.private_key,
+            algorithm="ES256",
+            headers={"kid": self.key_id},
+        )
+
+    async def exchange_code(self, authorization_code: str) -> str | None:
+        """Trade the app's one-time code for a refresh token to keep.
+
+        The code is single-use and expires within minutes of the sign-in that
+        produced it, so this happens during login or not at all.
+        """
+        payload = {
+            "grant_type": "authorization_code",
+            "code": authorization_code,
+            "client_id": self.client_id,
+            "client_secret": self.client_secret(),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(self.token_url, data=payload)
+                response.raise_for_status()
+                return response.json().get("refresh_token")
+        except httpx.HTTPError as exc:
+            logger.warning("Apple code exchange failed: %s", exc)
+            return None
+        except ValueError:
+            logger.warning("Apple code exchange returned something that was not JSON")
+            return None
+        except Exception:
+            # Broad on purpose. Everything this method exists for is optional;
+            # nothing it can do wrong is worth failing a sign-in over.
+            logger.exception("unexpected failure exchanging an Apple authorization code")
+            return None
+
+    async def revoke(self, refresh_token: str) -> bool:
+        """Revoke the grant. True when Apple accepted it."""
+        payload = {
+            "token": refresh_token,
+            "token_type_hint": "refresh_token",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret(),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(self.revoke_url, data=payload)
+                response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.warning("Apple revocation failed: %s", exc)
+            return False
+        except Exception:
+            # Broad on purpose, and it matters more here than above: this runs
+            # inside account deletion, and no failure of ours may leave her
+            # account standing after she asked for it to be gone.
+            logger.exception("unexpected failure revoking an Apple grant")
+            return False
+        return True
+
+
+_revoker: AppleRevoker | None = None
+
+
+def get_revoker() -> AppleRevoker | None:
+    """FastAPI dependency. None when the deployment holds no Apple key, which
+    is the ordinary state in development and in the tests."""
+    global _revoker
+    if not settings.apple_revocation_configured:
+        return None
+    if _revoker is None:
+        _revoker = AppleRevoker(
+            client_id=settings.apple_bundle_id,
+            team_id=settings.apple_team_id,
+            key_id=settings.apple_key_id,
+            private_key=settings.apple_private_key,
+            token_url=settings.apple_token_url,
+            revoke_url=settings.apple_revoke_url,
+        )
+    return _revoker
 
 
 _verifier: AppleTokenVerifier | None = None

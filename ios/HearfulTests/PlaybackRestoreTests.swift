@@ -20,7 +20,9 @@ private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
     func recentEpisodes(limit: Int) async throws -> [Episode] { [] }
     func shows() async throws -> [Show] { [] }
     func episodes(showID: Int) async throws -> [Episode] { [] }
-    func login(appleIdentityToken: String) async throws -> AuthResponse {
+    func login(appleIdentityToken: String, authorizationCode: String?) async throws
+        -> AuthResponse
+    {
         AuthResponse(token: "t", user: UserInfo(id: "u", displayName: nil))
     }
     func logout() async throws {}

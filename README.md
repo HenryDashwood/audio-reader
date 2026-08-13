@@ -130,6 +130,36 @@ development needs no configuration.
 database: a liveness probe that fails on a brief Postgres blip turns a
 recoverable outage into a restart loop.
 
+### Revoking Sign in with Apple on account deletion
+
+App Store guideline 5.1.1(v) asks that deleting an account also revokes the
+Apple grant. That needs a Sign in with Apple key from the developer portal
+(Certificates, Identifiers & Profiles → Keys → enable Sign in with Apple,
+configured for the app's App ID). The `.p8` downloads exactly once.
+
+- `AUDIOREADER_APPLE_TEAM_ID` — 10 characters, from Membership details
+- `AUDIOREADER_APPLE_KEY_ID` — 10 characters, shown on the key's page
+- `AUDIOREADER_APPLE_PRIVATE_KEY` — the `.p8` file's contents. Real newlines
+  or `\n` escapes both work.
+- `AUDIOREADER_APPLE_TOKEN_ENCRYPTION_KEY` — a Fernet key encrypting the
+  stored refresh tokens. Generate one with:
+
+  ```bash
+  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+  ```
+
+Leave any of the first three blank and revocation is skipped entirely —
+deletion still works, it just goes unreported. That is deliberate: erasing her
+data must never depend on Apple being reachable, and the same is true if the
+encryption key is lost or rotated. The worst case is always an un-revoked
+grant, never an account that outlives the request to delete it.
+
+The chain is: the app sends Apple's single-use `authorization_code` at
+sign-in → the backend trades it for a refresh token and stores it encrypted on
+`user_identities` → `DELETE /me` revokes with that token before deleting the
+row. Accounts created before this existed have no token and simply skip the
+revocation step until their next sign-in.
+
 The test suite stubs the LLM, so no API key is needed to run it.
 
 ### Choosing an LLM provider

@@ -79,6 +79,38 @@ class Settings(BaseSettings):
     apple_bundle_id: str = "com.henrydashwood.hearful"
     apple_jwks_url: str = "https://appleid.apple.com/auth/keys"
 
+    # Telling Apple when an account is deleted (guideline 5.1.1(v)) does need a
+    # secret: a JWT signed with a Sign in with Apple private key. Leave any of
+    # these blank and the revocation step is skipped — deletion still works,
+    # it just goes unreported. That is the right failure mode: erasing her data
+    # must never depend on Apple being reachable.
+    apple_team_id: str = ""
+    apple_key_id: str = ""
+    apple_private_key: str = ""  # the .p8 file's contents
+    apple_token_url: str = "https://appleid.apple.com/auth/token"
+    apple_revoke_url: str = "https://appleid.apple.com/auth/revoke"
+
+    @field_validator("apple_private_key")
+    @classmethod
+    def _with_real_newlines(cls, value: str) -> str:
+        """Accept a key pasted with literal backslash-n.
+
+        A .p8 is a multi-line PEM. Some hosting dashboards accept a real
+        multi-line value and some mangle it, so both spellings are tolerated
+        rather than failing at the first sign-in after a deploy.
+        """
+        return value.replace("\\n", "\n")
+
+    @property
+    def apple_revocation_configured(self) -> bool:
+        return bool(self.apple_team_id and self.apple_key_id and self.apple_private_key)
+
+    # Encrypts the Apple refresh tokens held for revocation, so a leaked
+    # database dump alone does not hand them over. Blank means store them as
+    # they are. Losing this key costs only the ability to tell Apple about
+    # deletions — never the ability to delete.
+    apple_token_encryption_key: str = ""
+
     # How long a session token stays good after its last use. Long, because
     # being signed out is a wall this user cannot climb unaided — but not
     # forever, so a lost or replaced phone stops being a live key eventually.

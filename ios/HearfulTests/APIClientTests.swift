@@ -325,7 +325,8 @@ struct AuthAndPositionTests {
         let json = #"{"token":"session-1","user":{"id":"u1","display_name":null}}"#
         let transport = FakeTransport(json: json)
         let response = try await withToken(nil) {
-            try await makeClient(transport).login(appleIdentityToken: "apple-jwt")
+            try await makeClient(transport).login(
+                appleIdentityToken: "apple-jwt", authorizationCode: nil)
         }
 
         #expect(response.token == "session-1")
@@ -335,6 +336,36 @@ struct AuthAndPositionTests {
         let body = try JSONDecoder().decode(
             [String: String].self, from: try #require(request.httpBody))
         #expect(body["identity_token"] == "apple-jwt")
+    }
+
+    @Test func loginForwardsTheAuthorizationCode() async throws {
+        // What lets the backend revoke her Apple grant when she deletes the
+        // account. Single-use, so if it does not go with the sign-in it is
+        // gone.
+        let json = #"{"token":"session-1","user":{"id":"u1","display_name":null}}"#
+        let transport = FakeTransport(json: json)
+        _ = try await withToken(nil) {
+            try await makeClient(transport).login(
+                appleIdentityToken: "apple-jwt", authorizationCode: "code-123")
+        }
+
+        let body = try JSONDecoder().decode(
+            [String: String].self, from: try #require(transport.lastRequest?.httpBody))
+        #expect(body["authorization_code"] == "code-123")
+    }
+
+    @Test func loginOmitsTheCodeWhenThereIsNone() async throws {
+        // The backend treats it as optional; sending null would be noise.
+        let json = #"{"token":"session-1","user":{"id":"u1","display_name":null}}"#
+        let transport = FakeTransport(json: json)
+        _ = try await withToken(nil) {
+            try await makeClient(transport).login(
+                appleIdentityToken: "apple-jwt", authorizationCode: nil)
+        }
+
+        let body = try JSONDecoder().decode(
+            [String: String].self, from: try #require(transport.lastRequest?.httpBody))
+        #expect(body["authorization_code"] == nil)
     }
 
     @Test func reportPositionSendsAPut() async throws {

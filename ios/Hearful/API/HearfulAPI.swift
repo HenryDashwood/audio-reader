@@ -13,7 +13,10 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func previewFeed(url: URL) async throws -> FeedPreview
     func subscribe(feedURL: URL) async throws -> Show
     func unsubscribe(showID: Int) async throws
-    func login(appleIdentityToken: String) async throws -> AuthResponse
+    /// `authorizationCode` is Apple's single-use code, forwarded so the
+    /// backend can hold something revocable for account deletion. Optional:
+    /// sign-in works without it.
+    func login(appleIdentityToken: String, authorizationCode: String?) async throws -> AuthResponse
     func logout() async throws
     func me() async throws -> UserInfo
     func deleteAccount() async throws
@@ -126,11 +129,16 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         try await perform(request)
     }
 
-    func login(appleIdentityToken: String) async throws -> AuthResponse {
+    func login(appleIdentityToken: String, authorizationCode: String?) async throws -> AuthResponse
+    {
         var request = URLRequest(url: baseURL.appendingPathComponent("auth/apple"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["identity_token": appleIdentityToken])
+        var body = ["identity_token": appleIdentityToken]
+        if let authorizationCode {
+            body["authorization_code"] = authorizationCode
+        }
+        request.httpBody = try JSONEncoder().encode(body)
         return try await send(request)
     }
 

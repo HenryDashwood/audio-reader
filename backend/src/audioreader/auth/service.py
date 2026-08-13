@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audioreader import secrets_store
 from audioreader.auth.apple import AppleIdentity
 from audioreader.config import settings
 from audioreader.models import (
@@ -40,9 +41,18 @@ def hash_token(token: str) -> str:
 
 
 async def login(
-    session: AsyncSession, identity: AppleIdentity, provider: str = "apple"
+    session: AsyncSession,
+    identity: AppleIdentity,
+    provider: str = "apple",
+    refresh_token: str | None = None,
 ) -> tuple[User, str]:
-    """Find or create the user for a verified identity; mint a session token."""
+    """Find or create the user for a verified identity; mint a session token.
+
+    `refresh_token` is the provider's, kept only so the grant can be revoked
+    when she deletes her account. It is stored encrypted, and a sign-in that
+    did not produce one leaves whatever was there — an older token still
+    revokes fine, and losing it in exchange for nothing would be worse.
+    """
     existing = await session.scalar(
         select(UserIdentity).where(
             UserIdentity.provider == provider,
@@ -51,6 +61,8 @@ async def login(
     )
     if existing is not None:
         user = await session.get_one(User, existing.user_id)
+        if refresh_token:
+            existing.refresh_token = secrets_store.encrypt(refresh_token)
     else:
         user = User()
         session.add(user)
@@ -60,6 +72,7 @@ async def login(
                 provider=provider,
                 provider_subject=identity.subject,
                 email=identity.email,
+                refresh_token=secrets_store.encrypt(refresh_token) if refresh_token else None,
             )
         )
         if user.email is None:
@@ -117,6 +130,20 @@ async def revoke(session: AsyncSession, token: str) -> None:
     if auth_session is not None and auth_session.revoked_at is None:
         auth_session.revoked_at = utcnow()
         await session.commit()
+
+
+async def provider_refresh_tokens(session: AsyncSession, user: User) -> list[str]:
+    """Her provider refresh tokens, decrypted, for revoking on the way out.
+
+    Read before anything is deleted, since the rows holding them are about to
+    go. Tokens that cannot be decrypted are simply absent from the result.
+    """
+    stored = await session.scalars(
+        select(UserIdentity.refresh_token).where(
+            UserIdentity.user_id == user.id, UserIdentity.refresh_token.is_not(None)
+        )
+    )
+    return [token for token in (secrets_store.decrypt(value) for value in stored) if token]
 
 
 async def delete_user(session: AsyncSession, user: User) -> None:

@@ -118,6 +118,11 @@ class FeedPreview(BaseModel):
 
 class AppleLoginRequest(BaseModel):
     identity_token: str
+    #: Apple's one-time authorization code, traded for the refresh token that
+    #: makes revoking her grant possible when she deletes her account.
+    #: Optional: older builds of the app do not send it, and a sign-in without
+    #: one must still work.
+    authorization_code: str | None = None
 
 
 class UserRead(BaseModel):

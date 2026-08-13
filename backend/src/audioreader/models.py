@@ -95,6 +95,10 @@ class UserIdentity(Base):
     provider: Mapped[str]  # "apple" today; "google" later
     provider_subject: Mapped[str]
     email: Mapped[str | None]
+    # Kept solely so the grant can be revoked with the provider when she
+    # deletes her account. Encrypted at rest (see secrets_store); null when the
+    # deployment has no Apple key configured, or the exchange failed.
+    refresh_token: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="identities")

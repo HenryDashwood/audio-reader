@@ -71,8 +71,15 @@ final class AuthController: ObservableObject {
                 signInError = "Sign in did not work. Please try again."
                 return
             }
+            // Sent so the backend can obtain something to revoke with Apple
+            // when she deletes her account. Single-use and short-lived, so it
+            // is now or not at all — but not fatal if it is missing: the
+            // backend treats it as optional, and sign-in matters more.
+            let authorizationCode = credential.authorizationCode
+                .flatMap { String(data: $0, encoding: .utf8) }
             do {
-                let response = try await api.login(appleIdentityToken: identityToken)
+                let response = try await api.login(
+                    appleIdentityToken: identityToken, authorizationCode: authorizationCode)
                 KeychainTokenStore.token = response.token
                 state = .signedIn
             } catch let error as APIError {
