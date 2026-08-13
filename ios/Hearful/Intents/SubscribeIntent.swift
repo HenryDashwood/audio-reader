@@ -15,7 +15,9 @@ struct SubscribeIntent: AppIntent {
     static let title: LocalizedStringResource = "Subscribe to a Show"
     static let description = IntentDescription(
         "Follows a podcast, blog or newsletter by name.")
-    static let openAppWhenRun = false
+    // Purely a network call and a spoken confirmation: no reason to ever put
+    // the app on screen for it.
+    static let supportedModes: IntentModes = .background
 
     @Parameter(
         title: "Show or publication",
@@ -45,7 +47,7 @@ struct SubscribeIntent: AppIntent {
         // and Siri relearns the show names it can match in spoken phrases,
         // so "play the latest X" works for the show she just added.
         NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
-        await HearfulShortcuts.updateAppShortcutParameters()
+        HearfulShortcuts.updateAppShortcutParameters()
         return .result(dialog: IntentDialog("\(response.spokenResponse)"))
     }
 }

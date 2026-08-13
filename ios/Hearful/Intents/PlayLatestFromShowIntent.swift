@@ -6,11 +6,12 @@ import Foundation
 /// The show is a phrase parameter matched against her subscriptions, so one
 /// breath works — no follow-up question — for any show she already follows.
 /// The newest item plays whether it is a podcast episode or an article.
-struct PlayLatestFromShowIntent: AppIntent, ForegroundContinuableIntent {
+struct PlayLatestFromShowIntent: AppIntent {
     static let title: LocalizedStringResource = "Play the Latest from a Show"
     static let description = IntentDescription(
         "Plays the newest episode or article from one of your shows.")
-    static let openAppWhenRun = false
+    /// Background first, coming forward only if the audio session refuses.
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
 
     @Parameter(title: "Show", requestValueDialog: "Which show?")
     var show: ShowEntity
@@ -40,11 +41,9 @@ struct PlayLatestFromShowIntent: AppIntent, ForegroundContinuableIntent {
             try PlaybackCoordinator.shared.play(episode)
         } catch {
             // iOS would not let us take the audio session from the background.
-            throw needsToContinueInForegroundError(
-                IntentDialog("Opening Hearful to play \(episode.title).")
-            ) {
-                try PlaybackCoordinator.shared.play(episode)
-            }
+            try await continueInForeground(
+                IntentDialog("Opening Hearful to play \(episode.title)."))
+            try PlaybackCoordinator.shared.play(episode)
         }
         return .result(dialog: IntentDialog("Playing \(episode.title)."))
     }

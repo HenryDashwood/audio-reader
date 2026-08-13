@@ -27,6 +27,12 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     private var statusObservation: NSKeyValueObservation?
     private var playbackStateObservation: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
+    /// True while a seek is still landing, during which AVPlayer's clock still
+    /// reads the old position and must not be published. See `seek`.
+    private var isSeeking = false
+    /// Identifies the newest seek, so an older one completing cannot clear
+    /// `isSeeking` out from under it.
+    private var seekGeneration = 0
     /// Sounded when an item reaches its end. Injectable so the tests can watch
     /// for it without a speaker.
     var feedback: FeedbackPlaying = Feedback.shared
@@ -109,9 +115,29 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
 
     func seek(to seconds: TimeInterval) {
         let clamped = min(max(seconds, 0), duration > 0 ? duration : seconds)
+
+        // A zero-tolerance seek is precise, which means it takes real time to
+        // land. Until it does, the periodic observer below keeps reporting the
+        // position we are leaving — so without this flag every skip published
+        // three positions: the new one, the old one again, then the new one.
+        // The middle of those is a stale position being written to the server,
+        // and if the app dies in that window she resumes in the wrong place.
+        seekGeneration += 1
+        let generation = seekGeneration
+        isSeeking = true
         player.seek(
             to: CMTime(seconds: clamped, preferredTimescale: 600),
-            toleranceBefore: .zero, toleranceAfter: .zero)
+            toleranceBefore: .zero, toleranceAfter: .zero
+        ) { @Sendable [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                // Only the newest seek may clear the flag: tapping skip three
+                // times in a row must not have the first landing re-open the
+                // window while the third is still in flight.
+                guard self.seekGeneration == generation else { return }
+                self.isSeeking = false
+            }
+        }
         currentTime = clamped
         updateNowPlayingPosition()
     }
@@ -180,7 +206,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
             forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main
         ) { [weak self] time in
             Task { @MainActor in
-                guard let self, !self.isScrubbing else { return }
+                // isScrubbing: her thumb is on the slider and owns the number.
+                // isSeeking: the clock has not caught up with where we jumped.
+                guard let self, !self.isScrubbing, !self.isSeeking else { return }
                 self.currentTime = time.seconds
             }
         }

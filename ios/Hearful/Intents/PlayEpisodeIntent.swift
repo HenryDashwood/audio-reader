@@ -6,10 +6,14 @@ import Foundation
 /// A plain AppIntent: Siri declined to run this app's AudioPlaybackIntent at
 /// all. It tries to start playback in the background and only comes forward if
 /// the audio session refuses.
-struct PlayEpisodeIntent: AppIntent, ForegroundContinuableIntent {
+struct PlayEpisodeIntent: AppIntent {
     static let title: LocalizedStringResource = "Play an Episode"
     static let description = IntentDescription("Plays a podcast episode.")
-    static let openAppWhenRun = false
+    /// Background first — the good case never shows the app at all — with
+    /// `.dynamic` foreground held in reserve for when the audio session
+    /// refuses to be taken from the background. Replaces `openAppWhenRun` and
+    /// `ForegroundContinuableIntent`, both deprecated in iOS 26.
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
 
     /// When Siri cannot fill this from the phrase — which is most of the time,
     /// since it only matches suggested episodes, not free text — it asks. Her
@@ -27,11 +31,13 @@ struct PlayEpisodeIntent: AppIntent, ForegroundContinuableIntent {
         do {
             try PlaybackCoordinator.shared.play(chosen)
         } catch {
-            throw needsToContinueInForegroundError(
-                IntentDialog("Opening Hearful to play \(episode.title).")
-            ) {
-                try PlaybackCoordinator.shared.play(chosen)
-            }
+            // Unlike the throwing call this replaces, this returns once the
+            // app is forward, so the retry happens here rather than in a
+            // continuation closure — and the confirmation below is still
+            // reached and still spoken.
+            try await continueInForeground(
+                IntentDialog("Opening Hearful to play \(episode.title)."))
+            try PlaybackCoordinator.shared.play(chosen)
         }
         // Short, because Siri reads it out before the episode begins.
         return .result(dialog: IntentDialog("Playing \(episode.title)."))

@@ -129,10 +129,13 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             return
         }
         chunkIndex = index
-        currentTime = script.chunks[index].start
         if wantsPlayback {
+            // Deliberately not set here as well: speakCurrentChunk lands
+            // currentTime on this chunk's start itself, and setting it twice
+            // publishes the same position to everything downstream twice.
             speakCurrentChunk()
         } else {
+            currentTime = script.chunks[index].start
             cancelSpeech()
             updateNowPlayingPosition()
         }

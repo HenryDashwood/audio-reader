@@ -14,8 +14,10 @@ struct AskHearfulIntent: AppIntent {
     static let description = IntentDescription(
         "Opens Hearful listening, ready for you to say what you'd like to hear.")
     // The whole point is to arrive in the app with the mic live; there is no
-    // background version of this intent.
-    static let openAppWhenRun = true
+    // background version of this intent. `.immediate` rather than `.deferred`
+    // because the sheet starts listening as soon as it appears — deferring the
+    // app's arrival would mean talking to a microphone that is not up yet.
+    static let supportedModes: IntentModes = .foreground(.immediate)
 
     @MainActor
     func perform() async throws -> some IntentResult {

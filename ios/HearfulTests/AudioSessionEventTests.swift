@@ -199,3 +199,65 @@ struct PlaybackInterruptionTests {
         #expect(!player.article.isPlaying)
     }
 }
+
+@Suite("Article seeking")
+@MainActor
+struct ArticleSeekTests {
+    private static let text = String(
+        repeating: "The Congress of Vienna redrew the map of Europe.\n\n", count: 20)
+
+    private func loadedPlayer() async -> ArticlePlayer {
+        let api = FakeAPI()
+        api.articleText = Self.text
+        let player = ArticlePlayer(api: api)
+        player.play(
+            Episode(
+                id: 1, title: "An article", description: nil, audioURL: nil,
+                durationSeconds: nil, publishedAt: nil, link: nil, imageURL: nil,
+                positionSeconds: nil, completed: nil, hasText: true))
+        for _ in 0..<100 where !player.isPlaying {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return player
+    }
+
+    @Test func seekingWhilePlayingLandsOnTheChunk() async {
+        // seek() no longer sets currentTime on this path — speakCurrentChunk
+        // does. If that coupling ever breaks, the position silently stops
+        // following her and the scrubber lies.
+        let player = await loadedPlayer()
+        #expect(player.isPlaying, "the article never started; the test proves nothing")
+
+        player.seek(to: player.duration / 2)
+
+        #expect(player.currentTime > 0)
+        #expect(player.currentTime <= player.duration / 2)
+    }
+
+    @Test func seekingWhilePausedStillMovesThePosition() async {
+        let player = await loadedPlayer()
+        player.pause()
+
+        player.seek(to: player.duration / 2)
+
+        #expect(player.currentTime > 0)
+    }
+
+    @Test func seekingBeyondTheEndClampsRatherThanOverrunning() async {
+        let player = await loadedPlayer()
+        player.pause()
+
+        player.seek(to: player.duration * 10)
+
+        #expect(player.currentTime <= player.duration)
+    }
+
+    @Test func seekingBeforeTheStartClampsToZero() async {
+        let player = await loadedPlayer()
+        player.pause()
+
+        player.seek(to: -500)
+
+        #expect(player.currentTime >= 0)
+    }
+}

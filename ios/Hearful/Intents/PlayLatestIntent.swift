@@ -11,10 +11,11 @@ private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "inte
 /// system intent that Siri declined to run for this app. This tries to start
 /// playback in the background and only asks to come to the foreground if the
 /// audio session refuses — so in the good case she never sees the app.
-struct PlayLatestIntent: AppIntent, ForegroundContinuableIntent {
+struct PlayLatestIntent: AppIntent {
     static let title: LocalizedStringResource = "Play the Latest Episode"
     static let description = IntentDescription("Plays the most recent episode.")
-    static let openAppWhenRun = false
+    /// Background first, coming forward only if the audio session refuses.
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
@@ -43,11 +44,9 @@ struct PlayLatestIntent: AppIntent, ForegroundContinuableIntent {
             // Ask to come forward and play there, rather than claiming success
             // and producing silence.
             log.notice("background playback refused, continuing in foreground")
-            throw needsToContinueInForegroundError(
-                IntentDialog("Opening Hearful to play \(episode.title).")
-            ) {
-                try PlaybackCoordinator.shared.play(episode)
-            }
+            try await continueInForeground(
+                IntentDialog("Opening Hearful to play \(episode.title)."))
+            try PlaybackCoordinator.shared.play(episode)
         }
 
         log.info("playing \(episode.title)")
