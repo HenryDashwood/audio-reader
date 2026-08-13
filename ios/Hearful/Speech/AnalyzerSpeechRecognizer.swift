@@ -166,18 +166,43 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
             return nil
         }
-        var supplied = false
+        // The input block is typed @Sendable, so a captured `var` and the
+        // non-Sendable buffer both look like races to the compiler. They are
+        // not: convert(to:error:withInputFrom:) calls this block synchronously
+        // on this thread and returns only once it is done with it, so nothing
+        // else can observe either value. Boxing says that in the one way the
+        // compiler accepts — same bargain as TapConversion above.
+        let source = ConversionSource(buffer: buffer)
         var error: NSError?
         converter.convert(to: output, error: &error) { _, status in
-            if supplied {
+            if source.supplied {
                 status.pointee = .noDataNow
                 return nil
             }
-            supplied = true
+            source.supplied = true
             status.pointee = .haveData
-            return buffer
+            return source.buffer
         }
         return error == nil ? output : nil
+    }
+
+    /// One buffer, offered to the converter exactly once.
+    ///
+    /// A class rather than locals so the whole thing crosses into the
+    /// @Sendable input block as a single reference. @unchecked is load-bearing
+    /// and deliberate: see the call site for why there is no concurrent access
+    /// to be unsafe about.
+    ///
+    /// `nonisolated` because nested types inherit the enclosing type's
+    /// isolation, and this one is used from the tap's realtime queue, which is
+    /// the one place that must never touch the main actor.
+    private nonisolated final class ConversionSource: @unchecked Sendable {
+        let buffer: AVAudioPCMBuffer
+        var supplied = false
+
+        init(buffer: AVAudioPCMBuffer) {
+            self.buffer = buffer
+        }
     }
 
     /// The language model is a download, not part of the OS image.
