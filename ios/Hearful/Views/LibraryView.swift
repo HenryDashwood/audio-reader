@@ -65,14 +65,30 @@ struct LibraryView: View {
                 Button("Add a show by voice") { openVoiceSheet($showingVoice) }
             }
         case .loaded(let shows):
-            List(shows) { show in
+            showList(shows, offline: false)
+        case .stale(let shows):
+            showList(shows, offline: true)
+        }
+    }
+
+    private func showList(_ shows: [Show], offline: Bool) -> some View {
+        List {
+            if offline {
+                // A row rather than a banner: VoiceOver reaches it in the same
+                // swipe order as everything else, instead of it living in a
+                // corner of the screen she never visits.
+                Label("Offline — showing your saved shows", systemImage: "wifi.slash")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(shows) { show in
                 NavigationLink(value: show) {
                     ShowRow(show: show)
                 }
             }
-            .listStyle(.plain)
-            .refreshable { await model.load() }
         }
+        .listStyle(.plain)
+        .refreshable { await model.load() }
     }
 
     @ViewBuilder
@@ -170,11 +186,22 @@ private struct ShowRow: View {
                 Text("\(show.episodeCount) episodes")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                // A show that has quietly stopped updating looks identical to
+                // one that simply has nothing new. Saying so is the difference
+                // between "they must be on a break" and knowing to remove it.
+                if show.isFailing == true {
+                    Label("Not updating", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(show.title), \(show.episodeCount) episodes")
+        .accessibilityLabel(
+            show.isFailing == true
+                ? "\(show.title), \(show.episodeCount) episodes, not updating"
+                : "\(show.title), \(show.episodeCount) episodes")
     }
 }
 
@@ -208,23 +235,41 @@ final class LibraryModel: ObservableObject {
         case loaded([Show])
         case empty
         case failed(String)
+        /// The request failed but we still have the last answer. She sees her
+        /// shows; the note explains why nothing is new.
+        case stale([Show])
     }
 
     @Published private(set) var state: State = .loading
     private let api: HearfulAPIProtocol
+    private let cache: OfflineCache
 
-    init(api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)) {
+    init(
+        api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+        cache: OfflineCache = .shared
+    ) {
         self.api = api
+        self.cache = cache
     }
 
     func load() async {
         do {
             let shows = try await api.shows()
+            cache.save(shows, for: .shows)
             state = shows.isEmpty ? .empty : .loaded(shows)
-        } catch let error as APIError {
-            state = .failed(error.spokenResponse)
         } catch {
-            state = .failed("Something went wrong.")
+            let message =
+                (error as? APIError)?.spokenResponse ?? "Something went wrong."
+            // An expired session is the one failure the cache must not paper
+            // over: showing her library while every tap fails would be worse
+            // than saying plainly that she needs to sign in.
+            if (error as? APIError)?.isAuthFailure != true,
+                let cached = cache.load([Show].self, for: .shows), !cached.isEmpty
+            {
+                state = .stale(cached)
+            } else {
+                state = .failed(message)
+            }
         }
     }
 }

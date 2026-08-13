@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload
 
 from audioreader import positions
 from audioreader.auth.dependencies import get_current_user
+from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.feeds import articles, service
 from audioreader.feeds.fetcher import FeedFetchError
@@ -39,6 +40,7 @@ def _to_feed_read(feed: Feed, episode_count: int) -> FeedRead:
         description=feed.description,
         image_url=feed.image_url,
         episode_count=episode_count,
+        is_failing=feed.consecutive_failures >= settings.feed_failure_threshold,
     )
 
 

@@ -26,6 +26,10 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     private var timeObserver: Any?
     private var statusObservation: NSKeyValueObservation?
     private var playbackStateObservation: NSKeyValueObservation?
+    private var endObserver: NSObjectProtocol?
+    /// Sounded when an item reaches its end. Injectable so the tests can watch
+    /// for it without a speaker.
+    var feedback: FeedbackPlaying = Feedback.shared
 
     var progress: Double {
         duration > 0 ? min(max(currentTime / duration, 0), 1) : 0
@@ -118,6 +122,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         // algorithm turns 1.5x podcasts into chipmunks-adjacent audio.
         item.audioTimePitchAlgorithm = .timeDomain
         player.replaceCurrentItem(with: item)
+        observeEnd(of: item)
         currentEpisode = episode
         PlaybackRestore.remember(episodeID: episode.id)
         currentTime = 0
@@ -148,6 +153,27 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     }
 
     // MARK: - Observation
+
+    /// Watches for the episode running out, which is otherwise indistinguishable
+    /// from everything having gone wrong. Scoped to one item and replaced with
+    /// it, so an old episode's ending cannot chime over a new one.
+    private func observeEnd(of item: AVPlayerItem) {
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+        }
+        endObserver = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // Land exactly on the end so the position reporter, which is
+                // watching this clock, records the episode as finished.
+                self.currentTime = self.duration
+                self.updateNowPlayingPosition()
+                self.feedback.play(.finished)
+            }
+        }
+    }
 
     private func observeTime() {
         timeObserver = player.addPeriodicTimeObserver(

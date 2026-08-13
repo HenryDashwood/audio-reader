@@ -1,3 +1,4 @@
+import AVFoundation
 import Combine
 import Foundation
 import MediaPlayer
@@ -31,6 +32,17 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     let audio: AudioPlayer
     let article: ArticlePlayer
     private var cancellables: Set<AnyCancellable> = []
+    private var interruptions = InterruptionPolicy()
+    /// Whether she has asked for sound, as opposed to whether sound is coming
+    /// out right now.
+    ///
+    /// The two differ exactly when it matters. AVPlayer pauses itself the
+    /// instant an interruption begins, and there is no guarantee our
+    /// notification handler runs before `isPlaying` has already gone false —
+    /// so deciding whether to resume from `isPlaying` would sometimes conclude
+    /// nothing was playing and leave the episode stopped for good. Intent does
+    /// not race: nothing but she changes it.
+    private var wantsPlayback = false
 
     init(audio: AudioPlayer, article: ArticlePlayer) {
         self.audio = audio
@@ -45,6 +57,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
             times: article.$currentTime, durations: article.$duration,
             rates: article.$playbackRate, when: .article)
         wireRemoteCommands()
+        wireAudioSessionEvents()
     }
 
     var progress: Double {
@@ -78,6 +91,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     }
 
     func play(_ episode: Episode) throws {
+        wantsPlayback = true
         if Self.playsAsArticle(episode) {
             audio.pause()
             activate(.article)
@@ -103,10 +117,12 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     // MARK: - Transport (routed to the active player)
 
     func pause() {
+        wantsPlayback = false
         active.pause()
     }
 
     func resume() {
+        wantsPlayback = true
         active.resume()
     }
 
@@ -186,6 +202,43 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
             guard let self, self.mode == expected else { return }
             self.playbackRate = value
         }.store(in: &cancellables)
+    }
+
+    /// Phone calls, alarms, Siri, and headphones being pulled out.
+    ///
+    /// Without this an interrupted episode simply never comes back: AVPlayer
+    /// pauses itself and waits to be told, and the article player is worse —
+    /// the synthesiser stops while nothing updates our state, leaving a player
+    /// that says it is playing and makes no sound. Neither is something she
+    /// can diagnose or fix by looking at the screen.
+    private func wireAudioSessionEvents() {
+        let centre = NotificationCenter.default
+        centre.publisher(for: AVAudioSession.interruptionNotification)
+            .sink { [weak self] note in
+                guard let event = AudioSessionEventReader.interruption(from: note.userInfo ?? [:])
+                else { return }
+                MainActor.assumeIsolated { self?.handle(event) }
+            }
+            .store(in: &cancellables)
+        centre.publisher(for: AVAudioSession.routeChangeNotification)
+            .sink { [weak self] note in
+                guard let event = AudioSessionEventReader.routeChange(from: note.userInfo ?? [:])
+                else { return }
+                MainActor.assumeIsolated { self?.handle(event) }
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Internal rather than private: the tests drive this directly, since a
+    /// real interruption cannot be staged in a unit test.
+    func handle(_ event: AudioSessionEvent) {
+        // Decided from intent, not from isPlaying — see wantsPlayback above.
+        // decide() records the answer before pause() clears the flag.
+        switch interruptions.decide(event, wantsPlayback: wantsPlayback) {
+        case .pause: pause()
+        case .resume: resume()
+        case .nothing: break
+        }
     }
 
     /// Lock screen, AirPods stems and "Hey Siri, pause" all arrive here — and

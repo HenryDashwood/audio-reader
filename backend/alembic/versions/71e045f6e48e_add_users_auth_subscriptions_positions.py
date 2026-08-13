@@ -59,7 +59,9 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_user_identities")),
         sa.UniqueConstraint(
-            "provider", "provider_subject", name=op.f("uq_user_identities_provider_provider_subject")
+            "provider",
+            "provider_subject",
+            name=op.f("uq_user_identities_provider_provider_subject"),
         ),
     )
     op.create_table(
@@ -91,10 +93,16 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
-            ["feed_id"], ["feeds.id"], name=op.f("fk_subscriptions_feed_id_feeds"), ondelete="CASCADE"
+            ["feed_id"],
+            ["feeds.id"],
+            name=op.f("fk_subscriptions_feed_id_feeds"),
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"], name=op.f("fk_subscriptions_user_id_users"), ondelete="CASCADE"
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_subscriptions_user_id_users"),
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_subscriptions")),
         sa.UniqueConstraint("user_id", "feed_id", name=op.f("uq_subscriptions_user_id_feed_id")),
@@ -135,9 +143,9 @@ def upgrade() -> None:
         )
     )
     op.execute(
-        sa.text("INSERT INTO subscriptions (user_id, feed_id) SELECT :id, id FROM feeds").bindparams(
-            legacy_id
-        )
+        sa.text(
+            "INSERT INTO subscriptions (user_id, feed_id) SELECT :id, id FROM feeds"
+        ).bindparams(legacy_id)
     )
 
 

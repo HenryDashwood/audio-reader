@@ -15,7 +15,9 @@ nonisolated enum CommandAction: String, Decodable {
     }
 }
 
-nonisolated struct Episode: Decodable, Equatable, Identifiable {
+/// Codable, not just Decodable: the same shape is written back out to the
+/// offline cache.
+nonisolated struct Episode: Codable, Equatable, Identifiable {
     let id: Int
     let title: String
     let description: String?
@@ -137,17 +139,22 @@ nonisolated struct PositionUpdate: Encodable {
 }
 
 /// A podcast the user subscribes to.
-nonisolated struct Show: Decodable, Identifiable, Equatable, Hashable {
+nonisolated struct Show: Codable, Identifiable, Equatable, Hashable {
     let id: Int
     let title: String
     let description: String?
     let artworkURL: URL?
     let episodeCount: Int
+    /// The backend has failed to reload this feed repeatedly — it has probably
+    /// moved or shut down. Optional so payloads from before the field existed
+    /// (including anything already in the offline cache) still decode.
+    var isFailing: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, title, description
         case artworkURL = "image_url"
         case episodeCount = "episode_count"
+        case isFailing = "is_failing"
     }
 }
 

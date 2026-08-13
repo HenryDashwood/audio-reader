@@ -29,6 +29,7 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
         AuthResponse(token: "t", user: UserInfo(id: "u", displayName: nil))
     }
     func logout() async throws {}
+    func deleteAccount() async throws {}
     func me() async throws -> UserInfo { UserInfo(id: "u", displayName: nil) }
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {}
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }

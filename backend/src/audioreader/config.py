@@ -61,10 +61,29 @@ class Settings(BaseSettings):
 
     poll_interval_seconds: int = 900  # 0 disables the background poller
 
+    # Consecutive failed polls before a feed is treated as broken rather than
+    # briefly unreachable. At the default interval that is a bit over an hour,
+    # which comfortably outlasts an ordinary blip.
+    feed_failure_threshold: int = 5
+
+    # How long an unsubscribed, never-listened-to feed stays in the shared
+    # catalog before being cleaned up. Generous: re-subscribing to a feed that
+    # is still there is instant, and the only cost of keeping it is disk.
+    orphan_feed_retention_days: int = 30
+    # Capped per pass so a first cleanup of a long-neglected database is a
+    # series of small deletes rather than one long table lock.
+    orphan_prune_batch_size: int = 200
+
     # Sign in with Apple: identity tokens are verified against Apple's public
     # keys, with the app's bundle id as the required audience. No secret needed.
     apple_bundle_id: str = "com.henrydashwood.hearful"
     apple_jwks_url: str = "https://appleid.apple.com/auth/keys"
+
+    # How long a session token stays good after its last use. Long, because
+    # being signed out is a wall this user cannot climb unaided — but not
+    # forever, so a lost or replaced phone stops being a live key eventually.
+    # Every request refreshes the clock; 0 disables expiry.
+    session_idle_timeout_days: int = 180
 
     # DeepSeek V4 Flash matched Opus 5 and Haiku 4.5 on every episode-selection
     # query we tried, at ~1/55 the cost of Opus. Switch back with
@@ -98,6 +117,14 @@ class Settings(BaseSettings):
     # web plugin lets the model search for sites it does not know.
     discovery_web_search: bool = True
     discovery_timeout_seconds: float = 120.0
+
+    # What one account may spend on spoken commands. The per-minute figure is
+    # a burst guard — no human asks for a podcast twelve times a minute — and
+    # the daily one is the actual budget, since a client stuck in a polite
+    # retry loop could otherwise sit just under the burst limit indefinitely.
+    # Set either to 0 to disable that window.
+    command_rate_limit_per_minute: int = 12
+    command_rate_limit_per_day: int = 500
 
 
 settings = Settings()

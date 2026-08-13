@@ -21,6 +21,13 @@ final class FallbackSpeechRecognizer: SpeechRecognizing {
         if !preferredHasFailed {
             do {
                 return try await preferred.listen(onReady: onReady)
+            } catch is SpeechPermissionDenied {
+                // Not a reason to try the backup — it needs the same
+                // permission and would fail the same way, a second or two
+                // later — and not a reason to write the preferred recogniser
+                // off for the rest of the session either: it is fine, we are
+                // simply not allowed to listen yet.
+                throw SpeechPermissionDenied()
             } catch {
                 preferredHasFailed = true
                 log.notice("preferred recogniser failed, using backup: \(error.localizedDescription)")

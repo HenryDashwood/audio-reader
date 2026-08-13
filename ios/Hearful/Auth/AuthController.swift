@@ -87,13 +87,28 @@ final class AuthController: ObservableObject {
         // Best effort: revoking server-side matters less than forgetting the
         // token locally, and must not block signing out while offline.
         try? await api.logout()
-        KeychainTokenStore.clear()
-        state = .signedOut
+        forgetSession()
+    }
+
+    /// Erase the account entirely — App Store guideline 5.1.1(v) requires this
+    /// to be reachable from inside the app, and a support email is not that.
+    /// Unlike signing out, a failure here matters: pretending it worked would
+    /// leave her believing her data is gone when it is not.
+    func deleteAccount() async throws {
+        try await api.deleteAccount()
+        forgetSession()
     }
 
     private func sessionDied() {
         guard state == .signedIn else { return }
+        forgetSession()
+    }
+
+    private func forgetSession() {
         KeychainTokenStore.clear()
+        // The next person to sign in on this phone must not be shown the last
+        // person's library out of the cache.
+        OfflineCache.shared.clear()
         state = .signedOut
     }
 }

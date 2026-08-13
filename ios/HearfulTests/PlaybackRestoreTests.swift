@@ -24,6 +24,7 @@ private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
         AuthResponse(token: "t", user: UserInfo(id: "u", displayName: nil))
     }
     func logout() async throws {}
+    func deleteAccount() async throws {}
     func me() async throws -> UserInfo { UserInfo(id: "u", displayName: nil) }
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {}
     func articleText(episodeID: Int) async throws -> EpisodeText {

@@ -6,7 +6,9 @@ bearer-token path runs, with Apple's JWKS endpoint mocked via respx.
 
 import base64
 import time
+import uuid
 from collections.abc import AsyncIterator
+from datetime import timedelta
 
 import jwt
 import pytest
@@ -21,7 +23,16 @@ from audioreader.auth.apple import APPLE_ISSUER, AppleTokenVerifier, get_verifie
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.main import create_app
-from audioreader.models import AuthSession, User, UserIdentity
+from audioreader.models import (
+    AuthSession,
+    Episode,
+    Feed,
+    PlaybackPosition,
+    Subscription,
+    User,
+    UserIdentity,
+    utcnow,
+)
 
 JWKS_URL = "https://appleid.test/auth/keys"
 KID = "test-key-1"
@@ -176,6 +187,132 @@ class TestSessions:
         headers = {"Authorization": f"Bearer {token}"}
         assert (await auth_client.post("/auth/logout", headers=headers)).status_code == 204
         assert (await auth_client.get("/me", headers=headers)).status_code == 401
+
+    async def test_account_deletion_removes_everything_of_hers(
+        self, auth_client, make_identity_token, session
+    ):
+        token = (await login(auth_client, make_identity_token())).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        user_id = uuid.UUID((await auth_client.get("/me", headers=headers)).json()["id"])
+
+        feed = Feed(url="https://example.com/feed.xml", title="A Show")
+        session.add(feed)
+        await session.flush()
+        episode = Episode(feed_id=feed.id, guid="g1", title="One", audio_url="https://e/1.mp3")
+        session.add(episode)
+        await session.flush()
+        session.add(Subscription(user_id=user_id, feed_id=feed.id))
+        session.add(PlaybackPosition(user_id=user_id, episode_id=episode.id, position_seconds=42.0))
+        await session.commit()
+
+        assert (await auth_client.delete("/me", headers=headers)).status_code == 204
+
+        assert await session.scalar(select(func.count(User.id)).where(User.id == user_id)) == 0
+        for table in (UserIdentity, AuthSession, Subscription, PlaybackPosition):
+            remaining = await session.scalar(
+                select(func.count()).select_from(table).where(table.user_id == user_id)
+            )
+            assert remaining == 0, f"{table.__name__} rows survived deletion"
+
+    async def test_account_deletion_keeps_the_shared_catalog(
+        self, auth_client, make_identity_token, session
+    ):
+        # Feeds and episodes are not hers to delete: other subscribers, and any
+        # future sign-in of her own, still need them.
+        token = (await login(auth_client, make_identity_token())).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        feed = Feed(url="https://example.com/feed.xml", title="A Show")
+        session.add(feed)
+        await session.commit()
+
+        await auth_client.delete("/me", headers=headers)
+
+        assert await session.scalar(select(func.count(Feed.id))) == 1
+
+    async def test_deleted_account_token_stops_working(
+        self, auth_client, make_identity_token, session
+    ):
+        token = (await login(auth_client, make_identity_token())).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        await auth_client.delete("/me", headers=headers)
+
+        assert (await auth_client.get("/me", headers=headers)).status_code == 401
+
+    async def test_signing_in_again_after_deletion_is_a_fresh_account(
+        self, auth_client, make_identity_token, session
+    ):
+        # Deletion must not blacklist her: the same Apple subject signing in
+        # again is simply a new account with nothing in it.
+        first = await login(auth_client, make_identity_token(sub="mum"))
+        headers = {"Authorization": f"Bearer {first.json()['token']}"}
+        await auth_client.delete("/me", headers=headers)
+
+        second = await login(auth_client, make_identity_token(sub="mum"))
+        assert second.status_code == 200
+        assert second.json()["user"]["id"] != first.json()["user"]["id"]
+
+    async def test_deletion_needs_a_token(self, auth_client):
+        assert (await auth_client.delete("/me")).status_code == 401
+
+    async def test_an_idle_session_expires(self, auth_client, make_identity_token, session):
+        token = (await login(auth_client, make_identity_token())).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        stored = await session.get(AuthSession, service.hash_token(token))
+        stored.last_used_at = utcnow() - timedelta(days=settings.session_idle_timeout_days + 1)
+        await session.commit()
+
+        assert (await auth_client.get("/me", headers=headers)).status_code == 401
+
+    async def test_an_expired_session_is_marked_revoked(
+        self, auth_client, make_identity_token, session
+    ):
+        token = (await login(auth_client, make_identity_token())).json()["token"]
+        stored = await session.get(AuthSession, service.hash_token(token))
+        stored.last_used_at = utcnow() - timedelta(days=settings.session_idle_timeout_days + 1)
+        await session.commit()
+
+        await auth_client.get("/me", headers={"Authorization": f"Bearer {token}"})
+
+        await session.refresh(stored)
+        assert stored.revoked_at is not None
+
+    async def test_use_keeps_a_session_alive(self, auth_client, make_identity_token, session):
+        token = (await login(auth_client, make_identity_token())).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Just inside the window, and using it pushes the clock forward.
+        stored = await session.get(AuthSession, service.hash_token(token))
+        stored.last_used_at = utcnow() - timedelta(days=settings.session_idle_timeout_days - 1)
+        await session.commit()
+
+        assert (await auth_client.get("/me", headers=headers)).status_code == 200
+        await session.refresh(stored)
+        assert utcnow() - service._as_aware(stored.last_used_at) < timedelta(minutes=1)
+
+    async def test_a_never_used_session_expires_from_its_creation(
+        self, auth_client, make_identity_token, session
+    ):
+        token = (await login(auth_client, make_identity_token())).json()["token"]
+        stored = await session.get(AuthSession, service.hash_token(token))
+        stored.last_used_at = None
+        stored.created_at = utcnow() - timedelta(days=settings.session_idle_timeout_days + 1)
+        await session.commit()
+
+        response = await auth_client.get("/me", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 401
+
+    async def test_expiry_can_be_disabled(
+        self, auth_client, make_identity_token, session, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "session_idle_timeout_days", 0)
+        token = (await login(auth_client, make_identity_token())).json()["token"]
+        stored = await session.get(AuthSession, service.hash_token(token))
+        stored.last_used_at = utcnow() - timedelta(days=3650)
+        await session.commit()
+
+        response = await auth_client.get("/me", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200
 
     async def test_legacy_user_is_not_reachable_without_a_token(self, auth_client, session):
         # The pre-auth placeholder row still exists in the deployed database;

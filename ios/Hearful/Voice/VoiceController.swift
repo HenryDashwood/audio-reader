@@ -51,27 +51,41 @@ final class VoiceController: ObservableObject {
     /// arrives on its own, short enough that the silence never feels broken.
     static let noticeAfter = Duration.milliseconds(600)
 
+    /// What she is told when listening is not permitted. Long, unlike every
+    /// other spoken line here, because it is the only one that has to carry
+    /// instructions she cannot read off the screen.
+    static let permissionMessage = """
+        Hearful needs permission to listen. Open the Settings app, choose \
+        Hearful, and turn on Microphone and Speech Recognition.
+        """
+
     @Published private(set) var state: VoiceState = .idle
     @Published private(set) var lastSpokenResponse = ""
+    /// True once listening has been refused for want of permission. The sheet
+    /// puts a button on screen so the trip to Settings is one tap rather than
+    /// a hunt through someone else's app.
+    @Published private(set) var needsPermission = false
 
     private let api: HearfulAPIProtocol
     private let speech: SpeechRecognizing
     private let speaker: Speaking
     private let player: AudioPlaying
     private let feedback: FeedbackPlaying
+    private let sleepTimer: SleepTimer
     private var isBusy = false
     /// True while an episode has been paused only so she could be heard.
     private var interruptedPlayback = false
 
     init(
         api: HearfulAPIProtocol, speech: SpeechRecognizing, speaker: Speaking,
-        player: AudioPlaying, feedback: FeedbackPlaying
+        player: AudioPlaying, feedback: FeedbackPlaying, sleepTimer: SleepTimer = .shared
     ) {
         self.api = api
         self.speech = speech
         self.speaker = speaker
         self.player = player
         self.feedback = feedback
+        self.sleepTimer = sleepTimer
     }
 
     func beginCommand() async {
@@ -101,12 +115,21 @@ final class VoiceController: ObservableObject {
                 announced = true
                 self.feedback.play(.listening)
             }
+            // Listening worked, so whatever was missing has been granted.
+            needsPermission = false
             guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 await fail(saying: "I did not hear anything. Tap and try again.")
                 return
             }
 
-            // Transport controls resolve here, with no network and no model.
+            // Transport controls and the sleep timer resolve here, with no
+            // network and no model. Sleep is checked first: its phrases are
+            // the more specific of the two ("stop" is a pause, "stop in
+            // twenty minutes" is not).
+            if let sleep = SleepCommand.match(transcript) {
+                await perform(sleep)
+                return
+            }
             if let transport = TransportCommand.match(transcript) {
                 perform(transport)
                 return
@@ -117,6 +140,11 @@ final class VoiceController: ObservableObject {
                 try await self.api.command(transcript: transcript)
             }
             await handle(response)
+        } catch is SpeechPermissionDenied {
+            // Distinct from every other failure: telling her to tap and try
+            // again would be advice that can never work.
+            needsPermission = true
+            await fail(saying: Self.permissionMessage)
         } catch let error as APIError {
             await fail(saying: error.spokenResponse)
         } catch {
@@ -142,6 +170,21 @@ final class VoiceController: ObservableObject {
         case .normalSpeed: player.setPlaybackRate(1.0)
         }
         state = .idle
+    }
+
+    /// Unlike the transport controls, this is confirmed aloud: setting a timer
+    /// makes no audible change at all, so silence would leave her with no way
+    /// to know whether it took — and she is about to stop paying attention.
+    private func perform(_ command: SleepCommand) async {
+        switch command {
+        case .after(let minutes):
+            sleepTimer.start(minutes: minutes)
+            await finish(saying: "I will stop in \(SleepTimer.spokenDuration(minutes: minutes)).")
+        case .cancel:
+            sleepTimer.cancel()
+            await finish(saying: "Sleep timer off.")
+        }
+        // The episode she interrupted to say this carries on.
     }
 
     /// Puts back what she was listening to, unless something replaced it.

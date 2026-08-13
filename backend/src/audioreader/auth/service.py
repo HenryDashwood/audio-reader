@@ -8,12 +8,21 @@ against the API.
 import hashlib
 import secrets
 import uuid
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.auth.apple import AppleIdentity
-from audioreader.models import AuthSession, User, UserIdentity, utcnow
+from audioreader.config import settings
+from audioreader.models import (
+    AuthSession,
+    PlaybackPosition,
+    Subscription,
+    User,
+    UserIdentity,
+    utcnow,
+)
 
 # The pre-auth deployment had exactly one implicit user; the migration created
 # this user (same literal) and attached the then-existing feeds to it. Nothing
@@ -63,9 +72,40 @@ async def login(
     return user, raw_token
 
 
+def _as_aware(value: datetime) -> datetime:
+    """Treat a naive timestamp as UTC.
+
+    Rows written by `server_default=func.now()` come back naive from SQLite,
+    and comparing those against an aware `utcnow()` raises rather than
+    returning a wrong answer — which is the good news, but only if it never
+    reaches production.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def is_expired(auth_session: AuthSession, now: datetime | None = None) -> bool:
+    """Has this session gone unused for longer than the idle timeout?
+
+    Measured from last use, falling back to creation for a token that was
+    minted and never used again.
+    """
+    if settings.session_idle_timeout_days <= 0:
+        return False
+    now = now or utcnow()
+    last_active = _as_aware(auth_session.last_used_at or auth_session.created_at)
+    return now - last_active > timedelta(days=settings.session_idle_timeout_days)
+
+
 async def user_for_token(session: AsyncSession, token: str) -> User | None:
     auth_session = await session.get(AuthSession, hash_token(token))
     if auth_session is None or auth_session.revoked_at is not None:
+        return None
+    if is_expired(auth_session):
+        # Recorded, not just refused: a token that has aged out should stop
+        # being a live row, so a stolen database is not a pile of keys waiting
+        # for their owner to sign in again.
+        auth_session.revoked_at = utcnow()
+        await session.commit()
         return None
     auth_session.last_used_at = utcnow()
     await session.commit()
@@ -77,3 +117,20 @@ async def revoke(session: AsyncSession, token: str) -> None:
     if auth_session is not None and auth_session.revoked_at is None:
         auth_session.revoked_at = utcnow()
         await session.commit()
+
+
+async def delete_user(session: AsyncSession, user: User) -> None:
+    """Erase an account and everything belonging to it.
+
+    Rows are deleted explicitly rather than left to ON DELETE CASCADE: the
+    cascades exist, but SQLite does not enforce foreign keys unless asked to,
+    so relying on them would mean the tests prove less than they appear to.
+
+    What deliberately survives is the shared catalog — feeds and episodes are
+    not hers, other subscribers still need them. Everything that identifies
+    her, or records what she listened to, goes.
+    """
+    for table in (PlaybackPosition, Subscription, AuthSession, UserIdentity):
+        await session.execute(delete(table).where(table.user_id == user.id))
+    await session.execute(delete(User).where(User.id == user.id))
+    await session.commit()

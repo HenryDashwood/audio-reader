@@ -15,3 +15,59 @@ func formatLength(seconds: Int?) -> String? {
     guard let seconds, seconds > 0 else { return nil }
     return "\(max(1, Int((Double(seconds) / 60).rounded()))) min"
 }
+
+/// How far through an episode she is, as a list row should describe it.
+///
+/// The backend stores a position for anything she has played, including the
+/// few seconds before she changed her mind, so a row is only called
+/// "in progress" once there is enough behind her to be worth going back to —
+/// and once finished it is called played, not "0 min left".
+enum ListeningProgress: Equatable {
+    case unplayed
+    case inProgress(remainingSeconds: Int)
+    case played
+
+    /// Below this, starting over costs nothing and "1 min left" would be a lie.
+    static let startedThreshold: TimeInterval = 60
+
+    init(positionSeconds: Double?, durationSeconds: Int?, completed: Bool?) {
+        if completed == true {
+            self = .played
+            return
+        }
+        guard let positionSeconds, positionSeconds > Self.startedThreshold,
+            let durationSeconds, durationSeconds > 0
+        else {
+            self = .unplayed
+            return
+        }
+        let remaining = Double(durationSeconds) - positionSeconds
+        // Within the last minute is effectively finished; an outro is not
+        // something to send her back to.
+        self = remaining <= 60 ? .played : .inProgress(remainingSeconds: Int(remaining))
+    }
+
+    /// Begun and not finished — the episodes worth offering to carry on with.
+    var hasStarted: Bool {
+        if case .inProgress = self { return true }
+        return false
+    }
+
+    /// What the row says, and what VoiceOver reads.
+    var label: String? {
+        switch self {
+        case .unplayed: nil
+        case .played: "Played"
+        case .inProgress(let remaining):
+            "\(max(1, Int((Double(remaining) / 60).rounded()))) min left"
+        }
+    }
+}
+
+extension Episode {
+    var listeningProgress: ListeningProgress {
+        ListeningProgress(
+            positionSeconds: positionSeconds, durationSeconds: durationSeconds,
+            completed: completed)
+    }
+}

@@ -36,4 +36,19 @@ nonisolated enum AppConfiguration {
         }
         return defaultBaseURL
     }
+
+    /// Whether a remembered address is in force, and what it is.
+    ///
+    /// Worth being able to see: the address is remembered precisely so that it
+    /// survives launching from the home screen, which also means one debug
+    /// launch pointed at a laptop follows the app around forever. On her phone
+    /// that looks like an app that has simply stopped working.
+    static func rememberedOverride(defaults: UserDefaults = .standard) -> String? {
+        defaults.string(forKey: storageKey)
+    }
+
+    /// Forget it and go back to the deployed backend.
+    static func clearRememberedOverride(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: storageKey)
+    }
 }

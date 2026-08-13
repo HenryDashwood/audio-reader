@@ -7,3 +7,7 @@ dockerfilePath = "Dockerfile"
 [deploy]
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
+# Migrations run before uvicorn binds, so a deploy is not healthy the instant
+# the container starts. The timeout covers that, plus a slow first connection.
+healthcheckPath = "/health"
+healthcheckTimeout = 120

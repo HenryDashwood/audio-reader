@@ -42,6 +42,8 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     /// are stale and ignored.
     private var currentUtterance: ObjectIdentifier?
     private var loadTask: Task<Void, Never>?
+    /// Sounded when an article is read to the end. Injectable for tests.
+    var feedback: FeedbackPlaying = Feedback.shared
 
     init(api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)) {
         self.api = api
@@ -297,6 +299,9 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
             chunkIndex = 0
             currentUtterance = nil
             updateNowPlayingPosition()
+            // The same marker a finished episode gets: an article simply
+            // stopping mid-silence reads as a fault.
+            feedback.play(.finished)
         }
     }
 

@@ -34,6 +34,10 @@ class FeedRead(BaseModel):
     description: str | None
     image_url: str | None
     episode_count: int
+    #: The feed has failed to load repeatedly — it has probably moved or shut
+    #: down. Surfaced so the app can say so, rather than leaving her to wonder
+    #: why a show she follows has gone quiet.
+    is_failing: bool = False
 
     @field_validator("description")
     @classmethod

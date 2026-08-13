@@ -46,3 +46,18 @@ async def me(user: CurrentUser) -> UserRead:
     """Cheap session probe: the app calls this at launch to notice a revoked
     or stale token before the user tries anything else."""
     return UserRead.model_validate(user)
+
+
+@router.delete("/me", status_code=204)
+async def delete_me(session: Session, user: CurrentUser) -> None:
+    """Erase the account. Required by App Store guideline 5.1.1(v), which is
+    why this exists as an endpoint rather than a support-email request.
+
+    Not yet done: Apple also asks that the Sign in with Apple token be revoked
+    with them at this point. That needs a client secret signed with an Apple
+    private key (.p8, team id, key id) which this deployment does not hold, and
+    the app would have to send the authorization code at sign-in for there to
+    be a token to revoke. Deleting our own record of her is the part we can do
+    honestly today; the Apple side is tracked separately.
+    """
+    await service.delete_user(session, user)

@@ -196,7 +196,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         }
         guard granted else {
             log.error("microphone permission denied")
-            throw SpeechError.notAuthorised
+            throw SpeechPermissionDenied()
         }
     }
 
@@ -217,7 +217,6 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     }
 
     enum SpeechError: Error {
-        case notAuthorised
         case noCompatibleAudioFormat
     }
 }

@@ -71,13 +71,25 @@ struct VoiceSheet: View {
                 .font(.title3)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
+            // Only when listening has actually been refused: the trip to
+            // Settings is otherwise a hunt through someone else's app.
+            if controller.needsPermission {
+                Button("Open Settings") {
+                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                    UIApplication.shared.open(url)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityHint("Opens Hearful's settings, where you can turn on the microphone")
+            }
             Spacer()
         }
         .padding(.top, 40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .onTapGesture { Task { await controller.beginCommand() } }
-        .accessibilityElement(children: .combine)
+        // Combined into one target normally, so a tap anywhere speaks — but
+        // not when there is a button to reach: merging would bury it.
+        .accessibilityElement(children: controller.needsPermission ? .contain : .combine)
         .accessibilityLabel("Ask Hearful")
         .accessibilityValue(caption)
         .accessibilityHint("Double tap anywhere to ask for something to listen to")

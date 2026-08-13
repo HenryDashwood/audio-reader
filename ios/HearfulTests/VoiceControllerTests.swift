@@ -106,8 +106,17 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     }
 
     var shows: [Show] = []
-    func shows() async throws -> [Show] { shows }
-    func episodes(showID: Int) async throws -> [Episode] { Array(episodesByID.values) }
+    /// Set to make the library request fail, for the offline-cache tests.
+    var showsError: Error?
+    func shows() async throws -> [Show] {
+        if let showsError { throw showsError }
+        return shows
+    }
+    var episodesError: Error?
+    func episodes(showID: Int) async throws -> [Episode] {
+        if let episodesError { throw episodesError }
+        return Array(episodesByID.values)
+    }
 
     var episodesByID: [Int: Episode] = [:]
     func episode(id: Int) async throws -> Episode {
@@ -121,6 +130,7 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
         AuthResponse(token: "fake-token", user: UserInfo(id: "u1", displayName: nil))
     }
     func logout() async throws {}
+    func deleteAccount() async throws {}
     func me() async throws -> UserInfo { UserInfo(id: "u1", displayName: nil) }
 
     var reportedPositions: [(episodeID: Int, seconds: Double, completed: Bool)] = []
@@ -128,8 +138,11 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
         reportedPositions.append((episodeID, seconds, completed))
     }
 
+    /// Set to let the article player actually load and speak something.
+    var articleText: String?
     func articleText(episodeID: Int) async throws -> EpisodeText {
-        throw APIError(underlying: "unused")
+        guard let articleText else { throw APIError(underlying: "unused") }
+        return EpisodeText(episodeID: episodeID, title: "An article", text: articleText)
     }
     func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }
@@ -154,9 +167,14 @@ private func makeController(
     let recorder = Recorder()
     let speech = speech ?? FakeSpeech()
     let player = FakePlayer(recorder)
+    // Its own sleep timer, not the shared one: tests run in parallel and must
+    // not set timers on each other's behalf.
+    let sleepTimer = SleepTimer(
+        player: PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api)),
+        feedback: FakeFeedback(recorder))
     let controller = VoiceController(
         api: api, speech: speech, speaker: FakeSpeaker(recorder), player: player,
-        feedback: FakeFeedback(recorder))
+        feedback: FakeFeedback(recorder), sleepTimer: sleepTimer)
     return (controller, recorder, speech, api, player)
 }
 
@@ -563,5 +581,138 @@ struct VoiceControllerFailureTests {
         _ = await (first, second)
 
         #expect(speech.listenCount == 1)
+    }
+
+    // MARK: - Sleep timer
+
+    @Test func aSleepRequestNeverReachesTheNetwork() async {
+        let speech = FakeSpeech()
+        speech.transcript = "stop in twenty minutes"
+        let (controller, _, _, api, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        // Setting a timer at bedtime must not depend on having signal.
+        #expect(api.transcripts.isEmpty)
+    }
+
+    @Test func aSleepRequestIsConfirmedAloud() async {
+        // Unlike pause or skip there is no audible change to hear, and she is
+        // about to stop paying attention.
+        let speech = FakeSpeech()
+        speech.transcript = "stop in twenty minutes"
+        let (controller, recorder, _, _, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        #expect(recorder.spoken == ["I will stop in 20 minutes."])
+    }
+
+    @Test func cancellingTheTimerIsConfirmedAloud() async {
+        let speech = FakeSpeech()
+        speech.transcript = "cancel the sleep timer"
+        let (controller, recorder, _, _, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        #expect(recorder.spoken == ["Sleep timer off."])
+    }
+
+    @Test func settingATimerLeavesTheEpisodePlaying() async {
+        // She interrupted it to speak; it must come back.
+        let speech = FakeSpeech()
+        speech.transcript = "stop in twenty minutes"
+        let (controller, recorder, _, _, player) = makeController(speech: speech)
+        player.isPlaying = true
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.contains(.resumed))
+    }
+
+    @Test func aBarePauseIsStillAPause() async {
+        // The sleep matcher runs first; it must not swallow "stop".
+        let speech = FakeSpeech()
+        speech.transcript = "stop"
+        let (controller, recorder, _, _, player) = makeController(speech: speech)
+        player.isPlaying = true
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.contains(.paused))
+        #expect(!recorder.events.contains(.resumed))
+    }
+
+    // MARK: - Permission
+
+    @Test func deniedPermissionIsExplained() async {
+        let speech = FakeSpeech()
+        speech.error = SpeechPermissionDenied()
+        let (controller, recorder, _, _, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        #expect(recorder.spoken == [VoiceController.permissionMessage])
+    }
+
+    @Test func deniedPermissionSaysWhereToFixIt() async {
+        // The generic apology sends her to tap again, which can never work.
+        let speech = FakeSpeech()
+        speech.error = SpeechPermissionDenied()
+        let (controller, recorder, _, _, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        let said = recorder.spoken.joined()
+        #expect(said.contains("Settings"))
+        #expect(!said.contains("try again"))
+    }
+
+    @Test func deniedPermissionRaisesTheFlagForTheSettingsButton() async {
+        let speech = FakeSpeech()
+        speech.error = SpeechPermissionDenied()
+        let (controller, _, _, _, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        #expect(controller.needsPermission)
+    }
+
+    @Test func grantingPermissionClearsTheFlag() async {
+        let speech = FakeSpeech()
+        speech.error = SpeechPermissionDenied()
+        let (controller, _, _, api, _) = makeController(speech: speech)
+        await controller.beginCommand()
+        #expect(controller.needsPermission)
+
+        // She has been to Settings and come back.
+        speech.error = nil
+        api.response = CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
+        await controller.beginCommand()
+
+        #expect(!controller.needsPermission)
+    }
+
+    @Test func anOrdinaryFailureIsNotTreatedAsAPermissionProblem() async {
+        let speech = FakeSpeech()
+        speech.error = URLError(.timedOut)
+        let (controller, recorder, _, _, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        #expect(!controller.needsPermission)
+        #expect(recorder.spoken == ["Sorry, I could not hear you. Please tap and try again."])
+    }
+
+    @Test func deniedPermissionStillPutsBackWhatWasPlaying() async {
+        // Being refused the microphone must not also cost her the episode.
+        let speech = FakeSpeech()
+        speech.error = SpeechPermissionDenied()
+        let (controller, recorder, _, _, player) = makeController(speech: speech)
+        player.isPlaying = true
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.contains(.resumed))
     }
 }

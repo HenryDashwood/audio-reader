@@ -10,6 +10,14 @@ enum Cue: Equatable {
     case acknowledged
     case listening
     case failed
+    /// An episode or article has reached its end.
+    ///
+    /// Without a marker, finishing sounds exactly like the app crashing, the
+    /// connection dropping, or the phone going to sleep — silence, with no way
+    /// to tell which. Deliberately a sound and not a sentence: hearing "that
+    /// was the end of the episode" every time would wear out fast, and nothing
+    /// starts automatically afterwards, so there is nothing to explain.
+    case finished
 }
 
 @MainActor
@@ -46,6 +54,13 @@ final class Feedback: FeedbackPlaying {
             AudioServicesPlaySystemSound(1114)  // end record: "go ahead"
         case .failed:
             notice.notificationOccurred(.error)
+        case .finished:
+            // A short tone plus a buzz: audible with the phone in a pocket,
+            // felt when it is in her hand. Any brief system sound would do —
+            // this one is soft enough not to startle at the end of something
+            // she may have fallen asleep to.
+            notice.notificationOccurred(.success)
+            AudioServicesPlaySystemSound(1057)
         }
     }
 }

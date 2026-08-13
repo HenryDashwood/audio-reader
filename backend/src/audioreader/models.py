@@ -28,7 +28,13 @@ class Feed(Base):
     description: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None]
     site_url: Mapped[str | None]
+    # Only bumped by a successful poll, so it doubles as "how stale is this".
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # A feed that has moved or died otherwise fails silently forever: the poll
+    # pass logs a line nobody reads and the show simply stops getting episodes.
+    # Counting failures makes that visible in the API, and to the listener.
+    consecutive_failures: Mapped[int] = mapped_column(default=0, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     episodes: Mapped[list["Episode"]] = relationship(

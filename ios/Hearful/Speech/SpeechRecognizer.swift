@@ -139,7 +139,7 @@ final class SpeechRecognizer: SpeechRecognizing {
         }
         guard speechStatus == .authorized else {
             log.error("speech authorisation denied: \(speechStatus.rawValue)")
-            throw SpeechError.notAuthorised
+            throw SpeechPermissionDenied()
         }
 
         let micGranted = await withCheckedContinuation { continuation in
@@ -147,12 +147,11 @@ final class SpeechRecognizer: SpeechRecognizing {
         }
         guard micGranted else {
             log.error("microphone permission denied")
-            throw SpeechError.notAuthorised
+            throw SpeechPermissionDenied()
         }
     }
 
     enum SpeechError: Error {
-        case notAuthorised
         case unavailable
         case recognitionFailed
     }

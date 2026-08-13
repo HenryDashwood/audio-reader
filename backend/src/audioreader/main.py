@@ -8,7 +8,7 @@ from fastapi import FastAPI
 
 from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
-from audioreader.feeds.poller import poll_all_feeds
+from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_feeds
 from audioreader.routers import auth, commands, feeds
 from audioreader.settings_types import LLMProvider
 
@@ -23,14 +23,25 @@ async def _poll_forever(interval_seconds: int) -> None:
     while True:
         await asyncio.sleep(interval_seconds)
         try:
-            async with SessionMaker() as session:
+            async with SessionMaker() as session, poll_lock(session) as acquired:
+                if not acquired:
+                    # Another replica is already polling. Nothing is wrong;
+                    # doing it again would just double the load on other
+                    # people's feed servers.
+                    logger.info("poll pass skipped: another replica holds the lock")
+                    continue
                 summary = await poll_all_feeds(session)
+                # Under the same lock, and after polling: cleanup is the least
+                # urgent thing here and must never delay new episodes.
+                await prune_orphaned_feeds(session)
             logger.info(
                 "poll pass: %d ok, %d failed, %d new episodes",
                 summary.polled,
                 summary.failed,
                 summary.episodes_added,
             )
+            if summary.failing:
+                logger.error("feeds needing attention: %s", ", ".join(summary.failing))
         except Exception:
             logger.exception("poll pass crashed; will retry next interval")
 
@@ -61,6 +72,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="audioreader", lifespan=lifespan)
+
+    @app.get("/health", tags=["health"])
+    async def health() -> dict[str, str]:
+        """Liveness, deliberately without touching the database.
+
+        The platform restarts the service when this fails, so it must answer
+        the question "is this process able to serve?" and nothing else. Folding
+        a database check in here would turn a thirty-second Postgres blip into
+        a restart loop, taking down an app that would otherwise have recovered
+        on its own. Database trouble surfaces as failing requests and in the
+        startup log line, which is where it belongs.
+        """
+        return {"status": "ok"}
+
     app.include_router(auth.router)
     app.include_router(feeds.router)
     app.include_router(feeds.episodes_router)

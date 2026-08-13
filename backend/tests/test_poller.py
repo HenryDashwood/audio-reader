@@ -3,8 +3,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from audioreader.config import settings
 from audioreader.feeds import service
-from audioreader.feeds.poller import poll_all_feeds, poll_feed
+from audioreader.feeds.poller import poll_all_feeds, poll_feed, poll_lock
 from audioreader.models import Episode
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -113,3 +114,81 @@ class TestPollAllFeeds:
 
         assert summary.polled == 0
         assert summary.failed == 0
+
+
+class TestFailureTracking:
+    async def test_a_failed_poll_is_counted(self, session, user, respx_mock, podcast_xml):
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        respx_mock.get(FEED_URL).respond(status_code=500)
+
+        await poll_all_feeds(session)
+
+        await session.refresh(feed)
+        assert feed.consecutive_failures == 1
+        assert feed.last_error
+
+    async def test_failures_accumulate(self, session, user, respx_mock, podcast_xml):
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        respx_mock.get(FEED_URL).respond(status_code=500)
+
+        for _ in range(3):
+            await poll_all_feeds(session)
+
+        await session.refresh(feed)
+        assert feed.consecutive_failures == 3
+
+    async def test_a_successful_poll_clears_the_count(
+        self, session, user, respx_mock, podcast_xml, podcast_updated_xml
+    ):
+        # A feed that was briefly unreachable must not stay flagged forever.
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        respx_mock.get(FEED_URL).respond(status_code=500)
+        await poll_all_feeds(session)
+
+        respx_mock.get(FEED_URL).respond(content=podcast_updated_xml)
+        await poll_all_feeds(session)
+
+        await session.refresh(feed)
+        assert feed.consecutive_failures == 0
+        assert feed.last_error is None
+
+    async def test_persistent_failure_is_reported(
+        self, session, user, respx_mock, podcast_xml, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "feed_failure_threshold", 2)
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        respx_mock.get(FEED_URL).respond(status_code=500)
+
+        assert (await poll_all_feeds(session)).failing == ()
+        assert (await poll_all_feeds(session)).failing == (feed.title,)
+
+    async def test_a_failing_feed_does_not_stop_the_pass(
+        self, session, user, respx_mock, podcast_xml, article_xml, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "feed_failure_threshold", 1)
+        await subscribed_feed(session, user, respx_mock, article_xml, url=OTHER_URL)
+        await subscribed_feed(session, user, respx_mock, podcast_xml)
+        respx_mock.get(OTHER_URL).respond(status_code=500)
+        respx_mock.get(FEED_URL).respond(content=podcast_xml)
+
+        summary = await poll_all_feeds(session)
+
+        assert summary.failed == 1
+        assert summary.polled == 1
+
+
+class TestPollLock:
+    async def test_sqlite_always_gets_the_lock(self, session):
+        # Nothing to coordinate outside Postgres; the poller must not become a
+        # no-op in development because of a lock that cannot exist.
+        async with poll_lock(session) as acquired:
+            assert acquired is True
+
+    async def test_the_lock_is_released_even_if_the_pass_raises(self, session):
+        with pytest.raises(RuntimeError):
+            async with poll_lock(session) as acquired:
+                assert acquired
+                raise RuntimeError("poll blew up")
+
+        async with poll_lock(session) as acquired:
+            assert acquired is True

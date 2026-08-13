@@ -16,6 +16,7 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func login(appleIdentityToken: String) async throws -> AuthResponse
     func logout() async throws
     func me() async throws -> UserInfo
+    func deleteAccount() async throws
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws
 }
 
@@ -141,6 +142,12 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
 
     func me() async throws -> UserInfo {
         try await send(URLRequest(url: baseURL.appendingPathComponent("me")))
+    }
+
+    func deleteAccount() async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("me"))
+        request.httpMethod = "DELETE"
+        try await perform(request)
     }
 
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {

@@ -4,6 +4,7 @@ import SwiftUI
 /// expect from any podcast app.
 struct NowPlayingView: View {
     @ObservedObject private var player = PlaybackCoordinator.shared
+    @ObservedObject private var sleepTimer = SleepTimer.shared
     @Environment(\.dismiss) private var dismiss
     @State private var scrubPosition: TimeInterval = 0
 
@@ -23,7 +24,10 @@ struct NowPlayingView: View {
 
             scrubber
             transport
-            speedControl
+            HStack(spacing: 16) {
+                speedControl
+                sleepControl
+            }
 
             Spacer(minLength: 0)
         }
@@ -104,6 +108,49 @@ struct NowPlayingView: View {
         }
         .accessibilityLabel("Playback speed")
         .accessibilityValue(spokenSpeed(player.playbackRate))
+    }
+
+    private var sleepControl: some View {
+        Menu {
+            ForEach(SleepTimer.options, id: \.self) { minutes in
+                Button("\(minutes) minutes") { sleepTimer.start(minutes: minutes) }
+            }
+            if sleepTimer.isRunning {
+                Divider()
+                Button("Turn off sleep timer", role: .destructive) { sleepTimer.cancel() }
+            }
+        } label: {
+            // Redrawn every half minute so a running timer counts down rather
+            // than showing whatever it said when the sheet was opened.
+            TimelineView(.periodic(from: .now, by: 30)) { _ in
+                Group {
+                    // The countdown is worth the width only while it is
+                    // counting; otherwise the icon says everything.
+                    if sleepTimer.isRunning {
+                        Label(sleepLabel, systemImage: "moon.zzz")
+                    } else {
+                        Image(systemName: "moon.zzz")
+                    }
+                }
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(sleepBackground, in: Capsule())
+            }
+        }
+        .accessibilityLabel("Sleep timer")
+        .accessibilityValue(sleepTimer.isRunning ? "stopping in \(sleepLabel)" : "off")
+    }
+
+    private var sleepBackground: AnyShapeStyle {
+        sleepTimer.isRunning ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary)
+    }
+
+    /// Minutes left, rounded up: "1 min" through the last sixty seconds,
+    /// rather than "0 min" for most of it.
+    private var sleepLabel: String {
+        guard let remaining = sleepTimer.remaining else { return "Sleep" }
+        return "\(max(1, Int(ceil(remaining / 60)))) min"
     }
 
     private func speedLabel(_ rate: Float) -> String {
