@@ -20,3 +20,23 @@ async def test_health_needs_no_token_and_no_database():
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/health")
     assert response.status_code == 200
+
+
+async def test_privacy_policy_is_public():
+    # App Store Connect and TestFlight both need a link that works without a
+    # login and keeps working.
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/privacy")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+
+
+async def test_privacy_policy_names_the_real_data_flows():
+    # The disclosures it would be dishonest to omit: the AI provider, the
+    # hosting provider, Apple, and how to delete an account.
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        body = (await client.get("/privacy")).text
+    for phrase in ("OpenRouter", "Delete Account", "Railway", "Apple"):
+        assert phrase in body, f"privacy policy no longer mentions {phrase}"

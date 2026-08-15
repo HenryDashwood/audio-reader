@@ -3,8 +3,10 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
@@ -14,6 +16,8 @@ from audioreader.settings_types import LLMProvider
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 async def _poll_forever(interval_seconds: int) -> None:
@@ -85,6 +89,18 @@ def create_app() -> FastAPI:
         startup log line, which is where it belongs.
         """
         return {"status": "ok"}
+
+    @app.get("/privacy", include_in_schema=False)
+    async def privacy() -> FileResponse:
+        """The privacy policy, at a stable public URL.
+
+        Served from the API rather than hosted separately because App Store
+        Connect and TestFlight both require a link that keeps working — one
+        fewer thing to renew, forget, or let lapse. Plain semantic HTML, since
+        the people most likely to read it will be doing so with a screen
+        reader.
+        """
+        return FileResponse(STATIC_DIR / "privacy.html", media_type="text/html")
 
     app.include_router(auth.router)
     app.include_router(feeds.router)

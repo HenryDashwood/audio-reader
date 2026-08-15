@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hearful — Privacy Policy</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    line-height: 1.6;
+    max-width: 40rem;
+    margin: 0 auto;
+    padding: 2rem 1.25rem 6rem;
+    color: #1c1c1e;
+    background: #fff;
+  }
+  h1 { font-size: 1.9rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.5rem; }
+  .updated { color: #6b6b70; margin-top: 0; }
+  ul { padding-left: 1.25rem; }
+  li { margin-bottom: 0.4rem; }
+  a { color: #0055cc; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #f2f2f7; background: #000; }
+    .updated { color: #9a9aa0; }
+    a { color: #6ea8ff; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Hearful — Privacy Policy</h1>
+<p class="updated">Last updated 15 August 2026</p>
+
+<p>
+  Hearful is a podcast and article player you control by speaking. It is built
+  for people who cannot easily use a screen, which means the microphone is not
+  an optional extra here — it is the main way the app is used. This policy
+  explains what that involves.
+</p>
+
+<h2>The short version</h2>
+<ul>
+  <li>We keep your email address, the shows you follow, and how far through each episode you are.</li>
+  <li>What you say is turned into text and sent to an AI provider so the app can work out which episode you meant. The text of your request is sent, never a recording.</li>
+  <li>That request is sent along with a list of recent episodes from the shows you follow, so the AI has something to choose between.</li>
+  <li>There is no advertising, no tracking, and nothing is sold or shared with data brokers.</li>
+  <li>You can delete your account, and everything in it, from inside the app.</li>
+</ul>
+
+<h2>Who is responsible for your data</h2>
+<p>
+  The data controller is <strong>Henry Dashwood</strong>. You can reach
+  us at <strong>hcndashwood@gmail.com</strong> about anything on this page.
+</p>
+
+<h2>What we collect, and why</h2>
+<ul>
+  <li>
+    <strong>Your email address and an Apple account identifier.</strong> These
+    come from Sign in with Apple when you create an account. If you chose to
+    hide your email, we only ever see Apple's private relay address. We use
+    these to know which account is yours and nothing else.
+  </li>
+  <li>
+    <strong>The shows you subscribe to.</strong> So your library is there when
+    you open the app.
+  </li>
+  <li>
+    <strong>Your place in each episode.</strong> So playback resumes where you
+    stopped, including on another device.
+  </li>
+  <li>
+    <strong>A sign-in token.</strong> Stored only as a one-way hash, so that
+    even we cannot read it back. It expires after 180 days without use.
+  </li>
+  <li>
+    <strong>An Apple refresh token.</strong> Encrypted, and kept for one
+    purpose only: so that deleting your account can also tell Apple to revoke
+    the Sign in with Apple connection.
+  </li>
+</ul>
+
+<h2>When you speak to the app</h2>
+<p>
+  Speech is turned into text on your device, using Apple's speech recognition.
+  If your device does not have the on-device speech models available, Apple's
+  system falls back to processing the audio on Apple's servers — that part is
+  handled by Apple under
+  <a href="https://www.apple.com/legal/privacy/">Apple's privacy policy</a>,
+  not by us.
+</p>
+<p>
+  The resulting <strong>text</strong> is sent to our server. We do not receive,
+  store or transmit any audio recording of your voice at any point.
+</p>
+<p>
+  To work out which episode you meant, our server sends that text to an AI
+  language-model provider —
+  <a href="https://openrouter.ai/privacy">OpenRouter</a>, which routes the
+  request to a model provider on our behalf. Alongside your words, we send a
+  list of recent episodes from the shows you follow: their titles, the show
+  names, publication dates, and a short extract of each description. The AI
+  needs that list in order to have something to choose between.
+</p>
+<p>
+  In plain terms: <strong>the AI provider sees what you asked for, and part of
+  your listening library.</strong> It does not see your name, your email
+  address, or your account identifier. If you ask to follow a publication we do
+  not recognise, the name you said is also used to search the web for its feed.
+</p>
+
+<h2>What other companies can see</h2>
+<ul>
+  <li>
+    <strong>Apple</strong> — sign-in, and speech recognition where it falls
+    back to Apple's servers.
+  </li>
+  <li>
+    <strong>OpenRouter and the model provider it routes to</strong> — your
+    spoken requests as text, and the episode list described above.
+  </li>
+  <li>
+    <strong>Railway</strong> — our hosting provider, which runs the servers and
+    database where your account is stored.
+  </li>
+  <li>
+    <strong>Podcast publishers and their hosts</strong> — episode audio and
+    artwork are fetched by the app directly from wherever the publisher hosts
+    them, so those servers see your device's IP address, exactly as they would
+    in any podcast app. Article text and podcast search are fetched by our
+    server instead, so publishers do not see your device for those.
+  </li>
+</ul>
+
+<h2>What we do not do</h2>
+<ul>
+  <li>No advertising, and no advertising identifiers.</li>
+  <li>No analytics or tracking across other apps or websites.</li>
+  <li>No selling or sharing of personal data with data brokers.</li>
+  <li>No storing of voice recordings.</li>
+</ul>
+
+<h2>How long we keep things</h2>
+<p>
+  Your account, subscriptions and playback positions are kept until you delete
+  your account. Sign-in tokens expire after 180 days without use. Shows that
+  nobody subscribes to and nobody has listened to are removed from our catalogue
+  after 30 days.
+</p>
+
+<h2>Deleting your account</h2>
+<p>
+  Open <strong>Settings</strong> in the app and choose
+  <strong>Delete Account</strong>.
+  This permanently removes your account, your subscriptions and your place in
+  every episode, and asks Apple to revoke the Sign in with Apple connection. It
+  cannot be undone. You do not need to contact us or wait for us to act.
+</p>
+
+<h2>Your rights</h2>
+<p>
+  If you are in the UK or the EU, you have the right to access your data, to
+  correct it, to have it deleted, to object to how it is used, and to receive a
+  copy of it. Deletion is available immediately in the app; for anything else,
+  write to us at the address above and we will respond within one month. You
+  also have the right to complain to the
+  <a href="https://ico.org.uk/">Information Commissioner's Office</a>.
+</p>
+<p>
+  We handle your data because it is necessary to provide the app you asked us
+  to provide — that is our lawful basis for everything described here.
+</p>
+
+<h2>Children</h2>
+<p>
+  Hearful is not directed at children under 13, and we do not knowingly collect
+  data from them.
+</p>
+
+<h2>Changes to this policy</h2>
+<p>
+  If we change how any of this works, we will update this page and change the
+  date at the top. Material changes will be announced in the app.
+</p>
+
+<h2>Contact</h2>
+<p>
+  <strong>hcndashwood@gmail.com</strong>
+</p>
+
+</body>
+</html>
