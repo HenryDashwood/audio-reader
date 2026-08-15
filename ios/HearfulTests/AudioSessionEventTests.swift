@@ -128,9 +128,16 @@ struct PlaybackInterruptionTests {
             hasText: true)
     }
 
-    /// The article text is fetched asynchronously before anything is spoken.
-    private func waitUntilSpeaking(_ player: PlaybackCoordinator) async {
-        for _ in 0..<100 where !player.article.isPlaying {
+    /// Waits for the article's text to arrive, which is what actually gates
+    /// everything below.
+    ///
+    /// Deliberately keyed on `duration` rather than on `isPlaying`: duration
+    /// is set the moment the script loads, whereas isPlaying depends on the
+    /// speech synthesiser getting going — and CI simulators are headless with
+    /// no audio route, so waiting on that stalls there while passing happily
+    /// on a Mac with speakers.
+    private func waitUntilLoaded(_ player: PlaybackCoordinator) async {
+        for _ in 0..<100 where player.article.duration == 0 {
             try? await Task.sleep(for: .milliseconds(20))
         }
     }
@@ -143,8 +150,8 @@ struct PlaybackInterruptionTests {
         // her episode stopped for good.
         let (player, _) = makePlayer()
         try player.play(article())
-        await waitUntilSpeaking(player)
-        #expect(player.article.isPlaying, "the article never started; the test proves nothing")
+        await waitUntilLoaded(player)
+        #expect(player.article.duration > 0, "the article never loaded; the test proves nothing")
 
         player.handle(.interrupted)
         #expect(!player.article.isPlaying)
@@ -167,7 +174,7 @@ struct PlaybackInterruptionTests {
         // She stopped it before the call came in; it must stay stopped.
         let (player, _) = makePlayer()
         try player.play(article())
-        await waitUntilSpeaking(player)
+        await waitUntilLoaded(player)
         player.pause()
 
         player.handle(.interrupted)
@@ -181,7 +188,7 @@ struct PlaybackInterruptionTests {
         // synthesiser does not, and would carry on out loud on the speaker.
         let (player, _) = makePlayer()
         try player.play(article())
-        await waitUntilSpeaking(player)
+        await waitUntilLoaded(player)
 
         player.handle(.outputDeviceDisconnected)
 
@@ -191,7 +198,7 @@ struct PlaybackInterruptionTests {
     @Test func headphonesOutIsNotUndoneByACallEnding() async throws {
         let (player, _) = makePlayer()
         try player.play(article())
-        await waitUntilSpeaking(player)
+        await waitUntilLoaded(player)
 
         player.handle(.outputDeviceDisconnected)
         player.handle(.interruptionEnded(shouldResume: true))
@@ -215,7 +222,9 @@ struct ArticleSeekTests {
                 id: 1, title: "An article", description: nil, audioURL: nil,
                 durationSeconds: nil, publishedAt: nil, link: nil, imageURL: nil,
                 positionSeconds: nil, completed: nil, hasText: true))
-        for _ in 0..<100 where !player.isPlaying {
+        // Keyed on duration, not isPlaying: see waitUntilLoaded above for
+        // why speech never starting on CI must not stall a test.
+        for _ in 0..<100 where player.duration == 0 {
             try? await Task.sleep(for: .milliseconds(20))
         }
         return player
@@ -226,7 +235,7 @@ struct ArticleSeekTests {
         // does. If that coupling ever breaks, the position silently stops
         // following her and the scrubber lies.
         let player = await loadedPlayer()
-        #expect(player.isPlaying, "the article never started; the test proves nothing")
+        #expect(player.duration > 0, "the article never loaded; the test proves nothing")
 
         player.seek(to: player.duration / 2)
 
