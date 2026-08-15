@@ -173,14 +173,31 @@ struct MiniPlayer: View {
     var body: some View {
         if let episode = player.currentEpisode {
             HStack(spacing: 12) {
-                Artwork(url: episode.imageURL, size: 40)
-                Text(episode.title).font(.subheadline).lineLimit(1)
-                Spacer(minLength: 4)
+                // A button rather than a tap gesture on the whole bar. The
+                // gesture worked by sight but was invisible to VoiceOver: the
+                // container was never exposed as a control, so there was no
+                // way to reach the player screen — and with it the scrubber,
+                // the speed control and the sleep timer — without seeing it.
+                Button {
+                    showingNowPlaying = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Artwork(url: episode.imageURL, size: 40)
+                        Text(episode.title).font(.subheadline).lineLimit(1)
+                        Spacer(minLength: 4)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Now playing: \(episode.title)")
+                .accessibilityHint("Opens the player, with the scrubber and sleep timer")
+
                 Button { player.toggle() } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.title3)
                         .frame(width: 44, height: 44)
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
             }
             .padding(.horizontal, 12)
@@ -195,10 +212,11 @@ struct MiniPlayer: View {
                         .frame(width: geometry.size.width * player.progress, height: 2)
                 }
                 .frame(height: 2)
+                // Purely visual, and duplicated properly by the scrubber on the
+                // player screen. As a VoiceOver element it would just be an
+                // unlabelled shape between the two buttons.
+                .accessibilityHidden(true)
             }
-            .contentShape(Rectangle())
-            .onTapGesture { showingNowPlaying = true }
-            .accessibilityElement(children: .contain)
         }
     }
 }
