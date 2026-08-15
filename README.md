@@ -130,6 +130,48 @@ development needs no configuration.
 database: a liveness probe that fails on a brief Postgres blip turns a
 recoverable outage into a restart loop.
 
+`GET /privacy` serves the privacy policy from
+`src/audioreader/static/privacy.html`. It is the URL registered with App Store
+Connect, so it needs to keep working; there is a test asserting it is public and
+still names the third parties involved.
+
+### Backups
+
+Two layers, protecting against different things.
+
+**Railway point-in-time recovery** is enabled on the Postgres service. It covers
+mistakes — a bad migration, rows deleted by accident — and restores to any
+moment. It does not cover losing the project or the account, because it lives
+inside them.
+
+**`backend/scripts/backup-db.sh`** covers that second case by putting a dump
+somewhere Railway does not control:
+
+```bash
+DATABASE_URL='<Railway public connection string>' backend/scripts/backup-db.sh
+```
+
+Use the **public** connection string from the Postgres service's Connect tab —
+the one in the service variables points at `postgres.railway.internal`, which
+only resolves inside Railway. Dumps land in `~/HearfulBackups` (override with
+`HEARFUL_BACKUP_DIR`), are `chmod 600`, and anything older than 30 days is
+deleted.
+
+That retention is a privacy decision as much as a housekeeping one: the privacy
+policy promises deletion is permanent, and a backup kept indefinitely would
+quietly make that untrue. If you change `HEARFUL_BACKUP_RETENTION_DAYS`, change
+the policy to match.
+
+The dump contains every user's email address, listening history and encrypted
+Apple tokens. The script refuses to write anywhere inside this repository, which
+is public.
+
+To restore one:
+
+```bash
+pg_restore --no-owner --no-privileges -d '<target database url>' hearful-<stamp>.dump
+```
+
 ### Revoking Sign in with Apple on account deletion
 
 App Store guideline 5.1.1(v) asks that deleting an account also revokes the

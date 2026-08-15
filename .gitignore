@@ -13,3 +13,6 @@ build/
 *.xcuserstate
 xcuserdata/
 *.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# Database dumps, in case one is ever pointed here despite the script refusing
+*.dump
