@@ -62,45 +62,96 @@ struct VoiceSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: icon)
-                .font(.system(size: 96))
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
-            Text(caption)
-                .font(.title3)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-            // Only when listening has actually been refused: the trip to
-            // Settings is otherwise a hunt through someone else's app.
-            if controller.needsPermission {
-                Button("Open Settings") {
-                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                    UIApplication.shared.open(url)
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 24) {
+                // The whole area is one button rather than a tap gesture over
+                // a plain stack. Visually identical — she can still tap
+                // anywhere without aiming, which is the point — but it is now
+                // a control VoiceOver can find and describe, instead of an
+                // invisible gesture sitting on top of some text.
+                Button {
+                    Task { await controller.beginCommand() }
+                } label: {
+                    VStack(spacing: 24) {
+                        Image(systemName: icon)
+                            .font(.system(size: 96))
+                            .foregroundStyle(.tint)
+                            .accessibilityHidden(true)
+                        Text(caption)
+                            .font(.title3)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderedProminent)
-                .accessibilityHint("Opens Hearful's settings, where you can turn on the microphone")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Ask Hearful")
+                .accessibilityValue(caption)
+                .accessibilityHint("Double tap to ask for something to listen to")
+
+                // Only when listening has actually been refused: the trip to
+                // Settings is otherwise a hunt through someone else's app.
+                // Outside the button above, so it is reachable on its own.
+                if controller.needsPermission {
+                    Button("Open Settings") {
+                        guard let url = URL(string: UIApplication.openSettingsURLString) else {
+                            return
+                        }
+                        UIApplication.shared.open(url)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityHint(
+                        "Opens Hearful's settings, where you can turn on the microphone")
+                    .padding(.bottom, 32)
+                }
             }
-            Spacer()
+            .padding(.top, 40)
+            // Read before the close button, which sits higher up the screen
+            // and would otherwise be reached first. Landing on "Close" while
+            // the screen says "double tap to speak" makes the instruction a
+            // trap: the obvious gesture does the opposite of what it says.
+            .accessibilitySortPriority(1)
+
+            // The same reasoning as the player: a sheet you can open and not
+            // close is worse than one you cannot open. Swiping it away has no
+            // discoverable VoiceOver equivalent.
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close")
+            .accessibilityHint("Closes without asking for anything")
+            // Last, deliberately. It is the escape hatch, not the purpose of
+            // the screen, and the purpose should be what she meets first.
+            .accessibilitySortPriority(0)
+            .padding(.trailing, 8)
+            .padding(.top, 8)
         }
-        .padding(.top, 40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture { Task { await controller.beginCommand() } }
-        // Combined into one target normally, so a tap anywhere speaks — but
-        // not when there is a button to reach: merging would bury it.
-        .accessibilityElement(children: controller.needsPermission ? .contain : .combine)
-        .accessibilityLabel("Ask Hearful")
-        .accessibilityValue(caption)
-        .accessibilityHint("Double tap anywhere to ask for something to listen to")
-        .accessibilityAddTraits(.isButton)
         .onChange(of: controller.state) { _, state in
             // Once something is playing, the sheet has done its job.
             if case .playing = state { dismiss() }
         }
         // Reaching this screen at all means she wants to say something: making
         // her find and tap it again is a step with no purpose.
-        .task { await controller.beginCommand() }
+        //
+        // Except under VoiceOver, where it is the opposite. VoiceOver announces
+        // the sheet the instant it appears, and nobody speaks over their own
+        // screen reader — so she waits for it to finish, and the listening
+        // window closes on silence before she has said a word. VoiceOver's own
+        // model is focus-then-activate, and the button is the first thing she
+        // lands on, so let her start it.
+        .task {
+            guard !UIAccessibility.isVoiceOverRunning else { return }
+            await controller.beginCommand()
+        }
     }
 
     private var icon: String {
@@ -115,8 +166,14 @@ struct VoiceSheet: View {
     private var caption: String {
         switch controller.state {
         case .idle:
+            // "Tap anywhere" is right when a tap is what starts it. Under
+            // VoiceOver the gesture is a double tap on the focused control,
+            // and telling her to tap anywhere would be telling her to do the
+            // one thing VoiceOver has taken away.
             controller.lastSpokenResponse.isEmpty
-                ? "Tap anywhere and say what you would like"
+                ? (UIAccessibility.isVoiceOverRunning
+                    ? "Double tap to say what you would like"
+                    : "Tap anywhere and say what you would like")
                 : controller.lastSpokenResponse
         case .listening: "Listening…"
         case .thinking: "One moment…"

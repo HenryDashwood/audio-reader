@@ -10,7 +10,34 @@ struct NowPlayingView: View {
 
     var body: some View {
         VStack(spacing: 28) {
-            Capsule().fill(.secondary.opacity(0.4)).frame(width: 40, height: 5).padding(.top, 8)
+            // The capsule reads as "drag me down" to anyone who can see it and
+            // means nothing at all to anyone who cannot, so it is decorative
+            // and there is a real button beside it. Swiping a sheet away has
+            // no simple VoiceOver equivalent — only the two-finger scrub, which
+            // almost nobody knows — and a screen you can enter but not leave is
+            // worse than one you cannot enter.
+            ZStack {
+                Capsule()
+                    .fill(.secondary.opacity(0.4))
+                    .frame(width: 40, height: 5)
+                    .accessibilityHidden(true)
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close player")
+                    .accessibilityHint("Goes back to the list you came from")
+                }
+            }
+            .padding(.top, 8)
+            .padding(.horizontal, 8)
 
             Artwork(url: player.currentEpisode?.imageURL, size: 260)
                 .shadow(radius: 12, y: 6)
