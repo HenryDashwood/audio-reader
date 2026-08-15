@@ -58,9 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         "starting: database=%s llm=%s/%s poll=%ss",
         redacted_database_url(settings.database_url),
         settings.llm_provider,
-        settings.openrouter_model
-        if settings.llm_provider is LLMProvider.OPENROUTER
-        else settings.llm_model,
+        settings.openrouter_model if settings.llm_provider is LLMProvider.OPENROUTER else settings.llm_model,
         settings.poll_interval_seconds,
     )
 

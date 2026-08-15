@@ -39,9 +39,7 @@ class TestSearchPodcasts:
     async def test_typed_search_is_not_word_filtered(self, client, respx_mock):
         # Voice rejects loose matches because acting on the wrong show is
         # dangerous. Typed results are on screen, so show them all.
-        respx_mock.get(SEARCH_URL).respond(
-            json=itunes(show("The Mortal Realms: A Warhammer Age of Sigmar Podcast"))
-        )
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("The Mortal Realms: A Warhammer Age of Sigmar Podcast")))
         body = (await client.get("/search/podcasts", params={"q": "warhammer stuff"})).json()
         assert len(body) == 1
 
@@ -60,9 +58,7 @@ class TestSearchPodcasts:
         assert not route.called
 
     async def test_artwork_is_upgraded_to_https(self, client, respx_mock):
-        respx_mock.get(SEARCH_URL).respond(
-            json=itunes(show("A Show", artwork="http://img.example.com/a.jpg"))
-        )
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("A Show", artwork="http://img.example.com/a.jpg")))
         body = (await client.get("/search/podcasts", params={"q": "a show"})).json()
         assert body[0]["artwork_url"] == "https://img.example.com/a.jpg"
 

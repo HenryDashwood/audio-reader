@@ -5,14 +5,10 @@ class TestNormaliseDatabaseURL:
     def test_adds_the_async_driver(self):
         # Railway (and most hosts) hand out a plain postgresql:// URL, which
         # SQLAlchemy's async engine cannot use.
-        assert normalise_database_url("postgresql://u:p@host:5432/db") == (
-            "postgresql+asyncpg://u:p@host:5432/db"
-        )
+        assert normalise_database_url("postgresql://u:p@host:5432/db") == ("postgresql+asyncpg://u:p@host:5432/db")
 
     def test_upgrades_the_legacy_postgres_scheme(self):
-        assert normalise_database_url("postgres://u:p@host/db") == (
-            "postgresql+asyncpg://u:p@host/db"
-        )
+        assert normalise_database_url("postgres://u:p@host/db") == ("postgresql+asyncpg://u:p@host/db")
 
     def test_leaves_an_explicit_driver_alone(self):
         url = "postgresql+asyncpg://u:p@host/db"
@@ -40,9 +36,7 @@ class TestRedactedDatabaseURL:
 
         # The host is the whole point: it tells you instantly whether the
         # deployment picked up the platform's database or fell back to local.
-        assert "localhost" in redacted_database_url(
-            "postgresql+asyncpg://a:b@localhost:5432/audioreader"
-        )
+        assert "localhost" in redacted_database_url("postgresql+asyncpg://a:b@localhost:5432/audioreader")
 
     def test_survives_a_url_with_no_credentials(self):
         from audioreader.config import redacted_database_url

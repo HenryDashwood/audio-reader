@@ -1,3 +1,4 @@
+from audioreader import text
 from audioreader.text import article_paragraphs, article_text, for_speech, summarise
 
 
@@ -66,3 +67,36 @@ class TestArticleText:
     def test_handles_none_and_empty(self):
         assert article_paragraphs(None) == []
         assert article_text("") == ""
+
+
+class TestSearchKey:
+    def test_folds_accents_the_transcript_will_not_have(self):
+        # She says "Rubaiyat"; the feed says "Rubáiyát".
+        assert "rubaiyat" in text.search_key("The Rubáiyát of Omar Khayyám")
+
+    def test_indexes_a_ligature_under_every_spelling(self):
+        # The failure this exists for: the BBC writes "Æthelstan", speech
+        # recognition writes "Athelstan", and neither contains the other.
+        spellings = text.search_key("Æthelstan").split()
+        assert "athelstan" in spellings
+        assert "aethelstan" in spellings
+
+    def test_strips_html_from_descriptions(self):
+        assert text.search_key("<p>With <b>guests</b> on 1815.</p>") == "with guests on 1815"
+
+    def test_joins_the_parts_it_is_given(self):
+        key = text.search_key("Sleep", "<p>Melvyn Bragg and guests discuss sleep.</p>")
+        assert key.startswith("sleep melvyn bragg")
+
+    def test_words_stay_separate_so_a_match_cannot_straddle_them(self):
+        # "onsleep" must not be findable across the boundary.
+        assert "onsleep" not in text.search_key("Bragg on", "Sleep")
+
+    def test_survives_nothing(self):
+        assert text.search_key(None, "", None) == ""
+
+    def test_is_bounded(self):
+        assert len(text.search_key("word " * 5000, limit=100)) <= 100
+
+    def test_a_word_with_several_ligatures_does_not_multiply_out(self):
+        assert len(text.search_key("æœß").split()) <= 4

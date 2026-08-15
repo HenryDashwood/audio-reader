@@ -43,9 +43,7 @@ class TestSearchPodcasts:
 
     async def test_skips_results_with_no_feed(self, respx_mock):
         # A podcast with no RSS feed is useless to us, however well it matches.
-        respx_mock.get(SEARCH_URL).respond(
-            json=itunes(show("History Weekly", feed=None), show("History Daily"))
-        )
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("History Weekly", feed=None), show("History Daily")))
         results = await search_podcasts("history daily")
 
         assert [r.title for r in results] == ["History Daily"]
@@ -74,15 +72,11 @@ class TestStrictness:
     async def test_loose_matches_survive_when_not_strict(self, respx_mock):
         # Typed search shows its results on screen, so a loose match is
         # useful there rather than dangerous.
-        respx_mock.get(SEARCH_URL).respond(
-            json=itunes(show("The Mortal Realms: A Warhammer Age of Sigmar Podcast"))
-        )
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("The Mortal Realms: A Warhammer Age of Sigmar Podcast")))
         assert await search_podcasts("wibble wobble nonsense", strict=False) != []
 
     async def test_exact_match_still_promoted_when_not_strict(self, respx_mock):
-        respx_mock.get(SEARCH_URL).respond(
-            json=itunes(show("The Rest Is History: Club"), show("The Rest Is History"))
-        )
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("The Rest Is History: Club"), show("The Rest Is History")))
         results = await search_podcasts("the rest is history", strict=False)
         assert results[0].title == "The Rest Is History"
 
@@ -124,16 +118,12 @@ class TestRanking:
         assert results[0].title == "The Rest Is History"
 
     async def test_matching_ignores_case_and_punctuation(self, respx_mock):
-        respx_mock.get(SEARCH_URL).respond(
-            json=itunes(show("Longer Name Entirely"), show("In Our Time!"))
-        )
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("Longer Name Entirely"), show("In Our Time!")))
         results = await search_podcasts("in our time")
         assert results[0].title == "In Our Time!"
 
     async def test_keeps_search_order_when_nothing_matches_exactly(self, respx_mock):
-        respx_mock.get(SEARCH_URL).respond(
-            json=itunes(show("History Weekly"), show("History Daily"))
-        )
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("History Weekly"), show("History Daily")))
         results = await search_podcasts("history")
         assert [r.title for r in results] == ["History Weekly", "History Daily"]
 
@@ -142,9 +132,7 @@ class TestRelevance:
     async def test_rejects_results_that_do_not_match_the_words_she_said(self, respx_mock):
         # iTunes almost never returns nothing; it returns something loosely
         # related. Subscribing her to that is worse than admitting defeat.
-        respx_mock.get(SEARCH_URL).respond(
-            json=itunes(show("The Mortal Realms: A Warhammer Age of Sigmar Podcast"))
-        )
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("The Mortal Realms: A Warhammer Age of Sigmar Podcast")))
         assert await search_podcasts("wibble wobble nonsense") == []
 
     async def test_accepts_a_partial_name(self, respx_mock):

@@ -41,10 +41,20 @@ python = "./.venv"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# So tests can import `evals`, which is a development tool rather than part of
+# the shipped package. The eval corpus itself is never collected: it calls a
+# real model and costs real money.
+pythonpath = ["."]
 
 [tool.ruff]
-line-length = 100
+line-length = 119
 src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+# `evals` lives beside the package rather than inside it, so say so explicitly
+# instead of putting the repo root on ruff's src path — that would also sweep
+# `alembic` in and reshuffle every migration.
+known-first-party = ["evals"]

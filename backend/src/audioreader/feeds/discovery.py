@@ -139,9 +139,7 @@ class FeedCandidates(BaseModel):
     """What the discovery model is allowed to answer."""
 
     publication: str = Field(description="The publication's canonical name, or empty if unknown.")
-    urls: list[str] = Field(
-        description="Up to six candidate feed or homepage URLs, most likely first."
-    )
+    urls: list[str] = Field(description="Up to six candidate feed or homepage URLs, most likely first.")
 
 
 @dataclass
@@ -233,9 +231,7 @@ async def find_feed_by_name(query: str, llm: LLMClient) -> DiscoveredFeed | None
                 "publication's own website and suggest different URLs."
             )
         try:
-            raw = await llm.decide(
-                system=FEED_DISCOVERY_PROMPT, user=prompt, output_model=FeedCandidates
-            )
+            raw = await llm.decide(system=FEED_DISCOVERY_PROMPT, user=prompt, output_model=FeedCandidates)
             candidates = FeedCandidates.model_validate(raw)
         except (LLMError, ValidationError) as exc:
             logger.warning("feed discovery failed for %r: %s", query, exc)
@@ -258,7 +254,5 @@ async def find_feed_by_name(query: str, llm: LLMClient) -> DiscoveredFeed | None
             haystack = f"{parsed.title} {candidates.publication} {feed_url}"
             if loosely_identifies(query, haystack):
                 return DiscoveredFeed(feed_url=feed_url, title=parsed.title)
-            logger.info(
-                "discovery candidate %s (%r) does not match %r", feed_url, parsed.title, query
-            )
+            logger.info("discovery candidate %s (%r) does not match %r", feed_url, parsed.title, query)
     return None

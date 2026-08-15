@@ -29,9 +29,7 @@ async def library(session, user):
         ("https://c.example/feed", "The Rest Is Politics"),
     ]:
         feed = Feed(url=url, title=title)
-        feed.episodes = [
-            Episode(guid=f"{title}-1", title=f"{title} ep", audio_url="https://cdn/x.mp3")
-        ]
+        feed.episodes = [Episode(guid=f"{title}-1", title=f"{title} ep", audio_url="https://cdn/x.mp3")]
         session.add(feed)
         session.add(Subscription(user_id=user.id, feed=feed))
     await session.commit()
@@ -41,9 +39,7 @@ class TestUnsubscribeByVoice:
     async def test_removes_the_named_show(self, session, user, library):
         llm = FakeLLMClient(unsubscribe_decision("in our time"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="unsubscribe from in our time"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="unsubscribe from in our time")
 
         assert result.action == Action.UNSUBSCRIBED
         titles = await subscribed_titles(session, user)
@@ -75,9 +71,7 @@ class TestUnsubscribeByVoice:
 
     async def test_matches_a_partial_name(self, session, user, library):
         llm = FakeLLMClient(unsubscribe_decision("politics"))
-        result = await service.interpret(
-            session, llm, user=user, transcript="unsubscribe from politics"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="unsubscribe from politics")
 
         assert result.action == Action.UNSUBSCRIBED
         assert "The Rest Is Politics" in result.spoken_response
@@ -87,9 +81,7 @@ class TestUnsubscribeByVoice:
         # would be much worse than asking.
         llm = FakeLLMClient(unsubscribe_decision("the rest is"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="unsubscribe from the rest is"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="unsubscribe from the rest is")
 
         assert result.action == Action.UNKNOWN
         assert len(await subscribed_titles(session, user)) == 3
@@ -98,9 +90,7 @@ class TestUnsubscribeByVoice:
     async def test_unknown_show_is_explained(self, session, user, library):
         llm = FakeLLMClient(unsubscribe_decision("gardeners question time"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="unsubscribe from gardening"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="unsubscribe from gardening")
 
         assert result.action == Action.UNKNOWN
         assert "not subscribed" in result.spoken_response.lower()
@@ -116,9 +106,7 @@ class TestUnsubscribeByVoice:
 
     async def test_nothing_subscribed_says_so(self, session, user):
         llm = FakeLLMClient(unsubscribe_decision("anything"))
-        result = await service.interpret(
-            session, llm, user=user, transcript="unsubscribe from anything"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="unsubscribe from anything")
         assert result.action == Action.UNKNOWN
         assert result.spoken_response
 

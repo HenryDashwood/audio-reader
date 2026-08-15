@@ -32,9 +32,7 @@ class TestSubscribeByVoice:
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         llm = FakeLLMClient(subscribe_decision("the rest is history"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="subscribe to the rest is history"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to the rest is history")
 
         assert result.action == Action.SUBSCRIBED
         feed = await session.scalar(select(Feed))
@@ -65,9 +63,7 @@ class TestSubscribeByVoice:
         respx_mock.get(SEARCH_URL).respond(json=itunes())
         llm = FakeLLMClient(subscribe_decision("a show that does not exist"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="subscribe to nonsense"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to nonsense")
 
         assert result.action == Action.UNKNOWN
         assert "a show that does not exist" in result.spoken_response.lower()
@@ -78,9 +74,7 @@ class TestSubscribeByVoice:
         llm = FakeLLMClient(subscribe_decision("the history hour"))
 
         await service.interpret(session, llm, user=user, transcript="subscribe to the history hour")
-        result = await service.interpret(
-            session, llm, user=user, transcript="subscribe to the history hour"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to the history hour")
 
         assert "already" in result.spoken_response.lower()
         assert await session.scalar(select(func.count()).select_from(Feed)) == 1
@@ -99,9 +93,7 @@ class TestSubscribeByVoice:
         respx_mock.get(FEED_URL).respond(status_code=500)
         llm = FakeLLMClient(subscribe_decision("broken feed show"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="subscribe to broken feed show"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to broken feed show")
 
         assert result.action == Action.UNKNOWN
         assert result.spoken_response
@@ -110,18 +102,14 @@ class TestSubscribeByVoice:
         respx_mock.get(SEARCH_URL).respond(status_code=503)
         llm = FakeLLMClient(subscribe_decision("anything"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="subscribe to anything"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to anything")
 
         assert result.action == Action.UNKNOWN
         assert result.spoken_response
 
 
 class TestSubscribeDoesNotBreakPlayback:
-    async def test_playing_still_works_with_the_larger_action_set(
-        self, session, user, respx_mock, podcast_xml
-    ):
+    async def test_playing_still_works_with_the_larger_action_set(self, session, user, respx_mock, podcast_xml):
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("The History Hour")))
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         await service.interpret(
@@ -132,9 +120,7 @@ class TestSubscribeDoesNotBreakPlayback:
         )
 
         episodes = await service.build_candidates(session, user)
-        play = FakeLLMClient(
-            {"action": "play_episode", "episode_id": episodes[0].id, "spoken_response": "Playing."}
-        )
+        play = FakeLLMClient({"action": "play_episode", "episode_id": episodes[0].id, "spoken_response": "Playing."})
         result = await service.interpret(session, play, transcript="play the latest one", user=user)
 
         assert result.action == Action.PLAY_EPISODE

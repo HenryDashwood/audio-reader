@@ -29,9 +29,7 @@ async def episode(session, user):
 
 class TestPutPosition:
     async def test_creates_a_position(self, client, episode):
-        response = await client.put(
-            f"/episodes/{episode.id}/position", json={"position_seconds": 125.5}
-        )
+        response = await client.put(f"/episodes/{episode.id}/position", json={"position_seconds": 125.5})
         assert response.status_code == 204
 
         body = (await client.get(f"/episodes/{episode.id}")).json()

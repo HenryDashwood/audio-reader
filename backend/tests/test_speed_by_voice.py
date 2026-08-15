@@ -10,9 +10,7 @@ def speed_decision(speed) -> dict:
 class TestSetSpeedByVoice:
     async def test_returns_the_speed_for_the_app_to_apply(self, session, user):
         llm = FakeLLMClient(speed_decision(1.5))
-        result = await service.interpret(
-            session, llm, user=user, transcript="play at one and a half speed"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="play at one and a half speed")
 
         assert result.action == Action.SET_SPEED
         assert result.speed == 1.5

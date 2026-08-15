@@ -42,9 +42,7 @@ async def user(session: AsyncSession) -> User:
 
 
 @pytest.fixture
-async def client(
-    session: AsyncSession, fake_llm: FakeLLMClient, user: User
-) -> AsyncIterator[AsyncClient]:
+async def client(session: AsyncSession, fake_llm: FakeLLMClient, user: User) -> AsyncIterator[AsyncClient]:
     # Auth is overridden with a fixed user: API tests exercise behaviour, not
     # token verification, which has its own tests in test_auth_api.py.
     app = create_app()

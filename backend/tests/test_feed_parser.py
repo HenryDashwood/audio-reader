@@ -52,9 +52,7 @@ class TestPodcastFeed:
         assert parse_feed(podcast_xml).items[2].guid == "https://example.com/historyhour/trailer-4"
 
     def test_item_level_artwork_is_captured(self, podcast_xml):
-        assert parse_feed(podcast_xml).items[0].image_url == (
-            "https://example.com/historyhour/ep103.jpg"
-        )
+        assert parse_feed(podcast_xml).items[0].image_url == ("https://example.com/historyhour/ep103.jpg")
 
     def test_item_without_artwork_is_none(self, podcast_xml):
         # No item-level image: the API falls back to the show's artwork.

@@ -26,9 +26,7 @@ class FakeLLMClient:
     def fail_with(self, error: Exception) -> None:
         self.error = error
 
-    async def decide(
-        self, *, system: str, user: str, output_model: type[BaseModel]
-    ) -> dict[str, Any]:
+    async def decide(self, *, system: str, user: str, output_model: type[BaseModel]) -> dict[str, Any]:
         self.calls.append({"system": system, "user": user, "output_model": output_model})
         if self.error is not None:
             raise self.error

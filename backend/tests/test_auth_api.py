@@ -113,9 +113,7 @@ async def login(auth_client: AsyncClient, token: str) -> Response:
 
 
 class TestAppleLogin:
-    async def test_creates_user_identity_and_session(
-        self, auth_client, make_identity_token, session
-    ):
+    async def test_creates_user_identity_and_session(self, auth_client, make_identity_token, session):
         response = await login(auth_client, make_identity_token())
         assert response.status_code == 200
         body = response.json()
@@ -136,9 +134,7 @@ class TestAppleLogin:
         assert first.json()["user"]["id"] == second.json()["user"]["id"]
         assert await session.scalar(select(func.count(User.id))) == 1
 
-    async def test_every_new_identity_gets_a_fresh_user(
-        self, auth_client, make_identity_token, session
-    ):
+    async def test_every_new_identity_gets_a_fresh_user(self, auth_client, make_identity_token, session):
         # The migration's placeholder must never be handed to a sign-in; it
         # exists only for the require_auth=false transition fallback.
         placeholder = User(id=service.LEGACY_USER_ID, display_name="Library owner")
@@ -194,9 +190,7 @@ class TestSessions:
         assert (await auth_client.post("/auth/logout", headers=headers)).status_code == 204
         assert (await auth_client.get("/me", headers=headers)).status_code == 401
 
-    async def test_account_deletion_removes_everything_of_hers(
-        self, auth_client, make_identity_token, session
-    ):
+    async def test_account_deletion_removes_everything_of_hers(self, auth_client, make_identity_token, session):
         token = (await login(auth_client, make_identity_token())).json()["token"]
         headers = {"Authorization": f"Bearer {token}"}
         user_id = uuid.UUID((await auth_client.get("/me", headers=headers)).json()["id"])
@@ -215,14 +209,10 @@ class TestSessions:
 
         assert await session.scalar(select(func.count(User.id)).where(User.id == user_id)) == 0
         for table in (UserIdentity, AuthSession, Subscription, PlaybackPosition):
-            remaining = await session.scalar(
-                select(func.count()).select_from(table).where(table.user_id == user_id)
-            )
+            remaining = await session.scalar(select(func.count()).select_from(table).where(table.user_id == user_id))
             assert remaining == 0, f"{table.__name__} rows survived deletion"
 
-    async def test_account_deletion_keeps_the_shared_catalog(
-        self, auth_client, make_identity_token, session
-    ):
+    async def test_account_deletion_keeps_the_shared_catalog(self, auth_client, make_identity_token, session):
         # Feeds and episodes are not hers to delete: other subscribers, and any
         # future sign-in of her own, still need them.
         token = (await login(auth_client, make_identity_token())).json()["token"]
@@ -235,18 +225,14 @@ class TestSessions:
 
         assert await session.scalar(select(func.count(Feed.id))) == 1
 
-    async def test_deleted_account_token_stops_working(
-        self, auth_client, make_identity_token, session
-    ):
+    async def test_deleted_account_token_stops_working(self, auth_client, make_identity_token, session):
         token = (await login(auth_client, make_identity_token())).json()["token"]
         headers = {"Authorization": f"Bearer {token}"}
         await auth_client.delete("/me", headers=headers)
 
         assert (await auth_client.get("/me", headers=headers)).status_code == 401
 
-    async def test_signing_in_again_after_deletion_is_a_fresh_account(
-        self, auth_client, make_identity_token, session
-    ):
+    async def test_signing_in_again_after_deletion_is_a_fresh_account(self, auth_client, make_identity_token, session):
         # Deletion must not blacklist her: the same Apple subject signing in
         # again is simply a new account with nothing in it.
         first = await login(auth_client, make_identity_token(sub="mum"))
@@ -301,9 +287,7 @@ async def revoking_client(session: AsyncSession, apple_keys, revoker) -> AsyncIt
 
 
 class TestAppleRevocation:
-    async def test_the_authorization_code_is_exchanged_at_sign_in(
-        self, revoking_client, make_identity_token, revoker
-    ):
+    async def test_the_authorization_code_is_exchanged_at_sign_in(self, revoking_client, make_identity_token, revoker):
         await revoking_client.post(
             "/auth/apple",
             json={"identity_token": make_identity_token(), "authorization_code": "code-123"},
@@ -323,9 +307,7 @@ class TestAppleRevocation:
         assert identity.refresh_token != "r.abc"
         assert "r.abc" not in identity.refresh_token
 
-    async def test_deleting_revokes_with_apple_first(
-        self, revoking_client, make_identity_token, revoker
-    ):
+    async def test_deleting_revokes_with_apple_first(self, revoking_client, make_identity_token, revoker):
         token = (
             await revoking_client.post(
                 "/auth/apple",
@@ -355,20 +337,14 @@ class TestAppleRevocation:
         assert response.status_code == 204
         assert await session.scalar(select(func.count(User.id))) == 0
 
-    async def test_signing_in_without_a_code_still_works(
-        self, revoking_client, make_identity_token, revoker
-    ):
+    async def test_signing_in_without_a_code_still_works(self, revoking_client, make_identity_token, revoker):
         # An older build of the app, which does not send one.
-        response = await revoking_client.post(
-            "/auth/apple", json={"identity_token": make_identity_token()}
-        )
+        response = await revoking_client.post("/auth/apple", json={"identity_token": make_identity_token()})
 
         assert response.status_code == 200
         assert revoker.exchanged == []
 
-    async def test_a_failed_exchange_does_not_fail_the_sign_in(
-        self, revoking_client, make_identity_token, revoker
-    ):
+    async def test_a_failed_exchange_does_not_fail_the_sign_in(self, revoking_client, make_identity_token, revoker):
         revoker.refresh_token = None
         response = await revoking_client.post(
             "/auth/apple",
@@ -381,11 +357,9 @@ class TestAppleRevocation:
     ):
         # Signed in before the app began sending codes: nothing to revoke.
         revoker.refresh_token = None
-        token = (
-            await revoking_client.post(
-                "/auth/apple", json={"identity_token": make_identity_token()}
-            )
-        ).json()["token"]
+        token = (await revoking_client.post("/auth/apple", json={"identity_token": make_identity_token()})).json()[
+            "token"
+        ]
 
         response = await revoking_client.delete("/me", headers={"Authorization": f"Bearer {token}"})
 
@@ -403,18 +377,14 @@ class TestAppleRevocation:
         )
         revoker.refresh_token = None
         token = (
-            await revoking_client.post(
-                "/auth/apple", json={"identity_token": make_identity_token(sub="mum")}
-            )
+            await revoking_client.post("/auth/apple", json={"identity_token": make_identity_token(sub="mum")})
         ).json()["token"]
 
         await revoking_client.delete("/me", headers={"Authorization": f"Bearer {token}"})
 
         assert revoker.revoked == ["r.abc"]
 
-    async def test_an_unconfigured_deployment_simply_skips_it(
-        self, auth_client, make_identity_token, session
-    ):
+    async def test_an_unconfigured_deployment_simply_skips_it(self, auth_client, make_identity_token, session):
         # The default everywhere without an Apple key: deletion still works.
         token = (
             await auth_client.post(
@@ -438,9 +408,7 @@ class TestAppleRevocation:
 
         assert (await auth_client.get("/me", headers=headers)).status_code == 401
 
-    async def test_an_expired_session_is_marked_revoked(
-        self, auth_client, make_identity_token, session
-    ):
+    async def test_an_expired_session_is_marked_revoked(self, auth_client, make_identity_token, session):
         token = (await login(auth_client, make_identity_token())).json()["token"]
         stored = await session.get(AuthSession, service.hash_token(token))
         stored.last_used_at = utcnow() - timedelta(days=settings.session_idle_timeout_days + 1)
@@ -464,9 +432,7 @@ class TestAppleRevocation:
         await session.refresh(stored)
         assert utcnow() - service._as_aware(stored.last_used_at) < timedelta(minutes=1)
 
-    async def test_a_never_used_session_expires_from_its_creation(
-        self, auth_client, make_identity_token, session
-    ):
+    async def test_a_never_used_session_expires_from_its_creation(self, auth_client, make_identity_token, session):
         token = (await login(auth_client, make_identity_token())).json()["token"]
         stored = await session.get(AuthSession, service.hash_token(token))
         stored.last_used_at = None
@@ -476,9 +442,7 @@ class TestAppleRevocation:
         response = await auth_client.get("/me", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 401
 
-    async def test_expiry_can_be_disabled(
-        self, auth_client, make_identity_token, session, monkeypatch
-    ):
+    async def test_expiry_can_be_disabled(self, auth_client, make_identity_token, session, monkeypatch):
         monkeypatch.setattr(settings, "session_idle_timeout_days", 0)
         token = (await login(auth_client, make_identity_token())).json()["token"]
         stored = await session.get(AuthSession, service.hash_token(token))

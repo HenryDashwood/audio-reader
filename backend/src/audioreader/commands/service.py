@@ -1,10 +1,13 @@
 """Turn a spoken request into an action, using an LLM to pick the episode."""
 
 import logging
+import operator
 import re
+from datetime import UTC, date, datetime
+from functools import reduce
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -21,8 +24,8 @@ from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import PodcastSearchError, matches_name, search_podcasts
 from audioreader.feeds.service import AlreadySubscribedError
-from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User
-from audioreader.text import summarise
+from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User, utcnow
+from audioreader.text import search_key, summarise
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +33,20 @@ SYSTEM_PROMPT = """You help a blind listener control a listening app by voice.
 The app plays podcast episodes and reads written articles aloud; articles are
 marked in the list and are chosen exactly like episodes.
 
-You will be given what she said and a numbered list of episodes and articles
-she subscribes to. Decide what she wants and reply with the matching action.
+You will be given today's date, what she said, and a numbered list of episodes
+and articles she subscribes to. Decide what she wants and reply with the
+matching action.
+
+The list is newest first, and holds her most recent items plus older ones
+matching what she said — so a much older episode appearing near the bottom is
+there because it answers to her words, and is very likely the one she means.
 
 - Choose play_episode only when one item is a clear match. She may refer to
   it by topic, by guest, by date ("Tuesday's one"), or by position
   ("the latest"). Prefer the most recent item when a request is ambiguous
   between several of the same show.
+- "The latest" with no show named means the first item in the list, whatever
+  show it belongs to. Play it rather than asking which show she meant.
 - If she names a show, only episodes from that show may be chosen. A show name
   narrows the choice, it is not a hint: "the latest In Our Time" means the most
   recent In Our Time episode, never a newer episode of something else.
@@ -93,38 +103,191 @@ guest, or by date — or unknown when nothing clearly matches.
 
 
 async def build_candidates(
-    session: AsyncSession, user: User, limit: int | None = None
+    session: AsyncSession,
+    user: User,
+    transcript: str | None = None,
+    limit: int | None = None,
+    search_limit: int | None = None,
 ) -> list[Candidate]:
     """The episodes and articles the model may choose between, newest first.
 
     Only the user's own subscriptions, and only playable items: audio, or
     article text the app can read aloud.
+
+    Recency alone is not enough. A feed like In Our Time carries its whole
+    archive — over a thousand episodes, back to 1998 — so with a handful of
+    subscriptions the newest sixty items reach back only a couple of months,
+    and everything before that is invisible to the model however clearly she
+    names it. So the list is the newest items *plus* whatever the words she
+    used match anywhere in her library.
     """
-    limit = limit if limit is not None else settings.command_candidate_limit
-    episodes = await session.scalars(
-        select(Episode)
-        .join(Subscription, Subscription.feed_id == Episode.feed_id)
-        .where(Subscription.user_id == user.id, PLAYABLE_EPISODE)
-        .options(joinedload(Episode.feed))
-        .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
-        .limit(limit)
+    subscribed = select(Episode).join(Subscription, Subscription.feed_id == Episode.feed_id)
+    return _to_candidates(
+        await _recent_and_matching(
+            session, subscribed, Subscription.user_id == user.id, transcript, limit, search_limit
+        )
     )
-    return _to_candidates(episodes)
 
 
 async def feed_candidates(
-    session: AsyncSession, feed_id: int, limit: int | None = None
+    session: AsyncSession,
+    feed_id: int,
+    transcript: str | None = None,
+    limit: int | None = None,
+    search_limit: int | None = None,
 ) -> list[Candidate]:
-    """One show's playable items, newest first, subscription not required."""
-    limit = limit if limit is not None else settings.command_candidate_limit
-    episodes = await session.scalars(
-        select(Episode)
-        .where(Episode.feed_id == feed_id, PLAYABLE_EPISODE)
-        .options(joinedload(Episode.feed))
-        .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
-        .limit(limit)
+    """One show's playable items, newest first, subscription not required.
+
+    Searched the same way as her own library: a long-running show's back
+    catalogue is out of reach of a recency window whether she subscribes to
+    it or not.
+    """
+    return _to_candidates(
+        await _recent_and_matching(
+            session, select(Episode), Episode.feed_id == feed_id, transcript, limit, search_limit
+        )
     )
-    return _to_candidates(episodes)
+
+
+async def _recent_and_matching(
+    session: AsyncSession,
+    base,
+    scope,
+    transcript: str | None,
+    limit: int | None,
+    search_limit: int | None,
+) -> list[Episode]:
+    limit = limit if limit is not None else settings.command_candidate_limit
+    search_limit = search_limit if search_limit is not None else settings.command_search_limit
+
+    newest = (Episode.published_at.desc().nulls_last(), Episode.id.desc())
+    recent = list(
+        await session.scalars(
+            base.where(scope, PLAYABLE_EPISODE).options(joinedload(Episode.feed)).order_by(*newest).limit(limit)
+        )
+    )
+
+    words = spoken_keywords(transcript or "")
+    if not words or search_limit <= 0:
+        return recent
+    words = await _identifying(session, base, scope, words, search_limit)
+
+    score = _match_score(words)
+    seen = {episode.id for episode in recent}
+    # Over-fetch, because the highest-scoring matches are usually the recent
+    # ones already in hand and it is the rest we are here for.
+    matched = await session.scalars(
+        base.where(scope, PLAYABLE_EPISODE, score > 0)
+        .options(joinedload(Episode.feed))
+        .order_by(score.desc(), *newest)
+        .limit(limit + search_limit)
+    )
+    older = [episode for episode in matched if episode.id not in seen][:search_limit]
+
+    # Newest first overall, so "the latest" is still the top of the list and
+    # an older match simply sits further down with its date beside it.
+    return sorted(
+        recent + older,
+        key=lambda episode: (episode.published_at or _UNDATED, episode.id),
+        reverse=True,
+    )
+
+
+#: A word matching more than this share of the library is describing the
+#: library rather than an episode in it.
+_TOO_COMMON = 0.1
+
+
+async def _identifying(session: AsyncSession, base, scope, words: list[str], search_limit: int):
+    """The words that actually narrow the library down.
+
+    "Play the In Our Time episode about Athelstan" carries two searchable
+    words. "Athelstan" is the title of one episode in eleven hundred; "time"
+    is in a third of them, because it is the show's own name and turns up in
+    every other blurb. Counting them equally buries the answer under whatever
+    matched "time" most recently, which is exactly the wrong episode of the
+    right show — the failure this all began with.
+
+    So a word matching a large share of the library is dropped. The floor
+    matters as much as the share: a word matching fewer episodes than there
+    are slots to spare cannot crowd anything out, however common it looks in
+    a small library.
+    """
+    if len(words) < 2:
+        return words
+
+    haystack = _haystack()
+    counted = (
+        await session.execute(
+            base.with_only_columns(
+                func.count(),
+                *(func.sum(case((haystack.contains(word), 1), else_=0)) for word in words),
+            ).where(scope, PLAYABLE_EPISODE)
+        )
+    ).one()
+    total, *counts = counted
+    if not total:
+        return words
+
+    ceiling = max(search_limit, total * _TOO_COMMON)
+    identifying = [word for word, count in zip(words, counts, strict=True) if (count or 0) <= ceiling]
+    # If every word is common, searching on all of them still beats not
+    # searching: the recency window is unchanged either way.
+    return identifying or words
+
+
+def _haystack():
+    """Where a spoken word is looked for.
+
+    The folded `search_text`, so "Rubaiyat" finds "Rubáiyát". Rows written
+    before that column existed fall back to their title, which still finds
+    most things while a backfill catches up.
+    """
+    return func.coalesce(Episode.search_text, func.lower(Episode.title))
+
+
+def _match_score(words: list[str]):
+    """How many of the words she used this episode answers to.
+
+    A plain LIKE scan, which is fast enough for one person's library — under
+    40ms across eleven hundred episodes. If it ever is not, the upgrade is a
+    tsvector index rather than a shorter list.
+    """
+    haystack = _haystack()
+    return reduce(operator.add, [case((haystack.contains(word), 1), else_=0) for word in words])
+
+
+#: Words that say what she wants done, not which episode she wants. Dropped
+#: before searching, since every one of them appears throughout the library.
+_COMMAND_WORDS = {
+    "play", "read", "listen", "hear", "start", "want", "would", "like",
+    "please", "the", "one", "ones", "about", "with", "episode", "episodes",
+    "show", "programme", "podcast", "article", "post", "latest", "newest",
+    "recent", "last", "next", "that", "this", "there", "here", "and", "for",
+    "from", "was", "were", "his", "her", "their", "its", "you", "know",
+    "thing", "something", "anything", "back", "again", "some", "any", "all",
+    "give", "find", "have", "has", "had", "can", "could", "will",
+}  # fmt: skip
+
+
+def spoken_keywords(transcript: str, limit: int = 6) -> list[str]:
+    """The words in what she said that could name a subject, guest or title.
+
+    Short words go too: "in", "our" and "of" match half of everything, and
+    losing them costs nothing, because a show she named is narrowed by the
+    model afterwards rather than by this search.
+
+    Folded by the same function that built the column being searched, so the
+    two sides always agree about what a word looks like.
+    """
+    keywords: list[str] = []
+    for word in search_key(transcript).split():
+        if len(word) > 3 and word not in _COMMAND_WORDS and word not in keywords:
+            keywords.append(word)
+    return keywords[:limit]
+
+
+_UNDATED = datetime.min.replace(tzinfo=UTC)
 
 
 def _to_candidates(episodes) -> list[Candidate]:
@@ -144,12 +307,25 @@ def _to_candidates(episodes) -> list[Candidate]:
     ]
 
 
-def build_prompt(transcript: str, candidates: list[Candidate]) -> str:
-    lines = ["She said:", f'"{transcript}"', "", "Episodes and articles she subscribes to:"]
+def build_prompt(transcript: str, candidates: list[Candidate], today: date | None = None) -> str:
+    """The per-request half of the prompt.
+
+    Today's date goes here rather than in the system prompt, which is fixed
+    text a provider can cache. Without it "Tuesday's one" and "last week's"
+    cannot be answered at all: every episode carries a date and the model has
+    nothing to measure them against.
+    """
+    today = today or utcnow().date()
+    lines = [
+        f"Today is {today.strftime('%A %d %B %Y')}.",
+        "",
+        "She said:",
+        f'"{transcript}"',
+        "",
+        "Episodes and articles she subscribes to:",
+    ]
     for candidate in candidates:
-        published = (
-            candidate.published_at.strftime("%A %d %B %Y") if candidate.published_at else "undated"
-        )
+        published = candidate.published_at.strftime("%A %d %B %Y") if candidate.published_at else "undated"
         header = f"[{candidate.id}] {candidate.title} — {candidate.feed_title} — {published}"
         if candidate.is_article:
             header += " — article"
@@ -161,13 +337,11 @@ def build_prompt(transcript: str, candidates: list[Candidate]) -> str:
     return "\n".join(lines)
 
 
-async def interpret(
-    session: AsyncSession, llm, transcript: str, user: User, discovery_llm=None
-) -> InterpretResult:
+async def interpret(session: AsyncSession, llm, transcript: str, user: User, discovery_llm=None) -> InterpretResult:
     # Feed discovery gets its own client (web search, long timeout); without
     # one, the ordinary client still handles the easy, well-known cases.
     discovery_llm = discovery_llm if discovery_llm is not None else llm
-    candidates = await build_candidates(session, user)
+    candidates = await build_candidates(session, user, transcript)
 
     raw = await llm.decide(
         system=SYSTEM_PROMPT,
@@ -196,7 +370,12 @@ async def interpret(
         return _set_speed(decision.speed)
 
     if decision.action is not Action.PLAY_EPISODE:
-        return InterpretResult(action=Action.UNKNOWN, spoken_response=decision.spoken_response)
+        # Never pass an empty sentence through: the app would simply go quiet,
+        # and she has no screen to check whether anything happened at all.
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response=decision.spoken_response.strip() or _CLARIFY,
+        )
 
     if not candidates:
         return InterpretResult(
@@ -351,7 +530,10 @@ async def _play_from_show(
             spoken_response=f"I found {found.title}, but could not load its episodes.",
         )
 
-    candidates = await feed_candidates(session, feed.id)
+    # Searched on what she said about the episode rather than the whole
+    # sentence, so the show's own name does not become a search term. When she
+    # only wants the latest, that is empty and no search runs at all.
+    candidates = await feed_candidates(session, feed.id, episode_query or "")
     if not candidates:
         return InterpretResult(
             action=Action.UNKNOWN,
@@ -382,8 +564,7 @@ async def _play_from_show(
     }:
         return InterpretResult(
             action=Action.UNKNOWN,
-            spoken_response=decision.spoken_response
-            or f"I could not find that episode of {feed.title}.",
+            spoken_response=decision.spoken_response or f"I could not find that episode of {feed.title}.",
         )
 
     episode = await session.get(Episode, decision.episode_id, options=[joinedload(Episode.feed)])
@@ -417,9 +598,7 @@ async def _unsubscribe(session: AsyncSession, query: str | None, user: User) -> 
 
     feeds = (
         await session.scalars(
-            select(Feed)
-            .join(Subscription, Subscription.feed_id == Feed.id)
-            .where(Subscription.user_id == user.id)
+            select(Feed).join(Subscription, Subscription.feed_id == Feed.id).where(Subscription.user_id == user.id)
         )
     ).all()
     if not feeds:

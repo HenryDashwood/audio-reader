@@ -117,9 +117,8 @@ class Settings(BaseSettings):
     # Every request refreshes the clock; 0 disables expiry.
     session_idle_timeout_days: int = 180
 
-    # DeepSeek V4 Flash matched Opus 5 and Haiku 4.5 on every episode-selection
-    # query we tried, at ~1/55 the cost of Opus. Switch back with
-    # AUDIOREADER_LLM_PROVIDER=anthropic if harder queries need it.
+    # OpenRouter, so the model is a config change rather than a code change.
+    # Switch to AUDIOREADER_LLM_PROVIDER=anthropic to talk to Claude directly.
     llm_provider: LLMProvider = LLMProvider.OPENROUTER
 
     # Also accept the bare vendor key names the SDKs and CLIs already use, so
@@ -135,14 +134,33 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AUDIOREADER_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"),
     )
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_model: str = "deepseek/deepseek-v4-flash-0731"
-    # DeepSeek V4 Flash reasons before answering by default, which cost 4-14s
-    # per command and varied wildly. Picking an episode from a labelled list
-    # does not need it: measured ~1.1s and no loss of accuracy without.
+    # Chosen on `backend/evals`, not on impressions: GPT-5.6 Luna is the only
+    # cheap model that has scored the whole corpus clean over three repeats,
+    # where DeepSeek V4 Flash returned malformed JSON on a few percent of
+    # calls and misrouted requests for shows she does not subscribe to.
+    #
+    # It is also the cheaper of the two here, which is not obvious from the
+    # rate card — Luna's output tokens cost twice DeepSeek's. One spoken
+    # command is about 3,500 input tokens against 45 output, so input price is
+    # very nearly the only price that matters. Weigh a replacement the same
+    # way, and run the corpus before switching.
+    openrouter_model: str = "openai/gpt-5.6-luna"
+    # Reasoning off. DeepSeek V4 Flash reasoned before answering by default,
+    # which cost 4-14s per command and varied wildly; picking an episode from
+    # a labelled list does not need it, and Luna answers in about a second
+    # without. Kept as a setting because a harder model may want it back.
     openrouter_reasoning: bool = False
-    # How many episodes the model gets to choose between. Every candidate costs
-    # input tokens on each spoken command, so this is the main cost dial.
+    # How many recent episodes the model gets to choose between. Every
+    # candidate costs input tokens on each spoken command, so this is the main
+    # cost dial.
     command_candidate_limit: int = 60
+    # How many older episodes matching what she actually said are added to
+    # that window. Feeds carry their whole archive — In Our Time is past a
+    # thousand episodes, back to 1998 — so recency alone puts anything more
+    # than a couple of months old permanently out of reach, however precisely
+    # she names it. These only cost tokens when her words match something old.
+    # Set to 0 to go back to a pure recency window.
+    command_search_limit: int = 15
 
     # Finding a blog's feed from a spoken name is the one task worth being
     # slow and thorough at: it happens once per publication, and OpenRouter's

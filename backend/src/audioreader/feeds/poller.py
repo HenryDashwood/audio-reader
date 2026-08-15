@@ -62,9 +62,7 @@ async def poll_lock(session: AsyncSession) -> AsyncIterator[bool]:
         yield True
         return
 
-    acquired = bool(
-        await session.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": POLL_LOCK_KEY})
-    )
+    acquired = bool(await session.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": POLL_LOCK_KEY}))
     try:
         yield acquired
     finally:
@@ -80,9 +78,7 @@ async def poll_all_feeds(session: AsyncSession) -> PollSummary:
     # feed fresh instead of trusting objects fetched before the loop.
     # Only feeds somebody still subscribes to: unsubscribing leaves the feed
     # in the catalog, and polling those orphans forever would be wasted work.
-    feed_ids = (
-        await session.scalars(select(Feed.id).where(Feed.id.in_(select(Subscription.feed_id))))
-    ).all()
+    feed_ids = (await session.scalars(select(Feed.id).where(Feed.id.in_(select(Subscription.feed_id))))).all()
     failing = []
     for feed_id in feed_ids:
         feed = await session.get(Feed, feed_id)
@@ -141,9 +137,7 @@ async def prune_orphaned_feeds(session: AsyncSession, now: datetime | None = Non
             .where(
                 Feed.id.not_in(select(Subscription.feed_id)),
                 Feed.id.not_in(
-                    select(Episode.feed_id).join(
-                        PlaybackPosition, PlaybackPosition.episode_id == Episode.id
-                    )
+                    select(Episode.feed_id).join(PlaybackPosition, PlaybackPosition.episode_id == Episode.id)
                 ),
                 Feed.created_at < cutoff,
             )

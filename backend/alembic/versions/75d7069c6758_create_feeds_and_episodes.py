@@ -57,9 +57,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["feed_id"], ["feeds.id"], name=op.f("fk_episodes_feed_id_feeds"), ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["feed_id"], ["feeds.id"], name=op.f("fk_episodes_feed_id_feeds"), ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_episodes")),
         sa.UniqueConstraint("feed_id", "guid", name=op.f("uq_episodes_feed_id_guid")),
     )

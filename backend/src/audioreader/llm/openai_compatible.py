@@ -59,9 +59,7 @@ class OpenAICompatibleClient:
         }
         self._timeout = timeout
 
-    async def decide(
-        self, *, system: str, user: str, output_model: type[BaseModel]
-    ) -> dict[str, Any]:
+    async def decide(self, *, system: str, user: str, output_model: type[BaseModel]) -> dict[str, Any]:
         # Extras go first so they can never overwrite the schema or messages.
         payload: dict[str, Any] = {
             **self.extra_payload,
@@ -82,9 +80,7 @@ class OpenAICompatibleClient:
 
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions", headers=self._headers, json=payload
-                )
+                response = await client.post(f"{self.base_url}/chat/completions", headers=self._headers, json=payload)
                 response.raise_for_status()
                 body = response.json()
         except httpx.HTTPError as exc:

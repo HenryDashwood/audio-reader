@@ -29,9 +29,7 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 @router.post("/auth/apple")
-async def apple_login(
-    body: AppleLoginRequest, session: Session, verifier: Verifier, revoker: Revoker
-) -> AuthResponse:
+async def apple_login(body: AppleLoginRequest, session: Session, verifier: Verifier, revoker: Revoker) -> AuthResponse:
     try:
         identity = await verifier.verify(body.identity_token)
     except AppleVerificationError as exc:

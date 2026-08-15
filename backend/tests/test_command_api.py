@@ -26,9 +26,7 @@ async def library(session, user):
 
 
 class TestCommandEndpoint:
-    async def test_play_request_returns_everything_the_player_needs(
-        self, client, fake_llm, library
-    ):
+    async def test_play_request_returns_everything_the_player_needs(self, client, fake_llm, library):
         fake_llm.respond_with(
             {
                 "action": "play_episode",
@@ -47,9 +45,7 @@ class TestCommandEndpoint:
 
     async def test_unrecognised_request_is_still_a_200_with_speech(self, client, fake_llm, library):
         # The app must always have something to say; an error tone is not enough.
-        fake_llm.respond_with(
-            {"action": "unknown", "spoken_response": "I could not find that episode."}
-        )
+        fake_llm.respond_with({"action": "unknown", "spoken_response": "I could not find that episode."})
         response = await client.post("/command", json={"transcript": "play the thing"})
 
         assert response.status_code == 200

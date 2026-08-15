@@ -85,14 +85,10 @@ class TestExchangeCode:
 
     async def test_sends_the_code_and_a_client_secret(self, revoker):
         with respx.mock:
-            route = respx.post(TOKEN_URL).mock(
-                return_value=Response(200, json={"refresh_token": "r.abc"})
-            )
+            route = respx.post(TOKEN_URL).mock(return_value=Response(200, json={"refresh_token": "r.abc"}))
             await revoker.exchange_code("code-123")
 
-        sent = dict(
-            pair.split("=", 1) for pair in route.calls.last.request.content.decode().split("&")
-        )
+        sent = dict(pair.split("=", 1) for pair in route.calls.last.request.content.decode().split("&"))
         assert sent["code"] == "code-123"
         assert sent["grant_type"] == "authorization_code"
         assert sent["client_secret"]
@@ -125,9 +121,7 @@ class TestRevoke:
             route = respx.post(REVOKE_URL).mock(return_value=Response(200))
             await revoker.revoke("r.abc")
 
-        sent = dict(
-            pair.split("=", 1) for pair in route.calls.last.request.content.decode().split("&")
-        )
+        sent = dict(pair.split("=", 1) for pair in route.calls.last.request.content.decode().split("&"))
         assert sent["token"] == "r.abc"
         assert sent["token_type_hint"] == "refresh_token"
 

@@ -76,9 +76,7 @@ def upgrade() -> None:
         ),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["user_id"], ["users.id"], name=op.f("fk_sessions_user_id_users"), ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_sessions_user_id_users"), ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("token_hash", name=op.f("pk_sessions")),
     )
     op.create_table(
@@ -137,16 +135,8 @@ def upgrade() -> None:
     # Backfill: everything that exists today belongs to the one pre-auth user.
     # Typed bindparam so the driver gets a real uuid, not a bare string.
     legacy_id = sa.bindparam("id", value=uuid.UUID(LEGACY_USER_ID), type_=sa.Uuid())
-    op.execute(
-        sa.text("INSERT INTO users (id, display_name) VALUES (:id, 'Library owner')").bindparams(
-            legacy_id
-        )
-    )
-    op.execute(
-        sa.text(
-            "INSERT INTO subscriptions (user_id, feed_id) SELECT :id, id FROM feeds"
-        ).bindparams(legacy_id)
-    )
+    op.execute(sa.text("INSERT INTO users (id, display_name) VALUES (:id, 'Library owner')").bindparams(legacy_id))
+    op.execute(sa.text("INSERT INTO subscriptions (user_id, feed_id) SELECT :id, id FROM feeds").bindparams(legacy_id))
 
 
 def downgrade() -> None:

@@ -7,6 +7,7 @@ speech synthesiser can read one at a time.
 """
 
 import re
+import unicodedata
 from html import unescape
 from html.parser import HTMLParser
 
@@ -103,3 +104,64 @@ def article_text(value: str | None) -> str:
     """The whole article as speech-ready text, paragraphs separated by blank
     lines — the shape the app's reader chunks on."""
     return "\n\n".join(article_paragraphs(value))
+
+
+#: Letters decomposition leaves alone, and every spelling a transcript might
+#: plausibly use for them. More than one, because expanding the ligature is not
+#: enough on its own: the BBC writes "Æthelstan", speech recognition writes
+#: "Athelstan", and "athelstan" is not a substring of "aethelstan". Both go in.
+_LIGATURE_FORMS = {
+    "æ": ("ae", "a", "e"),
+    "œ": ("oe", "o", "e"),
+    "ß": ("ss", "s"),
+    "ø": ("o",),
+    "ð": ("d", "th"),
+    "þ": ("th", "t"),
+    "ł": ("l",),
+    "đ": ("d",),
+}
+
+#: A word with several ligatures would otherwise multiply out; nobody needs
+#: sixteen spellings of one title.
+_MAX_SPELLINGS = 4
+
+#: Splits on anything that is neither a plain letter or digit nor a ligature —
+#: the ligatures survive this far so their alternate spellings can be worked out.
+_WORD_BREAK = re.compile(f"[^a-z0-9{''.join(_LIGATURE_FORMS)}]+")
+
+
+def search_key(*parts: str | None, limit: int = 2000) -> str:
+    """Title and description as a bag of words a spoken phrase can match.
+
+    An index, not readable prose. Accents come off, because the transcript
+    will not have them — she says "Rubaiyat" and the feed says "Rubáiyát" —
+    and a word written with a ligature is indexed under every spelling it
+    might reasonably be transcribed as, so the two meet in the middle.
+
+    Stored on the row at ingest rather than computed per query: SQL has no
+    portable way to fold Unicode, and this is read on every spoken command.
+    """
+    text = strip_html(" ".join(part for part in parts if part)).casefold()
+    # Accents decompose into a letter plus a combining mark, and the mark is
+    # then dropped for being non-ASCII. Ligatures do not decompose, so they
+    # come through intact and are spelled out word by word below.
+    plain = "".join(char for char in unicodedata.normalize("NFKD", text) if char.isascii() or char in _LIGATURE_FORMS)
+    words: list[str] = []
+    for word in _WORD_BREAK.split(plain):
+        for spelling in _spellings(word):
+            if spelling not in words:
+                words.append(spelling)
+    return " ".join(words)[:limit]
+
+
+def _spellings(word: str) -> list[str]:
+    """Every way this word might reasonably have been transcribed."""
+    found = [char for char in word if char in _LIGATURE_FORMS]
+    if not word or not found:
+        return [word] if word else []
+    spellings = [word]
+    for char in found:
+        spellings = [spelling.replace(char, form, 1) for spelling in spellings for form in _LIGATURE_FORMS[char]][
+            :_MAX_SPELLINGS
+        ]
+    return spellings

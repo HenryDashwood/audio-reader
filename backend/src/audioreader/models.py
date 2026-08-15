@@ -1,8 +1,10 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, MetaData, Text, UniqueConstraint, Uuid, func, or_
+from sqlalchemy import DateTime, ForeignKey, MetaData, Text, UniqueConstraint, Uuid, event, func, or_
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from audioreader.text import search_key
 
 # Deterministic constraint names so Alembic autogenerate produces stable,
 # reviewable diffs instead of Postgres-invented names.
@@ -37,9 +39,7 @@ class Feed(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    episodes: Mapped[list["Episode"]] = relationship(
-        back_populates="feed", cascade="all, delete-orphan"
-    )
+    episodes: Mapped[list["Episode"]] = relationship(back_populates="feed", cascade="all, delete-orphan")
 
 
 class Episode(Base):
@@ -55,6 +55,11 @@ class Episode(Base):
     # Speech-ready text for an article, extracted lazily on first read and
     # cached here so replaying does not refetch the page.
     article_text: Mapped[str | None] = mapped_column(Text)
+    # Title and description folded down to plain lower-case words, so a spoken
+    # phrase can be matched against a back catalogue that a recency window
+    # never reaches. Written once at ingest: SQL has no portable way to strip
+    # accents, and this runs on every spoken command. See text.search_key.
+    search_text: Mapped[str | None] = mapped_column(Text)
     audio_url: Mapped[str | None]
     duration_seconds: Mapped[int | None]
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -75,9 +80,7 @@ class User(Base):
     email: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    identities: Mapped[list["UserIdentity"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
+    identities: Mapped[list["UserIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class UserIdentity(Base):
@@ -135,12 +138,8 @@ class PlaybackPosition(Base):
     # surrogate id makes upsert a plain session.get-then-set.
     __tablename__ = "playback_positions"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    episode_id: Mapped[int] = mapped_column(
-        ForeignKey("episodes.id", ondelete="CASCADE"), primary_key=True
-    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), primary_key=True)
     position_seconds: Mapped[float]
     completed: Mapped[bool] = mapped_column(default=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -161,3 +160,16 @@ PLAYABLE_EPISODE = or_(
     Episode.link.is_not(None),
     Episode.description.is_not(None),
 )
+
+
+@event.listens_for(Episode, "before_insert")
+@event.listens_for(Episode, "before_update")
+def _fill_search_text(_mapper, _connection, episode: Episode) -> None:
+    """Keep the folded search column in step with the title and description.
+
+    Done here rather than at each call site so that no code path — poller,
+    first ingest, a fixture, a backfill script — can insert an episode that
+    the spoken search cannot see. An episode missing from that index is an
+    episode she can never ask for by name.
+    """
+    episode.search_text = search_key(episode.title, episode.description)

@@ -33,9 +33,7 @@ class TestMediaURLsAreSecure:
         # iOS App Transport Security refuses plain HTTP, so an http:// episode
         # simply will not play. Most podcast hosts serve the same file
         # over https.
-        assert episode("http://open.live.bbc.co.uk/x.mp3").audio_url == (
-            "https://open.live.bbc.co.uk/x.mp3"
-        )
+        assert episode("http://open.live.bbc.co.uk/x.mp3").audio_url == ("https://open.live.bbc.co.uk/x.mp3")
 
     def test_upgrades_http_artwork(self):
         assert feed("http://ichef.bbci.co.uk/a.jpg").image_url == "https://ichef.bbci.co.uk/a.jpg"

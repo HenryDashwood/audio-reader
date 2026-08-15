@@ -44,9 +44,7 @@ def _to_feed_read(feed: Feed, episode_count: int) -> FeedRead:
     )
 
 
-async def episodes_read(
-    session: AsyncSession, user: User, episodes: Sequence[Episode]
-) -> list[EpisodeRead]:
+async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Episode]) -> list[EpisodeRead]:
     """Episode payloads with the user's playback position and artwork folded in.
 
     Callers must load each episode's feed eagerly (joinedload): the artwork
@@ -61,9 +59,7 @@ async def episodes_read(
         read.image_url = secure_url(episode.image_url or episode.feed.image_url)
         # Mirrors the fallback chain in feeds/articles.py: anything that can
         # yield text marks the episode readable, so articles are playable.
-        read.has_text = bool(
-            episode.article_text or episode.content_html or episode.link or episode.description
-        )
+        read.has_text = bool(episode.article_text or episode.content_html or episode.link or episode.description)
         if (position := stored.get(episode.id)) is not None:
             read.position_seconds = position.position_seconds
             read.completed = position.completed
@@ -84,9 +80,7 @@ async def subscribe(body: FeedCreate, session: Session, user: CurrentUser) -> Fe
     # Counted with a query, never len(feed.episodes): the collection is only
     # reliably in memory when the feed was created this request, and a lazy
     # load outside the session's greenlet is an error, not a query.
-    count = await session.scalar(
-        select(func.count()).select_from(Episode).where(Episode.feed_id == feed.id)
-    )
+    count = await session.scalar(select(func.count()).select_from(Episode).where(Episode.feed_id == feed.id))
     return _to_feed_read(feed, episode_count=count or 0)
 
 
@@ -102,9 +96,7 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
     except FeedParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    episode_count = await session.scalar(
-        select(func.count()).select_from(Episode).where(Episode.feed_id == feed.id)
-    )
+    episode_count = await session.scalar(select(func.count()).select_from(Episode).where(Episode.feed_id == feed.id))
     episodes = (
         await session.scalars(
             select(Episode)
@@ -123,11 +115,7 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
 
 @router.get("")
 async def list_feeds(session: Session, user: CurrentUser) -> list[FeedRead]:
-    counts = (
-        select(Episode.feed_id, func.count(Episode.id).label("count"))
-        .group_by(Episode.feed_id)
-        .subquery()
-    )
+    counts = select(Episode.feed_id, func.count(Episode.id).label("count")).group_by(Episode.feed_id).subquery()
     rows = await session.execute(
         select(Feed, func.coalesce(counts.c.count, 0))
         .join(Subscription, Subscription.feed_id == Feed.id)
@@ -146,9 +134,7 @@ async def unsubscribe(feed_id: int, session: Session, user: CurrentUser) -> None
 
 
 @router.get("/{feed_id}/episodes")
-async def list_episodes(
-    feed_id: int, session: Session, user: CurrentUser, limit: int = 50
-) -> list[EpisodeRead]:
+async def list_episodes(feed_id: int, session: Session, user: CurrentUser, limit: int = 50) -> list[EpisodeRead]:
     subscribed = await session.scalar(
         select(Subscription).where(Subscription.user_id == user.id, Subscription.feed_id == feed_id)
     )
@@ -190,9 +176,7 @@ episodes_router = APIRouter(prefix="/episodes", tags=["episodes"])
 
 
 @episodes_router.get("")
-async def recent_episodes(
-    session: Session, user: CurrentUser, limit: int = 30
-) -> list[EpisodeRead]:
+async def recent_episodes(session: Session, user: CurrentUser, limit: int = 30) -> list[EpisodeRead]:
     """Newest playable items — episodes and articles — across the user's
     subscriptions.
 
@@ -242,13 +226,9 @@ async def get_episode_text(episode_id: int, session: Session, user: CurrentUser)
 
 
 @episodes_router.put("/{episode_id}/position", status_code=204)
-async def put_position(
-    episode_id: int, body: PositionUpdate, session: Session, user: CurrentUser
-) -> None:
+async def put_position(episode_id: int, body: PositionUpdate, session: Session, user: CurrentUser) -> None:
     """Record where the user is in an episode. Last write wins."""
     episode = await session.get(Episode, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
-    await positions.upsert_position(
-        session, user, episode_id, body.position_seconds, body.completed
-    )
+    await positions.upsert_position(session, user, episode_id, body.position_seconds, body.completed)

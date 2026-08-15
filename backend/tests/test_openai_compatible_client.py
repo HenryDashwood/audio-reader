@@ -125,8 +125,6 @@ class TestDecide:
 
     async def test_provider_error_payload_becomes_llm_error(self, client, respx_mock):
         # OpenRouter returns 200 with an error body when an upstream fails.
-        respx_mock.post(ENDPOINT).respond(
-            json={"error": {"message": "upstream model unavailable", "code": 502}}
-        )
+        respx_mock.post(ENDPOINT).respond(json={"error": {"message": "upstream model unavailable", "code": 502}})
         with pytest.raises(LLMError, match="upstream model unavailable"):
             await client.decide(system="s", user="u", output_model=ModelDecision)

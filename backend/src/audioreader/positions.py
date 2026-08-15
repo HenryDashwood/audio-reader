@@ -29,15 +29,11 @@ async def upsert_position(
     return position
 
 
-async def positions_for(
-    session: AsyncSession, user: User, episode_ids: Iterable[int]
-) -> dict[int, PlaybackPosition]:
+async def positions_for(session: AsyncSession, user: User, episode_ids: Iterable[int]) -> dict[int, PlaybackPosition]:
     ids = list(episode_ids)
     if not ids:
         return {}
     positions = await session.scalars(
-        select(PlaybackPosition).where(
-            PlaybackPosition.user_id == user.id, PlaybackPosition.episode_id.in_(ids)
-        )
+        select(PlaybackPosition).where(PlaybackPosition.user_id == user.id, PlaybackPosition.episode_id.in_(ids))
     )
     return {position.episode_id: position for position in positions}

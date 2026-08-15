@@ -15,9 +15,7 @@ class LLMError(Exception):
 
 @runtime_checkable
 class LLMClient(Protocol):
-    async def decide(
-        self, *, system: str, user: str, output_model: type[BaseModel]
-    ) -> dict[str, Any]:
+    async def decide(self, *, system: str, user: str, output_model: type[BaseModel]) -> dict[str, Any]:
         """Return the model's answer as a dict shaped like `output_model`.
 
         Implementations should raise LLMError for transport and provider

@@ -45,8 +45,7 @@ class ModelDecision(BaseModel):
     episode_id: int | None = None
     search_query: str | None = Field(
         default=None,
-        description="For subscribe, unsubscribe and play_from_show: the show's"
-        " name as she said it, nothing else.",
+        description="For subscribe, unsubscribe and play_from_show: the show's name as she said it, nothing else.",
     )
     episode_query: str | None = Field(
         default=None,
@@ -54,12 +53,9 @@ class ModelDecision(BaseModel):
     )
     speed: float | None = Field(
         default=None,
-        description="For set_speed: the playback rate multiplier, e.g. 1.5 for"
-        " one and a half times normal speed.",
+        description="For set_speed: the playback rate multiplier, e.g. 1.5 for one and a half times normal speed.",
     )
-    spoken_response: str = Field(
-        description="One short sentence to read aloud, naming the episode if one was chosen."
-    )
+    spoken_response: str = Field(description="One short sentence to read aloud, naming the episode if one was chosen.")
 
 
 @dataclass

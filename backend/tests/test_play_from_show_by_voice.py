@@ -40,9 +40,7 @@ class TestPlayLatest:
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         llm = FakeLLMClient(play_from_show("the history hour"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="play the latest history hour"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="play the latest history hour")
 
         assert result.action == Action.PLAY_EPISODE
         assert result.episode is not None
@@ -53,9 +51,7 @@ class TestPlayLatest:
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         llm = FakeLLMClient(play_from_show("the history hour"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="play the latest history hour"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="play the latest history hour")
 
         assert "The History Hour" in result.spoken_response
 
@@ -66,9 +62,7 @@ class TestPlayLatest:
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         llm = FakeLLMClient(play_from_show("the history hour", "the latest one"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="play the latest history hour"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="play the latest history hour")
 
         assert result.action == Action.PLAY_EPISODE
         assert len(llm.calls) == 1
@@ -85,17 +79,13 @@ class TestPlayLatest:
 
 
 class TestPlayDescribedEpisode:
-    async def test_second_call_picks_from_that_show_only(
-        self, session, user, respx_mock, podcast_xml
-    ):
+    async def test_second_call_picks_from_that_show_only(self, session, user, respx_mock, podcast_xml):
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("The History Hour")))
         # Feed already in the catalog (another user subscribed, say), so its
         # episode ids are knowable up front.
         respx_mock.get(FEED_URL).respond(content=podcast_xml)
         await feed_service.ensure_feed(session, FEED_URL)
-        wanted = await session.scalar(
-            select(Episode).where(Episode.title == "The South Sea Bubble")
-        )
+        wanted = await session.scalar(select(Episode).where(Episode.title == "The South Sea Bubble"))
 
         llm = FakeLLMClient()
         llm.queue(
@@ -182,24 +172,18 @@ class TestFailuresAreSpoken:
         respx_mock.get(FEED_URL).respond(status_code=500)
         llm = FakeLLMClient(play_from_show("broken feed show"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="play the latest broken feed show"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="play the latest broken feed show")
 
         assert result.action == Action.UNKNOWN
         assert "Broken Feed Show" in result.spoken_response
 
-    async def test_article_feeds_play_their_latest_article(
-        self, session, user, respx_mock, article_xml
-    ):
+    async def test_article_feeds_play_their_latest_article(self, session, user, respx_mock, article_xml):
         # A feed with no audio is still playable: the app reads articles aloud.
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("Notes on Progress")))
         respx_mock.get(FEED_URL).respond(content=article_xml)
         llm = FakeLLMClient(play_from_show("notes on progress"))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="play the latest notes on progress"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="play the latest notes on progress")
 
         assert result.action == Action.PLAY_EPISODE
         assert result.episode is not None

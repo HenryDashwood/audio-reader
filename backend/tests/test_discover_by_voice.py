@@ -90,9 +90,7 @@ class TestSpokenDomains:
     def test_literal_domains_are_found_in_sentences(self):
         from audioreader.feeds.discovery import spoken_domains
 
-        assert spoken_domains("subscribe to the rss feed of astralcodexten.com") == [
-            "astralcodexten.com"
-        ]
+        assert spoken_domains("subscribe to the rss feed of astralcodexten.com") == ["astralcodexten.com"]
 
     def test_spelled_out_domains_are_reassembled_longest_first(self):
         from audioreader.feeds.discovery import spoken_domains
@@ -204,18 +202,14 @@ class TestFindFeedByName:
 
 
 class TestSubscribeFallsBackToDiscovery:
-    async def test_blog_not_in_directory_is_found_and_subscribed(
-        self, session, user, respx_mock, article_xml
-    ):
+    async def test_blog_not_in_directory_is_found_and_subscribed(self, session, user, respx_mock, article_xml):
         empty_itunes(respx_mock)
         respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
         respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
         llm = FakeLLMClient()
         llm.queue(subscribe_decision("notes on progress"), candidates(SITE_URL))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="subscribe to notes on progress"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to notes on progress")
 
         assert result.action == Action.SUBSCRIBED
         assert "Notes on Progress" in result.spoken_response
@@ -231,33 +225,25 @@ class TestSubscribeFallsBackToDiscovery:
             candidates(publication=""),
         )
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="subscribe to an obscure zine"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to an obscure zine")
 
         assert result.action == Action.UNKNOWN
         assert "an obscure zine" in result.spoken_response
 
-    async def test_directory_outage_still_tries_discovery(
-        self, session, user, respx_mock, article_xml
-    ):
+    async def test_directory_outage_still_tries_discovery(self, session, user, respx_mock, article_xml):
         respx_mock.get(SEARCH_URL).respond(status_code=503)
         respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
         respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
         llm = FakeLLMClient()
         llm.queue(subscribe_decision("notes on progress"), candidates(SITE_URL))
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="subscribe to notes on progress"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to notes on progress")
 
         assert result.action == Action.SUBSCRIBED
 
 
 class TestPlayFromUnknownPublication:
-    async def test_latest_article_plays_without_subscribing(
-        self, session, user, respx_mock, article_xml
-    ):
+    async def test_latest_article_plays_without_subscribing(self, session, user, respx_mock, article_xml):
         empty_itunes(respx_mock)
         respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
         respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
@@ -272,9 +258,7 @@ class TestPlayFromUnknownPublication:
             candidates(SITE_URL),
         )
 
-        result = await service.interpret(
-            session, llm, user=user, transcript="play the latest notes on progress"
-        )
+        result = await service.interpret(session, llm, user=user, transcript="play the latest notes on progress")
 
         assert result.action == Action.PLAY_EPISODE
         assert result.episode is not None

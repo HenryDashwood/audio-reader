@@ -32,9 +32,7 @@ async def age(session, feed: Feed, when) -> None:
 
 
 class TestPruneOrphanedFeeds:
-    async def test_removes_an_old_unsubscribed_feed(
-        self, session, respx_mock, podcast_xml, long_ago
-    ):
+    async def test_removes_an_old_unsubscribed_feed(self, session, respx_mock, podcast_xml, long_ago):
         feed = await ingested_feed(session, respx_mock, podcast_xml)
         await age(session, feed, long_ago)
 
@@ -58,9 +56,7 @@ class TestPruneOrphanedFeeds:
         assert await prune_orphaned_feeds(session) == 0
         assert await session.get(Feed, feed.id) is not None
 
-    async def test_keeps_a_feed_she_has_listened_to(
-        self, session, user, respx_mock, podcast_xml, long_ago
-    ):
+    async def test_keeps_a_feed_she_has_listened_to(self, session, user, respx_mock, podcast_xml, long_ago):
         # Playing one episode without subscribing is a supported path; her
         # position in it must not be deleted out from under her.
         feed = await ingested_feed(session, respx_mock, podcast_xml)
@@ -84,9 +80,7 @@ class TestPruneOrphanedFeeds:
         kept = await ingested_feed(session, respx_mock, podcast_xml)
         episode = await session.scalar(select(Episode).limit(1))
         await upsert_position(session, user, episode.id, 30.0, completed=False)
-        dropped = await ingested_feed(
-            session, respx_mock, article_xml, url="https://example.com/other.xml"
-        )
+        dropped = await ingested_feed(session, respx_mock, article_xml, url="https://example.com/other.xml")
         await age(session, kept, long_ago)
         await age(session, dropped, long_ago)
 
@@ -100,9 +94,7 @@ class TestPruneOrphanedFeeds:
     ):
         monkeypatch.setattr(settings, "orphan_prune_batch_size", 1)
         first = await ingested_feed(session, respx_mock, podcast_xml)
-        second = await ingested_feed(
-            session, respx_mock, article_xml, url="https://example.com/other.xml"
-        )
+        second = await ingested_feed(session, respx_mock, article_xml, url="https://example.com/other.xml")
         await age(session, first, long_ago)
         await age(session, second, long_ago)
 

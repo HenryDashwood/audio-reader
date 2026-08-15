@@ -103,6 +103,20 @@ uv run python -m audioreader.feeds.poller   # one-shot poll of all feeds
 Tests run against in-memory SQLite and mocked HTTP, so they need neither the
 database container nor a network connection.
 
+### Evaluating the voice commands
+
+The test suite stubs the model, so it proves the pipeline works and says
+nothing about whether the model understands her. That question has its own
+corpus of spoken requests paired with the behaviour each should produce:
+
+```bash
+uv run python -m evals               # calls a real model; costs money
+```
+
+See `backend/evals/README.md`. Everything but the model call is stubbed, so a
+run is repeatable and never touches a real feed. Add a case whenever something
+goes wrong in real use — before fixing it.
+
 ## Configuration
 
 Settings come from environment variables prefixed `AUDIOREADER_` (or a
@@ -113,8 +127,13 @@ development needs no configuration.
 - `AUDIOREADER_POLL_INTERVAL_SECONDS` — background feed-poll interval
   (default 900; set 0 to disable, e.g. when an external scheduler runs
   `python -m audioreader.feeds.poller` instead)
-- `AUDIOREADER_COMMAND_CANDIDATE_LIMIT` — how many episodes the model chooses
-  between per command (default 60; the main cost dial)
+- `AUDIOREADER_COMMAND_CANDIDATE_LIMIT` — how many recent episodes the model
+  chooses between per command (default 60; the main cost dial)
+- `AUDIOREADER_COMMAND_SEARCH_LIMIT` — how many older episodes matching what
+  she actually said are added to that window (default 15; 0 disables the
+  search). Feeds carry their whole archive — In Our Time's is past a thousand
+  episodes, back to 1998 — so recency alone puts anything older than a couple
+  of months permanently out of reach, however precisely she names it.
 - `AUDIOREADER_COMMAND_RATE_LIMIT_PER_MINUTE` / `_PER_DAY` — what one account
   may spend on spoken commands (defaults 12 and 500; 0 disables either).
   In-process, so with several replicas the effective limit multiplies.
@@ -214,8 +233,30 @@ The test suite stubs the LLM, so no API key is needed to run it.
 | `openrouter` (default) | `OPENROUTER_API_KEY` | `AUDIOREADER_OPENROUTER_MODEL` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `AUDIOREADER_LLM_MODEL` |
 
-The default is `deepseek/deepseek-v4-flash-0731`, which matched Claude Opus 5
-on every episode-selection query we tried at roughly 1/55 of the cost.
+The default is `openai/gpt-5.6-luna`. Model choice is decided by
+`backend/evals` rather than by impressions — the numbers below are that
+corpus run three times over, alongside the cost of one spoken command measured
+from real token usage:
+
+| Model | $ / command | Corpus, 66 runs |
+| --- | --- | --- |
+| `openai/gpt-5.6-luna` | 0.00039 | 66 pass |
+| `deepseek/deepseek-v4-flash` | 0.00023 | 62 pass, 4 fail |
+| `deepseek/deepseek-v4-flash-0731` | 0.00049 | 59 pass, 3 fail, 3 error |
+| `anthropic/claude-opus-5` | 0.03352 | clean, at 85× the price |
+
+DeepSeek V4 Flash held the default until it was measured properly: it returns
+malformed JSON on a few percent of calls, and it misroutes requests for shows
+she does not subscribe to. Luna is the only cheap model to score the corpus
+clean, and it is quicker.
+
+Two things that are easy to get wrong here. **Input price is very nearly the
+only price that matters**: one command is about 3,500 input tokens against 45
+output, so Luna wins on cost despite its output tokens costing twice
+DeepSeek's. And **cost is not really what decides this** — at twenty commands a
+day every cheap option lands between 15p and 30p a month, and even Opus is
+about £16. Treat the choice as one of reliability with a rounding error
+attached.
 
 The `openrouter` client speaks the OpenAI chat-completions format, so pointing
 `AUDIOREADER_OPENROUTER_BASE_URL` elsewhere reaches OpenAI, DeepSeek direct,

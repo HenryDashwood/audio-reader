@@ -235,7 +235,5 @@ def get_verifier() -> AppleTokenVerifier:
     across requests. Tests override this dependency."""
     global _verifier
     if _verifier is None:
-        _verifier = AppleTokenVerifier(
-            audience=settings.apple_bundle_id, jwks_url=settings.apple_jwks_url
-        )
+        _verifier = AppleTokenVerifier(audience=settings.apple_bundle_id, jwks_url=settings.apple_jwks_url)
     return _verifier

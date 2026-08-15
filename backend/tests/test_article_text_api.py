@@ -38,9 +38,7 @@ class TestHasText:
 
 
 class TestEpisodeText:
-    async def test_full_feed_content_is_used_without_fetching(
-        self, client, respx_mock, article_xml, monkeypatch
-    ):
+    async def test_full_feed_content_is_used_without_fetching(self, client, respx_mock, article_xml, monkeypatch):
         # Below the threshold the endpoint would try the page; a Substack-style
         # feed with the whole article inline must never need the network.
         monkeypatch.setattr(articles, "FULL_TEXT_THRESHOLD", 10)
@@ -54,9 +52,7 @@ class TestEpisodeText:
         assert body["title"] == "Why sewers made cities possible"
         assert "For most of history, cities were death traps" in body["text"]
 
-    async def test_teaser_feeds_fall_back_to_the_article_page(
-        self, client, respx_mock, article_xml
-    ):
+    async def test_teaser_feeds_fall_back_to_the_article_page(self, client, respx_mock, article_xml):
         feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
         episode = (await client.get(f"/feeds/{feed_id}/episodes")).json()[0]
         page = respx_mock.get("https://notesonprogress.example.com/p/sewers").respond(
@@ -85,9 +81,7 @@ class TestEpisodeText:
         assert first == second
         assert page.call_count == 1
 
-    async def test_unreachable_page_still_reads_the_feed_content(
-        self, client, respx_mock, article_xml
-    ):
+    async def test_unreachable_page_still_reads_the_feed_content(self, client, respx_mock, article_xml):
         feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
         episode = (await client.get(f"/feeds/{feed_id}/episodes")).json()[0]
         respx_mock.get("https://notesonprogress.example.com/p/sewers").respond(status_code=500)
