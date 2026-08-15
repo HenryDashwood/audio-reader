@@ -230,11 +230,54 @@ class TestBackCatalogueIsReachable:
         offered = await service.build_candidates(session, user, "play the weekly one about Athelstan", limit=60)
         assert "Æthelstan" in {candidate.title for candidate in offered}
 
-    async def test_a_common_word_is_still_searched_when_it_is_all_she_gave(self, session, user, deep_archive):
-        # Dropping every word would mean searching for nothing, which is
-        # worse than searching badly.
+    async def test_nothing_is_added_when_every_word_matches_everything(self, session, user, deep_archive):
+        # "weekly" is in all two hundred descriptions, exactly as "time" is in
+        # a third of In Our Time's. Searching for it would fill the spare
+        # slots — and about a thousand input tokens — with whatever mentioned
+        # it most recently. Better to leave them empty.
         offered = await service.build_candidates(session, user, "play the weekly programme", limit=60)
-        assert len(offered) >= 60
+        assert len(offered) == 60
+
+    async def test_a_word_is_not_matched_inside_a_longer_one(self, session, user, deep_archive):
+        # Reported from real use: "In Our Time" was mis-transcribed as "in our
+        # stand", and "stand" as a bare substring matched 173 In Our Time
+        # episodes — 129 of them merely saying "understanding". Fifteen
+        # candidate slots and the tokens to describe them, all noise.
+        from audioreader.models import Episode
+
+        session.add(
+            Episode(
+                feed_id=deep_archive.id,
+                guid="understanding",
+                title="Consciousness",
+                description="What it means to understand understanding.",
+                audio_url="https://cdn.example.com/u.mp3",
+            )
+        )
+        await session.commit()
+
+        offered = await service.build_candidates(session, user, "play the stand one", limit=5)
+        assert "Consciousness" not in {candidate.title for candidate in offered}
+
+    async def test_a_word_still_matches_its_own_inflections(self, session, user, deep_archive):
+        # The other half of the trade: English inflects at the end, so a
+        # prefix must still match. Losing "volcanoes" for "volcano" would be
+        # a worse bug than the one above.
+        from audioreader.models import Episode
+
+        session.add(
+            Episode(
+                feed_id=deep_archive.id,
+                guid="volcanoes",
+                title="Volcanoes",
+                description="Lava, and where it comes from.",
+                audio_url="https://cdn.example.com/v.mp3",
+            )
+        )
+        await session.commit()
+
+        offered = await service.build_candidates(session, user, "play the volcano one", limit=5)
+        assert "Volcanoes" in {candidate.title for candidate in offered}
 
     async def test_one_show_is_searched_the_same_way(self, session, user, deep_archive):
         # play_from_show reaches a back catalogue too, subscribed or not.

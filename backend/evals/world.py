@@ -100,9 +100,18 @@ def _dates(reference: date, weekdays: tuple[int, ...], count: int, at: time) -> 
 # in the first handful, because that is all a 60-item window across four
 # subscriptions reaches. Æthelstan sits 70 weeks down on purpose — it is the
 # episode that started this corpus.
+#
+# The first two are not tidy topic names, because the real feed's are not
+# either: it currently opens with "Archive: Coffee" and "Pockets (from Here
+# For The History)". A rerun and a cross-promotion from another show, sitting
+# exactly where "play the latest In Our Time" has to land. An earlier version
+# of this world had only clean topic titles and could not reproduce a
+# reliability failure that the real feed produced on the first try.
 # ---------------------------------------------------------------------------
 
 IN_OUR_TIME_TOPICS = (
+    "Archive: Coffee",
+    "Pockets (from Here For The History)",
     "Plate Tectonics",
     "Sleep",
     "Dark Matter",

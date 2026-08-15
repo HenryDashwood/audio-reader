@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime
 from functools import reduce
 
 from pydantic import ValidationError
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -171,6 +171,8 @@ async def _recent_and_matching(
     if not words or search_limit <= 0:
         return recent
     words = await _identifying(session, base, scope, words, search_limit)
+    if not words:
+        return recent
 
     score = _match_score(words)
     seen = {episode.id for episode in recent}
@@ -212,16 +214,18 @@ async def _identifying(session: AsyncSession, base, scope, words: list[str], sea
     matters as much as the share: a word matching fewer episodes than there
     are slots to spare cannot crowd anything out, however common it looks in
     a small library.
-    """
-    if len(words) < 2:
-        return words
 
-    haystack = _haystack()
+    Dropping every word — and so searching for nothing — is a real answer,
+    not a failure to avoid. "Play the In Our Time" leaves only "time" once
+    the command words are gone, and searching for it fills fifteen slots and
+    about a thousand tokens with whatever last mentioned the word. Those
+    slots are better left empty.
+    """
     counted = (
         await session.execute(
             base.with_only_columns(
                 func.count(),
-                *(func.sum(case((haystack.contains(word), 1), else_=0)) for word in words),
+                *(func.sum(case((_mentions(word), 1), else_=0)) for word in words),
             ).where(scope, PLAYABLE_EPISODE)
         )
     ).one()
@@ -230,20 +234,28 @@ async def _identifying(session: AsyncSession, base, scope, words: list[str], sea
         return words
 
     ceiling = max(search_limit, total * _TOO_COMMON)
-    identifying = [word for word, count in zip(words, counts, strict=True) if (count or 0) <= ceiling]
-    # If every word is common, searching on all of them still beats not
-    # searching: the recency window is unchanged either way.
-    return identifying or words
+    return [word for word, count in zip(words, counts, strict=True) if (count or 0) <= ceiling]
 
 
-def _haystack():
-    """Where a spoken word is looked for.
+def _mentions(word: str):
+    """Does an episode use this word, or one starting with it?
 
-    The folded `search_text`, so "Rubaiyat" finds "Rubáiyát". Rows written
-    before that column existed fall back to their title, which still finds
-    most things while a backfill catches up.
+    Anchored to a word boundary rather than matched anywhere in the string.
+    A mis-transcribed "In Our Time" arrived as "in our stand", which searched
+    for "stand" — a bare substring of "understanding", and so a match against
+    a hundred and seventy episodes of In Our Time, filling the list with
+    noise. Prefixes are still matched, because English inflects at the end
+    and "volcano" ought to find "volcanoes".
+
+    Searched against the folded `search_text`, so "Rubaiyat" finds
+    "Rubáiyát". Rows written before that column existed fall back to their
+    title, which still finds most things while a backfill catches up.
     """
-    return func.coalesce(Episode.search_text, func.lower(Episode.title))
+    haystack = func.coalesce(Episode.search_text, func.lower(Episode.title))
+    return or_(
+        haystack.startswith(word, autoescape=True),
+        haystack.contains(f" {word}", autoescape=True),
+    )
 
 
 def _match_score(words: list[str]):
@@ -253,8 +265,7 @@ def _match_score(words: list[str]):
     40ms across eleven hundred episodes. If it ever is not, the upgrade is a
     tsvector index rather than a shorter list.
     """
-    haystack = _haystack()
-    return reduce(operator.add, [case((haystack.contains(word), 1), else_=0) for word in words])
+    return reduce(operator.add, [case((_mentions(word), 1), else_=0) for word in words])
 
 
 #: Words that say what she wants done, not which episode she wants. Dropped

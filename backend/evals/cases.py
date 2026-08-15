@@ -158,6 +158,33 @@ CASES: tuple[Case, ...] = (
         question_is_acceptable=False,
     ),
     Case(
+        id="show-named-no-episode",
+        said="Play the In Our Time",
+        expect=Expect(Action.PLAY_EPISODE, episode=_latest("in_our_time")),
+        why=(
+            "Naming a show and no episode means its newest one. Reported from real use, "
+            "and it is the reliability that fails rather than the reasoning: the same "
+            "request played the right episode twice and the second-newest once. Run this "
+            "with --repeat; a single pass proves nothing."
+        ),
+        tags=("play", "latest", "show-narrowing", "regression"),
+        question_is_acceptable=False,
+        never=(_WORLD["in_our_time"].items[1].guid,),
+    ),
+    Case(
+        id="show-name-misheard",
+        said="play the in our stand",
+        expect=Expect(Action.PLAY_EPISODE, episode=_latest("in_our_time")),
+        why=(
+            "The transcript she actually produced: speech recognition turned 'In Our "
+            "Time' into 'in our stand'. Near enough to identify the show, so the newest "
+            "episode of it is right — and 'stand' must not be searched for as a bare "
+            "substring, which found 'understanding' in 173 episodes."
+        ),
+        tags=("play", "mishearing", "regression"),
+        never=(_WORLD["in_our_time"].items[1].guid,),
+    ),
+    Case(
         id="recent-by-topic",
         said="Play the one about dark matter",
         expect=Expect(Action.PLAY_EPISODE, episode=_guid("in_our_time", "Dark Matter")),
