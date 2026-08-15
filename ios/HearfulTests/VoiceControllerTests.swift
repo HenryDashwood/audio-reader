@@ -367,7 +367,13 @@ struct VoiceControllerTests {
     @Test func saysOneMomentWhileASlowAnswerIsFetched() async {
         // An unexplained silence is indistinguishable from being ignored.
         let (controller, recorder, _, api, _) = makeController()
-        api.delay = VoiceController.noticeAfter + .milliseconds(400)
+        // Two seconds clear of the notice threshold, not four hundred
+        // milliseconds. The margin has to absorb a loaded machine: on busy
+        // shared hardware the notice's sleep overshoots, the answer arrives
+        // first, and the filler is correctly suppressed — a real pass that
+        // reads as a failure. What is being tested is that a slow answer
+        // gets a holding line, and a wider gap tests that just as well.
+        api.delay = VoiceController.noticeAfter + .milliseconds(2000)
         api.response = CommandResponse(
             action: .unknown, spokenResponse: "Which show?", episode: nil)
 
