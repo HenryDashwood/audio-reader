@@ -139,6 +139,14 @@ struct VoiceSheet: View {
             // Once something is playing, the sheet has done its job.
             if case .playing = state { dismiss() }
         }
+        // Closing the sheet is a change of mind, and it must reach the
+        // microphone. Nothing here stops on its own: the recogniser would go
+        // on listening to an empty room and then announce, seconds later and
+        // over whatever she is doing by then, that it did not hear anything.
+        //
+        // On disappear rather than in the close button, because swiping the
+        // sheet away is the other half of how it gets closed.
+        .onDisappear { controller.cancel() }
         // Reaching this screen at all means she wants to say something: making
         // her find and tap it again is a step with no purpose.
         //

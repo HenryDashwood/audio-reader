@@ -131,6 +131,7 @@ final class SpeechRecognizer: SpeechRecognizing {
         if engine.isRunning {
             engine.stop()
             engine.inputNode.removeTap(onBus: 0)
+            AudioSession.releaseRecording()
         }
         request?.endAudio()
         task?.cancel()

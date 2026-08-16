@@ -76,6 +76,13 @@ final class VoiceController: ObservableObject {
     private var isBusy = false
     /// True while an episode has been paused only so she could be heard.
     private var interruptedPlayback = false
+    /// True once the sheet has gone while a command was still in flight.
+    ///
+    /// Checked at every point the command picks up again rather than left to
+    /// unwind on its own, because nothing here stops by itself: the recogniser
+    /// waits out its silence timer, the backend answers, and the sentence gets
+    /// spoken to a room where nobody asked anything.
+    private var isCancelled = false
 
     init(
         api: HearfulAPIProtocol, speech: SpeechRecognizing, speaker: Speaking,
@@ -95,6 +102,7 @@ final class VoiceController: ObservableObject {
         // Taps are easy to double up when you cannot see the screen.
         guard !isBusy else { return }
         isBusy = true
+        isCancelled = false
         defer { isBusy = false }
 
         // One wide event per spoken request, opened here and sent once at the
@@ -130,6 +138,12 @@ final class VoiceController: ObservableObject {
                 self.feedback.play(.listening)
             }
             attempt.listenSeconds = Self.seconds(since: listenStarted)
+            // Cancelling a recogniser mid-turn is how closing the sheet ends
+            // the wait, and the analyser answers that by handing back whatever
+            // it had — nothing. Left to carry on, this is precisely the path
+            // that says "I did not hear anything" to a sheet that is no longer
+            // there. The attempt keeps its default outcome of `abandoned`.
+            guard !isCancelled else { return }
             // Listening worked, so whatever was missing has been granted.
             needsPermission = false
             let heard = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -163,8 +177,14 @@ final class VoiceController: ObservableObject {
                 try await self.api.command(
                     transcript: transcript, traceparent: attempt.traceparent())
             }
+            guard !isCancelled else { return }
             attempt.outcome = Self.outcome(of: response)
             await handle(response)
+        } catch _ where isCancelled {
+            // The recognisers that fail rather than return on cancellation end
+            // up here. Our own doing, so it is neither announced nor counted
+            // as an error — the outcome stays `abandoned`.
+            return
         } catch is SpeechPermissionDenied {
             attempt.outcome = .permissionDenied
             // Distinct from every other failure: telling her to tap and try
@@ -182,6 +202,29 @@ final class VoiceController: ObservableObject {
             attempt.error = String(describing: type(of: error))
             await fail(saying: "Sorry, I could not hear you. Please tap and try again.")
         }
+    }
+
+    /// Closing the sheet ends whatever it started.
+    ///
+    /// Without this the microphone stays open after the sheet has gone, and
+    /// several seconds later the recogniser gives up and the app announces "I
+    /// did not hear anything" — to someone who has stopped asking, and who
+    /// cannot see that the sheet closed. Worse, it arrives long enough after
+    /// the fact to sound like an answer to whatever she said next.
+    func cancel() {
+        guard isBusy else { return }
+        // A command that reached playback has already done what she asked; the
+        // sheet closes itself the moment it does. Unwinding here would stop
+        // the episode it has just started and put back the one before it.
+        if case .playing = state { return }
+
+        isCancelled = true
+        speech.cancel()
+        // Cuts off a confirmation mid-word, which is right: she has left.
+        speaker.stop()
+        state = .idle
+        // What she was listening to comes back either way — `beginCommand`
+        // puts it back as it unwinds, exactly as it does for a failure.
     }
 
     /// What she got, in her terms rather than the protocol's.
@@ -270,6 +313,10 @@ final class VoiceController: ObservableObject {
             player.prepare(episode)
             // Confirm first and wait: overlapping speech and podcast is unusable.
             await say(response.spokenResponse)
+            // She closed the sheet while it was being confirmed. Starting the
+            // episode now would be answering a question she withdrew, so what
+            // she was listening to before comes back instead.
+            guard !isCancelled else { return }
             do {
                 try player.play(episode)
                 state = .playing(episode)
@@ -288,7 +335,7 @@ final class VoiceController: ObservableObject {
     private func announcingDelay<T>(_ work: () async throws -> T) async throws -> T {
         let notice = Task {
             try? await Task.sleep(for: Self.noticeAfter)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, !self.isCancelled else { return }
             // Deliberately not `say`: this is a holding line, not an answer,
             // so it should not become the caption she is left looking at.
             await self.speaker.speak("One moment.")
@@ -312,6 +359,10 @@ final class VoiceController: ObservableObject {
     }
 
     private func say(_ text: String) async {
+        // The last line of defence for a sheet that has gone: a sentence
+        // started now would be talking to nobody, and would still be talking
+        // when she is doing something else.
+        guard !isCancelled else { return }
         lastSpokenResponse = text
         await speaker.speak(text)
     }
@@ -322,6 +373,7 @@ final class VoiceController: ObservableObject {
     }
 
     private func fail(saying text: String) async {
+        guard !isCancelled else { return }
         feedback.play(.failed)
         await finish(saying: text)
     }

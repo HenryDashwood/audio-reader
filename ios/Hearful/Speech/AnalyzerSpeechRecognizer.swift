@@ -290,6 +290,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         if engine.isRunning {
             engine.stop()
             engine.inputNode.removeTap(onBus: 0)
+            AudioSession.releaseRecording()
         }
         inputContinuation?.finish()
         inputContinuation = nil

@@ -28,22 +28,63 @@ final class FakeSpeech: SpeechRecognizing {
     var transcript = "play something"
     var error: Error?
     var listenCount = 0
+    var cancelCount = 0
+    /// Keeps the microphone open instead of answering, as it is while she is
+    /// still deciding what to say — the state the sheet gets closed in.
+    var keepsListening = false
+    /// How the wait ends when cancelled. The analyser hands back what it has,
+    /// which is nothing; the older recogniser fails instead. Both reach the
+    /// controller, so both are worth testing.
+    var failsWhenCancelled = false
+    private var pending: CheckedContinuation<String, Error>?
+
+    /// Whether the microphone is open right now, so a test can close the sheet
+    /// at that moment rather than at whichever one the scheduler reached.
+    var isListening: Bool { pending != nil }
 
     func listen(onReady: @MainActor () -> Void) async throws -> String {
         listenCount += 1
         if let error { throw error }
         onReady()
-        return transcript
+        guard keepsListening else { return transcript }
+        return try await withCheckedThrowingContinuation { continuation in
+            pending = continuation
+        }
     }
-    func cancel() {}
+
+    func cancel() {
+        cancelCount += 1
+        guard let pending else { return }
+        self.pending = nil
+        if failsWhenCancelled {
+            pending.resume(throwing: URLError(.cancelled))
+        } else {
+            pending.resume(returning: "")
+        }
+    }
 }
 
 @MainActor
 final class FakeSpeaker: Speaking {
     let recorder: Recorder
+    /// Holds the sentence open until `stop`, as a real utterance does — long
+    /// enough for the sheet to be closed part-way through it.
+    var keepsSpeaking = false
+    private var pending: CheckedContinuation<Void, Never>?
+
     init(_ recorder: Recorder) { self.recorder = recorder }
-    func speak(_ text: String) async { recorder.events.append(.spoke(text)) }
-    func stop() {}
+
+    func speak(_ text: String) async {
+        recorder.events.append(.spoke(text))
+        guard keepsSpeaking else { return }
+        await withCheckedContinuation { self.pending = $0 }
+    }
+
+    func stop() {
+        let pending = self.pending
+        self.pending = nil
+        pending?.resume()
+    }
 }
 
 @MainActor
@@ -171,20 +212,34 @@ private func episode(id: Int = 104, audio: String? = "https://cdn.example.com/10
 @MainActor
 private func makeController(
     speech: FakeSpeech? = nil,
-    api: FakeAPI = FakeAPI()
+    api: FakeAPI = FakeAPI(),
+    holdsTheConfirmation: Bool = false
 ) -> (VoiceController, Recorder, FakeSpeech, FakeAPI, FakePlayer) {
     let recorder = Recorder()
     let speech = speech ?? FakeSpeech()
     let player = FakePlayer(recorder)
+    let speaker = FakeSpeaker(recorder)
+    speaker.keepsSpeaking = holdsTheConfirmation
     // Its own sleep timer, not the shared one: tests run in parallel and must
     // not set timers on each other's behalf.
     let sleepTimer = SleepTimer(
         player: PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api)),
         feedback: FakeFeedback(recorder))
     let controller = VoiceController(
-        api: api, speech: speech, speaker: FakeSpeaker(recorder), player: player,
+        api: api, speech: speech, speaker: speaker, player: player,
         feedback: FakeFeedback(recorder), sleepTimer: sleepTimer)
     return (controller, recorder, speech, api, player)
+}
+
+/// Runs the command far enough for the moment under test to have arrived.
+/// Bounded rather than a bare loop: a condition that never comes true should
+/// fail the expectation below it, not hang the suite.
+@MainActor
+private func wait(until condition: () -> Bool) async {
+    for _ in 0..<1000 {
+        if condition() { return }
+        await Task.yield()
+    }
 }
 
 // MARK: - Tests
@@ -729,5 +784,155 @@ struct VoiceControllerFailureTests {
         await controller.beginCommand()
 
         #expect(recorder.events.contains(.resumed))
+    }
+}
+
+/// Closing the sheet is a change of mind, and nothing downstream of it stops
+/// on its own. Left running, the recogniser waits out its silence timer and
+/// the app then announces "I did not hear anything" — seconds late, to a sheet
+/// that has gone, over whatever she is doing by then.
+@Suite("Closing the sheet ends the command")
+@MainActor
+struct VoiceControllerCancelTests {
+    /// The command, left listening at the point where she closes the sheet.
+    private func listening(
+        player isPlaying: Bool = false, failsWhenCancelled: Bool = false
+    ) async -> (VoiceController, Recorder, FakeSpeech) {
+        let speech = FakeSpeech()
+        speech.keepsListening = true
+        speech.failsWhenCancelled = failsWhenCancelled
+        let (controller, recorder, _, _, player) = makeController(speech: speech)
+        player.isPlaying = isPlaying
+        Task { await controller.beginCommand() }
+        await wait { speech.isListening }
+        // Asserted, not assumed: every test below is about what happens when
+        // the sheet closes mid-listen, and one that never got there would
+        // otherwise pass by having nothing to go wrong.
+        #expect(speech.isListening)
+        return (controller, recorder, speech)
+    }
+
+    @Test func theMicrophoneIsToldToStop() async {
+        let (controller, _, speech) = await listening()
+
+        controller.cancel()
+
+        #expect(speech.cancelCount == 1)
+    }
+
+    @Test func nothingIsSaidAfterwards() async {
+        // The whole point: the analyser answers cancellation by handing back
+        // what it has, which is nothing — the exact input that produces "I did
+        // not hear anything".
+        let (controller, recorder, _) = await listening()
+
+        controller.cancel()
+        await wait { controller.state == .idle }
+
+        #expect(recorder.spoken.isEmpty)
+    }
+
+    @Test func nothingIsSaidWhenTheRecogniserFailsInstead() async {
+        // The older recogniser ends the wait by throwing rather than
+        // returning, and that arrives in a different branch of the controller.
+        let (controller, recorder, _) = await listening(failsWhenCancelled: true)
+
+        controller.cancel()
+        await wait { controller.state == .idle }
+
+        #expect(recorder.spoken.isEmpty)
+    }
+
+    @Test func noFailureCueIsPlayed() async {
+        // A sound is as much of an answer as a sentence, and she cannot see
+        // that the sheet closed to explain it.
+        let (controller, recorder, _) = await listening()
+
+        controller.cancel()
+        await wait { controller.state == .idle }
+
+        #expect(!recorder.events.contains(.cue(.failed)))
+    }
+
+    @Test func itGoesBackToIdle() async {
+        let (controller, _, _) = await listening()
+
+        controller.cancel()
+
+        #expect(controller.state == .idle)
+    }
+
+    @Test func whatWasPlayingCarriesOn() async {
+        // She interrupted an episode to speak and then thought better of it;
+        // changing her mind must not cost her the episode.
+        let (controller, recorder, _) = await listening(player: true)
+
+        controller.cancel()
+        await wait { recorder.events.contains(.resumed) }
+
+        #expect(recorder.events.contains(.resumed))
+    }
+
+    @Test func aLateAnswerFromTheBackendIsNotActedOn() async {
+        // Closing the sheet while it is thinking is still a change of mind:
+        // an episode starting a second later would be answering a withdrawn
+        // question, with no visible cause and nothing on screen to stop it.
+        let (controller, recorder, _, api, _) = makeController()
+        api.delay = .milliseconds(50)
+        api.response = CommandResponse(
+            action: .playEpisode, spokenResponse: "Playing it.", episode: episode())
+
+        Task { await controller.beginCommand() }
+        await wait { controller.state == .thinking }
+        #expect(controller.state == .thinking)
+        controller.cancel()
+        await wait { api.transcripts.count == 1 }
+        // Comfortably past the answer, which the controller must now ignore.
+        try? await Task.sleep(for: .milliseconds(200))
+
+        #expect(recorder.playedIDs.isEmpty)
+        #expect(recorder.spoken.isEmpty)
+    }
+
+    @Test func closingDuringTheConfirmationDoesNotStartTheEpisode() async {
+        let speech = FakeSpeech()
+        let (controller, recorder, _, api, player) = makeController(
+            speech: speech, holdsTheConfirmation: true)
+        player.isPlaying = true
+        api.response = CommandResponse(
+            action: .playEpisode, spokenResponse: "Playing it.", episode: episode())
+
+        Task { await controller.beginCommand() }
+        await wait { recorder.events.contains(.spoke("Playing it.")) }
+        #expect(recorder.events.contains(.spoke("Playing it.")))
+        controller.cancel()
+        await wait { recorder.events.contains(.resumed) }
+
+        #expect(recorder.playedIDs.isEmpty)
+        #expect(recorder.events.contains(.resumed))  // the old episode is back
+    }
+
+    @Test func closingAfterSomethingStartedPlayingLeavesItPlaying() async {
+        // The sheet closes itself the moment playback begins, so this path is
+        // reached on every successful command. It must not undo the command it
+        // is the confirmation of.
+        let (controller, recorder, _, api, _) = makeController()
+        api.response = CommandResponse(
+            action: .playEpisode, spokenResponse: "Playing it.", episode: episode())
+        await controller.beginCommand()
+
+        controller.cancel()
+
+        #expect(controller.state == .playing(episode()))
+        #expect(!recorder.events.contains(.paused))
+    }
+
+    @Test func cancellingWhenNothingIsHappeningDoesNothing() async {
+        let (controller, recorder, speech, _, _) = makeController()
+
+        controller.cancel()
+
+        #expect(speech.cancelCount == 0)
+        #expect(recorder.events.isEmpty)
     }
 }

@@ -34,6 +34,19 @@ enum AudioSession {
         sampleRate > 0 && channelCount > 0
     }
 
+    /// Gives the microphone back.
+    ///
+    /// Stopping the engine ends the capture, but the session stays active in
+    /// its recording category: other apps go on being ducked, and the phone
+    /// goes on telling her we are listening. On the ordinary path speaking the
+    /// answer clears that within a moment. On the path where she closes the
+    /// sheet instead, nothing else would clear it at all.
+    static func releaseRecording() {
+        let session = AVAudioSession.sharedInstance()
+        guard session.category == .playAndRecord else { return }
+        try? session.setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
     static func configureForListening() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
