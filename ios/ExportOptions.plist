@@ -13,10 +13,22 @@
 	<key>teamID</key>
 	<string>67F2439F4X</string>
 
-	<!-- Matches the project: signing is Automatic, and the archive step passes an
-	     App Store Connect key so Xcode can mint the distribution profile itself. -->
+	<!-- Manual, not automatic. Automatic signing makes Xcode ask App Store
+	     Connect to mint a distribution profile through cloud signing, which an
+	     API key is not permitted to do — it fails with "Cloud signing permission
+	     error". Naming the profile explicitly avoids that path entirely. -->
 	<key>signingStyle</key>
-	<string>automatic</string>
+	<string>manual</string>
+	<key>signingCertificate</key>
+	<string>Apple Distribution</string>
+
+	<!-- The workflow overwrites this value with the UUID of the profile it just
+	     installed, so the profile can be renamed without touching this file. -->
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.henrydashwood.hearful</key>
+		<string>REPLACED_BY_WORKFLOW</string>
+	</dict>
 
 	<!-- The workflow sets CURRENT_PROJECT_VERSION from the commit count; Xcode
 	     must not overwrite it. -->

@@ -105,16 +105,41 @@ jobs:
           set -euo pipefail
           echo "$ASC_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
 
-      - name: Archive
+      - name: Install the provisioning profile
+        id: profile
         env:
-          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          BUILD_NUMBER: ${{ steps.version.outputs.build }}
-          MARKETING_ARG: ${{ steps.version.outputs.marketing_arg }}
+          PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
         run: |
           set -euo pipefail
-          # The key is passed to xcodebuild so that automatic signing can fetch
-          # and update the distribution profile without a logged-in Xcode.
+          profile="$RUNNER_TEMP/profile.mobileprovision"
+          echo "$PROFILE_B64" | base64 --decode > "$profile"
+
+          security cms -D -i "$profile" > "$RUNNER_TEMP/profile.plist"
+          uuid=$(plutil -extract UUID raw -o - "$RUNNER_TEMP/profile.plist")
+          name=$(plutil -extract Name raw -o - "$RUNNER_TEMP/profile.plist")
+
+          # Xcode 26 reads profiles from UserData; older Xcode used MobileDevice.
+          # Install to both so the runner image version does not matter.
+          for dir in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
+                     "$HOME/Library/MobileDevice/Provisioning Profiles"; do
+            mkdir -p "$dir"
+            cp "$profile" "$dir/$uuid.mobileprovision"
+          done
+
+          echo "uuid=$uuid" >> "$GITHUB_OUTPUT"
+          echo "Installed '$name' ($uuid)"
+
+      - name: Archive
+        env:
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          MARKETING_ARG: ${{ steps.version.outputs.marketing_arg }}
+          PROFILE_UUID: ${{ steps.profile.outputs.uuid }}
+        run: |
+          set -euo pipefail
+          # Signed manually against the profile installed above. No
+          # -allowProvisioningUpdates and no API key here on purpose: given
+          # those, Xcode invents an "Apple Development: Created via API"
+          # certificate and archives with that instead of the distribution one.
           # MARKETING_ARG is unquoted on purpose: empty means "no override".
           xcodebuild archive \
             -project ios/Hearful.xcodeproj \
@@ -122,10 +147,10 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Hearful.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
+            DEVELOPMENT_TEAM=67F2439F4X \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             $MARKETING_ARG
 
@@ -133,13 +158,29 @@ jobs:
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          PROFILE_UUID: ${{ steps.profile.outputs.uuid }}
         run: |
           set -euo pipefail
+          # Apple's /usr/bin/rsync (openrsync) reads -E as --extended-attributes,
+          # upstream rsync reads it as --executability. Xcode's IPA step calls
+          # the Apple one, which spawns a helper found on PATH; if Homebrew's
+          # rsync answers, it rejects the flag and export dies with "Copy
+          # failed". Putting the system tools first keeps both ends Apple's.
+          export PATH="/usr/bin:$PATH"
+
+          # Point the export at the profile by UUID, so renaming it in the
+          # developer portal cannot break the build.
+          options="$RUNNER_TEMP/ExportOptions.plist"
+          cp ios/ExportOptions.plist "$options"
+          plutil -replace 'provisioningProfiles.com\.henrydashwood\.hearful' \
+            -string "$PROFILE_UUID" "$options"
+
+          # The key still authenticates the upload; it is only provisioning that
+          # must not go through it.
           xcodebuild -exportArchive \
             -archivePath "$RUNNER_TEMP/Hearful.xcarchive" \
-            -exportOptionsPlist ios/ExportOptions.plist \
+            -exportOptionsPlist "$options" \
             -exportPath "$RUNNER_TEMP/export" \
-            -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"

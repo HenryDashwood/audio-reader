@@ -103,6 +103,7 @@ The workflow needs five repository secrets:
 | `APP_STORE_CONNECT_KEY_ID` | Key ID of an App Store Connect API key with the App Manager role |
 | `APP_STORE_CONNECT_ISSUER_ID` | Issuer ID from the same Keys page |
 | `APP_STORE_CONNECT_KEY_P8` | The downloaded `AuthKey_*.p8`, base64-encoded |
+| `APPLE_PROVISIONING_PROFILE` | An App Store `.mobileprovision` for `com.henrydashwood.hearful`, base64-encoded |
 
 Uploading from Xcode does not necessarily leave an Apple Distribution
 certificate on the Mac — Xcode can sign with a cloud-managed identity whose key
@@ -111,10 +112,26 @@ only the development certificate. CI needs a real one: Xcode → Settings →
 Accounts → Manage Certificates → **+** → Apple Distribution, then export it
 from Keychain Access as `.p12` (select the certificate *and* its private key).
 
-Signing stays **Automatic**: the API key is passed to `xcodebuild`, so it mints
-and refreshes the distribution profile itself rather than needing a profile
-committed to the repo. `ios/ExportOptions.plist` uploads straight from
-`-exportArchive`, so there is no separate Transporter step.
+Signing in CI is **manual**, unlike the project's Automatic setting for local
+builds. Automatic signing does not work here: given an API key and
+`-allowProvisioningUpdates`, Xcode mints an `Apple Development: Created via API`
+certificate, archives with *that*, and then fails at export with `Cloud signing
+permission error` — an API key is not allowed to create a distribution profile
+through cloud signing. So the workflow installs a profile it is given, and
+names it explicitly.
+
+The profile must list the same Apple Distribution certificate as the `.p12`
+secret. Xcode's own `iOS Team Store Provisioning Profile` will not do if the app
+was ever uploaded from Xcode: that profile is built around a *cloud-managed*
+distribution certificate whose private key Apple keeps, so a locally created
+certificate is absent from it and signing fails. Create the profile in the
+developer portal against the certificate you exported, and regenerate it
+whenever that certificate is replaced.
+
+`ios/ExportOptions.plist` uploads straight from `-exportArchive`, so there is no
+separate Transporter step. The workflow rewrites the profile entry in a copy of
+it with the UUID of the installed profile, so renaming the profile in the portal
+cannot break the build.
 
 To exercise the network and playback path without speaking (the simulator has
 no useful microphone), launch with a canned transcript:
