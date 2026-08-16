@@ -161,12 +161,20 @@ if __name__ == "__main__":
     #   uv run python -m audioreader.feeds.poller
     import asyncio
 
+    import logfire
+
+    from audioreader import telemetry
     from audioreader.db import SessionMaker
 
     async def _main() -> None:
         logging.basicConfig(level=logging.INFO)
-        async with SessionMaker() as session:
-            result = await poll_all_feeds(session)
+        # Its own service name: run this way the poller is a separate process
+        # from the API, and a scheduler that has quietly stopped calling it
+        # should look like silence from one service rather than like nothing.
+        telemetry.configure(service_name="audioreader-poller")
+        with logfire.span("poll pass"):
+            async with SessionMaker() as session:
+                result = await poll_all_feeds(session)
         print(result)
 
     asyncio.run(_main())

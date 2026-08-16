@@ -34,9 +34,10 @@ async def test_privacy_policy_is_public():
 
 async def test_privacy_policy_names_the_real_data_flows():
     # The disclosures it would be dishonest to omit: the AI provider, the
-    # hosting provider, Apple, and how to delete an account.
+    # hosting provider, the diagnostics service that holds what she said, Apple,
+    # and how to delete an account.
     transport = ASGITransport(app=create_app())
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         body = (await client.get("/privacy")).text
-    for phrase in ("OpenRouter", "Delete Account", "Railway", "Apple"):
+    for phrase in ("OpenRouter", "Delete Account", "Railway", "Apple", "Logfire"):
         assert phrase in body, f"privacy policy no longer mentions {phrase}"

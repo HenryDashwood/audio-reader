@@ -16,6 +16,7 @@ dependencies = [
     "anthropic>=0.120.2",
     "pyjwt[crypto]>=2.9",
     "trafilatura>=2.2.0",
+    "logfire[fastapi,httpx,sqlalchemy,system-metrics]>=4.40.0",
 ]
 
 [dependency-groups]

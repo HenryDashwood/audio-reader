@@ -11,6 +11,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from audioreader import telemetry
 from audioreader.commands.intents import Action, Candidate, InterpretResult, ModelDecision
 from audioreader.config import settings
 from audioreader.feeds import service as feed_service
@@ -353,6 +354,11 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User, dis
     # one, the ordinary client still handles the easy, well-known cases.
     discovery_llm = discovery_llm if discovery_llm is not None else llm
     candidates = await build_candidates(session, user, transcript)
+    # How many episodes the model had to choose between. An episode she asked
+    # for by name and did not get is a different failure depending on whether
+    # it was in this list at all: one is the model misreading her, the other is
+    # the candidate window being too narrow to contain the answer.
+    telemetry.annotate(candidate_count=len(candidates))
 
     raw = await llm.decide(
         system=SYSTEM_PROMPT,
@@ -364,7 +370,14 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User, dis
         decision = ModelDecision.model_validate(raw)
     except ValidationError as exc:
         logger.warning("model returned an unusable decision (%s): %r", exc, raw)
+        telemetry.annotate(failure="invalid_decision")
         return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
+
+    # What the model asked for, which is not always what we let it have. The
+    # difference between this and the `action` on the enclosing span is the
+    # count of times we overrode it, and every one of those is a command she
+    # spoke and did not get.
+    telemetry.annotate(model_action=decision.action.value)
 
     if decision.action is Action.SUBSCRIBE:
         return await _subscribe(session, decision.search_query, transcript, user, discovery_llm)
@@ -397,6 +410,7 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User, dis
     # Never trust the model with a primary key: only ids we offered are valid.
     if decision.episode_id not in {candidate.id for candidate in candidates}:
         logger.warning("model chose episode_id %r, which was not offered", decision.episode_id)
+        telemetry.annotate(failure="episode_not_offered")
         return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
 
     # Feed loaded eagerly: the router folds show artwork into the response.
@@ -477,6 +491,10 @@ async def _subscribe(
 
     found = await _find_show(query, transcript, discovery_llm)
     if found is None:
+        # Worth separating from the other dead ends: this one is usually the
+        # directory and the web search both coming up empty on a name that was
+        # heard correctly, which no amount of prompt work will fix.
+        telemetry.annotate(failure="show_not_found")
         return InterpretResult(
             action=Action.UNKNOWN,
             spoken_response=f"I could not find a podcast or publication called {query}.",
@@ -568,11 +586,13 @@ async def _play_from_show(
         decision = ModelDecision.model_validate(raw)
     except ValidationError as exc:
         logger.warning("model returned an unusable episode pick (%s): %r", exc, raw)
+        telemetry.annotate(failure="invalid_episode_pick")
         return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
 
     if decision.action is not Action.PLAY_EPISODE or decision.episode_id not in {
         candidate.id for candidate in candidates
     }:
+        telemetry.annotate(failure="episode_not_in_show")
         return InterpretResult(
             action=Action.UNKNOWN,
             spoken_response=decision.spoken_response or f"I could not find that episode of {feed.title}.",

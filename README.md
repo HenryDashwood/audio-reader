@@ -154,6 +154,62 @@ recoverable outage into a restart loop.
 Connect, so it needs to keep working; there is a test asserting it is public and
 still names the third parties involved.
 
+### Telemetry
+
+Traces, logs and metrics go to [Logfire](https://logfire-eu.pydantic.dev)
+(the EU instance — a token issued for one region is rejected by the other).
+`src/audioreader/telemetry.py` sets it up; FastAPI, httpx and SQLAlchemy are
+instrumented, and the existing `logging` calls are forwarded rather than
+rewritten, so they still reach stdout and Railway's log view as well.
+
+- `LOGFIRE_TOKEN` — the write token, set as a Railway service variable. **With
+  no token nothing is sent**, which is what makes tests and local development
+  need no configuration at all. Never commit it.
+- `AUDIOREADER_ENVIRONMENT` — the label telemetry is filed under. Railway's own
+  `RAILWAY_ENVIRONMENT_NAME` is read as a fallback, so a deploy says
+  `production` on its own; locally it stays `development`.
+- `AUDIOREADER_TELEMETRY_TRANSCRIPTS` — whether her spoken words are attached
+  to the telemetry for a command (default true, see below).
+
+To send from a laptop:
+
+```bash
+uv run logfire --base-url='https://logfire-eu.pydantic.dev' auth
+uv run logfire --base-url='https://logfire-eu.pydantic.dev' projects use --org 'henry-dashwood' 'starter-project'
+```
+
+**What this is for.** Every spoken command produces one `command` span, and its
+attributes are there to answer the question no status code can: a request that
+plays the wrong episode is a perfectly successful HTTP 200. `action` is what
+happened, `model_action` is what the model asked for — the gap between them is
+the count of times we overrode it — and `failure` names the ways a command ends
+up going nowhere (`invalid_decision`, `episode_not_offered`, `show_not_found`,
+`invalid_episode_pick`, `episode_not_in_show`). `candidate_count` separates the
+model misreading her from the candidate window being too narrow to have held
+the answer at all.
+
+None of that is a correctness label; nothing in a request knows whether it was
+right. It is the set of proxies that can be measured without one. Anything it
+surfaces belongs in `backend/evals` as a case, which is where a number that
+means something comes from.
+
+**Transcripts are sent, and the privacy policy says so.** Without them a wrong
+answer cannot be diagnosed: everything else on the span says what happened and
+nothing says what was asked for. The policy's "Keeping the app working" section
+discloses this, names Pydantic Logfire, and promises deletion after 30 days.
+**That 30 days is Logfire's Personal/Team retention** — moving to a plan with a
+longer window makes the policy untrue, so change the policy at the same time.
+The same goes for turning `AUDIOREADER_TELEMETRY_TRANSCRIPTS` off.
+
+Two things are kept out deliberately, and both are guarded by
+`tests/test_telemetry.py` because both would return silently. The FastAPI
+instrumentation is given an explicit attribute mapper: its default uploads
+every parsed endpoint argument, which for `POST /command` is the transcript
+*and* the `User` row with her email address in it, whatever the setting above
+says. And the caller's IP address, which the ASGI instrumentation records on
+every request span, is scrubbed — it answers no question this telemetry exists
+to answer, and the policy says it never leaves the server.
+
 ### Backups
 
 Two layers, protecting against different things.

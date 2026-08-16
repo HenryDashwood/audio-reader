@@ -30,7 +30,7 @@
 <body>
 
 <h1>Hearful — Privacy Policy</h1>
-<p class="updated">Last updated 15 August 2026</p>
+<p class="updated">Last updated 16 August 2026</p>
 
 <p>
   Hearful is a podcast and article player you control by speaking. It is built
@@ -44,6 +44,7 @@
   <li>We keep your email address, the shows you follow, and how far through each episode you are.</li>
   <li>What you say is turned into text and sent to an AI provider so the app can work out which episode you meant. The text of your request is sent, never a recording.</li>
   <li>That request is sent along with a list of recent episodes from the shows you follow, so the AI has something to choose between.</li>
+  <li>A record of each request, including the words you said, is kept for 30 days so that mistakes can be found and put right.</li>
   <li>There is no advertising, no tracking, and nothing is sold or shared with data brokers.</li>
   <li>You can delete your account, and everything in it, from inside the app.</li>
 </ul>
@@ -110,6 +111,28 @@
   not recognise, the name you said is also used to search the web for its feed.
 </p>
 
+<h2>Keeping the app working</h2>
+<p>
+  An app you drive by speaking is only as good as its understanding of you, and
+  a request that plays the wrong thing looks, from the outside, exactly like one
+  that worked. So that mistakes can be found again and put right, our server
+  keeps a record of each request with
+  <a href="https://pydantic.dev/logfire">Pydantic Logfire</a>, a diagnostics
+  service whose servers are in the European Union.
+</p>
+<p>
+  That record holds the words you said, which episode the app decided on, how
+  long it took, and anything that went wrong along the way. It is labelled with
+  the same account identifier used elsewhere here — never your name, never your
+  email address, and never your device's IP address, which is removed before the
+  record leaves our server. It is deleted after 30 days.
+</p>
+<p>
+  It is used to fix the app and for nothing else. It does not build a profile of
+  you, it is not shared onward, and no advertising or cross-app tracking is
+  involved in it.
+</p>
+
 <h2>What other companies can see</h2>
 <ul>
   <li>
@@ -123,6 +146,10 @@
   <li>
     <strong>Railway</strong> — our hosting provider, which runs the servers and
     database where your account is stored.
+  </li>
+  <li>
+    <strong>Pydantic Logfire</strong> — our diagnostics service, which holds the
+    record of each request described above for 30 days.
   </li>
   <li>
     <strong>Podcast publishers and their hosts</strong> — episode audio and
@@ -146,7 +173,8 @@
   Your account, subscriptions and playback positions are kept until you delete
   your account. Sign-in tokens expire after 180 days without use. Shows that
   nobody subscribes to and nobody has listened to are removed from our catalogue
-  after 30 days.
+  after 30 days. The diagnostic records described above are deleted after 30
+  days.
 </p>
 <p>
   We also keep backups of the database, so that the service can be recovered if

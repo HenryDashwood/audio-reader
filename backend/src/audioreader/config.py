@@ -47,6 +47,24 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Which deployment this is, as telemetry labels it. Railway names its own
+    # environments, so on a deploy this is "production" without anyone setting
+    # it; on a laptop it stays "development" and the two never mix in a chart.
+    environment: str = Field(
+        default="development",
+        validation_alias=AliasChoices("AUDIOREADER_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"),
+    )
+
+    # Whether the spoken text is attached to the telemetry for a command.
+    #
+    # On, because when a command does the wrong thing the transcript is the
+    # whole of the evidence: everything else recorded says what happened, and
+    # nothing says what was asked for. The privacy policy discloses this and
+    # promises deletion after 30 days — so if this is turned off, or the
+    # retention is changed, change the policy to match. The policy is the
+    # promise; this setting is only how it is kept.
+    telemetry_transcripts: bool = True
+
     # Also accept the platform's own DATABASE_URL, which is what Railway,
     # Fly and Heroku all inject automatically.
     database_url: str = Field(

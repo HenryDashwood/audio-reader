@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 
+from audioreader import telemetry
 from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
 from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_feeds
@@ -15,6 +16,9 @@ from audioreader.routers import auth, commands, feeds
 from audioreader.settings_types import LLMProvider
 
 logging.basicConfig(level=logging.INFO)
+# Before the app is built, so the instrumentation is in place by the time
+# anything it hooks into runs. Without a token this does nothing observable.
+telemetry.configure(service_name="audioreader-api")
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -74,6 +78,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="audioreader", lifespan=lifespan)
+    telemetry.instrument_app(app)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
