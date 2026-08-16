@@ -87,6 +87,18 @@ git tag v1.1.0 && git push origin v1.1.0
 gh workflow run testflight.yml --ref main
 ```
 
+Only a tag reaches external testers. A manual run uploads the build, sets its
+release notes, and leaves it with the internal group; pushing a `v*` tag also
+adds it to the **Friends and Family** group and submits it for beta app review.
+Approval is Apple's to give and typically takes a day, so a tag starts that
+clock rather than finishing it.
+
+The **What to Test** notes are the topmost `## ` section of
+[docs/CHANGELOG.md](docs/CHANGELOG.md) — append a new section before tagging.
+On a tag the heading must be the tag without its `v` — `v1.1.0` wants
+`## 1.1.0` — so tagging with `## 1.0` still at the top fails the release
+instead of shipping last version's notes to testers.
+
 The tag form also sets `MARKETING_VERSION` from the tag (`v1.1.0` → `1.1.0`);
 the on-demand form leaves whatever the project carries. Either way the build
 number is `git rev-list --count HEAD`, which is unique and always increasing —
@@ -132,6 +144,21 @@ whenever that certificate is replaced.
 separate Transporter step. The workflow rewrites the profile entry in a copy of
 it with the UUID of the installed profile, so renaming the profile in the portal
 cannot break the build.
+
+Distribution happens in a second job, on Linux, because it is only App Store
+Connect API calls and most of its time is spent waiting for Apple to finish
+processing the build — a macOS runner would sit idle for the same twenty
+minutes. [scripts/testflight_distribute.py](scripts/testflight_distribute.py)
+does that work and can be run by hand against an already-uploaded build:
+
+```bash
+ASC_KEY_ID=... ASC_ISSUER_ID=... ASC_KEY_P8_BASE64=... uv run scripts/testflight_distribute.py --build-number 55
+```
+
+Both the certificate and the provisioning profile expire a year after they were
+made — August 2027 for the current pair. Nothing warns you beforehand; the
+release simply starts failing. Renewing means creating both again and updating
+`APPLE_DISTRIBUTION_CERT_P12` and `APPLE_PROVISIONING_PROFILE`.
 
 To exercise the network and playback path without speaking (the simulator has
 no useful microphone), launch with a canned transcript:

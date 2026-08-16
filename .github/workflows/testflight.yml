@@ -21,6 +21,8 @@ jobs:
   testflight:
     runs-on: macos-latest
     timeout-minutes: 60
+    outputs:
+      build: ${{ steps.version.outputs.build }}
 
     steps:
       - uses: actions/checkout@v7
@@ -199,3 +201,36 @@ jobs:
           path: |
             ${{ runner.temp }}/Hearful.xcarchive/Info.plist
           if-no-files-found: ignore
+
+  # Separate job, and on Linux: this is only HTTP calls, and most of its time is
+  # spent waiting for Apple to finish processing the build. Holding a macOS
+  # runner idle for twenty minutes to do that would be wasteful.
+  distribute:
+    needs: testflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+
+      - name: Set release notes and distribute
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+          BUILD_NUMBER: ${{ needs.testflight.outputs.build }}
+        run: |
+          set -euo pipefail
+          args=(--build-number "$BUILD_NUMBER" --changelog docs/CHANGELOG.md)
+
+          # Only a tag reaches real testers. A manual run still gets its release
+          # notes, so the build is legible in App Store Connect, but stays with
+          # the internal group.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            args+=(--expect-version "${GITHUB_REF_NAME#v}")
+            args+=(--external-group "Friends and Family")
+          fi
+
+          uv run scripts/testflight_distribute.py "${args[@]}"
