@@ -21,6 +21,9 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func me() async throws -> UserInfo
     func deleteAccount() async throws
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws
+    /// One wide event describing a spoken request, including the ones that
+    /// never got as far as `command`.
+    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws
 }
 
 extension Notification.Name {
@@ -67,6 +70,17 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["transcript": transcript])
         return try await send(request)
+    }
+
+    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("events/voice"))
+        request.httpMethod = "POST"
+        // Short, and deliberately shorter than a command's. This is a record of
+        // something already over; it must never be what she is waiting on.
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: event)
+        try await perform(request)
     }
 
     func episode(id: Int) async throws -> Episode {

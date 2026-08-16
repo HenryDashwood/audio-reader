@@ -12,7 +12,7 @@ from audioreader import telemetry
 from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
 from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_feeds
-from audioreader.routers import auth, commands, feeds
+from audioreader.routers import auth, commands, events, feeds
 from audioreader.settings_types import LLMProvider
 
 logging.basicConfig(level=logging.INFO)
@@ -110,6 +110,7 @@ def create_app() -> FastAPI:
     app.include_router(feeds.episodes_router)
     app.include_router(feeds.search_router)
     app.include_router(commands.router)
+    app.include_router(events.router)
     return app
 
 

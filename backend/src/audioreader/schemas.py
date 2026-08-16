@@ -168,3 +168,69 @@ class CommandResponse(BaseModel):
     episode: EpisodeRead | None = None
     # For set_speed: the playback rate multiplier the app should apply.
     speed: float | None = None
+
+
+class VoiceAttemptEvent(BaseModel):
+    """One spoken request, as the phone experienced it.
+
+    The client half of the wide event in `routers/commands.py`. Most of what
+    goes wrong with a spoken request goes wrong before the backend hears about
+    it — the microphone not waking, the recogniser producing nothing, a
+    transport word resolving on the phone — and none of that is visible in a
+    request that was never made. This is that missing row.
+
+    Deliberately flat and deliberately wide: one row per attempt, answerable
+    without a join, in the same shape as the server's own event. Fields are
+    optional because an attempt can end at any point, and a half-finished
+    attempt is exactly the one worth keeping.
+    """
+
+    # What happened, in her terms. The one field to group by.
+    outcome: str
+    #: True when the attempt never got as far as POST /command, which until now
+    #: made it invisible: the whole failure was an absence of a request.
+    command_sent: bool = False
+
+    # Speech
+    recogniser: str | None = None
+    used_fallback: bool = False
+    #: Milliseconds between starting capture and the first audio buffer. The
+    #: measurement that would have found the go-ahead-before-live bug in
+    #: minutes rather than a night: it is null exactly when the microphone
+    #: never came up.
+    audio_first_buffer_ms: int | None = None
+    listen_seconds: float | None = None
+    transcript_empty: bool | None = None
+    #: Whether the recogniser had committed to its transcript when the turn
+    #: ended, or was still revising and got cut off mid-thought.
+    settled_at_end: bool | None = None
+
+    # Resolved on the phone, so the server otherwise never learns they happened
+    transport_command: str | None = None
+    sleep_command: str | None = None
+
+    # Context that turned out to matter while debugging
+    voiceover: bool | None = None
+    #: The first request since launch is the one that kept failing, so it has
+    #: to be distinguishable from the retry that worked.
+    first_since_launch: bool | None = None
+    app_version: str | None = None
+    app_build: str | None = None
+
+    total_seconds: float | None = None
+    error: str | None = None
+
+    @field_validator("outcome", "recogniser", "transport_command", "sleep_command", "error")
+    @classmethod
+    def bounded(cls, value: str | None) -> str | None:
+        """Keep these columns low-cardinality and small.
+
+        They are the ones worth grouping by, which stops working the moment
+        something free-form ends up in them. Nothing here should ever be a
+        transcript — that is the server's to record, once, under a setting the
+        privacy policy is written against.
+        """
+        if value is None:
+            return None
+        value = value.strip()[:64]
+        return value or None

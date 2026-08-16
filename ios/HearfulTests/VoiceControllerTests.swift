@@ -140,6 +140,11 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
         reportedPositions.append((episodeID, seconds, completed))
     }
 
+    var reportedAttempts: [[String: any Sendable]] = []
+    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws {
+        reportedAttempts.append(event)
+    }
+
     /// Set to let the article player actually load and speak something.
     var articleText: String?
     func articleText(episodeID: Int) async throws -> EpisodeText {

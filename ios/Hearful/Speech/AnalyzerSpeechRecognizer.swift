@@ -32,6 +32,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
 
     func listen(onReady: @MainActor () -> Void) async throws -> String {
         hasHeardSpeech = false
+        VoiceAttempt.current?.recogniser = "analyzer"
         try await requestMicrophonePermission()
 
         let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
@@ -121,6 +122,10 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     /// Silence wins the race: hand back whatever she has said so far.
     private func silenceFallback() async -> String {
         await waitForSilence()
+        // Whether she was cut off mid-thought or had genuinely finished. The
+        // difference is invisible in the transcript and decides whether a
+        // wrong answer was the model's fault or ours.
+        VoiceAttempt.current?.settledAtEnd = isSettled
         return finalised + volatile
     }
 

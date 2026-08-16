@@ -16,6 +16,11 @@ final class RecordingAPI: HearfulAPIProtocol, @unchecked Sendable {
         reports.append(Report(episodeID: episodeID, seconds: seconds, completed: completed))
     }
 
+    var reportedAttempts: [[String: any Sendable]] = []
+    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws {
+        reportedAttempts.append(event)
+    }
+
     func command(transcript: String) async throws -> CommandResponse {
         CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
     }

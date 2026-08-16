@@ -191,12 +191,14 @@ extension VoiceController {
         // where its models are unavailable (notably the simulator).
         let speech = FallbackSpeechRecognizer(
             preferred: AnalyzerSpeechRecognizer(), backup: SpeechRecognizer())
+        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
         return VoiceController(
-            api: HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+            api: api,
             speech: canned.map(CannedSpeechRecognizer.init(transcript:)) ?? speech,
             speaker: Speaker(),
             player: PlaybackCoordinator.shared,
-            feedback: Feedback.shared)
+            feedback: Feedback.shared,
+            telemetry: TelemetryReporter(api: api))
     }
 }
 

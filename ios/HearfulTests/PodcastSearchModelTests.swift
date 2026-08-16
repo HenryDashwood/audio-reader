@@ -5,6 +5,11 @@ import Testing
 
 /// Records search queries; every other method is unused here.
 private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
+    var reportedAttempts: [[String: any Sendable]] = []
+    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws {
+        reportedAttempts.append(event)
+    }
+
     var results: [PodcastResult] = []
     var error: Error?
     private(set) var queries: [String] = []

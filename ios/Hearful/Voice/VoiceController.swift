@@ -72,13 +72,15 @@ final class VoiceController: ObservableObject {
     private let player: AudioPlaying
     private let feedback: FeedbackPlaying
     private let sleepTimer: SleepTimer
+    private let telemetry: TelemetryReporting?
     private var isBusy = false
     /// True while an episode has been paused only so she could be heard.
     private var interruptedPlayback = false
 
     init(
         api: HearfulAPIProtocol, speech: SpeechRecognizing, speaker: Speaking,
-        player: AudioPlaying, feedback: FeedbackPlaying, sleepTimer: SleepTimer = .shared
+        player: AudioPlaying, feedback: FeedbackPlaying, sleepTimer: SleepTimer = .shared,
+        telemetry: TelemetryReporting? = nil
     ) {
         self.api = api
         self.speech = speech
@@ -86,6 +88,7 @@ final class VoiceController: ObservableObject {
         self.player = player
         self.feedback = feedback
         self.sleepTimer = sleepTimer
+        self.telemetry = telemetry
     }
 
     func beginCommand() async {
@@ -93,6 +96,16 @@ final class VoiceController: ObservableObject {
         guard !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
+
+        // One wide event per spoken request, opened here and sent once at the
+        // end however it ends — including the ends that never reach the
+        // backend, which were invisible until this existed.
+        let attempt = VoiceAttempt()
+        VoiceAttempt.current = attempt
+        defer {
+            VoiceAttempt.current = nil
+            telemetry?.report(attempt)
+        }
 
         // Before anything slow happens: confirm we are on it — whether she got
         // here by tapping the sheet or by the sheet opening and starting itself.
@@ -110,14 +123,19 @@ final class VoiceController: ObservableObject {
             // A recogniser may start capture more than once — the older one
             // retries server-side — but she should be told to speak only once.
             var announced = false
+            let listenStarted = ContinuousClock.now
             let transcript = try await speech.listen {
                 guard !announced else { return }
                 announced = true
                 self.feedback.play(.listening)
             }
+            attempt.listenSeconds = Self.seconds(since: listenStarted)
             // Listening worked, so whatever was missing has been granted.
             needsPermission = false
-            guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            let heard = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            attempt.transcriptEmpty = heard.isEmpty
+            guard !heard.isEmpty else {
+                attempt.outcome = .noSpeech
                 await fail(saying: "I did not hear anything. Tap and try again.")
                 return
             }
@@ -127,29 +145,57 @@ final class VoiceController: ObservableObject {
             // the more specific of the two ("stop" is a pause, "stop in
             // twenty minutes" is not).
             if let sleep = SleepCommand.match(transcript) {
+                attempt.outcome = .sleep
+                attempt.sleepCommand = sleep == .cancel ? "cancel" : "after"
                 await perform(sleep)
                 return
             }
             if let transport = TransportCommand.match(transcript) {
+                attempt.outcome = .transport
+                attempt.transportCommand = String(describing: transport)
                 perform(transport)
                 return
             }
 
             state = .thinking
+            attempt.commandSent = true
             let response = try await announcingDelay {
                 try await self.api.command(transcript: transcript)
             }
+            attempt.outcome = Self.outcome(of: response)
             await handle(response)
         } catch is SpeechPermissionDenied {
+            attempt.outcome = .permissionDenied
             // Distinct from every other failure: telling her to tap and try
             // again would be advice that can never work.
             needsPermission = true
             await fail(saying: Self.permissionMessage)
         } catch let error as APIError {
+            attempt.outcome = .error
+            attempt.error = "api"
             await fail(saying: error.spokenResponse)
         } catch {
+            attempt.outcome = .error
+            // The type, never the message: messages carry detail that has no
+            // business in a column meant for grouping.
+            attempt.error = String(describing: type(of: error))
             await fail(saying: "Sorry, I could not hear you. Please tap and try again.")
         }
+    }
+
+    /// What she got, in her terms rather than the protocol's.
+    private static func outcome(of response: CommandResponse) -> VoiceAttempt.Outcome {
+        switch response.action {
+        case .playEpisode: .played
+        case .setSpeed: .speed
+        case .unknown: .spoken
+        }
+    }
+
+    private static func seconds(since instant: ContinuousClock.Instant) -> Double {
+        let elapsed = ContinuousClock.now - instant
+        return Double(elapsed.components.seconds)
+            + Double(elapsed.components.attoseconds) / 1e18
     }
 
     /// Acted on immediately and silently: the audio stopping, starting or

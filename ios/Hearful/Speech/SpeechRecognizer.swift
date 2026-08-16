@@ -23,6 +23,8 @@ final class SpeechRecognizer: SpeechRecognizing {
     private var arrivals = BufferArrivals()
 
     func listen(onReady: @MainActor () -> Void) async throws -> String {
+        VoiceAttempt.current?.recogniser = "fallback"
+        VoiceAttempt.current?.usedFallback = true
         try await requestPermissions()
         guard let recognizer else {
             log.error("no recogniser for this locale")

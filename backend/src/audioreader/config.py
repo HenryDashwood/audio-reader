@@ -206,6 +206,11 @@ class Settings(BaseSettings):
     # Set either to 0 to disable that window.
     command_rate_limit_per_minute: int = 12
     command_rate_limit_per_day: int = 500
+    # Telemetry is not allowed to be what takes the service down. One event
+    # per spoken attempt is a handful a day; this is sized for a queue
+    # draining after an outage, not for steady use. 0 disables the endpoint's
+    # limit entirely.
+    event_rate_limit_per_minute: int = 60
 
 
 settings = Settings()

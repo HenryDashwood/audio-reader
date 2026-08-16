@@ -43,11 +43,25 @@ final class BufferArrivals: @unchecked Sendable {
     /// necessarily live, and a tone sounded then invites her to speak a whole
     /// sentence into a microphone that is not recording yet.
     func waitForFirst() async -> Bool {
-        let deadline = ContinuousClock.now + .seconds(Self.wait)
+        let started = ContinuousClock.now
+        let deadline = started + .seconds(Self.wait)
         while ContinuousClock.now < deadline {
-            if count > 0 { return true }
+            if count > 0 {
+                // How long the route took to come up. Recorded on success as
+                // well as failure: an outlier is only recognisable against the
+                // ordinary case, and the ordinary case here is a few hundred
+                // milliseconds.
+                VoiceAttempt.current?.audioFirstBufferMs = Self.milliseconds(since: started)
+                return true
+            }
             try? await Task.sleep(for: Self.poll)
         }
         return count > 0
+    }
+
+    private static func milliseconds(since instant: ContinuousClock.Instant) -> Int {
+        let elapsed = ContinuousClock.now - instant
+        return Int(elapsed.components.seconds * 1000)
+            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
     }
 }
