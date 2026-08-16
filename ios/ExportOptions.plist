@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+
+	<!-- Export and upload in one step, so there is no separate altool/Transporter
+	     call to keep working. -->
+	<key>destination</key>
+	<string>upload</string>
+
+	<key>teamID</key>
+	<string>67F2439F4X</string>
+
+	<!-- Matches the project: signing is Automatic, and the archive step passes an
+	     App Store Connect key so Xcode can mint the distribution profile itself. -->
+	<key>signingStyle</key>
+	<string>automatic</string>
+
+	<!-- The workflow sets CURRENT_PROJECT_VERSION from the commit count; Xcode
+	     must not overwrite it. -->
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+
+	<key>uploadSymbols</key>
+	<true/>
+</dict>
+</plist>

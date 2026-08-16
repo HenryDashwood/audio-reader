@@ -73,9 +73,48 @@ opened from the home screen with no laptop in sight. When an override is in
 force, Settings grows a **Server** section showing the address with a button
 to forget it. On an ordinary install that section does not appear.
 
-Before a TestFlight upload, bump `CURRENT_PROJECT_VERSION` — App Store Connect
-rejects a build number it has already seen. `MARKETING_VERSION` only needs to
-change when the version shown to users does.
+### Releasing to TestFlight
+
+`.github/workflows/testflight.yml` runs the tests, archives, and uploads. It is
+not on every push to `main` — a build goes out when a `v*` tag is pushed, or on
+demand:
+
+```bash
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+```bash
+gh workflow run testflight.yml --ref main
+```
+
+The tag form also sets `MARKETING_VERSION` from the tag (`v1.1.0` → `1.1.0`);
+the on-demand form leaves whatever the project carries. Either way the build
+number is `git rev-list --count HEAD`, which is unique and always increasing —
+so `CURRENT_PROJECT_VERSION` in the project file no longer needs bumping by
+hand. It still does for an upload archived locally in Xcode, since App Store
+Connect rejects a build number it has already seen.
+
+The workflow needs five repository secrets:
+
+| Secret | What it is |
+| --- | --- |
+| `APPLE_DISTRIBUTION_CERT_P12` | Apple Distribution certificate + private key, exported from Keychain as `.p12`, then `base64 -i cert.p12 \| pbcopy` |
+| `APPLE_DISTRIBUTION_CERT_PASSWORD` | The password set when exporting that `.p12` |
+| `APP_STORE_CONNECT_KEY_ID` | Key ID of an App Store Connect API key with the App Manager role |
+| `APP_STORE_CONNECT_ISSUER_ID` | Issuer ID from the same Keys page |
+| `APP_STORE_CONNECT_KEY_P8` | The downloaded `AuthKey_*.p8`, base64-encoded |
+
+Uploading from Xcode does not necessarily leave an Apple Distribution
+certificate on the Mac — Xcode can sign with a cloud-managed identity whose key
+it keeps to itself, and `security find-identity -v -p codesigning` then shows
+only the development certificate. CI needs a real one: Xcode → Settings →
+Accounts → Manage Certificates → **+** → Apple Distribution, then export it
+from Keychain Access as `.p12` (select the certificate *and* its private key).
+
+Signing stays **Automatic**: the API key is passed to `xcodebuild`, so it mints
+and refreshes the distribution profile itself rather than needing a profile
+committed to the repo. `ios/ExportOptions.plist` uploads straight from
+`-exportArchive`, so there is no separate Transporter step.
 
 To exercise the network and playback path without speaking (the simulator has
 no useful microphone), launch with a canned transcript:

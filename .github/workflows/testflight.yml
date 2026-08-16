@@ -1,0 +1,160 @@
+name: TestFlight
+
+# Releases are deliberately not on every push to main. A build goes out when a
+# `v*` tag is pushed, or when someone asks for one:
+#
+#     git tag v1.2.0 && git push origin v1.2.0
+#     gh workflow run testflight.yml --ref main
+#
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# Two uploads racing each other would take the same build number.
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The build number is the commit count, so the whole history matters.
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+          # The deployment target is iOS 26, so anything older cannot build this.
+          major=$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')
+          if [ "$major" -lt 26 ]; then
+            echo "::error::Need Xcode 26+ for the iOS 26 SDK, found $major in $xcode"
+            exit 1
+          fi
+
+      - name: Run the iOS tests
+        run: |
+          set -euo pipefail
+          # Runner images change which simulators they ship, so pick whatever
+          # iPhone is actually present rather than naming one.
+          device=$(xcrun simctl list devices available | sed -nE 's/^ +(iPhone [^(]*[^ (]) +\(.*/\1/p' | sort -uV | tail -1)
+          if [ -z "$device" ]; then
+            echo "::error::no iPhone simulator available on this runner"
+            exit 1
+          fi
+          echo "Testing on $device"
+          xcodebuild test \
+            -project ios/Hearful.xcodeproj \
+            -scheme Hearful \
+            -destination "platform=iOS Simulator,OS=latest,name=$device"
+
+      - name: Work out the version numbers
+        id: version
+        run: |
+          set -euo pipefail
+          # App Store Connect rejects a build number it has seen before. The
+          # commit count is unique and always increasing, which the manual
+          # CURRENT_PROJECT_VERSION bump in the project file is not.
+          echo "build=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          # A v-tag sets the user-visible version; a manual run keeps whatever
+          # MARKETING_VERSION the project already carries, so the override is
+          # passed as a whole argument that is simply empty in that case.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "marketing_arg=MARKETING_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "marketing_arg=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import the signing certificate
+        env:
+          CERT_P12: ${{ secrets.APPLE_DISTRIBUTION_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(uuidgen)
+
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" \
+            -P "$CERT_PASSWORD" -A -t cert -f pkcs12
+          rm "$RUNNER_TEMP/cert.p12"
+
+          # Without this, codesign blocks on a GUI prompt no one can answer.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$password" "$keychain" > /dev/null
+          security list-keychain -d user -s "$keychain" login.keychain-db
+
+      - name: Write the App Store Connect key
+        env:
+          ASC_KEY_P8: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+        run: |
+          set -euo pipefail
+          echo "$ASC_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8"
+
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          MARKETING_ARG: ${{ steps.version.outputs.marketing_arg }}
+        run: |
+          set -euo pipefail
+          # The key is passed to xcodebuild so that automatic signing can fetch
+          # and update the distribution profile without a logged-in Xcode.
+          # MARKETING_ARG is unquoted on purpose: empty means "no override".
+          xcodebuild archive \
+            -project ios/Hearful.xcodeproj \
+            -scheme Hearful \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Hearful.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            $MARKETING_ARG
+
+      - name: Export and upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Hearful.xcarchive" \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Clean up credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP"/AuthKey_*.p8 "$RUNNER_TEMP/cert.p12"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+
+      - name: Keep the build logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xcarchive-logs
+          path: |
+            ${{ runner.temp }}/Hearful.xcarchive/Info.plist
+          if-no-files-found: ignore
