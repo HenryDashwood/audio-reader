@@ -3,6 +3,11 @@ import SwiftUI
 @main
 struct HearfulApp: App {
     @StateObject private var auth = AuthController()
+    /// Subscribed for the life of the app. iOS delivers crash and hang reports
+    /// in a daily batch at a moment of its choosing, so there is no later point
+    /// at which registering would still catch them.
+    private let diagnostics = DiagnosticsReporter(
+        api: HearfulAPI(baseURL: AppConfiguration.apiBaseURL))
 
     var body: some Scene {
         WindowGroup {

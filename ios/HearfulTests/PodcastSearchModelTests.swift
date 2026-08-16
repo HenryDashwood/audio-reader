@@ -10,6 +10,8 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
         reportedAttempts.append(event)
     }
 
+    func reportDiagnostic(_ event: [String: any Sendable]) async throws {}
+
     var results: [PodcastResult] = []
     var error: Error?
     private(set) var queries: [String] = []

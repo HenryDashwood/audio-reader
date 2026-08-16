@@ -41,3 +41,20 @@ async def test_privacy_policy_names_the_real_data_flows():
         body = (await client.get("/privacy")).text
     for phrase in ("OpenRouter", "Delete Account", "Railway", "Apple", "Logfire"):
         assert phrase in body, f"privacy policy no longer mentions {phrase}"
+
+
+async def test_privacy_policy_covers_what_the_phone_itself_reports():
+    # The app sends a record of its own for every use of the microphone,
+    # including the attempts that never reach the server. Disclosing only the
+    # server's record would describe the smaller half of what is collected.
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        body = (await client.get("/privacy")).text
+
+    assert "MetricKit" in body, "crash diagnostics are collected but not disclosed"
+    assert "microphone" in body
+
+    # The promise the client telemetry is built to keep. If a transcript or
+    # audio ever starts leaving the phone in that report, this is the line that
+    # has to change first.
+    assert "never your words" in body

@@ -45,6 +45,7 @@
   <li>What you say is turned into text and sent to an AI provider so the app can work out which episode you meant. The text of your request is sent, never a recording.</li>
   <li>That request is sent along with a list of recent episodes from the shows you follow, so the AI has something to choose between.</li>
   <li>A record of each request, including the words you said, is kept for 30 days so that mistakes can be found and put right.</li>
+  <li>The app also reports how well its own microphone and speech recognition worked, so that times it could not hear you can be found and fixed. That report contains timings only — never your words, and never any audio.</li>
   <li>There is no advertising, no tracking, and nothing is sold or shared with data brokers.</li>
   <li>You can delete your account, and everything in it, from inside the app.</li>
 </ul>
@@ -126,6 +127,30 @@
   the same account identifier used elsewhere here — never your name, never your
   email address, and never your device's IP address, which is removed before the
   record leaves our server. It is deleted after 30 days.
+</p>
+<p>
+  The app on your phone sends a short record of its own each time you use the
+  microphone — including the times it went wrong, which our server would
+  otherwise never hear about at all. If the app cannot hear you, nothing is
+  sent to our server, and without this that failure would be invisible to us
+  and you would simply be told to try again.
+</p>
+<p>
+  That record says how long the app listened, whether the microphone started
+  working, which speech recogniser it used, whether VoiceOver was running, and
+  what kind of thing you asked for — playing something, pausing, setting a
+  sleep timer. <strong>It never contains your words and never any audio.</strong>
+  If your phone is offline it is kept on the device and sent later. It is held
+  alongside the records above, for the same 30 days, and used the same way.
+</p>
+<p>
+  If the app crashes or freezes, your phone's own diagnostics — Apple's
+  MetricKit — hand us a report of where in the app it happened, which we
+  forward to the same service. These contain no personal information: they
+  describe the app's own code, not you or what you were listening to. Your
+  phone only provides them if you have left iOS's <em>Share With App
+  Developers</em> analytics setting on, and you can turn it off at any time in
+  Settings → Privacy &amp; Security → Analytics &amp; Improvements.
 </p>
 <p>
   It is used to fix the app and for nothing else. It does not build a profile of

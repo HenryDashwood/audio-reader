@@ -26,6 +26,8 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     /// One wide event describing a spoken request, including the ones that
     /// never got as far as `command`.
     func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String?) async throws
+    /// A crash or hang, as the phone's own diagnostics described it.
+    func reportDiagnostic(_ event: [String: any Sendable]) async throws
 }
 
 extension Notification.Name {
@@ -81,6 +83,15 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         request.httpMethod = "POST"
         // Short, and deliberately shorter than a command's. This is a record of
         // something already over; it must never be what she is waiting on.
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: event)
+        try await perform(request)
+    }
+
+    func reportDiagnostic(_ event: [String: any Sendable]) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("events/diagnostic"))
+        request.httpMethod = "POST"
         request.timeoutInterval = 10
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: event)

@@ -234,3 +234,48 @@ class VoiceAttemptEvent(BaseModel):
             return None
         value = value.strip()[:64]
         return value or None
+
+
+class DiagnosticEvent(BaseModel):
+    """A crash or hang, as the phone's own diagnostics described it.
+
+    From Apple's MetricKit, which delivers these in a daily batch — so this
+    answers "what has been crashing" and never "why did that just fail".
+    Deliberately the summary rather than the whole payload: the rest is call
+    stacks that mean nothing without the matching dSYM, and are not worth
+    uploading from a phone.
+
+    She will never report a crash. From the inside, a crash and the app being
+    closed are the same silence.
+    """
+
+    kind: str
+    signal: int | None = None
+    exception_type: int | None = None
+    exception_code: int | None = None
+    termination_reason: str | None = None
+    #: The line that names an out-of-memory or a guarded-resource kill
+    #: outright, rather than leaving it to be inferred from a stack.
+    virtual_memory_region: str | None = None
+    hang_seconds: float | None = None
+    app_version: str | None = None
+    os_version: str | None = None
+    window_end: str | None = None
+
+    @field_validator("kind", "termination_reason", "app_version", "os_version")
+    @classmethod
+    def bounded(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()[:128]
+        return value or None
+
+    @field_validator("virtual_memory_region")
+    @classmethod
+    def bounded_region(cls, value: str | None) -> str | None:
+        # Longer than the rest because it is prose from the OS, and truncating
+        # it to nothing would remove the only field that explains itself.
+        if value is None:
+            return None
+        value = value.strip()[:2000]
+        return value or None

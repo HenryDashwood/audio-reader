@@ -20,7 +20,7 @@ from audioreader.auth.dependencies import get_current_user
 from audioreader.config import settings
 from audioreader.models import User
 from audioreader.ratelimit import SlidingWindow
-from audioreader.schemas import VoiceAttemptEvent
+from audioreader.schemas import DiagnosticEvent, VoiceAttemptEvent
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,21 @@ async def voice_attempt(event: VoiceAttemptEvent, user: CurrentUser) -> None:
     """
     logfire.info(
         "voice_attempt",
+        user_id=str(user.id),
+        **event.model_dump(exclude_none=True),
+    )
+
+
+@router.post("/events/diagnostic", status_code=204, dependencies=[Depends(check_rate_limit)])
+async def diagnostic(event: DiagnosticEvent, user: CurrentUser) -> None:
+    """Record a crash or hang the phone reported about itself.
+
+    Arrives in a daily batch, long after the fact, and often for a build that
+    is no longer installed — which is why `app_version` is on the row rather
+    than inferred from when it landed.
+    """
+    logfire.info(
+        "app_diagnostic",
         user_id=str(user.id),
         **event.model_dump(exclude_none=True),
     )
