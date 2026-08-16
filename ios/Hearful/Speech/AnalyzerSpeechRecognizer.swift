@@ -61,7 +61,10 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     private var volatile = ""
 
     /// Reads results until she stops speaking. Each new phrase pushes the
-    /// silence deadline out, so pausing mid-sentence does not cut her off.
+    /// silence deadline out, and a deadline that arrives while the transcriber
+    /// still has an unfinalised guess in hand is a longer one — so pausing
+    /// mid-sentence does not cut her off, and neither does the transcriber
+    /// pausing to think.
     private func collectTranscript(from transcriber: SpeechTranscriber) async throws -> String {
         finalised = ""
         volatile = ""
@@ -108,9 +111,14 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
 
     private var silenceContinuation: CheckedContinuation<Void, Never>?
 
+    /// The transcript is settled when the transcriber has finalised everything
+    /// it has heard. A non-empty `volatile` means it is still holding a guess
+    /// it may yet rewrite — which is not a moment to stop listening.
+    private var isSettled: Bool { volatile.isEmpty }
+
     private func restartSilenceTimer() {
         silenceTimer?.invalidate()
-        let interval = timeouts.interval(hasHeardSpeech: hasHeardSpeech)
+        let interval = timeouts.interval(hasHeardSpeech: hasHeardSpeech, isSettled: isSettled)
         silenceTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) {
             [weak self] _ in
             Task { @MainActor in

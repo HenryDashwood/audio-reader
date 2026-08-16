@@ -110,9 +110,13 @@ final class SpeechRecognizer: SpeechRecognizing {
         task = nil
     }
 
+    /// Every partial result from this recogniser is a guess it may rewrite —
+    /// that is what "partial" means — so while the timer is what ends the
+    /// turn, the transcript is by definition unsettled. A final result
+    /// finishes immediately and never reaches here.
     private func restartSilenceTimer() {
         silenceTimer?.invalidate()
-        let interval = timeouts.interval(hasHeardSpeech: hasHeardSpeech)
+        let interval = timeouts.interval(hasHeardSpeech: hasHeardSpeech, isSettled: false)
         silenceTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) {
             [weak self] _ in
             Task { @MainActor in

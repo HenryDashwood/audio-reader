@@ -87,9 +87,18 @@ grader — with no model and no money. That runs in the ordinary suite.
   are matched on the phone so they work with no signal, and they have their own
   tests in `ios/HearfulTests/`. The one thing the corpus does check is that
   "play the one about sleep" is a play request — that is a backend decision.
-- **Speech recognition.** Cases are the text a recogniser produced, not audio.
-  Mishearings are worth adding as cases in their own right ("Athelstan" for
-  "Æthelstan" is one).
+- **Speech recognition.** Cases are the text a recogniser *finished*
+  producing, and that is a real blind spot rather than a detail. A request
+  that reads like a mishearing here may not be one: "play the in our stand"
+  turned out to be the phone ending the turn on a transcript the recogniser
+  had not committed to, halfway through her sentence. The corpus can only
+  ever say what the backend did with the words it was given, and it will
+  happily pass while she is being cut off mid-thought.
+
+  So when a spoken request goes wrong, check what was actually transcribed
+  before assuming the model chose badly — the timings live in
+  `ios/Hearful/Speech/ListeningTimeouts.swift`. Mishearings that really are
+  mishearings are still worth adding as cases.
 - **Token cost.** Model calls per case are counted; tokens are not. To compare
   two models on price, send `build_prompt`'s output to each and read `usage`
   off the response — one command is about 3,500 input tokens against 45
