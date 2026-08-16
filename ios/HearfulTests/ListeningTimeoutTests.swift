@@ -53,3 +53,23 @@ struct ListeningTimeoutTests {
                 > timeouts.interval(hasHeardSpeech: true, isSettled: false))
     }
 }
+
+@Suite("Microphone route")
+struct MicrophoneRouteTests {
+    @Test func acceptsAWorkingRoute() {
+        #expect(AudioSession.isUsableInputFormat(sampleRate: 48000, channelCount: 1))
+    }
+
+    @Test func rejectsARouteWithNoSampleRate() {
+        // What the input node reports after the audio session has been to
+        // playback and back. Handing it to installTap raises an Objective-C
+        // exception that Swift cannot catch, so the app dies with SIGABRT
+        // rather than falling back or saying anything. Observed four times in
+        // one evening, always on the second attempt after a failed one.
+        #expect(!AudioSession.isUsableInputFormat(sampleRate: 0, channelCount: 1))
+    }
+
+    @Test func rejectsARouteWithNoChannels() {
+        #expect(!AudioSession.isUsableInputFormat(sampleRate: 48000, channelCount: 0))
+    }
+}

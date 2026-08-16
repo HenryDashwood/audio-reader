@@ -11,12 +11,17 @@ private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "spee
 @MainActor
 final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     private let locale: Locale
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private var analyzer: SpeechAnalyzer?
     private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
     private var silenceTimer: Timer?
 
     private let timeouts = ListeningTimeouts()
+    /// Counts buffers arriving from the microphone tap. Zero is the one
+    /// thing that cannot mean "she said nothing": the tap delivers audio
+    /// continuously once capture is live, and silence is still audio. Zero
+    /// means the capture path never came up at all.
+    private var arrivals = BufferArrivals()
     /// Set once any words arrive, which switches the wait from "waiting for
     /// her to begin" to "she has finished".
     private var hasHeardSpeech = false
@@ -46,12 +51,26 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         self.analyzer = analyzer
         try await analyzer.start(inputSequence: stream)
 
+        arrivals = BufferArrivals()
         try startCapture(convertingTo: format, into: continuation)
         log.info("analyzer listening")
         onReady()
 
         defer { cancel() }
-        return try await collectTranscript(from: transcriber)
+        let transcript = try await collectTranscript(from: transcriber)
+
+        // An empty transcript with no audio behind it is not silence, it is a
+        // microphone that never delivered — and telling her "I did not hear
+        // anything" for that is both wrong and unactionable, because there was
+        // nothing wrong with what she said. Throwing hands the attempt to the
+        // fallback recogniser, which builds its own capture path from scratch.
+        if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            arrivals.count == 0
+        {
+            log.error("no audio arrived from the microphone tap; capture never came up")
+            throw SpeechError.microphoneSilent
+        }
+        return transcript
     }
 
     /// Live transcription so far. On the actor rather than captured locals:
@@ -137,8 +156,23 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     ) throws {
         try AudioSession.configureForListening()
 
+        // A fresh engine every time. AVAudioEngine's input node caches the
+        // format of the route it was built against, and that cache does not
+        // survive the audio session moving to playback and back — which is
+        // exactly what happens between a failed attempt and her tapping to
+        // try again. Reusing the engine there installs a tap with a stale
+        // format, and AVFoundation answers that by killing the process.
+        engine = AVAudioEngine()
+
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
+        guard
+            AudioSession.isUsableInputFormat(
+                sampleRate: inputFormat.sampleRate, channelCount: inputFormat.channelCount)
+        else {
+            log.error("no usable microphone route: \(inputFormat)")
+            throw SpeechError.microphoneUnavailable
+        }
         let tap = TapConversion(
             converter: AVAudioConverter(from: inputFormat, to: format), format: format)
 
@@ -147,8 +181,10 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         // this on its realtime tap queue, and a closure that is (or infers)
         // main-actor isolation traps the moment the first buffer arrives.
         // The stream continuation is Sendable and safe to feed from there.
+        let arrivals = self.arrivals
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
             @Sendable buffer, _ in
+            arrivals.record()
             guard let converted = Self.convert(buffer, using: tap.converter, to: tap.format)
             else { return }
             continuation.yield(AnalyzerInput(buffer: converted))
@@ -225,7 +261,12 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
 
     private func requestMicrophonePermission() async throws {
         let granted = await withCheckedContinuation { continuation in
-            AVAudioApplication.requestRecordPermission { continuation.resume(returning: $0) }
+            // @Sendable is load-bearing: AVAudioApplication calls this back on
+            // its own queue, and a closure written inside a @MainActor type
+            // otherwise infers main-actor isolation and traps off-main.
+            AVAudioApplication.requestRecordPermission { @Sendable in
+                continuation.resume(returning: $0)
+            }
         }
         guard granted else {
             log.error("microphone permission denied")
@@ -249,7 +290,45 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         Task { await analyzer?.cancelAndFinishNow() }
     }
 
-    enum SpeechError: Error {
+    enum SpeechError: TransientRecognitionFailure {
         case noCompatibleAudioFormat
+        /// No usable input route. Thrown rather than allowed to become an
+        /// uncatchable Objective-C exception inside installTap, so the
+        /// fallback recogniser gets its turn and she hears a sentence
+        /// instead of the app vanishing.
+        case microphoneUnavailable
+        /// Capture came up without error but delivered no audio at all.
+        /// Seen on the first request after launch, and gone by the second
+        /// — so the recogniser is fine and only this attempt was not.
+        case microphoneSilent
+
+        /// Only the audio-route failures are worth another go. A device with
+        /// no compatible format will not grow one, and retrying it costs her
+        /// a second or two of waiting before every single request.
+        var isTransient: Bool {
+            switch self {
+            case .microphoneSilent, .microphoneUnavailable: true
+            case .noCompatibleAudioFormat: false
+            }
+        }
+    }
+
+    /// A count the realtime tap queue can increment. Locked rather than
+    /// actor-isolated: the tap must never touch the main actor.
+    private final class BufferArrivals: @unchecked Sendable {
+        private let lock = NSLock()
+        private var buffers = 0
+
+        func record() {
+            lock.lock()
+            buffers += 1
+            lock.unlock()
+        }
+
+        var count: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return buffers
+        }
     }
 }

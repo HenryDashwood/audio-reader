@@ -11,7 +11,7 @@ private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "spee
 @MainActor
 final class SpeechRecognizer: SpeechRecognizing {
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-GB"))
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var continuation: CheckedContinuation<String, Error>?
@@ -57,10 +57,23 @@ final class SpeechRecognizer: SpeechRecognizing {
         request.requiresOnDeviceRecognition = onDevice
         self.request = request
 
+        // Fresh engine, and the format checked before it is handed over: the
+        // input node's cache does not survive the audio session switching to
+        // playback and back, and installTap answers a stale format with an
+        // Objective-C exception that Swift cannot catch. See AudioSession.
+        engine = AVAudioEngine()
         let input = engine.inputNode
+        let inputFormat = input.outputFormat(forBus: 0)
+        guard
+            AudioSession.isUsableInputFormat(
+                sampleRate: inputFormat.sampleRate, channelCount: inputFormat.channelCount)
+        else {
+            log.error("no usable microphone route: \(inputFormat)")
+            throw SpeechError.recognitionFailed
+        }
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) {
-            buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) {
+            @Sendable buffer, _ in
             request.append(buffer)
         }
         engine.prepare()
@@ -138,8 +151,15 @@ final class SpeechRecognizer: SpeechRecognizing {
     }
 
     private func requestPermissions() async throws {
+        // @Sendable on both callbacks below is load-bearing, not decoration.
+        // Speech and AVFAudio call back on their own queues; a closure written
+        // inside a @MainActor type otherwise infers main-actor isolation and
+        // traps off-main the instant the user answers the prompt. That is a
+        // real crash on this device, not a theoretical one.
         let speechStatus = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+            SFSpeechRecognizer.requestAuthorization { @Sendable in
+                continuation.resume(returning: $0)
+            }
         }
         guard speechStatus == .authorized else {
             log.error("speech authorisation denied: \(speechStatus.rawValue)")
@@ -147,7 +167,9 @@ final class SpeechRecognizer: SpeechRecognizing {
         }
 
         let micGranted = await withCheckedContinuation { continuation in
-            AVAudioApplication.requestRecordPermission { continuation.resume(returning: $0) }
+            AVAudioApplication.requestRecordPermission { @Sendable in
+                continuation.resume(returning: $0)
+            }
         }
         guard micGranted else {
             log.error("microphone permission denied")

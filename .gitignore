@@ -16,3 +16,8 @@ xcuserdata/
 
 # Database dumps, in case one is ever pointed here despite the script refusing
 *.dump
+
+# Scratch checkouts of this same repository. Left untracked they are invisible;
+# committed, `git add .` records each one as a submodule pointing at a commit
+# that exists on nobody else's machine.
+.claude/worktrees/

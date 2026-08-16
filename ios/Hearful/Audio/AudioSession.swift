@@ -20,6 +20,20 @@ enum AudioSession {
         try session.setActive(true)
     }
 
+    /// Whether the microphone route is one an audio tap can be installed on.
+    ///
+    /// This has to be checked *before* installing a tap, not after. Given an
+    /// unusable format `AVAudioNode.installTap(onBus:bufferSize:format:block:)`
+    /// raises an Objective-C exception rather than returning an error, and
+    /// Swift cannot catch that — the app simply dies with SIGABRT.
+    ///
+    /// It happens for real, and reliably, on the second attempt after a failed
+    /// one: speaking "I did not hear anything" switches the session to
+    /// playback, and the input node's format does not survive the switch back.
+    static func isUsableInputFormat(sampleRate: Double, channelCount: UInt32) -> Bool {
+        sampleRate > 0 && channelCount > 0
+    }
+
     static func configureForListening() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(

@@ -95,3 +95,45 @@ struct FallbackSpeechRecognizerTests {
         #expect(backup.cancelCount == 1)
     }
 }
+
+private struct ColdMicrophone: TransientRecognitionFailure {
+    var isTransient: Bool { true }
+}
+
+private struct NoAudioFormat: TransientRecognitionFailure {
+    var isTransient: Bool { false }
+}
+
+@Suite("Fallback after a transient failure")
+@MainActor
+struct TransientFallbackTests {
+    @Test func aTransientFailureDoesNotWriteTheGoodRecognizerOff() async throws {
+        // The microphone failing to come up on the first request after launch
+        // is about that attempt, not about the recogniser. Giving up on the
+        // analyser over it would leave her on the weaker one until she next
+        // restarts the app — for a fault that was gone by the second tap.
+        let preferred = ScriptedRecognizer(.failure(ColdMicrophone()))
+        let backup = ScriptedRecognizer(.success("ok"))
+        let recognizer = FallbackSpeechRecognizer(preferred: preferred, backup: backup)
+
+        _ = try await recognizer.listen()
+        preferred.result = .success("play the Keats one")
+        let second = try await recognizer.listen()
+
+        #expect(preferred.listenCount == 2)
+        #expect(second == "play the Keats one")
+    }
+
+    @Test func apermanentFailureStillWritesItOff() async throws {
+        // A device with no compatible audio format will not grow one, and
+        // retrying costs a wait before every request.
+        let preferred = ScriptedRecognizer(.failure(NoAudioFormat()))
+        let backup = ScriptedRecognizer(.success("ok"))
+        let recognizer = FallbackSpeechRecognizer(preferred: preferred, backup: backup)
+
+        _ = try await recognizer.listen()
+        _ = try await recognizer.listen()
+
+        #expect(preferred.listenCount == 1)
+    }
+}

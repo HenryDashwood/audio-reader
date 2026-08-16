@@ -29,8 +29,20 @@ final class FallbackSpeechRecognizer: SpeechRecognizing {
                 // simply not allowed to listen yet.
                 throw SpeechPermissionDenied()
             } catch {
-                preferredHasFailed = true
-                log.notice("preferred recogniser failed, using backup: \(error.localizedDescription)")
+                // A failure about this attempt rather than about the
+                // recogniser does not disqualify it. The microphone not
+                // coming up on the first request after launch is the case
+                // this exists for: writing the better recogniser off over it
+                // would leave her on the weaker one until she restarts.
+                if (error as? any TransientRecognitionFailure)?.isTransient == true {
+                    log.notice(
+                        "preferred recogniser failed this time, using backup: \(error.localizedDescription)"
+                    )
+                } else {
+                    preferredHasFailed = true
+                    log.notice(
+                        "preferred recogniser failed, using backup: \(error.localizedDescription)")
+                }
             }
         }
         return try await backup.listen(onReady: onReady)
