@@ -49,6 +49,12 @@ final class VoiceAttempt {
 
     var error: String?
 
+    /// W3C trace id, one per spoken request and shared by every call it
+    /// makes. What turns two rows in two services into one story: the
+    /// command and the event that describes it land in the same trace
+    /// without anything having to be joined by timestamp afterwards.
+    let traceID = VoiceAttempt.randomHex(bytes: 16)
+
     private let started = ContinuousClock.now
     private let voiceOver = UIAccessibility.isVoiceOverRunning
     private let firstSinceLaunch: Bool
@@ -83,6 +89,20 @@ final class VoiceAttempt {
         /// the way. Never sent deliberately; it is the default so that a row
         /// which stops early still says so.
         case abandoned
+    }
+
+    /// A `traceparent` header for one outgoing request.
+    ///
+    /// A fresh parent id each time, because the phone emits no spans of its
+    /// own for these to be children of — the id is synthetic and only the
+    /// trace id is load-bearing. Sampled flag set: there is one user, and
+    /// every request she makes is worth keeping.
+    func traceparent() -> String {
+        "00-\(traceID)-\(Self.randomHex(bytes: 8))-01"
+    }
+
+    static func randomHex(bytes: Int) -> String {
+        (0..<bytes).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
     }
 
     func payload() -> [String: any Sendable] {

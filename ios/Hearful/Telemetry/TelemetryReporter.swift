@@ -34,22 +34,29 @@ final class TelemetryReporter: TelemetryReporting {
     }
 
     func report(_ attempt: VoiceAttempt) {
-        let payload = attempt.payload()
-        Task { await self.send(payload) }
+        // The trace context travels *with* the event rather than beside it: a
+        // queued event sent tomorrow still belongs to the request it described,
+        // and would otherwise arrive orphaned from it.
+        let queued: [String: any Sendable] = [
+            "traceparent": attempt.traceparent(),
+            "event": attempt.payload(),
+        ]
+        Task { await self.send(queued) }
     }
 
     private func send(_ payload: [String: any Sendable]) async {
         var pending = queued()
         pending.append(payload)
         var undelivered: [[String: any Sendable]] = []
-        for event in pending {
+        for entry in pending {
+            guard let event = entry["event"] as? [String: any Sendable] else { continue }
             do {
-                try await api.reportVoiceAttempt(event)
+                try await api.reportVoiceAttempt(event, traceparent: entry["traceparent"] as? String)
             } catch {
                 // Keep it for next time rather than retrying now: she may be
                 // mid-request, and this must never be the slow thing.
                 log.notice("could not send voice attempt: \(error.localizedDescription)")
-                undelivered.append(event)
+                undelivered.append(entry)
             }
         }
         save(Array(undelivered.suffix(queueLimit)))

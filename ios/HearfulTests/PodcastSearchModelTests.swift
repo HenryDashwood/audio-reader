@@ -6,7 +6,7 @@ import Testing
 /// Records search queries; every other method is unused here.
 private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
     var reportedAttempts: [[String: any Sendable]] = []
-    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws {
+    func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String? = nil) async throws {
         reportedAttempts.append(event)
     }
 
@@ -20,7 +20,7 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
         return results
     }
 
-    func command(transcript: String) async throws -> CommandResponse {
+    func command(transcript: String, traceparent: String? = nil) async throws -> CommandResponse {
         CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
     }
     func episode(id: Int) async throws -> Episode { throw APIError(underlying: "unused") }

@@ -94,7 +94,7 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     /// How long the backend takes to answer.
     var delay: Duration = .zero
 
-    func command(transcript: String) async throws -> CommandResponse {
+    func command(transcript: String, traceparent: String? = nil) async throws -> CommandResponse {
         transcripts.append(transcript)
         if delay > .zero { try? await Task.sleep(for: delay) }
         if let error { throw error }
@@ -141,7 +141,7 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     }
 
     var reportedAttempts: [[String: any Sendable]] = []
-    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws {
+    func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String? = nil) async throws {
         reportedAttempts.append(event)
     }
 

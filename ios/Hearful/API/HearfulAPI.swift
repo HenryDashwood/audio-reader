@@ -3,7 +3,9 @@ import Foundation
 // The API layer is deliberately nonisolated: it holds no mutable state and is
 // called from App Intents and background tasks as well as the UI.
 nonisolated protocol HearfulAPIProtocol: Sendable {
-    func command(transcript: String) async throws -> CommandResponse
+    /// `traceparent` is W3C trace context, so the backend's own telemetry
+    /// for this request joins the phone's rather than sitting beside it.
+    func command(transcript: String, traceparent: String?) async throws -> CommandResponse
     func episode(id: Int) async throws -> Episode
     func articleText(episodeID: Int) async throws -> EpisodeText
     func recentEpisodes(limit: Int) async throws -> [Episode]
@@ -23,7 +25,7 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws
     /// One wide event describing a spoken request, including the ones that
     /// never got as far as `command`.
-    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws
+    func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String?) async throws
 }
 
 extension Notification.Name {
@@ -60,8 +62,9 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         self.transport = transport
     }
 
-    func command(transcript: String) async throws -> CommandResponse {
+    func command(transcript: String, traceparent: String?) async throws -> CommandResponse {
         var request = URLRequest(url: baseURL.appendingPathComponent("command"))
+        request.setValue(traceparent, forHTTPHeaderField: "traceparent")
         request.httpMethod = "POST"
         // Finding an unknown blog's feed is deliberately slow and thorough on
         // the backend (web search, verification); the default 60s would give
@@ -72,8 +75,9 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         return try await send(request)
     }
 
-    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws {
+    func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String?) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent("events/voice"))
+        request.setValue(traceparent, forHTTPHeaderField: "traceparent")
         request.httpMethod = "POST"
         // Short, and deliberately shorter than a command's. This is a record of
         // something already over; it must never be what she is waiting on.

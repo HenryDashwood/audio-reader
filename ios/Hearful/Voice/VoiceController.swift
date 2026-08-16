@@ -160,7 +160,8 @@ final class VoiceController: ObservableObject {
             state = .thinking
             attempt.commandSent = true
             let response = try await announcingDelay {
-                try await self.api.command(transcript: transcript)
+                try await self.api.command(
+                    transcript: transcript, traceparent: attempt.traceparent())
             }
             attempt.outcome = Self.outcome(of: response)
             await handle(response)

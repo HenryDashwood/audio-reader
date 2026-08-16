@@ -60,6 +60,18 @@ def configure(service_name: str) -> None:
         # there is one user and one phone — and would otherwise be a paragraph
         # in the privacy policy earning nothing.
         scrubbing=logfire.ScrubbingOptions(extra_patterns=["peer.ip", "client.address"]),
+        # The phone sends W3C trace context on its voice requests, so a
+        # spoken request is one trace across both: the command, and the event
+        # describing what the phone saw around it. Logfire warns about
+        # incoming trace context by default because it is usually accidental —
+        # here it is the point, and saying so silences a warning on every
+        # request rather than teaching everyone to ignore one.
+        #
+        # Worth knowing what it means: the client chooses the trace id, so a
+        # confused or malicious one could group unrelated requests together.
+        # With one user and one phone that is a curiosity; it would need
+        # thought before this app had many.
+        distributed_tracing=True,
         advanced=logfire.AdvancedOptions(base_url=LOGFIRE_BASE_URL),
     )
 

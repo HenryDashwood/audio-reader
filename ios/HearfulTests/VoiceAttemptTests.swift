@@ -83,12 +83,12 @@ private final class TelemetryAPI: HearfulAPIProtocol, @unchecked Sendable {
     var sent: [[String: any Sendable]] = []
     var failNext = false
 
-    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws {
+    func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String? = nil) async throws {
         if failNext { throw APIError(underlying: "offline") }
         sent.append(event)
     }
 
-    func command(transcript: String) async throws -> CommandResponse { throw APIError(underlying: "unused") }
+    func command(transcript: String, traceparent: String? = nil) async throws -> CommandResponse { throw APIError(underlying: "unused") }
     func episode(id: Int) async throws -> Episode { throw APIError(underlying: "unused") }
     func articleText(episodeID: Int) async throws -> EpisodeText { throw APIError(underlying: "unused") }
     func recentEpisodes(limit: Int) async throws -> [Episode] { [] }
@@ -163,5 +163,43 @@ struct TelemetryReporterTests {
         // Reaching here at all is the assertion: report() returns void and
         // swallows everything.
         #expect(api.sent.isEmpty)
+    }
+}
+
+@Suite("Trace context")
+@MainActor
+struct TraceContextTests {
+    @Test func everyRequestInOneAttemptSharesOneTrace() {
+        // What makes the command and the event that describes it one story
+        // rather than two rows to line up by timestamp afterwards.
+        let attempt = VoiceAttempt()
+        let first = attempt.traceparent().split(separator: "-")
+        let second = attempt.traceparent().split(separator: "-")
+
+        #expect(first[1] == second[1])
+        // A fresh parent id each time: they are separate requests, and only
+        // the trace is shared.
+        #expect(first[2] != second[2])
+    }
+
+    @Test func separateAttemptsAreSeparateTraces() {
+        let one = VoiceAttempt().traceparent().split(separator: "-")[1]
+        let two = VoiceAttempt().traceparent().split(separator: "-")[1]
+        #expect(one != two)
+    }
+
+    @Test func isWellFormedW3CTraceContext() {
+        // Malformed context is dropped silently by the server, which would
+        // look exactly like this feature not existing.
+        let parts = VoiceAttempt().traceparent().split(separator: "-")
+
+        #expect(parts.count == 4)
+        #expect(parts[0] == "00")
+        #expect(parts[1].count == 32)
+        #expect(parts[2].count == 16)
+        #expect(parts[3] == "01")
+        #expect(parts[1].allSatisfy { $0.isHexDigit })
+        #expect(parts[2].allSatisfy { $0.isHexDigit })
+        #expect(parts[1] != String(repeating: "0", count: 32))
     }
 }

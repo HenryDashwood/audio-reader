@@ -14,7 +14,7 @@ private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
         return stored
     }
 
-    func command(transcript: String) async throws -> CommandResponse {
+    func command(transcript: String, traceparent: String? = nil) async throws -> CommandResponse {
         CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
     }
     func recentEpisodes(limit: Int) async throws -> [Episode] { [] }
@@ -34,7 +34,7 @@ private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
     }
 
     var reportedAttempts: [[String: any Sendable]] = []
-    func reportVoiceAttempt(_ event: [String: any Sendable]) async throws {
+    func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String? = nil) async throws {
         reportedAttempts.append(event)
     }
     func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
