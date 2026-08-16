@@ -55,6 +55,19 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AUDIOREADER_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"),
     )
 
+    # The Logfire write token. Read through settings rather than left to the
+    # SDK's own lookup because that only reads the process environment, and on
+    # a laptop this lives in `.env` like every other key here. Both spellings
+    # are accepted: LOGFIRE_TOKEN is what Logfire's docs and CLI use, and
+    # LOGFIRE_API_KEY is what the project's own .env has always called it.
+    #
+    # Blank is the ordinary case — tests, CI, a laptop with nothing to report —
+    # and means telemetry is created and dropped rather than sent.
+    logfire_token: str = Field(
+        default="",
+        validation_alias=AliasChoices("LOGFIRE_TOKEN", "LOGFIRE_API_KEY"),
+    )
+
     # Whether the spoken text is attached to the telemetry for a command.
     #
     # On, because when a command does the wrong thing the transcript is the

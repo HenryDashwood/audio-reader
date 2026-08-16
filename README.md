@@ -162,20 +162,23 @@ Traces, logs and metrics go to [Logfire](https://logfire-eu.pydantic.dev)
 instrumented, and the existing `logging` calls are forwarded rather than
 rewritten, so they still reach stdout and Railway's log view as well.
 
-- `LOGFIRE_TOKEN` — the write token, set as a Railway service variable. **With
-  no token nothing is sent**, which is what makes tests and local development
-  need no configuration at all. Never commit it.
+- `LOGFIRE_TOKEN` — the write token for the `hearful` project, set as a Railway
+  service variable and read from `.env` locally. `LOGFIRE_API_KEY` is accepted
+  as well, since that is what this project's `.env` has always called it.
+  **With no token nothing is sent**, which is what makes tests and local
+  development need no configuration at all. Never commit it.
 - `AUDIOREADER_ENVIRONMENT` — the label telemetry is filed under. Railway's own
   `RAILWAY_ENVIRONMENT_NAME` is read as a fallback, so a deploy says
   `production` on its own; locally it stays `development`.
 - `AUDIOREADER_TELEMETRY_TRANSCRIPTS` — whether her spoken words are attached
   to the telemetry for a command (default true, see below).
 
-To send from a laptop:
+The token in `.env` is enough to send from a laptop. To use the CLI as well —
+`logfire projects`, and sending from a checkout with no `.env`:
 
 ```bash
 uv run logfire --base-url='https://logfire-eu.pydantic.dev' auth
-uv run logfire --base-url='https://logfire-eu.pydantic.dev' projects use --org 'henry-dashwood' 'starter-project'
+uv run logfire --base-url='https://logfire-eu.pydantic.dev' projects use --org 'henry-dashwood' 'hearful'
 ```
 
 **What this is for.** Every spoken command produces one `command` span, and its

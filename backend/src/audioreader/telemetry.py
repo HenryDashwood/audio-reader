@@ -40,6 +40,9 @@ def configure(service_name: str) -> None:
         # deploy rather than to "some time last week".
         service_version=os.environ.get("RAILWAY_GIT_COMMIT_SHA"),
         environment=settings.environment,
+        # Falls back to whatever `logfire projects use` wrote, so an authorised
+        # laptop needs no token of its own.
+        token=settings.logfire_token or None,
         # No token, no export. This is what keeps `pytest` and `uvicorn` on a
         # laptop working with no configuration and no network.
         send_to_logfire="if-token-present",
