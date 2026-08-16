@@ -16,6 +16,11 @@ final class RecordingAPI: HearfulAPIProtocol, @unchecked Sendable {
         reports.append(Report(episodeID: episodeID, seconds: seconds, completed: completed))
     }
 
+    var filings: [(episodeID: Int, played: Bool?, dismissed: Bool?)] = []
+    func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {
+        filings.append((episodeID, played, dismissed))
+    }
+
     var reportedAttempts: [[String: any Sendable]] = []
     func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String? = nil) async throws {
         reportedAttempts.append(event)
@@ -23,7 +28,8 @@ final class RecordingAPI: HearfulAPIProtocol, @unchecked Sendable {
 
     func reportDiagnostic(_ event: [String: any Sendable]) async throws {}
 
-    func command(transcript: String, traceparent: String? = nil) async throws -> CommandResponse {
+    func command(transcript: String, nowPlayingEpisodeID: Int? = nil, traceparent: String? = nil) async throws
+        -> CommandResponse {
         CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
     }
     func episode(id: Int) async throws -> Episode { throw APIError(underlying: "unused") }
@@ -110,6 +116,81 @@ struct PositionReporterTests {
 
     @Test func backgroundFlushReportsWhilePlaying() async {
         let (reporter, api) = makeReporter()
+        reporter.episodeChanged(to: episode(id: 104))
+        reporter.playingChanged(true)
+        reporter.timeTicked(to: 42)
+        reporter.flush()
+        await settle()
+
+        #expect(api.reports.last == .init(episodeID: 104, seconds: 42, completed: false))
+    }
+
+    @Test func aFiledEpisodeStopsReportingItsPosition() async {
+        // The bug this exists to stop: she marks the episode she is listening
+        // to as played, the app pauses it, the pause flushes a position, and
+        // the flush works `completed` out from how far through she is — false.
+        // Thirty seconds of listening would undo what she asked for, and the
+        // confirmation she heard would have been a lie.
+        let (reporter, api) = makeReporter()
+        reporter.episodeChanged(to: episode(id: 104))
+        reporter.playingChanged(true)
+        reporter.timeTicked(to: 120)
+
+        reporter.episodeFiled(.init(episodeID: 104, filing: .played))
+        reporter.playingChanged(false)
+        await settle()
+
+        #expect(api.reports.isEmpty)
+    }
+
+    @Test func aDismissedEpisodeStopsReportingToo() async {
+        let (reporter, api) = makeReporter()
+        reporter.episodeChanged(to: episode(id: 104))
+        reporter.playingChanged(true)
+        reporter.timeTicked(to: 120)
+
+        reporter.episodeFiled(.init(episodeID: 104, filing: .dismissed))
+        reporter.flush()
+        await settle()
+
+        #expect(api.reports.isEmpty)
+    }
+
+    @Test func filingOneEpisodeDoesNotSilenceAnother() async {
+        let (reporter, api) = makeReporter()
+        reporter.episodeFiled(.init(episodeID: 999, filing: .played))
+        reporter.episodeChanged(to: episode(id: 104))
+        reporter.playingChanged(true)
+        reporter.timeTicked(to: 42)
+        reporter.flush()
+        await settle()
+
+        #expect(api.reports.last == .init(episodeID: 104, seconds: 42, completed: false))
+    }
+
+    @Test func restoringLetsItReportAgain() async {
+        let (reporter, api) = makeReporter()
+        reporter.episodeChanged(to: episode(id: 104))
+        reporter.playingChanged(true)
+        reporter.episodeFiled(.init(episodeID: 104, filing: .played))
+        reporter.episodeFiled(.init(episodeID: 104, filing: .restored))
+        reporter.timeTicked(to: 42)
+        reporter.flush()
+        await settle()
+
+        #expect(api.reports.last == .init(episodeID: 104, seconds: 42, completed: false))
+    }
+
+    @Test func playingItAgainLetsItReportAgain() async {
+        // Marking something played and then playing it anyway is her
+        // overruling herself; the position has to start being kept again, or
+        // that episode would never remember where she got to.
+        let (reporter, api) = makeReporter()
+        reporter.episodeChanged(to: episode(id: 104))
+        reporter.playingChanged(true)
+        reporter.episodeFiled(.init(episodeID: 104, filing: .played))
+
+        reporter.episodeChanged(to: episode(id: 200))
         reporter.episodeChanged(to: episode(id: 104))
         reporter.playingChanged(true)
         reporter.timeTicked(to: 42)

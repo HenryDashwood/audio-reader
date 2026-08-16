@@ -69,6 +69,9 @@ class EpisodeRead(BaseModel):
     # playback_positions; None means never played.
     position_seconds: float | None = None
     completed: bool = False
+    #: She asked for this one to go without hearing it. Distinct from
+    #: completed: both leave the feed, only one is a claim about listening.
+    dismissed: bool = False
     # True when the episode can be read aloud as an article — the app's cue
     # that an item with no audio_url is still playable, via text-to-speech.
     has_text: bool = False
@@ -149,8 +152,24 @@ class PositionUpdate(BaseModel):
         return max(0.0, value)
 
 
+class EpisodeStateUpdate(BaseModel):
+    """How an episode is filed. Omitted fields are left as they were.
+
+    Two independent flags rather than one state, because they answer different
+    questions — "have I heard this?" and "do I want to see this?" — and an
+    episode can be either without being the other.
+    """
+
+    played: bool | None = None
+    dismissed: bool | None = None
+
+
 class CommandRequest(BaseModel):
     transcript: str
+    #: What she is listening to as she speaks. Without it "mark this as
+    #: played" has no referent at all: the backend knows her whole library and
+    #: nothing about which part of it is currently coming out of the speaker.
+    now_playing_episode_id: int | None = None
 
     @field_validator("transcript")
     @classmethod

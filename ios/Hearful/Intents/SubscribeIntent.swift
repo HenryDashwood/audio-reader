@@ -35,7 +35,10 @@ struct SubscribeIntent: AppIntent {
             // Through the same backend path as the in-app microphone: the
             // model extracts the show's name, the directory is searched, and
             // unknown blogs go through web discovery.
-            response = try await api.command(transcript: "subscribe to \(name)", traceparent: nil)
+            // No now-playing episode: this intent can run with the app closed,
+            // and subscribing has nothing to say about what is in her ears.
+            response = try await api.command(
+                transcript: "subscribe to \(name)", nowPlayingEpisodeID: nil, traceparent: nil)
         } catch let error as APIError where error.isAuthFailure {
             return .result(dialog: IntentDialog("Please open Hearful and sign in first."))
         } catch let error as APIError {

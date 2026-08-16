@@ -20,6 +20,14 @@ final class PositionReporter {
     private var cancellables: Set<AnyCancellable> = []
 
     private(set) var trackedEpisode: Episode?
+    /// Episodes she has filed by hand: marked played, or put aside.
+    ///
+    /// Their state is hers to decide, not the clock's. Without this, marking
+    /// the episode she is listening to as played is undone within seconds:
+    /// pausing it flushes a position, the flush reports `completed` worked out
+    /// from how far through she is, and the answer is false. She would hear
+    /// the confirmation, and the episode would be back in her list.
+    private var filedByHand: Set<Int> = []
     private var lastTime: TimeInterval = 0
     /// Nothing is reported for an episode that was only loaded, never played:
     /// prepare() must not overwrite a saved position with zero.
@@ -50,6 +58,12 @@ final class PositionReporter {
                 MainActor.assumeIsolated { self?.timeTicked(to: time) }
             }
             .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)
+            .sink { [weak self] note in
+                guard let change = note.object as? EpisodeFiling.Change else { return }
+                MainActor.assumeIsolated { self?.episodeFiled(change) }
+            }
+            .store(in: &cancellables)
         // Backgrounding is the last reliable moment to write before iOS may
         // kill the process.
         NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
@@ -67,8 +81,20 @@ final class PositionReporter {
             report(episode: outgoing, seconds: lastTime)
         }
         trackedEpisode = episode
+        // Playing it again is her overruling herself, and positions should
+        // start being written for it once more. Otherwise an episode marked
+        // played would never remember a position again.
+        if let episode { filedByHand.remove(episode.id) }
         lastTime = episode?.positionSeconds ?? 0
         hasPlayed = false
+    }
+
+    func episodeFiled(_ change: EpisodeFiling.Change) {
+        if change.filing.hidesFromLatest {
+            filedByHand.insert(change.episodeID)
+        } else {
+            filedByHand.remove(change.episodeID)
+        }
     }
 
     func playingChanged(_ playing: Bool) {
@@ -98,6 +124,7 @@ final class PositionReporter {
     }
 
     private func report(episode: Episode, seconds: TimeInterval) {
+        guard !filedByHand.contains(episode.id) else { return }
         lastReportAt = Date()
         let duration = player.duration
         let completed = duration > 0 && seconds / duration > 0.95

@@ -27,6 +27,9 @@ protocol Speaking {
 protocol AudioPlaying {
     var isPlaying: Bool { get }
     var playbackRate: Float { get }
+    /// What is loaded, playing or paused. Sent with every spoken request:
+    /// "mark this as played" has no referent without it.
+    var currentEpisode: Episode? { get }
     /// Starts buffering without playing, so the wait overlaps the confirmation.
     func prepare(_ episode: Episode)
     func play(_ episode: Episode) throws
@@ -173,9 +176,14 @@ final class VoiceController: ObservableObject {
 
             state = .thinking
             attempt.commandSent = true
+            // Captured before the request rather than read inside it: what is
+            // playing is what she was listening to when she spoke, and by the
+            // time the answer comes back it may not be.
+            let nowPlaying = player.currentEpisode?.id
             let response = try await announcingDelay {
                 try await self.api.command(
-                    transcript: transcript, traceparent: attempt.traceparent())
+                    transcript: transcript, nowPlayingEpisodeID: nowPlaying,
+                    traceparent: attempt.traceparent())
             }
             guard !isCancelled else { return }
             attempt.outcome = Self.outcome(of: response)
@@ -232,6 +240,7 @@ final class VoiceController: ObservableObject {
         switch response.action {
         case .playEpisode: .played
         case .setSpeed: .speed
+        case .markPlayed, .dismiss, .restore: .filed
         case .unknown: .spoken
         }
     }
@@ -290,6 +299,9 @@ final class VoiceController: ObservableObject {
         case .unknown:
             await finish(saying: response.spokenResponse)
 
+        case .markPlayed, .dismiss, .restore:
+            await file(response)
+
         case .setSpeed:
             guard let speed = response.speed else {
                 await finish(saying: response.spokenResponse)
@@ -324,6 +336,28 @@ final class VoiceController: ObservableObject {
                 await fail(saying: "Sorry, that episode would not play.")
             }
         }
+    }
+
+    /// The backend has already filed the episode; the app catches up.
+    ///
+    /// Nothing is played or stopped on the strength of the sentence alone —
+    /// the episode in the response is the row that actually changed, and the
+    /// only thing worth acting on.
+    private func file(_ response: CommandResponse) async {
+        guard let episode = response.episode, let filing = response.action.filing else {
+            await finish(saying: response.spokenResponse)
+            return
+        }
+        // Taking the episode she is listening to out of her list, and then
+        // carrying on playing it, would answer "I have heard this" by playing
+        // more of it — and thirty seconds later the position reporter would
+        // write its own idea of the episode's state over hers.
+        if filing.hidesFromLatest, player.currentEpisode?.id == episode.id {
+            interruptedPlayback = false
+            player.pause()
+        }
+        filing.broadcast(episodeID: episode.id)
+        await finish(saying: response.spokenResponse)
     }
 
     /// Runs `work`, saying "one moment" aloud if it turns out to be slow.

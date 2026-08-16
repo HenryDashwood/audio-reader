@@ -91,6 +91,7 @@ final class FakeSpeaker: Speaking {
 final class FakePlayer: AudioPlaying {
     let recorder: Recorder
     var isPlaying = false
+    var currentEpisode: Episode?
     var failure: Error?
     init(_ recorder: Recorder) { self.recorder = recorder }
 
@@ -100,6 +101,7 @@ final class FakePlayer: AudioPlaying {
     func play(_ episode: Episode) throws {
         if let failure { throw failure }
         recorder.events.append(.played(episode.id))
+        currentEpisode = episode
         isPlaying = true
     }
     func pause() {
@@ -135,8 +137,13 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     /// How long the backend takes to answer.
     var delay: Duration = .zero
 
-    func command(transcript: String, traceparent: String? = nil) async throws -> CommandResponse {
+    /// What the phone said was playing, per request.
+    var nowPlayingIDs: [Int?] = []
+
+    func command(transcript: String, nowPlayingEpisodeID: Int? = nil, traceparent: String? = nil) async throws
+        -> CommandResponse {
         transcripts.append(transcript)
+        nowPlayingIDs.append(nowPlayingEpisodeID)
         if delay > .zero { try? await Task.sleep(for: delay) }
         if let error { throw error }
         return response ?? CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
@@ -179,6 +186,11 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     var reportedPositions: [(episodeID: Int, seconds: Double, completed: Bool)] = []
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {
         reportedPositions.append((episodeID, seconds, completed))
+    }
+
+    var filings: [(episodeID: Int, played: Bool?, dismissed: Bool?)] = []
+    func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {
+        filings.append((episodeID, played, dismissed))
     }
 
     var reportedAttempts: [[String: any Sendable]] = []
@@ -934,5 +946,98 @@ struct VoiceControllerCancelTests {
 
         #expect(speech.cancelCount == 0)
         #expect(recorder.events.isEmpty)
+    }
+}
+
+@Suite("Filing episodes by voice")
+@MainActor
+struct VoiceFilingTests {
+    private func filingResponse(_ action: CommandAction, _ episode: Episode) -> CommandResponse {
+        CommandResponse(action: action, spokenResponse: "Marked as played: it.", episode: episode)
+    }
+
+    @Test func tellsTheBackendWhatIsPlaying() async {
+        // "Mark this as played" has no referent otherwise: the backend knows
+        // her whole library and nothing about which part of it she can hear.
+        let (controller, _, _, api, player) = makeController()
+        player.currentEpisode = episode()
+
+        await controller.beginCommand()
+
+        #expect(api.nowPlayingIDs == [104])
+    }
+
+    @Test func sendsNoEpisodeWhenNothingIsPlaying() async {
+        let (controller, _, _, api, _) = makeController()
+
+        await controller.beginCommand()
+
+        #expect(api.nowPlayingIDs == [nil])
+    }
+
+    @Test func stopsTheEpisodeItJustTookOffTheList() async {
+        // Answering "I have already heard this" by playing more of it is the
+        // obvious wrong behaviour; the quiet one is that carrying on lets the
+        // position reporter write the episode's state back over hers.
+        let (controller, recorder, _, api, player) = makeController()
+        player.currentEpisode = episode()
+        player.isPlaying = true
+        api.response = filingResponse(.markPlayed, episode())
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.contains(.paused))
+        #expect(!recorder.events.contains(.resumed))
+    }
+
+    @Test func leavesADifferentEpisodePlaying() async {
+        // Filing something from her list while listening to something else
+        // must not interrupt what she is listening to.
+        let (controller, recorder, _, api, player) = makeController()
+        player.currentEpisode = episode(id: 104)
+        player.isPlaying = true
+        api.response = filingResponse(.markPlayed, episode(id: 999))
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.contains(.resumed))
+    }
+
+    @Test func restoringDoesNotStopAnything() async {
+        // Putting an episode back is not a reason to stop playing it.
+        let (controller, recorder, _, api, player) = makeController()
+        player.currentEpisode = episode()
+        player.isPlaying = true
+        api.response = CommandResponse(
+            action: .restore, spokenResponse: "Back in your list: it.", episode: episode())
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.contains(.resumed))
+    }
+
+    @Test func saysWhatHappened() async {
+        // The only evidence there is: a row leaving a list she cannot see.
+        let (controller, recorder, _, api, _) = makeController()
+        api.response = filingResponse(.dismiss, episode())
+
+        await controller.beginCommand()
+
+        #expect(recorder.spoken.contains("Marked as played: it."))
+    }
+
+    @Test func aFilingWithNoEpisodeIsJustSpoken() async {
+        // The backend asking which one she meant, or an older app meeting a
+        // newer backend: say the sentence, touch nothing.
+        let (controller, recorder, _, api, player) = makeController()
+        player.currentEpisode = episode()
+        player.isPlaying = true
+        api.response = CommandResponse(
+            action: .markPlayed, spokenResponse: "Which episode?", episode: nil)
+
+        await controller.beginCommand()
+
+        #expect(recorder.spoken.contains("Which episode?"))
+        #expect(recorder.events.contains(.resumed))
     }
 }

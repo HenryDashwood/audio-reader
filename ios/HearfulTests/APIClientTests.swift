@@ -52,7 +52,7 @@ private let playJSON = """
 struct CommandEndpointTests {
     @Test func decodesPlayEpisode() async throws {
         let result = try await makeClient(FakeTransport(json: playJSON))
-            .command(transcript: "play the Vienna one", traceparent: nil)
+            .command(transcript: "play the Vienna one", nowPlayingEpisodeID: nil, traceparent: nil)
 
         #expect(result.action == .playEpisode)
         #expect(result.spokenResponse == "Playing The Congress of Vienna.")
@@ -62,7 +62,7 @@ struct CommandEndpointTests {
     }
 
     @Test func decodesPublishedDate() async throws {
-        let result = try await makeClient(FakeTransport(json: playJSON)).command(transcript: "x", traceparent: nil)
+        let result = try await makeClient(FakeTransport(json: playJSON)).command(transcript: "x", nowPlayingEpisodeID: nil, traceparent: nil)
         let expected = ISO8601DateFormatter().date(from: "2026-08-04T00:00:00Z")
         #expect(result.episode?.publishedAt == expected)
     }
@@ -74,7 +74,7 @@ struct CommandEndpointTests {
               "id":1,"title":"t","description":null,"audio_url":"https://x/y.mp3",
               "duration_seconds":null,"published_at":"2026-08-04T00:00:00.123456Z","link":null}}
             """
-        let result = try await makeClient(FakeTransport(json: json)).command(transcript: "x", traceparent: nil)
+        let result = try await makeClient(FakeTransport(json: json)).command(transcript: "x", nowPlayingEpisodeID: nil, traceparent: nil)
         #expect(result.episode?.publishedAt != nil)
     }
 
@@ -83,7 +83,7 @@ struct CommandEndpointTests {
             {"action":"unknown","spoken_response":"Which show would you like?","episode":null}
             """
         let result = try await makeClient(FakeTransport(json: json))
-            .command(transcript: "play the thing", traceparent: nil)
+            .command(transcript: "play the thing", nowPlayingEpisodeID: nil, traceparent: nil)
 
         #expect(result.action == .unknown)
         #expect(result.episode == nil)
@@ -97,7 +97,7 @@ struct CommandEndpointTests {
         let json = """
             {"action":"subscribed","spoken_response":"Subscribed to The Rest Is History.","episode":null}
             """
-        let result = try await makeClient(FakeTransport(json: json)).command(transcript: "x", traceparent: nil)
+        let result = try await makeClient(FakeTransport(json: json)).command(transcript: "x", nowPlayingEpisodeID: nil, traceparent: nil)
 
         #expect(result.action == .unknown)
         #expect(result.spokenResponse == "Subscribed to The Rest Is History.")
@@ -105,7 +105,7 @@ struct CommandEndpointTests {
 
     @Test func sendsTranscriptAsJSONPost() async throws {
         let transport = FakeTransport(json: playJSON)
-        _ = try await makeClient(transport).command(transcript: "play the Vienna one", traceparent: nil)
+        _ = try await makeClient(transport).command(transcript: "play the Vienna one", nowPlayingEpisodeID: nil, traceparent: nil)
 
         let request = try #require(transport.lastRequest)
         #expect(request.httpMethod == "POST")
@@ -421,7 +421,7 @@ struct AuthAndPositionTests {
             {"action":"set_speed","spoken_response":"1.5 times speed.",
              "episode":null,"speed":1.5}
             """
-        let result = try await makeClient(FakeTransport(json: json)).command(transcript: "faster", traceparent: nil)
+        let result = try await makeClient(FakeTransport(json: json)).command(transcript: "faster", nowPlayingEpisodeID: nil, traceparent: nil)
         #expect(result.action == .setSpeed)
         #expect(result.speed == 1.5)
     }
@@ -438,7 +438,7 @@ struct CommandFailureTests {
             """
         do {
             _ = try await makeClient(FakeTransport(status: 503, json: json))
-                .command(transcript: "x", traceparent: nil)
+                .command(transcript: "x", nowPlayingEpisodeID: nil, traceparent: nil)
             Issue.record("expected a thrown error")
         } catch let error as APIError {
             #expect(error.spokenResponse == "Sorry, I cannot reach my assistant right now.")
@@ -448,7 +448,7 @@ struct CommandFailureTests {
     @Test func plainServerErrorStillHasSomethingToSay() async throws {
         do {
             _ = try await makeClient(FakeTransport(status: 500, json: "internal server error"))
-                .command(transcript: "x", traceparent: nil)
+                .command(transcript: "x", nowPlayingEpisodeID: nil, traceparent: nil)
             Issue.record("expected a thrown error")
         } catch let error as APIError {
             #expect(!error.spokenResponse.isEmpty)
@@ -458,7 +458,7 @@ struct CommandFailureTests {
     @Test func transportFailureIsSpeakable() async throws {
         do {
             _ = try await makeClient(FakeTransport(failure: URLError(.notConnectedToInternet)))
-                .command(transcript: "x", traceparent: nil)
+                .command(transcript: "x", nowPlayingEpisodeID: nil, traceparent: nil)
             Issue.record("expected a thrown error")
         } catch let error as APIError {
             #expect(!error.spokenResponse.isEmpty)
@@ -468,7 +468,7 @@ struct CommandFailureTests {
     @Test func malformedBodyIsSpeakable() async throws {
         do {
             _ = try await makeClient(FakeTransport(json: "{\"action\": \"nonsense\"}"))
-                .command(transcript: "x", traceparent: nil)
+                .command(transcript: "x", nowPlayingEpisodeID: nil, traceparent: nil)
             Issue.record("expected a thrown error")
         } catch let error as APIError {
             #expect(!error.spokenResponse.isEmpty)
@@ -481,7 +481,7 @@ struct TraceHeaderTests {
     @Test func aCommandCarriesTheTraceItWasGiven() async throws {
         let transport = FakeTransport(json: playJSON)
         _ = try await makeClient(transport).command(
-            transcript: "x", traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+            transcript: "x", nowPlayingEpisodeID: nil, traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
 
         let sent = transport.lastRequest?.value(forHTTPHeaderField: "traceparent")
         #expect(sent == "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
@@ -492,7 +492,7 @@ struct TraceHeaderTests {
         // the backend should start its own trace rather than be handed a
         // malformed one.
         let transport = FakeTransport(json: playJSON)
-        _ = try await makeClient(transport).command(transcript: "x", traceparent: nil)
+        _ = try await makeClient(transport).command(transcript: "x", nowPlayingEpisodeID: nil, traceparent: nil)
 
         #expect(transport.lastRequest?.value(forHTTPHeaderField: "traceparent") == nil)
     }

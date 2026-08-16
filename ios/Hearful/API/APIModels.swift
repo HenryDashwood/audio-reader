@@ -3,6 +3,11 @@ import Foundation
 nonisolated enum CommandAction: String, Decodable {
     case playEpisode = "play_episode"
     case setSpeed = "set_speed"
+    /// The backend has already filed the episode; the app updates its lists
+    /// and, when the episode was the one playing, stops it.
+    case markPlayed = "mark_played"
+    case dismiss
+    case restore
     case unknown
 
     /// The backend can add actions faster than the app gets reinstalled on her
@@ -12,6 +17,16 @@ nonisolated enum CommandAction: String, Decodable {
     init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
         self = CommandAction(rawValue: raw) ?? .unknown
+    }
+
+    /// The filing this action reports, for the three that report one.
+    var filing: EpisodeFiling? {
+        switch self {
+        case .markPlayed: .played
+        case .dismiss: .dismissed
+        case .restore: .restored
+        case .playEpisode, .setSpeed, .unknown: nil
+        }
     }
 }
 
@@ -32,12 +47,16 @@ nonisolated struct Episode: Codable, Equatable, Identifiable {
     /// Optional so payloads from before the field existed still decode.
     var positionSeconds: Double?
     var completed: Bool?
+    /// She asked for this one to go without hearing it. Kept apart from
+    /// `completed` so a list never claims she listened to something she
+    /// skipped — the two look identical from a position alone.
+    var dismissed: Bool?
     /// True when the backend can supply article text to read aloud — the cue
     /// that an item with no audio URL is still playable, via text-to-speech.
     var hasText: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, description, link, completed
+        case id, title, description, link, completed, dismissed
         case audioURL = "audio_url"
         case durationSeconds = "duration_seconds"
         case publishedAt = "published_at"
@@ -125,6 +144,26 @@ nonisolated struct UserInfo: Decodable, Equatable {
         case id
         case displayName = "display_name"
     }
+}
+
+/// Body of POST /command.
+nonisolated struct CommandRequest: Encodable {
+    let transcript: String
+    /// What is coming out of the speaker as she talks, so "mark this as
+    /// played" has something to refer to.
+    var nowPlayingEpisodeID: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case transcript
+        case nowPlayingEpisodeID = "now_playing_episode_id"
+    }
+}
+
+/// Body of PUT /episodes/{id}/state. A nil flag is left as it was, so hiding
+/// an episode never has to say anything about whether she heard it.
+nonisolated struct EpisodeStateUpdate: Encodable {
+    var played: Bool?
+    var dismissed: Bool?
 }
 
 /// Body of PUT /episodes/{id}/position.

@@ -14,7 +14,8 @@ private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
         return stored
     }
 
-    func command(transcript: String, traceparent: String? = nil) async throws -> CommandResponse {
+    func command(transcript: String, nowPlayingEpisodeID: Int? = nil, traceparent: String? = nil) async throws
+        -> CommandResponse {
         CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
     }
     func recentEpisodes(limit: Int) async throws -> [Episode] { [] }
@@ -29,6 +30,7 @@ private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
     func deleteAccount() async throws {}
     func me() async throws -> UserInfo { UserInfo(id: "u", displayName: nil) }
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {}
+    func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {}
     func articleText(episodeID: Int) async throws -> EpisodeText {
         throw APIError(underlying: "unused")
     }

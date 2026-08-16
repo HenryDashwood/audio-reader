@@ -90,7 +90,8 @@ private final class TelemetryAPI: HearfulAPIProtocol, @unchecked Sendable {
 
     func reportDiagnostic(_ event: [String: any Sendable]) async throws {}
 
-    func command(transcript: String, traceparent: String? = nil) async throws -> CommandResponse { throw APIError(underlying: "unused") }
+    func command(transcript: String, nowPlayingEpisodeID: Int? = nil, traceparent: String? = nil) async throws
+        -> CommandResponse { throw APIError(underlying: "unused") }
     func episode(id: Int) async throws -> Episode { throw APIError(underlying: "unused") }
     func articleText(episodeID: Int) async throws -> EpisodeText { throw APIError(underlying: "unused") }
     func recentEpisodes(limit: Int) async throws -> [Episode] { [] }
@@ -107,6 +108,7 @@ private final class TelemetryAPI: HearfulAPIProtocol, @unchecked Sendable {
     func me() async throws -> UserInfo { UserInfo(id: "u1", displayName: nil) }
     func deleteAccount() async throws {}
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {}
+    func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {}
 }
 
 @Suite("Telemetry reporter")

@@ -62,7 +62,13 @@ struct EpisodeQuery: EntityStringQuery {
     /// when it asks her what to play, rather than when matching the phrase.
     func entities(matching string: String) async throws -> [EpisodeEntity] {
         let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
-        let response = try await api.command(transcript: "play \(string)", traceparent: nil)
+        let response = try await api.command(
+            transcript: "play \(string)",
+            // Siri resolves entities before anything is playing, and the
+            // transcript is always a "play" request, so there is nothing here
+            // for a "this one" to refer to.
+            nowPlayingEpisodeID: nil,
+            traceparent: nil)
         guard let episode = response.episode,
             episode.audioURL != nil || episode.hasText == true
         else { return [] }

@@ -1,8 +1,11 @@
-"""Per-user playback positions: one row per (user, episode), last write wins."""
+"""Per-user playback positions: one row per (user, episode), last write wins.
+
+Also where an episode is filed: heard, put aside, or back in the list.
+"""
 
 from collections.abc import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.models import PlaybackPosition, User, utcnow
@@ -27,6 +30,51 @@ async def upsert_position(
     position.updated_at = utcnow()
     await session.commit()
     return position
+
+
+async def set_episode_state(
+    session: AsyncSession,
+    user: User,
+    episode_id: int,
+    *,
+    played: bool | None = None,
+    dismissed: bool | None = None,
+) -> PlaybackPosition:
+    """File an episode: heard, put aside, or back in the list.
+
+    Both flags are optional and only what is given is touched, so hiding an
+    episode does not quietly claim she listened to it and vice versa. Kept
+    apart from `upsert_position` because that one runs from a heartbeat every
+    thirty seconds and must never be the thing that decides these.
+    """
+    position = await session.get(PlaybackPosition, (user.id, episode_id))
+    if position is None:
+        position = PlaybackPosition(user_id=user.id, episode_id=episode_id, position_seconds=0.0)
+        session.add(position)
+    if played is not None:
+        position.completed = played
+        if not played:
+            # "I have not heard that" means start it again, not resume its last
+            # thirty seconds — which is what an untouched position would do,
+            # and which the app would still describe as finished.
+            position.position_seconds = 0.0
+    if dismissed is not None:
+        position.dismissed = dismissed
+    position.updated_at = utcnow()
+    await session.commit()
+    return position
+
+
+def filed_away(user: User):
+    """The episodes to keep out of her feed: heard, or asked not to see again.
+
+    A select rather than a list of ids, so it goes into the feed query as a
+    subquery and the database does the excluding.
+    """
+    return select(PlaybackPosition.episode_id).where(
+        PlaybackPosition.user_id == user.id,
+        or_(PlaybackPosition.completed, PlaybackPosition.dismissed),
+    )
 
 
 async def positions_for(session: AsyncSession, user: User, episode_ids: Iterable[int]) -> dict[int, PlaybackPosition]:

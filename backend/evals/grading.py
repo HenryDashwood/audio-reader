@@ -61,9 +61,19 @@ class Observed:
             subscribed_removed=before - after,
         )
 
+    #: How each episode-shaped action reads in a failure line. Without this
+    #: every one of them says "played", which is the one word a filing bug
+    #: must not be reported in.
+    _VERBS = {
+        Action.MARK_PLAYED: "marked played",
+        Action.DISMISS: "dismissed",
+        Action.RESTORE: "restored",
+    }
+
     def describe(self) -> str:
         if self.episode_title:
-            return f"played {self.episode_title!r} ({self.episode_show})"
+            verb = self._VERBS.get(self.action, "played")
+            return f"{verb} {self.episode_title!r} ({self.episode_show})"
         if self.subscribed_added:
             return f"subscribed to {', '.join(sorted(self.subscribed_added))}"
         if self.subscribed_removed:

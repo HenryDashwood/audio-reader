@@ -11,7 +11,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from audioreader import telemetry
+from audioreader import positions, telemetry
 from audioreader.commands.intents import Action, Candidate, InterpretResult, ModelDecision
 from audioreader.config import settings
 from audioreader.feeds import service as feed_service
@@ -68,6 +68,24 @@ there because it answers to her words, and is very likely the one she means.
 - Choose unsubscribe when she wants to stop following a show she already has
   ("unsubscribe from", "remove", "stop following", "get rid of"). Put just the
   show's name in search_query, and leave spoken_response empty.
+- Choose mark_played when she says she has already heard something ("mark
+  this as played", "I have listened to that one", "I have already heard the
+  Athelstan one"). Put the item's id in episode_id.
+- Choose dismiss when she wants an item out of her list without hearing it
+  ("skip that one", "get rid of this", "I am not interested in that", "do not
+  show me that again"). Put the item's id in episode_id.
+- Choose restore when she wants one of those two undone ("put that back", "I
+  have not heard that after all", "unmark it").
+- For those three, "this", "that" and "it" on their own mean the item she is
+  listening to, which is named above the list whenever something is playing.
+  If nothing is playing and she has not otherwise said which item she means,
+  choose unknown and ask which one. Never guess: filing the wrong episode is
+  invisible to her until the day she goes looking for it.
+  Leave spoken_response empty — the app confirms these itself, naming what it
+  actually changed.
+- Wanting to skip an item is not the same as wanting to skip forward inside
+  one. "Skip that episode" is dismiss; "skip ahead" is not, and reaches you
+  only by mistake — choose unknown for it.
 - Choose set_speed when she asks for a playback speed ("one and a half times",
   "play at double speed", "half speed", "normal speed"). Put the multiplier in
   speed: "double" is 2, "normal" is 1, "half" is 0.5. Sensible values are 0.5
@@ -319,13 +337,22 @@ def _to_candidates(episodes) -> list[Candidate]:
     ]
 
 
-def build_prompt(transcript: str, candidates: list[Candidate], today: date | None = None) -> str:
+def build_prompt(
+    transcript: str,
+    candidates: list[Candidate],
+    today: date | None = None,
+    now_playing: Candidate | None = None,
+) -> str:
     """The per-request half of the prompt.
 
     Today's date goes here rather than in the system prompt, which is fixed
     text a provider can cache. Without it "Tuesday's one" and "last week's"
     cannot be answered at all: every episode carries a date and the model has
     nothing to measure them against.
+
+    What is playing is named for the same reason: "mark this as played" is a
+    sentence about something the phone can see and the backend cannot, and
+    without this line the only honest answer to it is a question.
     """
     today = today or utcnow().date()
     lines = [
@@ -334,8 +361,13 @@ def build_prompt(transcript: str, candidates: list[Candidate], today: date | Non
         "She said:",
         f'"{transcript}"',
         "",
-        "Episodes and articles she subscribes to:",
     ]
+    if now_playing is not None:
+        lines += [
+            f"She is listening to [{now_playing.id}] {now_playing.title} — {now_playing.feed_title} right now.",
+            "",
+        ]
+    lines.append("Episodes and articles she subscribes to:")
     for candidate in candidates:
         published = candidate.published_at.strftime("%A %d %B %Y") if candidate.published_at else "undated"
         header = f"[{candidate.id}] {candidate.title} — {candidate.feed_title} — {published}"
@@ -349,11 +381,26 @@ def build_prompt(transcript: str, candidates: list[Candidate], today: date | Non
     return "\n".join(lines)
 
 
-async def interpret(session: AsyncSession, llm, transcript: str, user: User, discovery_llm=None) -> InterpretResult:
+async def interpret(
+    session: AsyncSession,
+    llm,
+    transcript: str,
+    user: User,
+    discovery_llm=None,
+    now_playing_episode_id: int | None = None,
+) -> InterpretResult:
     # Feed discovery gets its own client (web search, long timeout); without
     # one, the ordinary client still handles the easy, well-known cases.
     discovery_llm = discovery_llm if discovery_llm is not None else llm
     candidates = await build_candidates(session, user, transcript)
+    # What she is listening to has to be choosable, and it often is not: a
+    # 2003 In Our Time episode is decades outside the recency window and
+    # matches none of the words in "mark this as played". Without this, the
+    # one command she is most likely to give about the thing in her ears
+    # would be the one command that cannot name it.
+    now_playing = await _now_playing(session, now_playing_episode_id)
+    if now_playing is not None and all(candidate.id != now_playing.id for candidate in candidates):
+        candidates.append(now_playing)
     # What the model had to work with. An episode she asked for by name and did
     # not get is a different failure depending on whether it was in this list
     # at all: one is the model misreading her, the other is the candidate
@@ -367,7 +414,7 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User, dis
 
     raw = await llm.decide(
         system=SYSTEM_PROMPT,
-        user=build_prompt(transcript, candidates),
+        user=build_prompt(transcript, candidates, now_playing=now_playing),
         output_model=ModelDecision,
     )
 
@@ -401,6 +448,9 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User, dis
 
     if decision.action is Action.SET_SPEED:
         return _set_speed(decision.speed)
+
+    if decision.action in _FILING:
+        return await _file_episode(session, decision.action, decision.episode_id, candidates, user)
 
     if decision.action is not Action.PLAY_EPISODE:
         # Never pass an empty sentence through: the app would simply go quiet,
@@ -449,6 +499,88 @@ def _set_speed(speed: float | None) -> InterpretResult:
         spoken_response=f"{_spoken_speed(speed)} speed.",
         speed=speed,
     )
+
+
+#: What each filing action writes, and how it is confirmed aloud. The two live
+#: together because they must not drift apart: the sentence she hears is the
+#: only evidence she has of which row changed.
+_FILING: dict[Action, tuple[tuple[bool | None, bool | None], str]] = {
+    Action.MARK_PLAYED: ((True, None), "Marked as played:"),
+    # Only the dismissed flag: she has not heard it, and a list that says
+    # otherwise is one she cannot trust about anything.
+    Action.DISMISS: ((None, True), "Taken off your list:"),
+    Action.RESTORE: ((False, False), "Back in your list:"),
+}
+
+
+async def _now_playing(session: AsyncSession, episode_id: int | None) -> Candidate | None:
+    """What the phone says is playing, as a candidate the model can choose."""
+    if episode_id is None:
+        return None
+    episode = await session.get(Episode, episode_id, options=[joinedload(Episode.feed)])
+    if episode is None:
+        # The phone is ahead of us, or the episode has been pruned. Not worth
+        # failing the whole command over: everything else still works.
+        logger.warning("now-playing episode %r is not in the catalog", episode_id)
+        return None
+    return _to_candidates([episode])[0]
+
+
+async def _file_episode(
+    session: AsyncSession,
+    action: Action,
+    episode_id: int | None,
+    candidates: list[Candidate],
+    user: User,
+) -> InterpretResult:
+    """Mark an episode heard, put it aside, or put it back in the list."""
+    if not candidates:
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response="You have no episodes yet. Say subscribe, and the name of a show.",
+        )
+
+    # Never trust the model with a primary key, and least of all here: playing
+    # the wrong episode announces itself in a second, whereas filing the wrong
+    # one is silent until the day she goes looking for it.
+    if episode_id not in {candidate.id for candidate in candidates}:
+        logger.warning("model chose episode_id %r for %s, which was not offered", episode_id, action)
+        telemetry.annotate(failure="episode_not_offered")
+        return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
+
+    # Feed loaded eagerly: the router folds show artwork into the response.
+    episode = await session.get(Episode, episode_id, options=[joinedload(Episode.feed)])
+    if episode is None:
+        return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
+
+    (played, dismissed), said = _FILING[action]
+    await positions.set_episode_state(session, user, episode.id, played=played, dismissed=dismissed)
+    # Our sentence, not the model's: this one names the row that actually
+    # changed, which is the only way she can catch it having changed the wrong
+    # one — and the only place that mistake ever surfaces.
+    return InterpretResult(
+        action=action,
+        spoken_response=f"{said} {_spoken_title(episode.title)}.",
+        episode=episode,
+    )
+
+
+#: A leading episode number and its punctuation: "696. ", "Ep 12: ", "5) ".
+_LEADING_NUMBER = re.compile(r"^\s*(?:ep(?:isode)?\.?\s*)?\d+\s*[.:)\-]\s*", re.IGNORECASE)
+
+
+def _spoken_title(title: str, words: int = 6) -> str:
+    """Enough of a title to recognise, and no more.
+
+    She waits through every word of a confirmation, and podcast titles are
+    written to be scanned rather than heard: "696. Elizabeth I vs The
+    Catholics: Killing the Queen (Part 5)". The filing number goes first — it
+    identifies the episode to nobody — and what is left is cut to a few words,
+    which is all it takes to notice the wrong one.
+    """
+    spoken = _LEADING_NUMBER.sub("", title).strip() or title.strip()
+    parts = spoken.split()
+    return " ".join(parts[:words]) if len(parts) > words else spoken
 
 
 def _spoken_speed(speed: float) -> str:

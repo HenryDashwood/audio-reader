@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from audioreader.commands import service
 from audioreader.config import settings
 from audioreader.llm.client import LLMClient, LLMError
-from audioreader.models import Base, Feed, Subscription, User
+from audioreader.models import Base, Episode, Feed, Subscription, User
 from evals.cases import Case
 from evals.grading import Grade, Observed, grade
 from evals.world import Show, seed, stub_world
@@ -102,7 +102,12 @@ async def run_case(case: Case, world: tuple[Show, ...], client: LLMClient) -> Ru
             before = await subscribed_urls(session, user)
             try:
                 result = await service.interpret(
-                    session, metered, transcript=case.said, user=user, discovery_llm=metered
+                    session,
+                    metered,
+                    transcript=case.said,
+                    user=user,
+                    discovery_llm=metered,
+                    now_playing_episode_id=await episode_id(session, case.now_playing),
                 )
             except LLMError as exc:
                 return Run(
@@ -126,6 +131,21 @@ async def run_case(case: Case, world: tuple[Show, ...], client: LLMClient) -> Ru
         )
     finally:
         await engine.dispose()
+
+
+async def episode_id(session, guid: str | None) -> int | None:
+    """The row id of the episode a case says is playing.
+
+    Cases name episodes by guid because ids are assigned at seed time and
+    would differ from run to run; the phone sends an id, so the two have to
+    meet here.
+    """
+    if guid is None:
+        return None
+    found = await session.scalar(select(Episode.id).where(Episode.guid == guid))
+    if found is None:
+        raise KeyError(f"no episode with guid {guid!r} in the eval world")
+    return found
 
 
 async def subscribed_urls(session, user: User) -> frozenset[str]:

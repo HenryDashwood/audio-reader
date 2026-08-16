@@ -105,7 +105,12 @@ async def command(
 
         try:
             result = await service.interpret(
-                session, llm, transcript=body.transcript, user=user, discovery_llm=discovery_llm
+                session,
+                llm,
+                transcript=body.transcript,
+                user=user,
+                discovery_llm=discovery_llm,
+                now_playing_episode_id=body.now_playing_episode_id,
             )
         except LLMError as exc:
             raise HTTPException(

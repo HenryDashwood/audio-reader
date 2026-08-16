@@ -38,6 +38,13 @@ struct LatestView: View {
             }
         }
         .task { await model.load() }
+        // Filing by voice has to move the list too: she may well be looking
+        // at it — or have VoiceOver reading it — while she speaks.
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)) { note in
+            if let change = note.object as? EpisodeFiling.Change {
+                Task { await model.filed(change) }
+            }
+        }
     }
 
     private func episodeList(_ episodes: [Episode], offline: Bool) -> some View {
@@ -76,6 +83,9 @@ struct LatestView: View {
         EpisodeRow(episode: episode, isCurrent: player.currentEpisode?.id == episode.id)
             .contentShape(Rectangle())
             .onTapGesture { try? player.play(episode) }
+            .episodeFilingActions(for: episode) { filing in
+                Task { await model.file(filing, episode: episode) }
+            }
     }
 }
 
@@ -99,6 +109,47 @@ final class LatestModel: ObservableObject {
     ) {
         self.api = api
         self.cache = cache
+    }
+
+    /// Marks an episode played, puts it aside, or puts it back.
+    ///
+    /// The row goes only once the server has taken it, so a failed request
+    /// leaves the list exactly as it was rather than losing an episode to a
+    /// change that never happened.
+    func file(_ filing: EpisodeFiling, episode: Episode) async {
+        guard await fileEpisode(filing, episode, api: api) else { return }
+        remove(episode.id)
+    }
+
+    /// The same thing having happened somewhere else — by voice, or on a
+    /// show's page. The broadcast carries no episode, so a restore reloads.
+    func filed(_ change: EpisodeFiling.Change) async {
+        if change.filing.hidesFromLatest {
+            remove(change.episodeID)
+        } else {
+            await load()
+        }
+    }
+
+    /// Filed episodes are left out of the feed by the backend, so a row that
+    /// has just been filed is one the next load would not return anyway.
+    ///
+    /// The cache is rewritten as well, because the next load may never come:
+    /// out of signal, the saved copy is what she sees, and it would otherwise
+    /// go on offering the episode she has just taken off her list.
+    private func remove(_ episodeID: Int) {
+        switch state {
+        case .loaded(let episodes):
+            let remaining = episodes.filter { $0.id != episodeID }
+            cache.save(remaining, for: .recentEpisodes)
+            state = .loaded(remaining)
+        case .stale(let episodes):
+            let remaining = episodes.filter { $0.id != episodeID }
+            cache.save(remaining, for: .recentEpisodes)
+            state = .stale(remaining)
+        case .loading, .failed:
+            break
+        }
     }
 
     func load() async {

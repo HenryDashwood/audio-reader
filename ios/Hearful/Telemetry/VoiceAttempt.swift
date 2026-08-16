@@ -81,6 +81,8 @@ final class VoiceAttempt {
         case transport
         case sleep
         case speed
+        /// An episode marked played, put aside, or put back.
+        case filed
         /// She spoke and nothing was transcribed.
         case noSpeech = "no_speech"
         case permissionDenied = "permission_denied"

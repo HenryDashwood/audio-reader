@@ -15,6 +15,13 @@ class Action(StrEnum):
     SUBSCRIBE = "subscribe"
     UNSUBSCRIBE = "unsubscribe"
     SET_SPEED = "set_speed"
+    #: Filing an episode she already has: heard it, does not want it, or wants
+    #: one of those undone. Unlike subscribe, these need no outcome action of
+    #: their own — the item is already in front of us, so choosing it and
+    #: doing it are the same step and cannot half-succeed.
+    MARK_PLAYED = "mark_played"
+    DISMISS = "dismiss"
+    RESTORE = "restore"
     # Outcome actions, produced by us rather than chosen by the model.
     SUBSCRIBED = "subscribed"
     UNSUBSCRIBED = "unsubscribed"
@@ -28,6 +35,9 @@ MODEL_ACTIONS = (
     Action.SUBSCRIBE,
     Action.UNSUBSCRIBE,
     Action.SET_SPEED,
+    Action.MARK_PLAYED,
+    Action.DISMISS,
+    Action.RESTORE,
     Action.UNKNOWN,
 )
 
@@ -35,8 +45,10 @@ MODEL_ACTIONS = (
 class ModelDecision(BaseModel):
     """The schema the model is constrained to. Deliberately tiny.
 
-    episode_id is only meaningful for PLAY_EPISODE, and is always checked
-    against the candidate list before we act on it. search_query is only
+    episode_id is only meaningful for PLAY_EPISODE, MARK_PLAYED, DISMISS and
+    RESTORE, and is always checked against the candidate list before we act on
+    it — the filing actions write to her library, so an invented id there
+    would silently change the wrong row. search_query is only
     meaningful for SUBSCRIBE, UNSUBSCRIBE and PLAY_FROM_SHOW; episode_query
     only for PLAY_FROM_SHOW. speed is only meaningful for SET_SPEED.
     """

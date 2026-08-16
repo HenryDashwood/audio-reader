@@ -89,6 +89,11 @@ class Case:
     #: Episodes that would be actively wrong to play. Picking one of these is
     #: always a failure, even if the action was right.
     never: tuple[str, ...] = field(default_factory=tuple)
+    #: The guid of what is playing as she speaks. Set it on any case whose
+    #: sentence contains a "this" or a "that" — those words have no referent
+    #: at all without it, and a case that leaves it unset is asking the model
+    #: to guess.
+    now_playing: str | None = None
 
 
 CASES: tuple[Case, ...] = (
@@ -327,6 +332,72 @@ CASES: tuple[Case, ...] = (
         why="'Normal' is 1, not 'unknown'.",
         tags=("speed", "test-plan"),
         question_is_acceptable=False,
+    ),
+    # -- Filing episodes away -----------------------------------------------
+    Case(
+        id="mark-this-played",
+        said="I've already heard this one, mark it as played",
+        expect=Expect(Action.MARK_PLAYED, episode=_latest("rest_is_history")),
+        why=(
+            "The commonest of these by far, and the one that only works by voice: she is "
+            "listening to it as she says it. 'This one' has no referent unless what is "
+            "playing is put in front of the model, so a regression here shows up as the "
+            "model picking the top of the list — which is right by luck when the latest "
+            "episode is playing and wrong every other time."
+        ),
+        tags=("filing", "now-playing"),
+        now_playing=_latest("rest_is_history"),
+        question_is_acceptable=False,
+    ),
+    Case(
+        id="mark-named-episode-played",
+        said="Mark the In Our Time about Athelstan as played, I listened to it last night",
+        expect=Expect(Action.MARK_PLAYED, episode=_guid("in_our_time", "Æthelstan")),
+        why=(
+            "Filing works on the back catalogue too, and by the same search that finds an "
+            "episode to play. Filing the wrong row is worse than playing the wrong one: "
+            "nothing announces it, and she finds out weeks later when the episode is "
+            "missing from her list."
+        ),
+        tags=("filing", "back-catalogue"),
+        never=(_latest("in_our_time"),),
+    ),
+    Case(
+        id="dismiss-this",
+        said="I'm not interested in this one, get rid of it",
+        expect=Expect(Action.DISMISS, episode=_latest("rest_is_politics")),
+        why=(
+            "Not the same as having heard it. The two are stored separately precisely so "
+            "her list never claims she listened to something she skipped."
+        ),
+        tags=("filing", "now-playing"),
+        now_playing=_latest("rest_is_politics"),
+        question_is_acceptable=False,
+    ),
+    Case(
+        id="restore-this",
+        said="Actually put that one back, I haven't heard it",
+        expect=Expect(Action.RESTORE, episode=_latest("in_our_time")),
+        why=(
+            "The undo. Without it a mistake made by voice can only be corrected by sight, "
+            "which for her means not at all."
+        ),
+        tags=("filing", "now-playing"),
+        now_playing=_latest("in_our_time"),
+    ),
+    Case(
+        id="skip-ahead-is-not-dismissal",
+        said="Skip ahead a bit",
+        expect=Expect(Action.UNKNOWN),
+        why=(
+            "'Skip' means two opposite things, and the transport word is answered on the "
+            "phone — so anything reaching the server is either a mis-hearing or a phrase "
+            "the phone did not recognise. Reading it as 'remove this episode' would take "
+            "away the thing she is enjoying, in answer to a request to hear more of it."
+        ),
+        tags=("filing", "unknown"),
+        now_playing=_latest("rest_is_history"),
+        never=(_latest("rest_is_history"),),
     ),
     # -- Saying no ----------------------------------------------------------
     Case(

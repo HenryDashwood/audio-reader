@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, MetaData, Text, UniqueConstraint, Uuid, event, func, or_
+from sqlalchemy import DateTime, ForeignKey, MetaData, Text, UniqueConstraint, Uuid, event, false, func, or_
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from audioreader.text import search_key
@@ -136,12 +136,23 @@ class Subscription(Base):
 class PlaybackPosition(Base):
     # Composite primary key: the natural key is (user, episode), and having no
     # surrogate id makes upsert a plain session.get-then-set.
+    #
+    # Despite the name, this is everything the listener has done with an
+    # episode, not only where she got to: whether she considers it heard, and
+    # whether she has asked not to be offered it again.
     __tablename__ = "playback_positions"
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), primary_key=True)
     position_seconds: Mapped[float]
     completed: Mapped[bool] = mapped_column(default=False)
+    #: She has asked for this one to go, without having heard it. Kept apart
+    #: from `completed` deliberately: both take an episode out of the feed, but
+    #: only one of them is a claim about what she has listened to, and a list
+    #: that says she played something she never played is a list she cannot
+    #: trust. Nothing else can tell them apart afterwards — an episode skipped
+    #: and an episode finished look identical from a position alone.
+    dismissed: Mapped[bool] = mapped_column(default=False, server_default=false())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

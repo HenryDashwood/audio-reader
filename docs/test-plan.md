@@ -58,6 +58,16 @@ The heart of the app. Try each phrasing out loud, not typed.
 - [ ] Say nothing at all → "I did not hear anything", and the app is usable again
 - [ ] ⏱️ Ask something that takes a while → "One moment" fills the silence, then the real answer
 
+### Filing episodes
+
+- [ ] While an episode is **playing**, "I've already heard this, mark it as played" → confirms aloud naming that episode, and **stops** — it must not carry on playing
+- [ ] ⏱️ Wait a minute, then pull to refresh **Latest** → still gone. If it is back, the position reporter has overwritten the filing
+- [ ] While playing, "I'm not interested in this one" → same, and the show's page says "Not in Latest" rather than "Played"
+- [ ] "Put that one back" → returns to **Latest**, and plays from the beginning rather than the end
+- [ ] Name an episode instead of saying "this" — "mark the one about \<topic\> as played" → files **that** one, and whatever is playing keeps playing
+- [ ] With **nothing** playing, "mark this as played" → asks which episode, rather than filing whatever was newest
+- [ ] "Skip ahead" while listening → jumps forward. It must never be heard as "remove this episode"
+
 ### Cost and limits
 
 - [ ] ⏱️ Make a dozen requests inside a minute → it eventually says you are going too fast, spoken not silent, and recovers shortly after
@@ -159,6 +169,11 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 - [ ] **Latest**: newest episodes across subscriptions
 - [ ] Start an episode, leave it part-heard, return to Latest → it appears under **Continue listening**, and not twice
 - [ ] Finished episodes read "Played"; part-heard ones read "N min left"
+- [ ] Swipe a **Latest** row from the right → **Mark played** and **Not interested**; either one removes the row
+- [ ] Pull to refresh afterwards → the removed episode does not come back
+- [ ] The same episode on its **show's page** is still there, reading "Played" or "Not in Latest"
+- [ ] Swipe that row → **Put back**, and it returns to **Latest** on the next refresh
+- [ ] Play an episode to the end → it leaves **Latest** on the next refresh, without being marked by hand
 - [ ] **Mini player** appears when something is playing, tapping it opens the full player
 - [ ] Full player closes again — by swipe **and** by the close button
 - [ ] Pull to refresh on both lists
@@ -187,6 +202,9 @@ Do this with the **screen curtain** on — three-finger triple-tap. If you can s
 - [ ] A failing show also announces "not updating"
 - [ ] Flick through **Latest** → rows read title, date, length and progress without running together
 - [ ] The **offline note** is reachable in the swipe order, not skipped
+- [ ] On a **Latest** row, the rotor's **Actions** offer "Mark played" and "Not interested" — this is the only way she can reach them at all
+- [ ] Choosing one → the row goes **and** she is told which episode and what happened to it
+- [ ] Do it with the network off → she is told it failed, rather than the row simply not moving
 - [ ] **Mini player** → "Now playing: \<title\>" and a separate Play/Pause, and the first one opens the player
 - [ ] **Full player** → every control labelled; the scrubber announces its position; **Close player** works
 - [ ] **Voice sheet** → lands on "Ask Hearful" *before* "Close", so the double tap does what the screen says

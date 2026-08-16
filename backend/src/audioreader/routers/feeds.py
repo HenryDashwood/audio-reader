@@ -17,6 +17,7 @@ from audioreader.feeds.search import PodcastSearchError, search_podcasts
 from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User
 from audioreader.schemas import (
     EpisodeRead,
+    EpisodeStateUpdate,
     EpisodeTextRead,
     FeedCreate,
     FeedPreview,
@@ -63,6 +64,7 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
         if (position := stored.get(episode.id)) is not None:
             read.position_seconds = position.position_seconds
             read.completed = position.completed
+            read.dismissed = position.dismissed
         reads.append(read)
     return reads
 
@@ -178,17 +180,27 @@ episodes_router = APIRouter(prefix="/episodes", tags=["episodes"])
 @episodes_router.get("")
 async def recent_episodes(session: Session, user: CurrentUser, limit: int = 30) -> list[EpisodeRead]:
     """Newest playable items — episodes and articles — across the user's
-    subscriptions.
+    subscriptions, minus the ones she has already dealt with.
 
     Siri needs a concrete list of episodes up front: its App Shortcut phrases
     match spoken words against suggested entities, not against free text.
+
+    Episodes she has heard or put aside are left out here rather than by the
+    app, so the same fifty items are worth fifty rows however much of the feed
+    she has worked through. They are still reachable on the show's own page,
+    and the voice pipeline still offers them, so nothing is lost — only the
+    "what's new" list stops repeating itself.
     """
     episodes = (
         await session.scalars(
             select(Episode)
             .options(joinedload(Episode.feed))
             .join(Subscription, Subscription.feed_id == Episode.feed_id)
-            .where(Subscription.user_id == user.id, PLAYABLE_EPISODE)
+            .where(
+                Subscription.user_id == user.id,
+                PLAYABLE_EPISODE,
+                Episode.id.not_in(positions.filed_away(user)),
+            )
             .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
             .limit(limit)
         )
@@ -223,6 +235,20 @@ async def get_episode_text(episode_id: int, session: Session, user: CurrentUser)
             detail={"spoken_response": "Sorry, I could not get the text of that article."},
         )
     return EpisodeTextRead(episode_id=episode.id, title=episode.title, text=text)
+
+
+@episodes_router.put("/{episode_id}/state", status_code=204)
+async def put_state(episode_id: int, body: EpisodeStateUpdate, session: Session, user: CurrentUser) -> None:
+    """Mark an episode played, put it aside, or put it back.
+
+    Separate from the position endpoint, which fires from a heartbeat every
+    thirty seconds: a deliberate "I have heard this" must not be something a
+    later tick can quietly undo.
+    """
+    episode = await session.get(Episode, episode_id)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    await positions.set_episode_state(session, user, episode_id, played=body.played, dismissed=body.dismissed)
 
 
 @episodes_router.put("/{episode_id}/position", status_code=204)

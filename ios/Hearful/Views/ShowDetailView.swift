@@ -40,6 +40,12 @@ struct ShowDetailView: View {
                         EpisodeRow(episode: episode, isCurrent: player.currentEpisode?.id == episode.id)
                             .contentShape(Rectangle())
                             .onTapGesture { try? player.play(episode) }
+                            // The way back. A show's page keeps every episode,
+                            // filed or not, so this is where a mistake made in
+                            // the Latest list — or by voice — is undone.
+                            .episodeFilingActions(for: episode) { filing in
+                                Task { await model.file(filing, episode: episode) }
+                            }
                     }
                 }
             }
@@ -48,6 +54,11 @@ struct ShowDetailView: View {
         .navigationTitle(show.title)
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.load(showID: show.id) }
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)) { note in
+            if let change = note.object as? EpisodeFiling.Change {
+                model.filed(change)
+            }
+        }
     }
 
     /// The mirror of the preview page's Subscribe button. Unsubscribing is
@@ -110,6 +121,14 @@ struct EpisodeRow: View {
                             .foregroundStyle(
                                 episode.listeningProgress == .played
                                     ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                    }
+                    // Said rather than implied. An episode she put aside is
+                    // absent from the Latest list and otherwise identical to
+                    // every other row here, so without this the only evidence
+                    // of her having filed it is somewhere she is not looking.
+                    if episode.dismissed == true {
+                        Text("·")
+                        Text("Not in Latest")
                     }
                 }
                 .font(.caption)
@@ -185,6 +204,39 @@ final class EpisodeListModel: ObservableObject {
                 state = .failed(message)
             }
         }
+    }
+
+    /// Marks an episode played, puts it aside, or puts it back.
+    ///
+    /// The row stays — this is her whole library, not the "what's new" list —
+    /// and changes its label instead, so the action she just took is visible
+    /// on the thing she took it on.
+    func file(_ filing: EpisodeFiling, episode: Episode) async {
+        guard await fileEpisode(filing, episode, api: api) else { return }
+        filed(.init(episodeID: episode.id, filing: filing))
+    }
+
+    /// The same having happened elsewhere — by voice, or from the Latest list.
+    func filed(_ change: EpisodeFiling.Change) {
+        guard case .loaded(let episodes) = state else { return }
+        state = .loaded(
+            episodes.map { episode in
+                guard episode.id == change.episodeID else { return episode }
+                var updated = episode
+                switch change.filing {
+                case .played:
+                    updated.completed = true
+                case .dismissed:
+                    updated.dismissed = true
+                case .restored:
+                    updated.completed = false
+                    updated.dismissed = false
+                    // The backend rewinds it, and the row would otherwise go
+                    // on offering to carry on from where it stopped.
+                    updated.positionSeconds = 0
+                }
+                return updated
+            })
     }
 
     /// True on success, so the view can pop back to the library.
