@@ -53,24 +53,27 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
 
         arrivals = BufferArrivals()
         try startCapture(convertingTo: format, into: continuation)
+
+        // The tone means "speak now", and she believes it — so it must not
+        // sound until the microphone is genuinely delivering audio. Starting
+        // the engine is not the same thing: `engine.start()` returns before
+        // the route is necessarily live, and a tone sounded then invites her
+        // to say a whole sentence into nothing. That is what "I did not hear
+        // anything" was, on the first request after launch, every time.
+        //
+        // Failing here rather than after she has spoken is the point. Once
+        // she has said her piece the audio is gone and falling back to
+        // another recogniser buys nothing; before the tone, the backup gets
+        // to hear the real sentence.
+        guard await arrivals.waitForFirst() else {
+            log.error("no audio arrived from the microphone within \(BufferArrivals.wait)s")
+            throw SpeechError.microphoneSilent
+        }
         log.info("analyzer listening")
         onReady()
 
         defer { cancel() }
-        let transcript = try await collectTranscript(from: transcriber)
-
-        // An empty transcript with no audio behind it is not silence, it is a
-        // microphone that never delivered — and telling her "I did not hear
-        // anything" for that is both wrong and unactionable, because there was
-        // nothing wrong with what she said. Throwing hands the attempt to the
-        // fallback recogniser, which builds its own capture path from scratch.
-        if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            arrivals.count == 0
-        {
-            log.error("no audio arrived from the microphone tap; capture never came up")
-            throw SpeechError.microphoneSilent
-        }
-        return transcript
+        return try await collectTranscript(from: transcriber)
     }
 
     /// Live transcription so far. On the actor rather than captured locals:
@@ -310,25 +313,6 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
             case .microphoneSilent, .microphoneUnavailable: true
             case .noCompatibleAudioFormat: false
             }
-        }
-    }
-
-    /// A count the realtime tap queue can increment. Locked rather than
-    /// actor-isolated: the tap must never touch the main actor.
-    private final class BufferArrivals: @unchecked Sendable {
-        private let lock = NSLock()
-        private var buffers = 0
-
-        func record() {
-            lock.lock()
-            buffers += 1
-            lock.unlock()
-        }
-
-        var count: Int {
-            lock.lock()
-            defer { lock.unlock() }
-            return buffers
         }
     }
 }

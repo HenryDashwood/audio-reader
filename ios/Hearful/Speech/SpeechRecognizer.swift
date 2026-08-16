@@ -20,6 +20,7 @@ final class SpeechRecognizer: SpeechRecognizing {
 
     private let timeouts = ListeningTimeouts()
     private var hasHeardSpeech = false
+    private var arrivals = BufferArrivals()
 
     func listen(onReady: @MainActor () -> Void) async throws -> String {
         try await requestPermissions()
@@ -71,13 +72,25 @@ final class SpeechRecognizer: SpeechRecognizing {
             log.error("no usable microphone route: \(inputFormat)")
             throw SpeechError.recognitionFailed
         }
+        arrivals = BufferArrivals()
+        let arrivals = self.arrivals
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) {
             @Sendable buffer, _ in
+            arrivals.record()
             request.append(buffer)
         }
         engine.prepare()
         try engine.start()
+
+        // The go-ahead waits for audio to actually be flowing, exactly as in
+        // the analyser. Starting the engine is not the same as the microphone
+        // being live, and a tone sounded early asks her to speak into nothing
+        // — then reports it back to her as having said nothing.
+        guard await arrivals.waitForFirst() else {
+            log.error("no audio arrived from the microphone within \(BufferArrivals.wait)s")
+            throw SpeechError.microphoneSilent
+        }
         onReady()
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -177,8 +190,19 @@ final class SpeechRecognizer: SpeechRecognizing {
         }
     }
 
-    enum SpeechError: Error {
+    enum SpeechError: TransientRecognitionFailure {
         case unavailable
         case recognitionFailed
+        /// Capture came up without error but delivered no audio at all.
+        case microphoneSilent
+
+        /// A microphone that did not wake in time is worth another go; a
+        /// recogniser this locale has none of is not.
+        var isTransient: Bool {
+            switch self {
+            case .microphoneSilent: true
+            case .unavailable, .recognitionFailed: false
+            }
+        }
     }
 }

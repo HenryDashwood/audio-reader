@@ -32,12 +32,17 @@ final class Feedback: FeedbackPlaying {
 
     private let tick = UIImpactFeedbackGenerator(style: .light)
     private let impact = UIImpactFeedbackGenerator(style: .medium)
+    /// Rigid rather than another weight of the same thing: the go-ahead has to
+    /// be told apart from the acknowledgement by character, not by guessing at
+    /// strength, and they can arrive a couple of seconds apart.
+    private let ready = UIImpactFeedbackGenerator(style: .rigid)
     private let notice = UINotificationFeedbackGenerator()
 
     init() {
         // Warming these avoids the first buzz arriving late.
         tick.prepare()
         impact.prepare()
+        ready.prepare()
         notice.prepare()
     }
 
@@ -49,8 +54,19 @@ final class Feedback: FeedbackPlaying {
             tick.impactOccurred()
         case .acknowledged:
             impact.impactOccurred()
+            // The go-ahead is no longer immediate — it waits for the
+            // microphone route to actually come up, which can take a moment on
+            // the first request after launch. Warm the generator that fires
+            // then, so it is crisp rather than late.
+            ready.prepare()
             AudioServicesPlaySystemSound(1113)  // begin record
         case .listening:
+            // Felt as well as heard, because this is the one cue that has to
+            // land. It fires the moment audio is genuinely flowing, so it is
+            // the only honest signal that speaking now will be recorded — and
+            // with the phone in her hand it arrives even when the tone is lost
+            // under VoiceOver, a noisy room, or headphones she is not wearing.
+            ready.impactOccurred()
             AudioServicesPlaySystemSound(1114)  // end record: "go ahead"
         case .failed:
             notice.notificationOccurred(.error)
