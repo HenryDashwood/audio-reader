@@ -9,14 +9,19 @@ test long before it fails a user.
 
 from datetime import UTC, datetime
 
+import logfire
 import pytest
 from logfire.testing import CaptureLogfire
 
 from audioreader import telemetry
+from audioreader.commands.intents import ModelDecision
 from audioreader.config import settings
+from audioreader.llm.client import LLMError
+from audioreader.llm.openai_compatible import OpenAICompatibleClient
 from audioreader.models import Episode, Feed, Subscription
 
 TRANSCRIPT = "play the Vienna episode"
+BASE_URL = "https://openrouter.test/api/v1"
 
 
 @pytest.fixture
@@ -55,6 +60,9 @@ class TestCommandSpan:
         assert attributes["model_action"] == "play_episode"
         assert attributes["episode_id"] == 1
         assert attributes["episode_title"] == "The Congress of Vienna"
+        # A plain string rather than a null, so `group by failure` buckets
+        # the successes alongside each way of failing.
+        assert attributes["failure"] == "none"
         # The size of the choice the model was given. Without it, an episode
         # she named and did not get cannot be told apart from one that was
         # never in the list to begin with.
@@ -73,11 +81,78 @@ class TestCommandSpan:
         assert attributes["model_action"] == "play_episode"
         assert attributes["action"] == "unknown"
 
+    async def test_records_the_shape_of_the_library_and_the_answer(self, capfire, client, fake_llm, library):
+        fake_llm.respond_with({"action": "play_episode", "episode_id": 1, "spoken_response": "Playing."})
+        await client.post("/command", json={"transcript": TRANSCRIPT})
+
+        attributes = command_span(capfire)["attributes"]
+        assert attributes["feed_title"] == "The History Hour"
+        assert attributes["feed_count"] == 1
+        # Four words. A one- or two-word transcript is the truncation signal.
+        assert attributes["transcript_words"] == len(TRANSCRIPT.split())
+        # Published 2026-08-04, so comfortably inside the recency window rather
+        # than something the back-catalogue search had to reach for.
+        assert attributes["episode_age_days"] >= 0
+
+    async def test_a_command_that_never_reached_an_outcome_still_says_so(self, capfire, client, fake_llm, library):
+        # `action` is seeded to "error" rather than left absent: an outage must
+        # be countable in the same group-by as everything else, not a silent
+        # gap in it.
+        fake_llm.fail_with(LLMError("provider is down"))
+        response = await client.post("/command", json={"transcript": TRANSCRIPT})
+
+        assert response.status_code == 503
+        assert command_span(capfire)["attributes"]["action"] == "error"
+
     async def test_marks_a_decision_the_model_mangled(self, capfire, client, fake_llm, library):
         fake_llm.respond_with({"action": "play_episode", "episode_id": "not an integer"})
         await client.post("/command", json={"transcript": TRANSCRIPT})
 
         assert command_span(capfire)["attributes"]["failure"] == "invalid_decision"
+
+
+class TestWhatTheModelCost:
+    """Token counts and latency, summed over a request rather than per call.
+
+    Which model to run is decided on cost and reliability together, and until
+    now both came from measuring by hand. Summing matters because a spoken
+    request is not always one call: naming a show asks twice.
+    """
+
+    async def test_the_provider_reported_usage_reaches_the_span(self, capfire, respx_mock):
+        # Through the real client, so this breaks if a provider stops sending
+        # `usage` or renames its fields — which is the only way this silently
+        # becomes zero.
+        respx_mock.post(f"{BASE_URL}/chat/completions").respond(
+            json={
+                "choices": [{"message": {"content": '{"action": "unknown", "spoken_response": "Sorry?"}'}}],
+                "usage": {"prompt_tokens": 3500, "completion_tokens": 45},
+            }
+        )
+        model = OpenAICompatibleClient(base_url=BASE_URL, api_key="k", model="test-model")
+        with logfire.span("command"), telemetry.collect_llm_usage():
+            await model.decide(system="s", user="u", output_model=ModelDecision)
+
+        attributes = command_span(capfire)["attributes"]
+        assert attributes["llm_calls"] == 1
+        assert attributes["llm_input_tokens"] == 3500
+        assert attributes["llm_output_tokens"] == 45
+        assert attributes["llm_seconds"] >= 0
+
+    def test_calls_accumulate_rather_than_overwrite(self):
+        # The play_from_show shape: work out the show, then pick within it.
+        with telemetry.collect_llm_usage():
+            telemetry.record_llm_call(input_tokens=3000, output_tokens=40, seconds=0.5)
+            telemetry.record_llm_call(input_tokens=1200, output_tokens=20, seconds=0.3)
+            usage = telemetry._llm_usage.get()
+
+        assert usage is not None
+        assert (usage.calls, usage.input_tokens, usage.output_tokens) == (2, 4200, 60)
+        assert usage.seconds == pytest.approx(0.8)
+
+    def test_recording_outside_a_request_is_harmless(self):
+        # The poller and the eval runner both call models with no span open.
+        telemetry.record_llm_call(input_tokens=10, output_tokens=1, seconds=0.1)
 
 
 class TestPrivacy:

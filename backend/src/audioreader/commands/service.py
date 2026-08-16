@@ -354,11 +354,16 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User, dis
     # one, the ordinary client still handles the easy, well-known cases.
     discovery_llm = discovery_llm if discovery_llm is not None else llm
     candidates = await build_candidates(session, user, transcript)
-    # How many episodes the model had to choose between. An episode she asked
-    # for by name and did not get is a different failure depending on whether
-    # it was in this list at all: one is the model misreading her, the other is
-    # the candidate window being too narrow to contain the answer.
-    telemetry.annotate(candidate_count=len(candidates))
+    # What the model had to work with. An episode she asked for by name and did
+    # not get is a different failure depending on whether it was in this list
+    # at all: one is the model misreading her, the other is the candidate
+    # window being too narrow to contain the answer. `feed_count` separates
+    # those again — sixty candidates drawn from two shows and from twenty are
+    # very different haystacks.
+    telemetry.annotate(
+        candidate_count=len(candidates),
+        feed_count=len({candidate.feed_title for candidate in candidates}),
+    )
 
     raw = await llm.decide(
         system=SYSTEM_PROMPT,
@@ -377,7 +382,11 @@ async def interpret(session: AsyncSession, llm, transcript: str, user: User, dis
     # difference between this and the `action` on the enclosing span is the
     # count of times we overrode it, and every one of those is a command she
     # spoke and did not get.
-    telemetry.annotate(model_action=decision.action.value)
+    #
+    # `search_query` is the show name it heard. When a subscribe fails, that
+    # name is the difference between the directory not carrying a show and us
+    # having gone looking for the wrong one.
+    telemetry.annotate(model_action=decision.action.value, search_query=decision.search_query)
 
     if decision.action is Action.SUBSCRIBE:
         return await _subscribe(session, decision.search_query, transcript, user, discovery_llm)

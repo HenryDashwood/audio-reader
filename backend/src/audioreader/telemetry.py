@@ -15,6 +15,10 @@ before any of this existed.
 
 import logging
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 
 import logfire
 from opentelemetry import trace
@@ -100,6 +104,53 @@ def annotate(**attributes: str | int | float | bool | None) -> None:
     for key, value in attributes.items():
         if value is not None:
             span.set_attribute(key, value)
+
+
+@dataclass
+class _LLMUsage:
+    calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    seconds: float = 0.0
+
+
+_llm_usage: ContextVar[_LLMUsage | None] = ContextVar("_llm_usage", default=None)
+
+
+@contextmanager
+def collect_llm_usage() -> Iterator[None]:
+    """Accumulate what the model cost across one request.
+
+    A spoken request is not always one model call: picking an episode from a
+    named show asks twice, once to work out the show and once to choose within
+    it. Summing them is what makes the per-command figure comparable between a
+    simple play and a hard one, and comparable to the rate card.
+    """
+    token = _llm_usage.set(_LLMUsage())
+    try:
+        yield
+    finally:
+        _llm_usage.reset(token)
+
+
+def record_llm_call(*, input_tokens: int, output_tokens: int, seconds: float) -> None:
+    """Fold one model call into the request's running total."""
+    usage = _llm_usage.get()
+    if usage is None:
+        # Outside a request — the poller, a script, a test. Nothing to add to.
+        return
+    usage.calls += 1
+    usage.input_tokens += input_tokens
+    usage.output_tokens += output_tokens
+    usage.seconds += seconds
+    # Re-set each time rather than once at the end, so a request that dies
+    # mid-flight still says what it had spent when it did.
+    annotate(
+        llm_calls=usage.calls,
+        llm_input_tokens=usage.input_tokens,
+        llm_output_tokens=usage.output_tokens,
+        llm_seconds=round(usage.seconds, 3),
+    )
 
 
 def instrument_app(app) -> None:

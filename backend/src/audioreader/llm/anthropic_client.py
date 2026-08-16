@@ -1,6 +1,9 @@
+import time
+
 import anthropic
 from pydantic import BaseModel
 
+from audioreader import telemetry
 from audioreader.config import settings
 from audioreader.llm.client import LLMError
 
@@ -17,6 +20,7 @@ class AnthropicClient:
         self._client = anthropic.AsyncAnthropic(api_key=api_key or settings.anthropic_api_key)
 
     async def decide(self, *, system: str, user: str, output_model: type[BaseModel]) -> dict:
+        started = time.perf_counter()
         try:
             response = await self._client.messages.parse(
                 model=self.model,
@@ -27,6 +31,12 @@ class AnthropicClient:
             )
         except anthropic.APIError as exc:
             raise LLMError(f"{type(exc).__name__}: {exc}") from exc
+
+        telemetry.record_llm_call(
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            seconds=time.perf_counter() - started,
+        )
 
         parsed = response.parsed_output
         if parsed is None:

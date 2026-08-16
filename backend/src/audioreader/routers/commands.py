@@ -5,13 +5,14 @@ import logfire
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audioreader import telemetry
 from audioreader.auth.dependencies import get_current_user
 from audioreader.commands import service
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.llm.client import LLMClient, LLMError
 from audioreader.llm.provider import get_discovery_llm_client, get_llm_client
-from audioreader.models import User
+from audioreader.models import User, utcnow
 from audioreader.ratelimit import SlidingWindow
 from audioreader.routers.feeds import episodes_read
 from audioreader.schemas import CommandRequest, CommandResponse
@@ -63,26 +64,42 @@ def check_rate_limit(user: CurrentUser) -> None:
 async def command(
     body: CommandRequest, session: Session, llm: LLM, discovery_llm: DiscoveryLLM, user: CurrentUser
 ) -> CommandResponse:
-    # One span per spoken request, carrying enough to answer the question the
-    # HTTP status code cannot: did we do what she asked? Every command returns
-    # 200 whether it played the right episode, the wrong one, or gave up, so
-    # correctness has to be reconstructed from these attributes afterwards.
+    # One wide event per spoken request. Everything the pipeline learns is
+    # attached here rather than scattered across log lines, because the
+    # question worth asking spans the whole request — "which commands were
+    # misunderstood, and what did her library look like when they were?" — and
+    # that is a query over one row, not a search through many.
     #
-    # There is no label here for "correct" — nothing in the request knows that.
-    # What there is: the outcome, and every point at which the pipeline settled
-    # for something less than an answer. `action=unknown` is the model saying
-    # so outright; the `failure` attribute, set from inside `service.interpret`,
+    # It exists because the HTTP status code cannot answer it. Every command
+    # returns 200 whether it played the right episode, the wrong one, or gave
+    # up. There is no label here for "correct"; nothing in the request knows
+    # that. What there is: the outcome, what the model wanted, what it was
+    # given to choose from, what it cost, and every point at which the pipeline
+    # settled for less than an answer. `action=unknown` is the model saying so
+    # outright; the `failure` attribute, set from inside `service.interpret`,
     # names the quieter ways a request ends up going nowhere.
-    with logfire.span(
-        "command",
-        user_id=str(user.id),
-        provider=settings.llm_provider.value,
-        model=settings.openrouter_model if settings.llm_provider is LLMProvider.OPENROUTER else settings.llm_model,
-        # Placeholders: set below once known, so that a command which raises
-        # still leaves an attribute saying so rather than an absent key.
-        action="error",
-        episode_id=None,
-    ) as span:
+    with (
+        logfire.span(
+            "command",
+            user_id=str(user.id),
+            provider=settings.llm_provider.value,
+            model=settings.openrouter_model if settings.llm_provider is LLMProvider.OPENROUTER else settings.llm_model,
+            # How much she actually said. A request that arrives as two or
+            # three words is usually the phone cutting her off rather than the
+            # model misreading her, and the two are indistinguishable from the
+            # outcome alone — this has twice looked like a model failure and
+            # been a truncated transcript.
+            transcript_words=len(body.transcript.split()),
+            # Seeded, then overwritten once known. Both of these are grouped
+            # by rather than filtered on, and a missing key and a null make an
+            # untidy bucket in a way a plain string does not — so a command
+            # that succeeded says `failure=none`, and one that died before it
+            # reached an outcome says `action=error` rather than nothing.
+            action="error",
+            failure="none",
+        ) as span,
+        telemetry.collect_llm_usage(),
+    ):
         if settings.telemetry_transcripts:
             span.set_attribute("transcript", body.transcript)
 
@@ -97,14 +114,24 @@ async def command(
             ) from exc
 
         span.set_attribute("action", result.action.value)
+        if result.speed is not None:
+            span.set_attribute("speed", result.speed)
 
         episode = None
         if result.episode is not None:
-            # The title as well as the id: a query about what she is being
-            # given should be readable without joining back to the database,
-            # which by then may not still hold the row.
+            # Titles as well as ids: a query about what she is being given
+            # should be readable without joining back to the database, which by
+            # then may not still hold the row.
             span.set_attribute("episode_id", result.episode.id)
             span.set_attribute("episode_title", result.episode.title)
+            span.set_attribute("feed_title", result.episode.feed.title or "")
+            # Whether the answer came out of the recency window or the back
+            # catalogue. Feeds carry their whole archive, and reaching an old
+            # episode is the thing the candidate search exists to do — this is
+            # how you see whether it is working outside the eval corpus.
+            if result.episode.published_at is not None:
+                age = utcnow() - result.episode.published_at
+                span.set_attribute("episode_age_days", age.days)
             episode = (await episodes_read(session, user, [result.episode]))[0]
 
         return CommandResponse(

@@ -7,11 +7,13 @@ change rather than a code change.
 """
 
 import json
+import time
 from typing import Any
 
 import httpx
 from pydantic import BaseModel
 
+from audioreader import telemetry
 from audioreader.llm.client import LLMError
 
 
@@ -78,6 +80,7 @@ class OpenAICompatibleClient:
             },
         }
 
+        started = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(f"{self.base_url}/chat/completions", headers=self._headers, json=payload)
@@ -85,6 +88,17 @@ class OpenAICompatibleClient:
                 body = response.json()
         except httpx.HTTPError as exc:
             raise LLMError(f"{type(exc).__name__}: {exc}") from exc
+
+        # Reported rather than inferred, and folded into the request's total.
+        # One command is about 3,500 input tokens against 45 output, so this is
+        # what makes the cost of a model something measured in production
+        # rather than estimated from a rate card.
+        usage = body.get("usage") or {}
+        telemetry.record_llm_call(
+            input_tokens=usage.get("prompt_tokens") or 0,
+            output_tokens=usage.get("completion_tokens") or 0,
+            seconds=time.perf_counter() - started,
+        )
 
         return _extract_json(body)
 

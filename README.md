@@ -181,20 +181,61 @@ uv run logfire --base-url='https://logfire-eu.pydantic.dev' auth
 uv run logfire --base-url='https://logfire-eu.pydantic.dev' projects use --org 'henry-dashwood' 'hearful'
 ```
 
-**What this is for.** Every spoken command produces one `command` span, and its
-attributes are there to answer the question no status code can: a request that
-plays the wrong episode is a perfectly successful HTTP 200. `action` is what
-happened, `model_action` is what the model asked for — the gap between them is
-the count of times we overrode it — and `failure` names the ways a command ends
-up going nowhere (`invalid_decision`, `episode_not_offered`, `show_not_found`,
-`invalid_episode_pick`, `episode_not_in_show`). `candidate_count` separates the
-model misreading her from the candidate window being too narrow to have held
-the answer at all.
+**One wide event per command.** A spoken request emits a single `command` span
+carrying everything the pipeline learned, rather than a trail of log lines to
+be reassembled later. The reason is that every question worth asking spans the
+whole request — *which commands were misunderstood, and what did her library
+look like when they were?* — and that is one row to group by, not a search
+through many. The line-per-step alternative optimises for writing; this
+optimises for asking.
+
+It exists because the HTTP status code answers none of it: a request that plays
+the wrong episode is a perfectly successful 200.
+
+| | |
+| --- | --- |
+| `action` | what she got |
+| `model_action` | what the model asked for — the gap between the two is how often we overrode it |
+| `failure` | `none`, or how it went nowhere: `invalid_decision`, `episode_not_offered`, `show_not_found`, `invalid_episode_pick`, `episode_not_in_show` |
+| `transcript`, `transcript_words` | what she said, and how much of it arrived |
+| `candidate_count`, `feed_count` | the size and breadth of the haystack |
+| `search_query` | the show name the model heard |
+| `episode_id`, `episode_title`, `feed_title`, `episode_age_days` | what she was given, and how far back it was reached for |
+| `speed` | the multiplier, for `set_speed` |
+| `llm_calls`, `llm_input_tokens`, `llm_output_tokens`, `llm_seconds` | what it cost, summed over a request — naming a show asks the model twice |
+| `user_id`, `provider`, `model` | who, and against what |
+
+Deliberately absent: `failure` and `action` are seeded with plain strings
+(`none`, `error`) rather than left null, so a group-by buckets successes and
+outages alongside every way of failing instead of dropping them.
+
+Some queries this is shaped for:
+
+```sql
+-- where commands go wrong, and how often
+select action, failure, count(*) from records
+where span_name = 'command' group by action, failure order by count(*) desc
+
+-- cost of a spoken command, from real token usage rather than the rate card
+select model, avg(attributes->>'llm_input_tokens'), avg(attributes->>'llm_seconds')
+from records where span_name = 'command' group by model
+
+-- is the phone truncating her? short transcripts, grouped by outcome
+select attributes->>'transcript_words' as words, action, count(*) from records
+where span_name = 'command' group by words, action order by words
+```
 
 None of that is a correctness label; nothing in a request knows whether it was
 right. It is the set of proxies that can be measured without one. Anything it
 surfaces belongs in `backend/evals` as a case, which is where a number that
 means something comes from.
+
+**No sampling, deliberately.** The usual advice with wide events is to keep
+errors and slow requests and sample the healthy remainder at a few percent.
+That arithmetic assumes volume this app does not have: twenty commands a day is
+not a sampling problem, and throwing away nineteen in twenty successes would
+leave the "what does normal look like" baseline too thin to compare a bad week
+against. Revisit it if this ever serves more than a handful of people.
 
 **Transcripts are sent, and the privacy policy says so.** Without them a wrong
 answer cannot be diagnosed: everything else on the span says what happened and
