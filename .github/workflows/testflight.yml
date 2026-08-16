@@ -6,11 +6,23 @@ name: TestFlight
 #     git tag v1.2.0 && git push origin v1.2.0
 #     gh workflow run testflight.yml --ref main
 #
+# Distribution is a separate job from the build, so a build that uploaded fine
+# but failed to distribute can be picked up again without rebuilding:
+#
+#     gh workflow run testflight.yml --ref main -f distribute_build=56
+#
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      distribute_build:
+        description: >-
+          Distribute an already-uploaded build number to the external testers
+          instead of building a new one. Leave empty to build.
+        required: false
+        default: ""
 
 # Two uploads racing each other would take the same build number.
 concurrency:
@@ -19,6 +31,7 @@ concurrency:
 
 jobs:
   testflight:
+    if: inputs.distribute_build == ''
     runs-on: macos-latest
     timeout-minutes: 60
     outputs:
@@ -207,13 +220,18 @@ jobs:
   # runner idle for twenty minutes to do that would be wasteful.
   distribute:
     needs: testflight
+    # `skipped` is the distribute-an-existing-build case, where the build job
+    # never ran. Without always() the whole job would be skipped with it.
+    if: always() && contains(fromJSON('["success", "skipped"]'), needs.testflight.result)
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      # Pinned exactly: this action publishes moving major tags only up to v7,
+      # so `@v10` does not resolve even though v10.0.1 is the current release.
+      - uses: astral-sh/setup-uv@v10.0.1
 
       - name: Set release notes and distribute
         env:
@@ -221,15 +239,24 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           ASC_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
           BUILD_NUMBER: ${{ needs.testflight.outputs.build }}
+          DISTRIBUTE_BUILD: ${{ inputs.distribute_build }}
         run: |
           set -euo pipefail
-          args=(--build-number "$BUILD_NUMBER" --changelog docs/CHANGELOG.md)
+          build="${DISTRIBUTE_BUILD:-$BUILD_NUMBER}"
+          if [ -z "$build" ]; then
+            echo "::error::no build number to distribute"
+            exit 1
+          fi
+          args=(--build-number "$build" --changelog docs/CHANGELOG.md)
 
-          # Only a tag reaches real testers. A manual run still gets its release
-          # notes, so the build is legible in App Store Connect, but stays with
-          # the internal group.
+          # Only a tag, or an explicit request for an existing build, reaches
+          # real testers. A plain manual run still gets its release notes, so the
+          # build is legible in App Store Connect, but stays with the internal
+          # group.
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             args+=(--expect-version "${GITHUB_REF_NAME#v}")
+            args+=(--external-group "Friends and Family")
+          elif [ -n "$DISTRIBUTE_BUILD" ]; then
             args+=(--external-group "Friends and Family")
           fi
 

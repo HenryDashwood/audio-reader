@@ -90,6 +90,13 @@ gh workflow run testflight.yml --ref main
 Only a tag reaches external testers. A manual run uploads the build, sets its
 release notes, and leaves it with the internal group; pushing a `v*` tag also
 adds it to the **Friends and Family** group and submits it for beta app review.
+Building and distributing are separate jobs, so a build that uploaded but failed
+to distribute can be picked up without rebuilding:
+
+```bash
+gh workflow run testflight.yml --ref main -f distribute_build=56
+```
+
 Approval is Apple's to give and typically takes a day, so a tag starts that
 clock rather than finishing it.
 
