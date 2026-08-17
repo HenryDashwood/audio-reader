@@ -130,6 +130,25 @@ RICH_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
 """
 
 
+#: A feed whose article is half maths, written as TeX between dollar signs.
+MATHS_FEED = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Workings</title>
+    <link>https://maths.example.com</link>
+    <item>
+      <title>An intuition for attention</title>
+      <guid isPermaLink="true">https://maths.example.com/p/one</guid>
+      <link>https://maths.example.com/p/one</link>
+      <content:encoded><![CDATA[<p>The formula for self-attention is:</p>
+        <p>$$ \\text{softmax}(\\frac{QK^T}{\\sqrt{d_k}})V $$</p>
+        <p>Imagine the embedding size $d$ is 4.</p>]]></content:encoded>
+    </item>
+  </channel>
+</rss>
+"""
+
+
 class TestArticleHtml:
     async def test_markup_survives_for_the_reader(self, client, respx_mock, monkeypatch):
         monkeypatch.setattr(articles, "FULL_TEXT_THRESHOLD", 10)
@@ -170,6 +189,22 @@ class TestArticleHtml:
         assert "A heading" in text
         assert "Prose with emphasis" in text
         assert "link." in text
+
+    async def test_maths_reaches_the_reader_as_mathml(self, client, respx_mock, monkeypatch):
+        # A blog writes its formulas as TeX and leaves the drawing to a script
+        # in the page, which a reader never runs. Set here instead, so what
+        # arrives is an equation rather than the recipe for one.
+        monkeypatch.setattr(articles, "FULL_TEXT_THRESHOLD", 10)
+        feed_id = (await subscribe(client, respx_mock, MATHS_FEED, "https://maths.example.com/feed.xml")).json()["id"]
+        episode = (await client.get(f"/feeds/{feed_id}/episodes")).json()[0]
+
+        html = (await client.get(f"/episodes/{episode['id']}/text")).json()["html"]
+
+        assert "$" not in html
+        assert '<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">' in html
+        assert "<mfrac>" in html
+        # And the one inline in the sentence stays inline.
+        assert 'display="inline"' in html
 
     async def test_html_is_cached_with_the_text(self, client, respx_mock, article_xml):
         # One fetch between reading and listening, not one each.

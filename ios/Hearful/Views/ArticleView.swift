@@ -21,6 +21,12 @@ import WebKit
 struct ArticleView: View {
     let episode: Episode
     @StateObject private var model = ArticleTextModel()
+    /// The article's own scrolling, handed to the bars so they know what to
+    /// get out of the way of. UIKit will hunt for a scroll view to track when
+    /// it is not told, and it does not find this one: it belongs to a web
+    /// view, three layers inside a representable, rather than to the screen.
+    @State private var articleScroll: UIScrollView?
+    @ObservedObject private var chrome = ArticleControlsModel.shared
     /// Not read directly — it is here so a change of text size redraws the
     /// page, since the web view is sized in points we hand it rather than by
     /// anything that scales on its own.
@@ -30,11 +36,17 @@ struct ArticleView: View {
         VStack(spacing: 0) {
             content
         }
-        // The article runs to the top of the screen, under the back button
-        // and the clock, rather than starting below a bar the width of the
-        // phone. On a screen whose whole job is to hold prose, a strip of
-        // empty chrome across the top is the most expensive thing on it.
-        .ignoresSafeArea(edges: .top)
+        // The article runs the whole height of the screen, under the back
+        // button and the clock at one end and under the tab bar at the other,
+        // rather than stopping dead against them. Prose that ends in a hard
+        // line an inch above the bottom of the screen looks like a page torn
+        // off; prose that slides under a pane of glass looks like a page.
+        //
+        // It is also what the bars themselves are waiting for. They shrink out
+        // of the way of a scroll only while something is scrolling underneath
+        // them, so this is the difference between bars that get out of the way
+        // and bars that sit there.
+        .ignoresSafeArea()
         // Which leaves the clock sitting on the first line of the article
         // once it has scrolled up. A band of the page's own colour, exactly as
         // tall as the status bar, keeps both readable without looking like a
@@ -45,11 +57,49 @@ struct ArticleView: View {
         // one that belongs to the page.
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
-        // Listen and Original ride on the tab bar for as long as this screen
-        // is up, and the back button gets out of the way when she scrolls.
-        .background(ArticleChrome { ArticleControls(episode: episode) })
+        // Listen and Original, in a capsule of their own directly above the
+        // tab bar and exactly as wide, so the bar itself is the same on this
+        // screen as on every other.
+        .overlay(alignment: .bottom) { controlsCapsule }
+        // The tab bar leaves and returns on the same word as the capsule above
+        // it. It used to shrink to a pill on UIKit's own reckoning of the
+        // scroll while the capsule went on ours, and two clocks meant two
+        // answers: the capsule back and the bar still a pill, sitting over the
+        // words underneath.
+        .toolbarVisibility(chrome.hidden ? .hidden : .visible, for: .tabBar)
+        // Both bars get out of the way when she scrolls, and the capsule with
+        // them; and both are told what to watch, which is the web view.
+        .background(ArticleChrome(tracking: articleScroll))
         .task { await model.load(episodeID: episode.id) }
     }
+
+    /// Listen and Original, in a capsule the same length as the tab bar and
+    /// sitting just above it — so the bar itself never changes shape, on this
+    /// screen or any other.
+    ///
+    /// Bottom-aligned rather than placed at a measured height: this overlay's
+    /// own bottom edge already stops at the top of the tab bar, so all that is
+    /// needed is the gap between them. Only the width has to be measured.
+    @ViewBuilder
+    private var controlsCapsule: some View {
+        if !chrome.hidden {
+            ArticleControls(episode: episode)
+                .frame(width: chrome.pillWidth ?? Self.fallbackWidth, height: Self.capsuleHeight)
+                .glassEffect(in: .capsule)
+                .padding(.bottom, Self.gap)
+                // Sliding down and out rather than blinking away: the same
+                // movement the tab bar underneath makes, at the same moment.
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    private static let capsuleHeight: CGFloat = 52
+    /// The space between the two capsules.
+    private static let gap: CGFloat = 10
+    /// Only used if the tab bar could not be measured, which would mean UIKit
+    /// had rearranged itself under us. Controls of roughly the right size beat
+    /// no controls at all.
+    private static let fallbackWidth: CGFloat = 274
 
     private var statusBarScrim: some View {
         GeometryReader { proxy in
@@ -92,7 +142,8 @@ struct ArticleView: View {
                     // Feeds write their pictures and links relative to the
                     // site they came from, so without the article's own
                     // address every image is a broken one.
-                    baseURL: episode.link)
+                    baseURL: episode.link,
+                    scrolling: { articleScroll = $0 })
             }
         }
     }
@@ -106,103 +157,168 @@ struct ArticleView: View {
     }
 }
 
-/// Whether the tab bar has shrunk out of the way of a scroll, and so whether
-/// the controls sitting on it have room for their words.
+/// Where the reader's own controls should sit, and whether they should be
+/// there at all.
 ///
-/// A shared object rather than the environment because the controls hang off
-/// the tab bar in UIKit, outside the SwiftUI tree that would otherwise carry
-/// this down to them.
+/// A shared object rather than plain view state because both answers come from
+/// UIKit — the tab bar's measurements and the web view's scrolling — which is
+/// outside the SwiftUI tree that would otherwise carry them down.
 @MainActor
 final class ArticleControlsModel: ObservableObject {
     static let shared = ArticleControlsModel()
 
-    @Published var isInline = false
+    /// How wide the tab bar's visible capsule is, so the controls above it can
+    /// be cut to the same length. Nil when it could not be measured, which the
+    /// reader answers with a width of its own.
+    @Published var pillWidth: CGFloat?
+    /// True while she is reading down the page, when the controls go the way
+    /// of the two system bars.
+    @Published var hidden = false
 }
 
-/// The two pieces of this screen's furniture that SwiftUI has no word for.
+/// The bits of this screen's furniture that SwiftUI has no word for.
 ///
-/// **Listen and Original ride on the tab bar.** SwiftUI's own
-/// `tabViewBottomAccessory` puts them there, but it can only ever be given
-/// different content — never taken away. Emptying it leaves the pill behind,
-/// blank, floating over the episode list for the rest of the session, and
-/// nothing said in SwiftUI takes it down: not an empty view, not a view of no
-/// height, and removing the modifier rebuilds the whole tab view, which
-/// destroys the navigation that opened the article in the first place.
+/// **All the furniture gets out of the way when she reads, together.** The
+/// system will do a version of this on its own — `hidesBarsOnSwipe` for the
+/// navigation bar, `tabBarMinimizeBehavior` for the tab bar — but each keeps
+/// its own count of the scroll, and the capsule below keeps a third, so they
+/// came and went at different moments: the controls back while the tab bar
+/// was still a pill sitting over the words. So none of the system's versions
+/// are used, and one reading of the scroll moves all three.
 ///
-/// So the accessory is hung and taken down here instead. It is a
-/// `UITabBarController` underneath either way, and `bottomAccessory` is a
-/// property that accepts nothing as readily as something: set on the way in,
-/// cleared on the way out, every time, with no state in between to get stuck.
+/// **The bars need telling what to watch.** UIKit hunts for a scroll view to
+/// track when it is not told which one, and the one here is inside a web view
+/// inside a representable, far enough off the path that the hunt comes back
+/// empty — which is why the bars used to sit still through a whole article.
+/// Naming it also hands UIKit the job of insetting the page clear of the bars
+/// it now sits behind.
 ///
-/// **The back button gets out of the way.** `hidesBarsOnSwipe` is the
-/// system's own reading gesture — swipe up and the bar goes, swipe down and
-/// it comes back — the same bargain the tab bar strikes at the other end of
-/// the screen, and one every reading app on the phone has already taught her.
-/// Off under VoiceOver, where it is driven by a pan of the finger that
-/// VoiceOver never sends: the bar would go once and never come back.
-private struct ArticleChrome<Content: View>: UIViewControllerRepresentable {
-    @ViewBuilder let content: () -> Content
+/// **And the controls need to know where the tab bar is.** Listen and Original
+/// used to hang off the tab bar as a `UITabAccessory`, which meant the bar
+/// grew wider on this screen than on every other — the system's own layout for
+/// a bar carrying an accessory, and not ours to overrule. So they are drawn as
+/// a capsule of our own instead, and this measures the bar underneath so the
+/// two line up. `tabBar.frame` is the full width of the screen and would put
+/// them off both ends; the visible capsule is the platter inside it.
+private struct ArticleChrome: UIViewControllerRepresentable {
+    /// The article's scrolling. Arrives a moment after the screen does, since
+    /// the web view has to exist first.
+    let tracking: UIScrollView?
 
-    func makeUIViewController(context: Context) -> Chrome<Content> {
-        Chrome(controls: content())
-    }
+    func makeUIViewController(context: Context) -> Chrome { Chrome() }
 
-    func updateUIViewController(_ chrome: Chrome<Content>, context: Context) {
-        // Play/pause changes as the player ticks; the accessory is a live view
-        // of it rather than a snapshot taken when the article opened.
-        chrome.controls.rootView = content()
+    func updateUIViewController(_ chrome: Chrome, context: Context) {
+        chrome.track(tracking)
     }
 }
 
-private final class Chrome<Content: View>: UIViewController {
-    let controls: UIHostingController<Content>
+private final class Chrome: UIViewController {
     private weak var tabs: UITabBarController?
+    private weak var tracked: UIScrollView?
+    private var named = false
+    private var scrolling: NSKeyValueObservation?
+    private var lastOffset: CGFloat = 0
 
-    init(controls rootView: Content) {
-        controls = UIHostingController(rootView: rootView)
-        // The accessory sizes itself to what it holds, and paints no
-        // background of its own — the pill behind it is the system's.
-        controls.sizingOptions = [.intrinsicContentSize]
-        controls.view.backgroundColor = .clear
-        super.init(nibName: nil, bundle: nil)
+    /// Name the article's scroll view to the bars at both ends of it, and
+    /// watch it ourselves for the one thing UIKit will not do for us: taking
+    /// our own capsule away while she is reading down the page.
+    ///
+    /// Called both when the scroll view turns up and when this screen does,
+    /// since either can be second, and said once rather than on every redraw.
+    func track(_ scrollView: UIScrollView?) {
+        if let scrollView, scrollView !== tracked {
+            tracked = scrollView
+            named = false
+            watch(scrollView)
+        }
+        guard !named, let tracked, let parent else { return }
+        parent.setContentScrollView(tracked, for: .all)
+        named = true
     }
 
-    required init?(coder: NSCoder) { fatalError("not from a nib") }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        navigationController?.hidesBarsOnSwipe = !UIAccessibility.isVoiceOverRunning
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
         guard let bar = tabBarController else { return }
         tabs = bar
-        // Only while an article is open. Scrolling a page of prose is reading,
-        // and the bar getting out of the way is welcome; scrolling a list of
-        // episodes is looking for one, and having the way out of the list
-        // shrink to a pill while she does it is not.
-        bar.tabBarMinimizeBehavior = .onScrollDown
-        // Whether the bar has shrunk to a pill is a UIKit trait rather than
-        // anything SwiftUI publishes to a view it does not own, so it is read
-        // from here and handed to the controls to lay themselves out by.
-        controls.registerForTraitChanges([UITraitTabAccessoryEnvironment.self]) {
-            (hosted: UIViewController, _) in
-            ArticleControlsModel.shared.isInline =
-                hosted.traitCollection.tabAccessoryEnvironment == .inline
-        }
-        bar.addChild(controls)
-        bar.setBottomAccessory(UITabAccessory(contentView: controls.view), animated: true)
-        controls.didMove(toParent: bar)
+        // Nothing of UIKit's own: neither the tab bar shrinking to a pill on
+        // its reckoning of the scroll, nor `hidesBarsOnSwipe` on the
+        // navigation bar. Both are good behaviour on their own and wrong
+        // together, because each keeps its own time — so all three pieces of
+        // furniture move on the one signal from `watch` below instead.
+        bar.tabBarMinimizeBehavior = .never
+        named = false
+        track(nil)
+        ArticleControlsModel.shared.hidden = false
+        measureTabBar()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        measureTabBar()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         // All of it undone: every other screen in the app wants its navigation
         // bar where it left it, and none of them want these two buttons.
-        navigationController?.hidesBarsOnSwipe = false
         navigationController?.setNavigationBarHidden(false, animated: animated)
-        controls.willMove(toParent: nil)
+        parent?.setContentScrollView(nil, for: .all)
+        scrolling = nil
+        tracked = nil
+        named = false
         tabs?.tabBarMinimizeBehavior = .never
-        tabs?.setBottomAccessory(nil, animated: true)
-        controls.removeFromParent()
         tabs = nil
+        ArticleControlsModel.shared.pillWidth = nil
+        ArticleControlsModel.shared.hidden = false
+    }
+
+    /// How wide the tab bar's visible capsule is, so the controls can be cut
+    /// to the same length.
+    private func measureTabBar() {
+        guard let tabBar = tabs?.tabBar, let platter = tabBar.subviews.first else {
+            ArticleControlsModel.shared.pillWidth = nil
+            return
+        }
+        // A sanity check on a view we did not put there: anything that is not
+        // plausibly the capsule leaves the controls to their own fallback,
+        // rather than drawing them somewhere absurd.
+        let frame = platter.frame
+        guard frame.width > 120, frame.width <= tabBar.bounds.width, frame.height > 20 else {
+            ArticleControlsModel.shared.pillWidth = nil
+            return
+        }
+        ArticleControlsModel.shared.pillWidth = frame.width
+    }
+
+    /// The one signal the whole screen's furniture moves on: away while she
+    /// reads down the page, back when she scrolls up. The navigation bar is
+    /// told here, the tab bar and the capsule read it from the model, and so
+    /// all three leave and return in the same moment.
+    ///
+    /// Nothing hides under VoiceOver. The gesture that brings the bars back is
+    /// a scroll she has no reason to make when she is moving by element, and a
+    /// back button that has gone with no obvious way to return it is worse
+    /// than a screen with less room on it.
+    private func watch(_ scrollView: UIScrollView) {
+        guard !UIAccessibility.isVoiceOverRunning else { return }
+        lastOffset = scrollView.contentOffset.y
+        scrolling = scrollView.observe(\.contentOffset, options: [.new]) { [weak self] view, _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let offset = view.contentOffset.y
+                let travelled = offset - self.lastOffset
+                // Enough movement to be a scroll rather than a wobble, and far
+                // enough down that the top of the article is not flickering.
+                guard abs(travelled) > 6 else { return }
+                self.lastOffset = offset
+                let away = travelled > 0 && offset > 32
+                guard ArticleControlsModel.shared.hidden != away else { return }
+                self.navigationController?.setNavigationBarHidden(away, animated: true)
+                withAnimation(.easeOut(duration: 0.25)) {
+                    ArticleControlsModel.shared.hidden = away
+                }
+            }
+        }
     }
 }
 
@@ -219,7 +335,6 @@ private final class Chrome<Content: View>: UIViewController {
 struct ArticleControls: View {
     let episode: Episode
     @ObservedObject private var player = PlaybackCoordinator.shared
-    @ObservedObject private var chrome = ArticleControlsModel.shared
 
     var body: some View {
         HStack(spacing: 8) {
@@ -230,21 +345,14 @@ struct ArticleControls: View {
                     try? player.play(episode)
                 }
             } label: {
-                if chrome.isInline {
-                    // Half the pill each, rather than two glyphs huddled in
-                    // the middle of it: the target is what she is aiming at,
-                    // and there is no reason for it to be smaller than the
-                    // space going spare.
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                } else {
-                    Label(
-                        isPlaying ? "Pause" : "Listen",
-                        systemImage: isPlaying ? "pause.fill" : "play.fill"
-                    )
-                    .font(.body.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                }
+                // Half the capsule each, so the two sit at the centre of
+                // their halves and the target is as big as the space allows.
+                Label(
+                    isPlaying ? "Pause" : "Listen",
+                    systemImage: isPlaying ? "pause.fill" : "play.fill"
+                )
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
             }
             .accessibilityLabel(isPlaying ? "Pause" : "Listen")
             .accessibilityHint(
@@ -254,16 +362,8 @@ struct ArticleControls: View {
 
             if let link = episode.link {
                 Link(destination: link) {
-                    if chrome.isInline {
-                        Image(systemName: "safari")
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    } else {
-                        // Half the bar each, so the two sit at the centre of
-                        // their halves rather than one filling the bar and the
-                        // other hanging off the end of it.
-                        Label("Original", systemImage: "safari")
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
+                    Label("Original", systemImage: "safari")
+                        .frame(maxWidth: .infinity, minHeight: 44)
                 }
                 .accessibilityLabel("Open the original")
                 .accessibilityHint("Opens the article's own page in your browser")
@@ -287,6 +387,8 @@ struct ArticleControls: View {
 private struct ArticleWebView: UIViewRepresentable {
     let document: String
     let baseURL: URL?
+    /// Handed out so the bars above and below can be told what to track.
+    let scrolling: (UIScrollView) -> Void
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -299,6 +401,14 @@ private struct ArticleWebView: UIViewRepresentable {
         view.isOpaque = false
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
+        // The page sits behind both bars, so its own content has to start and
+        // stop clear of them — otherwise the first line is under the clock and
+        // the last is under the tab bar for good.
+        view.scrollView.contentInsetAdjustmentBehavior = .always
+        // Out of the update pass: this is a value the enclosing view keeps,
+        // and handing it over while that view is being built is a write in the
+        // middle of a read.
+        DispatchQueue.main.async { scrolling(view.scrollView) }
         return view
     }
 
@@ -410,9 +520,23 @@ enum ArticleDocument {
             margin-left: 0; padding-left: 1em;
             border-left: 3px solid var(--rule); color: var(--quiet);
           }
-          /* Code and tables scroll inside themselves rather than making the
-             whole article scroll sideways. */
+          /* Code, tables and formulas scroll inside themselves rather than
+             making the whole article scroll sideways. */
           pre { overflow-x: auto; font-size: 0.9em; }
+          /* Maths arrives as MathML, which WebKit sets itself in the article's
+             own font. An equation on its own line comes in a box of its own,
+             because WebKit will not scroll a <math> element however it is
+             styled — it widens the article instead, and then every paragraph
+             of it slides about under the thumb. */
+          .formula {
+            display: block;
+            overflow-x: auto;
+            overflow-y: hidden;
+            margin: 1.2em 0;
+          }
+          /* Centred where it fits, and hard against the left edge where it
+             does not, so a long equation is read from its beginning. */
+          .formula > math { width: max-content; margin: 0 auto; }
           table { display: block; overflow-x: auto; border-collapse: collapse; }
           th, td { border: 1px solid var(--rule); padding: 0.4em 0.6em; text-align: left; }
           hr { border: 0; border-top: 1px solid var(--rule); margin: 2em 0; }

@@ -18,6 +18,7 @@ dependencies = [
     "trafilatura>=2.2.0",
     "logfire[fastapi,httpx,sqlalchemy,system-metrics]>=4.40.0",
     "nh3>=0.3.6",
+    "latex2mathml>=3.77",
 ]
 
 [dependency-groups]
