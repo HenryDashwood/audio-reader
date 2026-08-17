@@ -20,6 +20,10 @@ class ParsedItem(BaseModel):
     title: str
     description: str | None = None
     content_html: str | None = None
+    #: Who wrote it — the byline a reader shows above the first paragraph.
+    #: From the item where the feed names one, otherwise from the channel,
+    #: which for a one-writer blog is the same person either way.
+    author: str | None = None
     audio_url: str | None = None
     duration_seconds: int | None = None
     published_at: datetime | None = None
@@ -30,6 +34,7 @@ class ParsedItem(BaseModel):
 class ParsedFeed(BaseModel):
     title: str
     description: str | None = None
+    author: str | None = None
     image_url: str | None = None
     site_url: str | None = None
     items: list[ParsedItem]
@@ -43,16 +48,18 @@ def parse_feed(raw: bytes) -> ParsedFeed:
     if not parsed.feed.get("title") and not parsed.entries:
         raise FeedParseError("input does not look like an RSS/Atom feed")
 
+    feed_author = _author(parsed.feed)
     return ParsedFeed(
         title=parsed.feed.get("title", "Untitled feed"),
         description=parsed.feed.get("description") or None,
+        author=feed_author,
         image_url=(parsed.feed.get("image") or {}).get("href"),
         site_url=parsed.feed.get("link"),
-        items=[item for entry in parsed.entries if (item := _parse_entry(entry)) is not None],
+        items=[item for entry in parsed.entries if (item := _parse_entry(entry, feed_author)) is not None],
     )
 
 
-def _parse_entry(entry: feedparser.util.FeedParserDict) -> ParsedItem | None:
+def _parse_entry(entry: feedparser.util.FeedParserDict, feed_author: str | None) -> ParsedItem | None:
     audio_url = _first_audio_enclosure(entry)
     guid = entry.get("id") or entry.get("link") or audio_url
     if guid is None:
@@ -65,6 +72,7 @@ def _parse_entry(entry: feedparser.util.FeedParserDict) -> ParsedItem | None:
         title=entry.get("title") or "Untitled",
         description=entry.get("summary") or None,
         content_html=_content_html(entry),
+        author=_author(entry) or feed_author,
         audio_url=audio_url,
         duration_seconds=_parse_duration(entry.get("itunes_duration")),
         published_at=_published_at(entry),
@@ -87,6 +95,22 @@ def _content_html(entry: feedparser.util.FeedParserDict) -> str | None:
         if content.get("type") == "text/html" and content.get("value"):
             return content["value"]
     return None
+
+
+def _author(source: feedparser.util.FeedParserDict) -> str | None:
+    """A byline, not a mailbox.
+
+    RSS specifies <author> as an email address with the writer's name in
+    brackets after it, so a great many feeds put "noreply@example.com (Jane
+    Doe)" where a person's name belongs. feedparser splits that apart into
+    author_detail.name, which is the half worth showing above an article; a
+    bare address is nobody's byline, so it is dropped rather than displayed.
+    """
+    name = (source.get("author_detail") or {}).get("name")
+    byline = (name or source.get("author") or "").strip()
+    if not byline or "@" in byline:
+        return None
+    return byline
 
 
 def _parse_duration(value: str | None) -> int | None:

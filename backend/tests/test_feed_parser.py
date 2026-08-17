@@ -58,6 +58,14 @@ class TestPodcastFeed:
         # No item-level image: the API falls back to the show's artwork.
         assert parse_feed(podcast_xml).items[1].image_url is None
 
+    def test_a_name_is_taken_out_of_the_rss_author_mailbox(self, podcast_xml):
+        # <author> is specified as an address with the name in brackets after
+        # it. The name is the byline; the address is not.
+        assert parse_feed(podcast_xml).items[0].author == "Nadia Rahman"
+
+    def test_an_item_with_no_author_takes_the_channel_s(self, podcast_xml):
+        assert parse_feed(podcast_xml).items[1].author == "The History Hour team"
+
 
 class TestArticleFeed:
     def test_items_have_no_audio(self, article_xml):
@@ -69,6 +77,16 @@ class TestArticleFeed:
         item = parse_feed(article_xml).items[0]
         assert item.content_html is not None
         assert "death traps" in item.content_html
+
+    def test_the_writer_is_captured_for_the_byline(self, article_xml):
+        assert parse_feed(article_xml).items[0].author == "Ada Whitfield"
+
+    def test_a_bare_mailbox_is_not_a_byline(self, article_xml):
+        # The channel names only <managingEditor>, an address. The second item
+        # names nobody, so it has no author at all rather than an email one.
+        feed = parse_feed(article_xml)
+        assert feed.author is None
+        assert feed.items[1].author is None
 
 
 class TestInvalidInput:

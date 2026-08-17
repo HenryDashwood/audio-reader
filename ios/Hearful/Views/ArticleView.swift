@@ -14,12 +14,14 @@ import WebKit
 /// has become plain words is a reference nobody can follow. Speech has to do
 /// without all of that; a screen does not.
 ///
-/// Listening is still the first control on the page. This is a way into an
-/// article, not a replacement for hearing it.
+/// Listening is still the first control on the page — but it now lives on the
+/// tab bar rather than above the text. Two full-width buttons pinned over
+/// every article cost a third of a phone screen on the one screen whose whole
+/// job is to show as much prose as it can.
 struct ArticleView: View {
     let episode: Episode
     @StateObject private var model = ArticleTextModel()
-    @ObservedObject private var player = PlaybackCoordinator.shared
+    @ObservedObject private var accessory = ArticleControlsModel.shared
     /// Not read directly — it is here so a change of text size redraws the
     /// page, since the web view is sized in points we hand it rather than by
     /// anything that scales on its own.
@@ -27,53 +29,18 @@ struct ArticleView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            controls
-            Divider()
             content
         }
-        .navigationTitle(episode.title)
+        // No title in the bar: it is the same sentence as the heading the
+        // article opens with, a foot below it, and the article's own is the
+        // one that belongs to the page.
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.load(episodeID: episode.id) }
-    }
-
-    /// Pinned above the article rather than scrolling with it: both of these
-    /// are ways to leave this screen for the thing it is about, and having to
-    /// scroll back to the top to reach them is a tax on long pieces — which
-    /// is to say on exactly the articles worth listening to instead.
-    private var controls: some View {
-        HStack(spacing: 10) {
-            Button {
-                if isCurrent {
-                    player.toggle()
-                } else {
-                    try? player.play(episode)
-                }
-            } label: {
-                Label(
-                    isCurrent && player.isPlaying ? "Pause" : "Listen",
-                    systemImage: isCurrent && player.isPlaying ? "pause.fill" : "play.fill"
-                )
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 30)
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityHint(
-                isCurrent && player.isPlaying
-                    ? "Stops reading this article aloud"
-                    : "Reads this article aloud")
-
-            if let link = episode.link {
-                Link(destination: link) {
-                    Label("Original", systemImage: "safari")
-                        .frame(minHeight: 30)
-                }
-                .buttonStyle(.bordered)
-                .accessibilityLabel("Open the original")
-                .accessibilityHint("Opens the article's own page in your browser")
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        // Listen and Original ride on the tab bar for as long as this screen
+        // is up. Set here rather than in the tab bar itself because the tab
+        // bar has no idea what is on top of it.
+        .onAppear { accessory.episode = episode }
+        .onDisappear { accessory.episode = nil }
     }
 
     @ViewBuilder
@@ -111,32 +78,95 @@ struct ArticleView: View {
         }
     }
 
-    private var isCurrent: Bool { player.currentEpisode?.id == episode.id }
-
-    /// Title and byline live in the document rather than above it, so they
-    /// scroll away like the top of any article instead of holding a third of
-    /// a phone screen for the whole read.
     private func document(for article: ArticleTextModel.Article) -> String {
-        var header = "<h1>\(ArticleTextModel.escaped(episode.title))</h1>"
-        var meta: [String] = []
-        if let published = episode.publishedAt {
-            meta.append(
-                ArticleTextModel.escaped(
-                    published.formatted(.dateTime.day().month(.wide).year())))
-        }
-        // The player's own estimate, not a separate reading-speed guess: two
-        // different numbers for one article, here and on the scrubber, would
-        // be worse than no number at all.
-        if let length = formatLength(seconds: Int(article.spokenDuration)) {
-            meta.append("\(length) to listen")
-        }
-        if !meta.isEmpty {
-            header += "<p class=\"meta\">\(meta.joined(separator: " · "))</p>"
-        }
-        return ArticleDocument.page(
-            body: header + article.body,
+        ArticleDocument.page(
+            body: ArticleDocument.header(
+                title: episode.title, author: episode.author,
+                publishedAt: episode.publishedAt) + article.body,
             pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize)
     }
+}
+
+/// Which article's controls the tab bar should be carrying, if any.
+///
+/// The tab bar lives at the root of the app and the article three pushes deep
+/// inside one of its tabs, so the two cannot see each other. This is the note
+/// between them: the reader writes the episode it is showing, the tab bar
+/// reads it, and an empty one means no article is open and the bar is just a
+/// bar again.
+@MainActor
+final class ArticleControlsModel: ObservableObject {
+    static let shared = ArticleControlsModel()
+
+    @Published var episode: Episode?
+}
+
+/// Listen and Original, riding above the three tabs.
+///
+/// They were two large buttons above the text, which is a lot of screen to
+/// give permanently to controls used once each. Down here they are always
+/// within thumb's reach without costing the article anything — the same trade
+/// the system's own accessory makes for the Music app's player.
+///
+/// The pill shrinks when the tab bar does, so this has two forms: the full one
+/// with words on it, and a compact one of nothing but glyphs for when the tab
+/// bar has collapsed out of the way of a scroll.
+struct ArticleControls: View {
+    let episode: Episode
+    @ObservedObject private var player = PlaybackCoordinator.shared
+    @Environment(\.tabViewBottomAccessoryPlacement) private var placement
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                if isCurrent {
+                    player.toggle()
+                } else {
+                    try? player.play(episode)
+                }
+            } label: {
+                if placement == .inline {
+                    // Half the pill each, rather than two glyphs huddled in
+                    // the middle of it: the target is what she is aiming at,
+                    // and there is no reason for it to be smaller than the
+                    // space going spare.
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                } else {
+                    Label(
+                        isPlaying ? "Pause" : "Listen",
+                        systemImage: isPlaying ? "pause.fill" : "play.fill"
+                    )
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                }
+            }
+            .accessibilityLabel(isPlaying ? "Pause" : "Listen")
+            .accessibilityHint(
+                isPlaying
+                    ? "Stops reading this article aloud"
+                    : "Reads this article aloud")
+
+            if let link = episode.link {
+                Link(destination: link) {
+                    if placement == .inline {
+                        Image(systemName: "safari")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    } else {
+                        Label("Original", systemImage: "safari")
+                            .frame(minHeight: 44)
+                    }
+                }
+                .accessibilityLabel("Open the original")
+                .accessibilityHint("Opens the article's own page in your browser")
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+    }
+
+    private var isCurrent: Bool { player.currentEpisode?.id == episode.id }
+    private var isPlaying: Bool { isCurrent && player.isPlaying }
 }
 
 /// The article itself. A web view because the content is HTML from somewhere
@@ -201,6 +231,36 @@ private struct ArticleWebView: UIViewRepresentable {
 
 /// The page the article is rendered into.
 enum ArticleDocument {
+    /// Everything above the first paragraph: the article's title, then who
+    /// wrote it and when.
+    ///
+    /// Title and byline live in the document rather than in the bar above it,
+    /// so they scroll away like the top of any article instead of sitting
+    /// over it for the whole read — and so the title is said once rather than
+    /// twice, an inch apart, which is what the navigation bar made of it.
+    ///
+    /// The byline used to end with how long the article would take to hear.
+    /// That is a fact about the app rather than about the piece, and the
+    /// scrubber says it the moment she starts listening anyway.
+    static func header(title: String, author: String?, publishedAt: Date?) -> String {
+        var header = "<h1>\(ArticleTextModel.escaped(title))</h1>"
+        var meta: [String] = []
+        if let author = author?.trimmingCharacters(in: .whitespacesAndNewlines), !author.isEmpty {
+            meta.append(ArticleTextModel.escaped(author))
+        }
+        // Most feeds name nobody, and a good few name nothing at all; the line
+        // is then the half that exists, or is not there.
+        if let publishedAt {
+            meta.append(
+                ArticleTextModel.escaped(
+                    publishedAt.formatted(.dateTime.day().month(.wide).year())))
+        }
+        if !meta.isEmpty {
+            header += "<p class=\"meta\">\(meta.joined(separator: " · "))</p>"
+        }
+        return header
+    }
+
     /// Wraps an article's body in a stylesheet built for reading.
     ///
     /// The body size is passed in rather than left to the web view's default,
@@ -266,13 +326,9 @@ final class ArticleTextModel: ObservableObject {
         /// second code path for the degraded case is a second thing to get
         /// wrong, in the case nobody looks at.
         let body: String
-        /// How long the player will take to read it aloud, from the player's
-        /// own estimate so the two never disagree.
-        let spokenDuration: TimeInterval
 
         init(text: String, html: String?) {
             body = html?.isEmpty == false ? html! : Self.wrapped(text)
-            spokenDuration = ArticleScript(text: text).duration
         }
 
         /// Plain paragraphs as the simplest possible article.

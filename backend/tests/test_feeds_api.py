@@ -138,6 +138,14 @@ class TestListEpisodes:
         assert episode["duration_seconds"] == 3723
         assert episode["published_at"].startswith("2026-07-28")
 
+    async def test_episode_carries_its_byline(self, client, respx_mock, article_xml):
+        # The reader shows this above the first paragraph, in place of the
+        # title it already has in the navigation bar.
+        feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
+        episodes = (await client.get(f"/feeds/{feed_id}/episodes")).json()
+        assert episodes[0]["author"] == "Ada Whitfield"
+        assert episodes[1]["author"] is None
+
     async def test_episode_artwork_prefers_item_image(self, client, respx_mock, podcast_xml):
         feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
         episodes = (await client.get(f"/feeds/{feed_id}/episodes")).json()

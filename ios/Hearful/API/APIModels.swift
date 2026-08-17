@@ -38,6 +38,10 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable {
     let id: Int
     let title: String
     let description: String?
+    /// Who wrote it, where the feed says. The byline on the reader's page;
+    /// nil for most podcasts, which name a show rather than a person, and for
+    /// anything stored before the field existed.
+    var author: String?
     let audioURL: URL?
     let durationSeconds: Int?
     let publishedAt: Date?
@@ -58,7 +62,7 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable {
     var hasText: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, description, link, completed, dismissed
+        case id, title, description, author, link, completed, dismissed
         case audioURL = "audio_url"
         case durationSeconds = "duration_seconds"
         case publishedAt = "published_at"

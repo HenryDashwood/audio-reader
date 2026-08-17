@@ -59,6 +59,9 @@ class EpisodeRead(BaseModel):
     id: int
     title: str
     description: str | None
+    #: The byline, where the feed gives one. None for most podcasts, which
+    #: name a show rather than a person.
+    author: str | None = None
     audio_url: str | None
     duration_seconds: int | None
     published_at: datetime | None

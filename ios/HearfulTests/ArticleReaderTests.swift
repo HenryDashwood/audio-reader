@@ -194,23 +194,6 @@ struct ArticleDocumentTests {
         #expect(loaded.body.contains("&amp;"))
     }
 
-    @Test func theLengthShownIsStillMeasuredFromTheSpokenText() async {
-        // Not from the markup: the number on this screen is the number on the
-        // scrubber, and the scrubber counts words the synthesiser will say.
-        let api = FakeAPI()
-        api.articleText = article
-        api.articleHTML = "<p>Anything at all.</p>"
-        let model = ArticleTextModel(api: api, cache: makeCache())
-
-        await model.load(episodeID: 1)
-
-        guard case .loaded(let loaded) = model.state else {
-            Issue.record("expected the article, got \(model.state)")
-            return
-        }
-        #expect(loaded.spokenDuration == ArticleScript(text: article).duration)
-    }
-
     @Test func theMarkupIsSavedWithTheText() async {
         let cache = makeCache()
         let api = FakeAPI()
@@ -250,6 +233,62 @@ struct ArticleDocumentTests {
         #expect(page.contains("<p>Hello</p>"))
         // Both appearances, since the page paints no background of its own.
         #expect(page.contains("prefers-color-scheme: dark"))
+    }
+}
+
+@Suite("An article's heading")
+struct ArticleHeaderTests {
+    private let published = Date(timeIntervalSince1970: 1_785_801_600)  // 4 August 2026
+    /// However this phone's region writes it — the test is about what is in
+    /// the line and in which order, not about which country reads it.
+    private var date: String { published.formatted(.dateTime.day().month(.wide).year()) }
+
+    @Test func theBylineIsWhoWroteItAndWhen() {
+        let header = ArticleDocument.header(
+            title: "The Beauty Of Settled Science", author: "Scott Alexander",
+            publishedAt: published)
+
+        #expect(header.contains("<h1>The Beauty Of Settled Science</h1>"))
+        #expect(header.contains("<p class=\"meta\">Scott Alexander · \(date)</p>"))
+    }
+
+    @Test func howLongItTakesToHearIsNotInIt() {
+        // It was, and it is a fact about the app rather than about the piece.
+        // The scrubber says it the moment she starts listening.
+        let header = ArticleDocument.header(
+            title: "A post", author: "Ada Whitfield", publishedAt: published)
+
+        #expect(!header.contains("to listen"))
+        #expect(!header.contains(" min"))
+    }
+
+    @Test func anArticleThatNamesNobodyShowsItsDateAlone() {
+        // Most podcast feeds, and a fair few blogs.
+        let header = ArticleDocument.header(
+            title: "A post", author: nil, publishedAt: published)
+
+        #expect(header.contains("<p class=\"meta\">\(date)</p>"))
+    }
+
+    @Test func aBlankAuthorIsNotADanglingSeparator() {
+        let header = ArticleDocument.header(
+            title: "A post", author: "   ", publishedAt: published)
+
+        #expect(!header.contains("·"))
+        #expect(header.contains("<p class=\"meta\">\(date)</p>"))
+    }
+
+    @Test func withNeitherThereIsNoBylineAtAll() {
+        let header = ArticleDocument.header(title: "A post", author: nil, publishedAt: nil)
+
+        #expect(header == "<h1>A post</h1>")
+    }
+
+    @Test func aBylineIsEscapedOnItsWayIn() {
+        let header = ArticleDocument.header(
+            title: "A post", author: "Ben & Jerry <b>", publishedAt: nil)
+
+        #expect(header.contains("Ben &amp; Jerry &lt;b&gt;"))
     }
 }
 

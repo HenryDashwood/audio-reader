@@ -98,6 +98,7 @@ def new_episodes(parsed: ParsedFeed, known_guids: set[str]) -> list[Episode]:
                 title=item.title,
                 description=item.description,
                 content_html=item.content_html,
+                author=item.author,
                 audio_url=item.audio_url,
                 duration_seconds=item.duration_seconds,
                 published_at=item.published_at,

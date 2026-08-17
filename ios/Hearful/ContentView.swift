@@ -12,6 +12,7 @@ func openVoiceSheet(_ showingVoice: Binding<Bool>) {
 struct ContentView: View {
     @State private var showingVoice = false
     @State private var showingNowPlaying = false
+    @ObservedObject private var articleControls = ArticleControlsModel.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +27,22 @@ struct ContentView: View {
                     SettingsView()
                 }
             }
+            // The bar grows upwards when a screen has controls of its own to
+            // put there, rather than those controls taking a slice out of the
+            // screen they belong to. Nothing to show means no accessory and a
+            // tab bar of exactly the size it was.
+            .tabViewBottomAccessory {
+                if let episode = articleControls.episode {
+                    ArticleControls(episode: episode)
+                }
+            }
+            // Scrolling down collapses the bar to a pill and scrolling up
+            // brings it back — the system's own behaviour, and the one people
+            // already have the reflex for, rather than a gesture of our
+            // invention. The controls above go with it, shrinking to glyphs
+            // instead of disappearing, so listening is never more than a tap
+            // away however far down the article she has read.
+            .tabBarMinimizeBehavior(.onScrollDown)
             MiniPlayer(showingNowPlaying: $showingNowPlaying)
         }
         .sheet(isPresented: $showingNowPlaying) {

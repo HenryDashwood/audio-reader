@@ -52,6 +52,10 @@ class Episode(Base):
     title: Mapped[str]
     description: Mapped[str | None] = mapped_column(Text)
     content_html: Mapped[str | None] = mapped_column(Text)
+    # Who wrote it, for the byline above the article on screen. Falls back to
+    # the channel's own author at parse time, and is NULL for the many feeds
+    # that name nobody at all — a reader shows the date alone in that case.
+    author: Mapped[str | None]
     # Speech-ready text for an article, extracted lazily on first read and
     # cached here so replaying does not refetch the page.
     article_text: Mapped[str | None] = mapped_column(Text)

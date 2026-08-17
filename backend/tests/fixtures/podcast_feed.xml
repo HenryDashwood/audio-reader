@@ -5,9 +5,11 @@
     <link>https://example.com/historyhour</link>
     <description>A weekly podcast about history.</description>
     <itunes:image href="https://example.com/historyhour/cover.jpg"/>
+    <itunes:author>The History Hour team</itunes:author>
     <item>
       <title>The Fall of Constantinople</title>
       <guid isPermaLink="false">hh-ep-103</guid>
+      <author>bookings@example.com (Nadia Rahman)</author>
       <pubDate>Tue, 28 Jul 2026 05:00:00 GMT</pubDate>
       <description>With guest Professor Maria Sharpe on the siege of 1453.</description>
       <enclosure url="https://cdn.example.com/hh/103.mp3" length="55123456" type="audio/mpeg"/>
