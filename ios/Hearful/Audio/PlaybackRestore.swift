@@ -12,6 +12,13 @@ enum PlaybackRestore {
         defaults.set(episodeID, forKey: lastEpisodeKey)
     }
 
+    /// Called when the player is emptied — she closed it, or the episode
+    /// ended. Without this, the next launch would put the same bar back at the
+    /// bottom of the screen, which is the thing she was getting rid of.
+    static func forget(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: lastEpisodeKey)
+    }
+
     /// Called once when the signed-in UI appears. Fetches the episode fresh
     /// rather than caching it: the payload carries the saved playback
     /// position, which may have moved on another device since last launch.

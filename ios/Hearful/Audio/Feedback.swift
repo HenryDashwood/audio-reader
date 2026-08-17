@@ -25,10 +25,20 @@ protocol FeedbackPlaying {
     func play(_ cue: Cue)
 }
 
+/// Feels and sounds like nothing. What the shared cue player is under test:
+/// the tones here are system sounds, which a test run plays out of the Mac's
+/// speakers for real. A test that wants to check a cue fired passes in its own
+/// recording stand-in instead.
+@MainActor
+final class SilentFeedback: FeedbackPlaying {
+    func play(_ cue: Cue) {}
+}
+
 @MainActor
 final class Feedback: FeedbackPlaying {
     /// One instance app-wide, so the generators stay warm between taps.
-    static let shared = Feedback()
+    static let shared: FeedbackPlaying =
+        TestEnvironment.isRunningTests ? SilentFeedback() : Feedback()
 
     private let tick = UIImpactFeedbackGenerator(style: .light)
     private let impact = UIImpactFeedbackGenerator(style: .medium)

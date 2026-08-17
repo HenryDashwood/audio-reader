@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import MediaPlayer
 import UIKit
 
@@ -44,10 +45,13 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     private var loadTask: Task<Void, Never>?
     /// Sounded when an article is read to the end. Injectable for tests.
     var feedback: FeedbackPlaying = Feedback.shared
+    /// Announces that the article has been read to the end, for the
+    /// coordinator to act on.
+    let finished = PassthroughSubject<Void, Never>()
 
     init(
         api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
-        synthesizer: SpeechSynthesizing = SystemSpeechSynthesizer()
+        synthesizer: SpeechSynthesizing = SpeechSynthesizers.make()
     ) {
         self.api = api
         self.synthesizer = synthesizer
@@ -180,6 +184,20 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         isPlaying = false
     }
 
+    /// Stops and unloads, leaving nothing loaded at all. The episode is
+    /// published as nil before the clock is wound back, for the reason given
+    /// on AudioPlayer.clear().
+    func clear() {
+        loadTask?.cancel()
+        loadTask = nil
+        deactivate()
+        currentEpisode = nil
+        script = nil
+        chunkIndex = 0
+        currentTime = 0
+        duration = 0
+    }
+
     // MARK: - Loading
 
     private func load(_ episode: Episode, andPlay: Bool) {
@@ -299,6 +317,8 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             // The same marker a finished episode gets: an article simply
             // stopping mid-silence reads as a fault.
             feedback.play(.finished)
+            // Qualified: the parameter of this method shadows the subject.
+            self.finished.send()
         }
     }
 
@@ -343,6 +363,8 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     }
 
     private func updateNowPlayingPosition() {
+        // Nothing loaded means nothing to say — see AudioPlayer's copy.
+        guard currentEpisode != nil else { return }
         var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(playbackRate) : 0.0

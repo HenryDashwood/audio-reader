@@ -58,6 +58,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
             rates: article.$playbackRate, when: .article)
         wireRemoteCommands()
         wireAudioSessionEvents()
+        wireCompletion()
     }
 
     var progress: Double {
@@ -122,12 +123,33 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     }
 
     func resume() {
+        // Nothing loaded, nothing to put back on. Reachable since the player
+        // can be emptied: a lock-screen play button, or the voice controller
+        // restoring what she interrupted, would otherwise activate the audio
+        // session — silencing whatever else is playing — for no sound at all.
+        guard currentEpisode != nil else { return }
         wantsPlayback = true
         active.resume()
     }
 
     func toggle() {
         isPlaying ? pause() : resume()
+    }
+
+    /// Puts the player away: stops sound, unloads both players, clears the
+    /// lock screen, and forgets the episode so it does not come back at the
+    /// next launch. This is what empties the mini player.
+    ///
+    /// Both players are cleared, not just the active one, so nothing is left
+    /// holding an item that a later mode switch would bring back on screen.
+    func clear() {
+        wantsPlayback = false
+        audio.clear()
+        article.clear()
+        // Last: the players' own pausing writes to the now-playing info, so
+        // emptying it any earlier just refills it with a rate and a clock.
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        PlaybackRestore.forget()
     }
 
     func skip(by seconds: TimeInterval) {
@@ -202,6 +224,36 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
             guard let self, self.mode == expected else { return }
             self.playbackRate = value
         }.store(in: &cancellables)
+    }
+
+    /// An episode running out is the end of it, so the player goes away.
+    ///
+    /// Leaving it up gave her a bar she could not get rid of: it stayed at the
+    /// bottom of every screen, said the episode she had just finished, and did
+    /// nothing useful — pressing play on an item sitting on its own last second
+    /// only starts the outro again. Clearing here rather than in the players
+    /// keeps both kinds of item ending the same way.
+    ///
+    /// The order matters: the players sound their end-of-item cue and land the
+    /// clock on the duration before this runs, so the position reporter still
+    /// sees a finished episode when clear() publishes the change.
+    private func wireCompletion() {
+        audio.finished
+            .sink { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.mode == .audio else { return }
+                    self.clear()
+                }
+            }
+            .store(in: &cancellables)
+        article.finished
+            .sink { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.mode == .article else { return }
+                    self.clear()
+                }
+            }
+            .store(in: &cancellables)
     }
 
     /// Phone calls, alarms, Siri, and headphones being pulled out.

@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import MediaPlayer
 import UIKit
 
@@ -36,6 +37,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     /// Sounded when an item reaches its end. Injectable so the tests can watch
     /// for it without a speaker.
     var feedback: FeedbackPlaying = Feedback.shared
+    /// Announces that the current item has run out, for the coordinator to act
+    /// on. The player itself does not decide what happens next.
+    let finished = PassthroughSubject<Void, Never>()
 
     var progress: Double {
         duration > 0 ? min(max(currentTime / duration, 0), 1) : 0
@@ -107,6 +111,26 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
 
     func toggle() {
         isPlaying ? pause() : resume()
+    }
+
+    /// Stops and unloads, leaving nothing loaded at all.
+    ///
+    /// The episode is published as nil before the clock is wound back: the
+    /// position reporter flushes on that change and works out from the
+    /// duration whether she finished it, so zeroing first would file a
+    /// finished episode as unplayed.
+    func clear() {
+        player.pause()
+        currentEpisode = nil
+        player.replaceCurrentItem(with: nil)
+        statusObservation = nil
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+            self.endObserver = nil
+        }
+        currentTime = 0
+        duration = 0
+        isPlaying = false
     }
 
     func skip(by seconds: TimeInterval) {
@@ -197,6 +221,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                 self.currentTime = self.duration
                 self.updateNowPlayingPosition()
                 self.feedback.play(.finished)
+                self.finished.send()
             }
         }
     }
@@ -209,6 +234,10 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                 // isScrubbing: her thumb is on the slider and owns the number.
                 // isSeeking: the clock has not caught up with where we jumped.
                 guard let self, !self.isScrubbing, !self.isSeeking else { return }
+                // With no item loaded — after clear() — the clock is invalid
+                // and reads as NaN, which would spread to the progress bar and
+                // to the position written to the server.
+                guard time.seconds.isFinite else { return }
                 self.currentTime = time.seconds
             }
         }
@@ -267,6 +296,10 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     }
 
     private func updateNowPlayingPosition() {
+        // Nothing loaded means nothing to say. Without this, the KVO callbacks
+        // that arrive a beat after clear() would put an empty entry — no
+        // title, a zeroed clock — back on the lock screen.
+        guard currentEpisode != nil else { return }
         var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(playbackRate) : 0.0

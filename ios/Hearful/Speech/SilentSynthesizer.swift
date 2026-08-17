@@ -1,12 +1,11 @@
 import AVFoundation
 
-@testable import Hearful
-
 /// A synthesiser that says nothing.
 ///
-/// Every ArticlePlayer a test builds must be given one of these: the real
-/// synthesiser routes through the simulator to the Mac's speakers, so running
-/// the suite otherwise reads the fixture articles out loud.
+/// What an ArticlePlayer gets under test, so the suite cannot read the
+/// fixture articles out of the Mac's speakers. It lives in the app target
+/// rather than the test one only because the default has to be able to reach
+/// it; nothing in the app uses it otherwise.
 ///
 /// It records what would have been spoken, and lets a test deliver the
 /// callbacks the real one delivers as it works through an utterance.

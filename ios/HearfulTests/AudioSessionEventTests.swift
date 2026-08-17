@@ -205,6 +205,54 @@ struct PlaybackInterruptionTests {
     }
 }
 
+@Suite("Reaching the end of an article")
+@MainActor
+struct ArticleCompletionTests {
+    /// One paragraph, so a single chunk: finishing it finishes the article.
+    private func reading() async -> (ArticlePlayer, SilentSynthesizer, Recorder) {
+        let api = FakeAPI()
+        api.articleText = "One short paragraph, read out as a single chunk."
+        let synthesizer = SilentSynthesizer()
+        let player = ArticlePlayer(api: api, synthesizer: synthesizer)
+        let recorder = Recorder()
+        player.feedback = FakeFeedback(recorder)
+        player.play(
+            Episode(
+                id: 1, title: "An article", description: nil, audioURL: nil,
+                durationSeconds: nil, publishedAt: nil, link: nil, imageURL: nil,
+                positionSeconds: nil, completed: nil, hasText: true))
+        for _ in 0..<100 where player.duration == 0 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return (player, synthesizer, recorder)
+    }
+
+    @Test func theLastChunkFinishingLandsOnTheEnd() async {
+        // The position must land exactly on the duration: the position
+        // reporter reads completion off that, and an article stopping a
+        // second short would never be marked as read.
+        let (player, synthesizer, recorder) = await reading()
+        #expect(player.duration > 0, "the article never loaded; the test proves nothing")
+
+        synthesizer.finishSpeaking()
+
+        #expect(player.currentTime == player.duration)
+        #expect(!player.isPlaying)
+        // The end must be audible: silence alone reads as a fault.
+        #expect(recorder.events == [.cue(.finished)])
+    }
+
+    @Test func thePositionFollowsTheVoiceThroughAChunk() async {
+        let (player, synthesizer, _) = await reading()
+        #expect(player.duration > 0, "the article never loaded; the test proves nothing")
+
+        synthesizer.speakOn(toFraction: 0.5)
+
+        #expect(player.currentTime > 0)
+        #expect(player.currentTime < player.duration)
+    }
+}
+
 @Suite("Article seeking")
 @MainActor
 struct ArticleSeekTests {

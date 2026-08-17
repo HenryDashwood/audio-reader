@@ -17,6 +17,18 @@ protocol SpeechSynthesizing: AnyObject {
     func continueSpeaking()
 }
 
+/// What speech comes out of when nothing has been named.
+@MainActor
+enum SpeechSynthesizers {
+    /// The system voice in the app, silence under test — so a test that
+    /// builds a reader without saying otherwise cannot make the machine talk.
+    /// A test wanting to watch what would have been said builds its own
+    /// SilentSynthesizer and passes it in.
+    static func make() -> SpeechSynthesizing {
+        TestEnvironment.isRunningTests ? SilentSynthesizer() : SystemSpeechSynthesizer()
+    }
+}
+
 /// Which utterance a callback is about. The utterance itself is not Sendable,
 /// so what crosses back to the main actor is its identity, not the object —
 /// which is all the reader compares against anyway.

@@ -60,6 +60,13 @@ struct NowPlayingView: View {
         }
         .padding(.bottom, 32)
         .presentationDragIndicator(.hidden)
+        // The episode can go away underneath this screen — it ended, or she
+        // closed the player from elsewhere. Staying open on "Nothing playing"
+        // with dead controls tells her nothing; going back to the list she
+        // came from is the same thing that happens when she closes it herself.
+        .onChange(of: player.currentEpisode == nil) { _, empty in
+            if empty { dismiss() }
+        }
     }
 
     private var scrubber: some View {
@@ -219,15 +226,37 @@ struct MiniPlayer: View {
                 .accessibilityLabel("Now playing: \(episode.title)")
                 .accessibilityHint("Opens the player, with the scrubber and sleep timer")
 
-                Button { player.toggle() } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title3)
-                        .frame(width: 44, height: 44)
+                // No spacing between these two: each already carries a 44pt
+                // frame, and adding gaps on top would eat the title.
+                HStack(spacing: 0) {
+                    Button { player.toggle() } label: {
+                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title3)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+
+                    // The way out. Everything else on this bar assumes she
+                    // still wants the episode; nothing until now let her say
+                    // she does not, so the bar sat across the bottom of every
+                    // screen with no way to be rid of it. Deliberately a
+                    // button and not a swipe: a gesture here would be reachable
+                    // by sight only, and this is the one control on the bar
+                    // whose absence left her stuck.
+                    Button { player.clear() } label: {
+                        Image(systemName: "xmark")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Stop and close player")
+                    .accessibilityHint("Stops the episode and takes this bar away")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
             }
-            .padding(.horizontal, 12)
+            .padding(.leading, 12)
+            .padding(.trailing, 4)
             .frame(height: 56)
             .background(.regularMaterial)
             .overlay(alignment: .top) {
@@ -241,7 +270,7 @@ struct MiniPlayer: View {
                 .frame(height: 2)
                 // Purely visual, and duplicated properly by the scrubber on the
                 // player screen. As a VoiceOver element it would just be an
-                // unlabelled shape between the two buttons.
+                // unlabelled shape between the buttons.
                 .accessibilityHidden(true)
             }
         }
