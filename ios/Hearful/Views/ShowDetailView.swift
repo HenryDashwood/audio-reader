@@ -6,6 +6,9 @@ struct ShowDetailView: View {
     @StateObject private var model = EpisodeListModel()
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Environment(\.dismiss) private var dismiss
+    /// The article whose text is open, if any.
+    @State private var readingArticle: Episode?
+    @State private var searchText = ""
 
     var body: some View {
         List {
@@ -24,7 +27,7 @@ struct ShowDetailView: View {
                 unsubscribeRow
             }
 
-            Section("Episodes") {
+            Section(model.isSearching ? "Results" : "Episodes") {
                 if model.isOffline {
                     Label("Offline — showing saved episodes", systemImage: "wifi.slash")
                         .font(.footnote)
@@ -35,17 +38,27 @@ struct ShowDetailView: View {
                     HStack { Spacer(); ProgressView(); Spacer() }
                 case .failed(let message):
                     Text(message).foregroundStyle(.secondary)
+                // Said rather than shown as an empty list: a search that found
+                // nothing and a show still loading look identical otherwise,
+                // and under VoiceOver both are simply silence.
+                case .loaded(let episodes) where episodes.isEmpty && model.isSearching:
+                    Text("Nothing in \(show.title) matches “\(searchText)”.")
+                        .foregroundStyle(.secondary)
                 case .loaded(let episodes):
                     ForEach(episodes) { episode in
-                        EpisodeRow(episode: episode, isCurrent: player.currentEpisode?.id == episode.id)
-                            .contentShape(Rectangle())
-                            .onTapGesture { try? player.play(episode) }
-                            // The way back. A show's page keeps every episode,
-                            // filed or not, so this is where a mistake made in
-                            // the Latest list — or by voice — is undone.
-                            .episodeFilingActions(for: episode) { filing in
-                                Task { await model.file(filing, episode: episode) }
-                            }
+                        EpisodeRow(
+                            episode: episode,
+                            isCurrent: player.currentEpisode?.id == episode.id,
+                            openArticle: episode.isArticle ? { readingArticle = episode } : nil
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { try? player.play(episode) }
+                        // The way back. A show's page keeps every episode,
+                        // filed or not, so this is where a mistake made in
+                        // the Latest list — or by voice — is undone.
+                        .episodeFilingActions(for: episode) { filing in
+                            Task { await model.file(filing, episode: episode) }
+                        }
                     }
                 }
             }
@@ -53,6 +66,18 @@ struct ShowDetailView: View {
         .listStyle(.plain)
         .navigationTitle(show.title)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $readingArticle) { ArticleView(episode: $0) }
+        // Always visible, like the library's: the default placement hides the
+        // field until a pull-down, which is undiscoverable — especially by
+        // VoiceOver.
+        .searchable(
+            text: $searchText,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "Search this show")
+        .onChange(of: searchText) { _, text in
+            model.queryChanged(text, showID: show.id)
+        }
+        .onSubmit(of: .search) { model.searchNow(searchText, showID: show.id) }
         .task { await model.load(showID: show.id) }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)) { note in
             if let change = note.object as? EpisodeFiling.Change {
@@ -91,8 +116,39 @@ struct ShowDetailView: View {
 struct EpisodeRow: View {
     let episode: Episode
     var isCurrent = false
+    /// Opens the article's text on screen. Set for written episodes, and only
+    /// where there is a navigation stack to open it in.
+    ///
+    /// A control of its own rather than a change to what tapping the row does:
+    /// every row in this app plays when tapped, and an article row that
+    /// quietly navigated instead would be the one place that gesture means
+    /// something else — the kind of exception that is invisible until it
+    /// surprises you.
+    var openArticle: (() -> Void)?
 
     var body: some View {
+        HStack(spacing: 12) {
+            playableContent
+            if let openArticle {
+                Button(action: openArticle) {
+                    Text("Read")
+                        .font(.footnote.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                // .plain so the button claims only its own label; a bordered
+                // button inside a List row swallows the whole row's taps.
+                .buttonStyle(.plain)
+                .foregroundStyle(.tint)
+                .accessibilityLabel("Read \(episode.title)")
+                .accessibilityHint("Shows the article's text on screen")
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var playableContent: some View {
         HStack(spacing: 12) {
             Artwork(url: episode.imageURL, size: 56)
             VStack(alignment: .leading, spacing: 4) {
@@ -143,7 +199,6 @@ struct EpisodeRow: View {
                 .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
                 .accessibilityHidden(true)
         }
-        .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         // The hint changes with the state, because the action does: tapping a
@@ -174,26 +229,82 @@ final class EpisodeListModel: ObservableObject {
     /// True when the episodes on screen came from the cache rather than the
     /// network, so the view can say so.
     @Published private(set) var isOffline = false
+    /// True when the list on screen answers a search rather than being the
+    /// show. The difference matters to what an empty list means.
+    @Published private(set) var isSearching = false
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
+    private let debounce: Duration
+    /// The search in flight, including the pause before it starts. Not private
+    /// so tests can await it: sleeping for longer than the debounce instead
+    /// passes on a quiet machine and fails on a loaded one, which is the worst
+    /// kind of test — it fails for people who did not touch this code.
+    private(set) var pending: Task<Void, Never>?
 
+    /// The debounce collapses a burst of keystrokes into one request, the same
+    /// reason as the directory search: each one is a database scan across a
+    /// whole archive, and a fast typist would start a dozen of them.
     init(
         api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
-        cache: OfflineCache = .shared
+        cache: OfflineCache = .shared,
+        debounce: Duration = .milliseconds(300)
     ) {
         self.api = api
         self.cache = cache
+        self.debounce = debounce
     }
 
     func load(showID: Int) async {
+        await fetch(showID: showID, query: nil)
+    }
+
+    /// Called on every keystroke: search after a pause in typing.
+    func queryChanged(_ query: String, showID: Int) {
+        schedule(query, showID: showID, after: debounce)
+    }
+
+    /// Called from the keyboard's Search key: no waiting.
+    func searchNow(_ query: String, showID: Int) {
+        schedule(query, showID: showID, after: .zero)
+    }
+
+    private func schedule(_ query: String, showID: Int, after delay: Duration) {
+        pending?.cancel()
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Existing rows stay on screen until fresher ones replace them, so the
+        // list updates in place rather than flickering through a spinner.
+        pending = Task { [weak self] in
+            if delay > .zero {
+                try? await Task.sleep(for: delay)
+            }
+            guard !Task.isCancelled else { return }
+            await self?.fetch(showID: showID, query: query.isEmpty ? nil : query)
+        }
+    }
+
+    private func fetch(showID: Int, query: String?) async {
         do {
-            let episodes = try await api.episodes(showID: showID)
-            cache.save(episodes, for: .episodes(showID: showID))
+            let episodes = try await api.episodes(showID: showID, query: query)
+            guard !Task.isCancelled else { return }
+            // Only the whole show is worth keeping. Writing a result set here
+            // would leave the cache holding three episodes about volcanoes and
+            // call them the show — and the next time she opened it with no
+            // signal, that is what she would get.
+            if query == nil {
+                cache.save(episodes, for: .episodes(showID: showID))
+            }
+            isSearching = query != nil
             isOffline = false
             state = .loaded(episodes)
         } catch {
+            guard !Task.isCancelled else { return }
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
-            if (error as? APIError)?.isAuthFailure != true,
+            isSearching = query != nil
+            // A search that cannot reach the network falls back to nothing
+            // rather than to the cached show: answering "what have you got
+            // about Krakatoa?" with the last fifty episodes is not a worse
+            // answer, it is a different question.
+            if query == nil, (error as? APIError)?.isAuthFailure != true,
                 let cached = cache.load([Episode].self, for: .episodes(showID: showID)),
                 !cached.isEmpty
             {

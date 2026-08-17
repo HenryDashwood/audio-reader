@@ -55,6 +55,10 @@ class Episode(Base):
     # Speech-ready text for an article, extracted lazily on first read and
     # cached here so replaying does not refetch the page.
     article_text: Mapped[str | None] = mapped_column(Text)
+    # The same article as sanitised HTML, for reading on screen: headings,
+    # emphasis, links and images, none of which survive the trip to speech.
+    # Extracted alongside article_text, from the same fetch.
+    article_html: Mapped[str | None] = mapped_column(Text)
     # Title and description folded down to plain lower-case words, so a spoken
     # phrase can be matched against a back catalogue that a recency window
     # never reaches. Written once at ingest: SQL has no portable way to strip

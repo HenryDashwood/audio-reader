@@ -15,7 +15,12 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func articleText(episodeID: Int) async throws -> EpisodeText
     func recentEpisodes(limit: Int) async throws -> [Episode]
     func shows() async throws -> [Show]
-    func episodes(showID: Int) async throws -> [Episode]
+    /// One show's episodes, newest first — or the ones matching `query`.
+    ///
+    /// Searching happens on the backend because the app only ever holds the
+    /// newest fifty, and the episode being looked for is usually older than
+    /// that: a feed like In Our Time carries its archive back to 1998.
+    func episodes(showID: Int, query: String?) async throws -> [Episode]
     func searchPodcasts(query: String) async throws -> [PodcastResult]
     func previewFeed(url: URL) async throws -> FeedPreview
     func subscribe(feedURL: URL) async throws -> Show
@@ -139,11 +144,16 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         try await send(URLRequest(url: baseURL.appendingPathComponent("feeds")))
     }
 
-    func episodes(showID: Int) async throws -> [Episode] {
+    func episodes(showID: Int, query: String? = nil) async throws -> [Episode] {
         let url = baseURL.appendingPathComponent("feeds")
             .appendingPathComponent("\(showID)")
             .appendingPathComponent("episodes")
-        return try await send(URLRequest(url: url))
+        guard let query, !query.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return try await send(URLRequest(url: url))
+        }
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        return try await send(URLRequest(url: components.url!))
     }
 
     func searchPodcasts(query: String) async throws -> [PodcastResult] {

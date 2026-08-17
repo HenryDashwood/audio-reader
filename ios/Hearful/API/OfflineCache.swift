@@ -23,12 +23,16 @@ nonisolated struct OfflineCache {
         case shows
         case recentEpisodes
         case episodes(showID: Int)
+        /// One article's text. Unlike episode audio, an article is small
+        /// enough that having read it once is enough to keep it.
+        case articleText(episodeID: Int)
 
         var filename: String {
             switch self {
             case .shows: "shows.json"
             case .recentEpisodes: "recent-episodes.json"
             case .episodes(let showID): "show-\(showID)-episodes.json"
+            case .articleText(let episodeID): "article-\(episodeID).json"
             }
         }
     }

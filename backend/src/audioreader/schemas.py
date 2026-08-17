@@ -88,12 +88,16 @@ class EpisodeRead(BaseModel):
 
 
 class EpisodeTextRead(BaseModel):
-    """An article's full text, ready to be read aloud by the app."""
+    """An article's full content, to be read aloud or read on screen."""
 
     episode_id: int
     title: str
     # Paragraphs separated by blank lines; the app chunks on these.
     text: str
+    # The same article as sanitised HTML, for showing rather than speaking.
+    # Null when only plain text could be recovered — the reader falls back to
+    # `text`, so an article is never unreadable for want of markup.
+    html: str | None = None
 
 
 class PodcastSearchResult(BaseModel):

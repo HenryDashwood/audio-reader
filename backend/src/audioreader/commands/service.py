@@ -7,13 +7,14 @@ from datetime import UTC, date, datetime
 from functools import reduce
 
 from pydantic import ValidationError
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from audioreader import positions, telemetry
 from audioreader.commands.intents import Action, Candidate, InterpretResult, ModelDecision
 from audioreader.config import settings
+from audioreader.episode_search import mentions
 from audioreader.feeds import service as feed_service
 from audioreader.feeds.discovery import (
     DiscoveredFeed,
@@ -244,7 +245,7 @@ async def _identifying(session: AsyncSession, base, scope, words: list[str], sea
         await session.execute(
             base.with_only_columns(
                 func.count(),
-                *(func.sum(case((_mentions(word), 1), else_=0)) for word in words),
+                *(func.sum(case((mentions(word), 1), else_=0)) for word in words),
             ).where(scope, PLAYABLE_EPISODE)
         )
     ).one()
@@ -256,27 +257,6 @@ async def _identifying(session: AsyncSession, base, scope, words: list[str], sea
     return [word for word, count in zip(words, counts, strict=True) if (count or 0) <= ceiling]
 
 
-def _mentions(word: str):
-    """Does an episode use this word, or one starting with it?
-
-    Anchored to a word boundary rather than matched anywhere in the string.
-    A mis-transcribed "In Our Time" arrived as "in our stand", which searched
-    for "stand" — a bare substring of "understanding", and so a match against
-    a hundred and seventy episodes of In Our Time, filling the list with
-    noise. Prefixes are still matched, because English inflects at the end
-    and "volcano" ought to find "volcanoes".
-
-    Searched against the folded `search_text`, so "Rubaiyat" finds
-    "Rubáiyát". Rows written before that column existed fall back to their
-    title, which still finds most things while a backfill catches up.
-    """
-    haystack = func.coalesce(Episode.search_text, func.lower(Episode.title))
-    return or_(
-        haystack.startswith(word, autoescape=True),
-        haystack.contains(f" {word}", autoescape=True),
-    )
-
-
 def _match_score(words: list[str]):
     """How many of the words she used this episode answers to.
 
@@ -284,7 +264,7 @@ def _match_score(words: list[str]):
     40ms across eleven hundred episodes. If it ever is not, the upgrade is a
     tsvector index rather than a shorter list.
     """
-    return reduce(operator.add, [case((_mentions(word), 1), else_=0) for word in words])
+    return reduce(operator.add, [case((mentions(word), 1), else_=0) for word in words])
 
 
 #: Words that say what she wants done, not which episode she wants. Dropped

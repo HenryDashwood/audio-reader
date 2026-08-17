@@ -35,7 +35,7 @@ final class RecordingAPI: HearfulAPIProtocol, @unchecked Sendable {
     func episode(id: Int) async throws -> Episode { throw APIError(underlying: "unused") }
     func recentEpisodes(limit: Int) async throws -> [Episode] { [] }
     func shows() async throws -> [Show] { [] }
-    func episodes(showID: Int) async throws -> [Episode] { [] }
+    func episodes(showID: Int, query: String? = nil) async throws -> [Episode] { [] }
     func login(appleIdentityToken: String, authorizationCode: String?) async throws
         -> AuthResponse
     {

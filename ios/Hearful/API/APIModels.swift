@@ -32,7 +32,9 @@ nonisolated enum CommandAction: String, Decodable {
 
 /// Codable, not just Decodable: the same shape is written back out to the
 /// offline cache.
-nonisolated struct Episode: Codable, Equatable, Identifiable {
+/// Hashable as well, so an episode can be a navigation destination in its own
+/// right — which is what opening an article's text on screen is.
+nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable {
     let id: Int
     let title: String
     let description: String?
@@ -69,15 +71,25 @@ nonisolated struct Episode: Codable, Equatable, Identifiable {
     var isArticle: Bool { audioURL == nil && hasText == true }
 }
 
-/// An article's full text, fetched when it is about to be read aloud.
-nonisolated struct EpisodeText: Decodable, Equatable {
+/// An article's full text, fetched when it is about to be read aloud — or
+/// read on screen.
+///
+/// Codable rather than Decodable so the reader can keep it: an article she has
+/// already opened is then still there with no signal, which is the whole point
+/// of the offline cache elsewhere in the app.
+nonisolated struct EpisodeText: Codable, Equatable {
     let episodeID: Int
     let title: String
     /// Paragraphs separated by blank lines; the reader chunks on these.
     let text: String
+    /// The same article as sanitised HTML, for showing rather than speaking.
+    /// Optional twice over: the backend sends null when only plain text could
+    /// be recovered, and payloads cached before this field existed have no
+    /// key at all.
+    var html: String?
 
     enum CodingKeys: String, CodingKey {
-        case title, text
+        case title, text, html
         case episodeID = "episode_id"
     }
 }

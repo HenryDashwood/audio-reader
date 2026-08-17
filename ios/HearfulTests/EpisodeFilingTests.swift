@@ -15,7 +15,7 @@ private final class FilingAPI: HearfulAPIProtocol, @unchecked Sendable {
     }
 
     func recentEpisodes(limit: Int) async throws -> [Episode] { episodes }
-    func episodes(showID: Int) async throws -> [Episode] { episodes }
+    func episodes(showID: Int, query: String? = nil) async throws -> [Episode] { episodes }
 
     func command(transcript: String, nowPlayingEpisodeID: Int? = nil, traceparent: String? = nil)
         async throws -> CommandResponse

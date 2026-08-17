@@ -32,7 +32,7 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
     }
     func recentEpisodes(limit: Int) async throws -> [Episode] { [] }
     func shows() async throws -> [Show] { [] }
-    func episodes(showID: Int) async throws -> [Episode] { [] }
+    func episodes(showID: Int, query: String? = nil) async throws -> [Episode] { [] }
     func login(appleIdentityToken: String, authorizationCode: String?) async throws
         -> AuthResponse
     {

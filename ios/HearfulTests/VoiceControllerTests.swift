@@ -161,8 +161,15 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
         return shows
     }
     var episodesError: Error?
-    func episodes(showID: Int) async throws -> [Episode] {
+    /// What each show's page was asked for, in order: nil for the whole show,
+    /// a string for a search.
+    var episodeQueries: [String?] = []
+    /// Set to answer searches with something other than the whole show.
+    var searchResults: [Episode]?
+    func episodes(showID: Int, query: String? = nil) async throws -> [Episode] {
+        episodeQueries.append(query)
         if let episodesError { throw episodesError }
+        if query != nil, let searchResults { return searchResults }
         return Array(episodesByID.values)
     }
 
@@ -202,9 +209,16 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
 
     /// Set to let the article player actually load and speak something.
     var articleText: String?
+    /// Set to give the reader markup to render; nil is an article only plain
+    /// text could be recovered from.
+    var articleHTML: String?
+    /// Set to make fetching the text fail, for the reader's offline tests.
+    var articleTextError: Error?
     func articleText(episodeID: Int) async throws -> EpisodeText {
+        if let articleTextError { throw articleTextError }
         guard let articleText else { throw APIError(underlying: "unused") }
-        return EpisodeText(episodeID: episodeID, title: "An article", text: articleText)
+        return EpisodeText(
+            episodeID: episodeID, title: "An article", text: articleText, html: articleHTML)
     }
     func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }

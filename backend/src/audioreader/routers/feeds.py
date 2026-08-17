@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from audioreader import positions
+from audioreader import episode_search, positions
 from audioreader.auth.dependencies import get_current_user
 from audioreader.config import settings
 from audioreader.db import get_session
@@ -136,21 +136,32 @@ async def unsubscribe(feed_id: int, session: Session, user: CurrentUser) -> None
 
 
 @router.get("/{feed_id}/episodes")
-async def list_episodes(feed_id: int, session: Session, user: CurrentUser, limit: int = 50) -> list[EpisodeRead]:
+async def list_episodes(
+    feed_id: int, session: Session, user: CurrentUser, limit: int = 50, q: str | None = None
+) -> list[EpisodeRead]:
+    """A show's episodes, newest first — or the ones matching `q`.
+
+    Searching is done here rather than in the app because the app only ever
+    holds the newest fifty. A feed like In Our Time carries its whole archive,
+    so filtering what was already downloaded would search a couple of months
+    of a programme that has been running since 1998 — and would find nothing
+    while looking exactly like an answer.
+    """
     subscribed = await session.scalar(
         select(Subscription).where(Subscription.user_id == user.id, Subscription.feed_id == feed_id)
     )
     if subscribed is None:
         raise HTTPException(status_code=404, detail="feed not found")
-    episodes = (
-        await session.scalars(
-            select(Episode)
-            .options(joinedload(Episode.feed))
-            .where(Episode.feed_id == feed_id)
-            .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
-            .limit(limit)
-        )
-    ).all()
+    statement = (
+        select(Episode)
+        .options(joinedload(Episode.feed))
+        .where(Episode.feed_id == feed_id)
+        .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
+        .limit(limit)
+    )
+    if q and q.strip():
+        statement = episode_search.matching(q, statement)
+    episodes = (await session.scalars(statement)).all()
     return await episodes_read(session, user, episodes)
 
 
@@ -222,19 +233,20 @@ async def get_episode(episode_id: int, session: Session, user: CurrentUser) -> E
 
 @episodes_router.get("/{episode_id}/text")
 async def get_episode_text(episode_id: int, session: Session, user: CurrentUser) -> EpisodeTextRead:
-    """The full article text for a written episode, extracted on first request
-    and cached. Like get_episode, a subscription is deliberately not required:
-    articles can be played from previews and old voice picks."""
+    """The full article for a written episode — speech-ready text and the
+    sanitised HTML behind it — extracted on first request and cached. Like
+    get_episode, a subscription is deliberately not required: articles can be
+    played from previews and old voice picks."""
     episode = await session.get(Episode, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
-    text = await articles.text_for(session, episode)
+    text, html = await articles.content_for(session, episode)
     if not text:
         raise HTTPException(
             status_code=422,
             detail={"spoken_response": "Sorry, I could not get the text of that article."},
         )
-    return EpisodeTextRead(episode_id=episode.id, title=episode.title, text=text)
+    return EpisodeTextRead(episode_id=episode.id, title=episode.title, text=text, html=html)
 
 
 @episodes_router.put("/{episode_id}/state", status_code=204)

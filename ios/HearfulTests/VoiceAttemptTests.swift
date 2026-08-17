@@ -96,7 +96,7 @@ private final class TelemetryAPI: HearfulAPIProtocol, @unchecked Sendable {
     func articleText(episodeID: Int) async throws -> EpisodeText { throw APIError(underlying: "unused") }
     func recentEpisodes(limit: Int) async throws -> [Episode] { [] }
     func shows() async throws -> [Show] { [] }
-    func episodes(showID: Int) async throws -> [Episode] { [] }
+    func episodes(showID: Int, query: String? = nil) async throws -> [Episode] { [] }
     func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }
     func subscribe(feedURL: URL) async throws -> Show { throw APIError(underlying: "unused") }
