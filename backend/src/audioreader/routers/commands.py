@@ -90,6 +90,13 @@ async def command(
             # outcome alone — this has twice looked like a model failure and
             # been a truncated transcript.
             transcript_words=len(body.transcript.split()),
+            # How far into an exchange this is: 0 for a request that starts a
+            # subject, higher for an answer to something we asked. The pair to
+            # `expects_reply` below, and together they say whether asking her
+            # a question actually gets the command carried out — a clarify
+            # that is never answered is a dead end with a polite voice, and
+            # from a single row it looks exactly like one that worked.
+            conversation_turns=len(body.turns),
             # Seeded, then overwritten once known. Both of these are grouped
             # by rather than filtered on, and a missing key and a null make an
             # untidy bucket in a way a plain string does not — so a command
@@ -111,6 +118,7 @@ async def command(
                 user=user,
                 discovery_llm=discovery_llm,
                 now_playing_episode_id=body.now_playing_episode_id,
+                turns=body.turns,
             )
         except LLMError as exc:
             raise HTTPException(
@@ -119,6 +127,7 @@ async def command(
             ) from exc
 
         span.set_attribute("action", result.action.value)
+        span.set_attribute("expects_reply", result.expects_reply)
         if result.speed is not None:
             span.set_attribute("speed", result.speed)
 
@@ -144,4 +153,5 @@ async def command(
             spoken_response=result.spoken_response,
             episode=episode,
             speed=result.speed,
+            expects_reply=result.expects_reply,
         )

@@ -33,7 +33,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingVoice) {
             VoiceSheet()
-                .presentationDetents([.medium])
+                // Large as well as medium now that there is a transcript to
+                // read: medium fits the last few turns, and a longer exchange
+                // is worth being able to open up and scroll back through.
+                .presentationDetents([.medium, .large])
         }
         .task {
             // The Ask Hearful intent may have run before this view existed.
@@ -90,6 +93,19 @@ struct VoiceSheet: View {
                 .accessibilityLabel("Ask Hearful")
                 .accessibilityValue(caption)
                 .accessibilityHint("Double tap to ask for something to listen to")
+
+                // What the app believes it heard, which is the one thing she
+                // cannot check by listening — and the thing that explains most
+                // answers that look like the model being stupid. It is also
+                // what gets sent back with her next sentence, so the exchange
+                // on screen is exactly the exchange the model reads.
+                if !controller.conversation.isEmpty {
+                    TranscriptView(turns: controller.conversation.turns)
+                        // Between the microphone and the close button: it is
+                        // the record of what happened, which matters more than
+                        // the escape hatch and less than the thing she came for.
+                        .accessibilitySortPriority(0.5)
+                }
 
                 // Only when listening has actually been refused: the trip to
                 // Settings is otherwise a hunt through someone else's app.
@@ -186,6 +202,65 @@ struct VoiceSheet: View {
         case .listening: "Listening…"
         case .thinking: "One moment…"
         case .playing(let episode): "Playing \(episode.title)"
+        }
+    }
+}
+
+/// The exchange so far, oldest at the top.
+///
+/// Deliberately plain text rather than chat bubbles. Two people read this: she
+/// hears it and does not need it, and whoever is helping her works out from it
+/// why a request went wrong — for which the useful thing is an unambiguous
+/// "this is what you said, this is what it heard", not a shape and a colour.
+/// Each turn names its speaker in words, so it survives being read aloud, seen
+/// at large type, or seen by someone who cannot tell the two tints apart.
+struct TranscriptView: View {
+    let turns: [ConversationTurn]
+
+    /// Enough for the last few exchanges without crowding out the microphone,
+    /// which she has to be able to hit without aiming. The sheet's large
+    /// detent is how a longer history gets read.
+    private static let maxHeight: CGFloat = 200
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                // Indices are stable identity here: the list only ever grows
+                // within one exchange, and is cleared whole rather than
+                // trimmed, so turn three stays turn three.
+                ForEach(Array(turns.enumerated()), id: \.offset) { _, turn in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(Self.name(of: turn.speaker))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        Text(turn.text)
+                            .font(.body)
+                            .foregroundStyle(turn.speaker == .her ? .primary : .secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // One utterance is one thing to swipe past, and it reads
+                    // as a sentence: "You said, play the Athelstan one."
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(Self.name(of: turn.speaker)) said: \(turn.text)")
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 8)
+        }
+        // The newest turn is the one that matters, and it is at the bottom.
+        .defaultScrollAnchor(.bottom)
+        .frame(maxHeight: Self.maxHeight)
+        // A container VoiceOver can step into and out of, rather than a run of
+        // loose text between the microphone and the close button.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Conversation")
+    }
+
+    private static func name(of speaker: ConversationTurn.Speaker) -> String {
+        switch speaker {
+        case .her: "You"
+        case .app: "Hearful"
         }
     }
 }

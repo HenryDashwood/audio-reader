@@ -9,6 +9,7 @@ struct ShowDetailView: View {
     /// The article whose text is open, if any.
     @State private var readingArticle: Episode?
     @State private var searchText = ""
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         List {
@@ -67,13 +68,21 @@ struct ShowDetailView: View {
         .navigationTitle(show.title)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(item: $readingArticle) { ArticleView(episode: $0) }
-        // Always visible, like the library's: the default placement hides the
-        // field until a pull-down, which is undiscoverable — especially by
-        // VoiceOver.
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                SearchToolbarButton(label: "Search this show", focused: $searchFocused)
+            }
+        }
+        // Hidden until a pull-down, like the library's. Two reasons: the
+        // episodes arrive after the page does, and a field pinned under the
+        // title restyles itself the moment the list grows long enough to
+        // scroll — a flicker on every visit; and the page is less cluttered
+        // without it. The toolbar button above is what keeps it findable.
         .searchable(
             text: $searchText,
-            placement: .navigationBarDrawer(displayMode: .always),
+            placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: "Search this show")
+        .searchFocused($searchFocused)
         .onChange(of: searchText) { _, text in
             model.queryChanged(text, showID: show.id)
         }

@@ -7,6 +7,7 @@ struct LibraryView: View {
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
     @State private var searchText = ""
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -21,6 +22,11 @@ struct LibraryView: View {
             .navigationDestination(for: Show.self) { ShowDetailView(show: $0) }
             .navigationDestination(for: PodcastResult.self) { PodcastPreviewView(podcast: $0) }
             .toolbar {
+                // Ahead of the microphone, which stays where it has always
+                // been: it is the button she reaches for without looking.
+                ToolbarItem(placement: .topBarTrailing) {
+                    SearchToolbarButton(label: "Search podcasts", focused: $searchFocused)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { openVoiceSheet($showingVoice) } label: {
                         Image(systemName: "mic.fill")
@@ -28,12 +34,14 @@ struct LibraryView: View {
                     .accessibilityLabel("Ask for something to listen to")
                 }
             }
-            // Always visible: the default placement hides the field until a
-            // pull-down, which is undiscoverable — especially by VoiceOver.
+            // Hidden until a pull-down, so the list of shows is the whole
+            // screen. The toolbar button above is what keeps it findable —
+            // see SearchToolbarButton.
             .searchable(
                 text: $searchText,
-                placement: .navigationBarDrawer(displayMode: .always),
+                placement: .navigationBarDrawer(displayMode: .automatic),
                 prompt: "Search podcasts, or paste a feed URL")
+            .searchFocused($searchFocused)
             .onSubmit(of: .search) { searchModel.searchNow(for: searchText) }
             .onChange(of: searchText) { _, text in
                 searchModel.queryChanged(text)

@@ -26,6 +26,9 @@ final class Recorder {
 @MainActor
 final class FakeSpeech: SpeechRecognizing {
     var transcript = "play something"
+    /// What she says on each successive turn, for exchanges that take more than
+    /// one. Falls back to `transcript` once exhausted.
+    var transcripts: [String] = []
     var error: Error?
     var listenCount = 0
     var cancelCount = 0
@@ -46,10 +49,14 @@ final class FakeSpeech: SpeechRecognizing {
         listenCount += 1
         if let error { throw error }
         onReady()
-        guard keepsListening else { return transcript }
+        guard keepsListening else { return next() }
         return try await withCheckedThrowingContinuation { continuation in
             pending = continuation
         }
+    }
+
+    private func next() -> String {
+        transcripts.isEmpty ? transcript : transcripts.removeFirst()
     }
 
     func cancel() {
@@ -132,6 +139,10 @@ final class FakeFeedback: FeedbackPlaying {
 
 final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     var response: CommandResponse?
+    /// Answers in order, for exchanges that take more than one turn. Falls back
+    /// to `response` once exhausted, so a test says only what is different
+    /// about the turns it cares about.
+    var responses: [CommandResponse] = []
     var error: Error?
     var transcripts: [String] = []
     /// How long the backend takes to answer.
@@ -139,13 +150,21 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
 
     /// What the phone said was playing, per request.
     var nowPlayingIDs: [Int?] = []
+    /// The exchange each request carried, so a test can show that her answer
+    /// arrived with the question attached rather than on its own.
+    var turnsSent: [[ConversationTurn]] = []
 
-    func command(transcript: String, nowPlayingEpisodeID: Int? = nil, traceparent: String? = nil) async throws
+    func command(
+        transcript: String, nowPlayingEpisodeID: Int? = nil, turns: [ConversationTurn] = [],
+        traceparent: String? = nil
+    ) async throws
         -> CommandResponse {
         transcripts.append(transcript)
         nowPlayingIDs.append(nowPlayingEpisodeID)
+        turnsSent.append(turns)
         if delay > .zero { try? await Task.sleep(for: delay) }
         if let error { throw error }
+        if !responses.isEmpty { return responses.removeFirst() }
         return response ?? CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
     }
 
@@ -249,7 +268,9 @@ private func makeController(
     // Its own sleep timer, not the shared one: tests run in parallel and must
     // not set timers on each other's behalf.
     let sleepTimer = SleepTimer(
-        player: PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api)),
+        player: PlaybackCoordinator(
+            audio: AudioPlayer(),
+            article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer())),
         feedback: FakeFeedback(recorder))
     let controller = VoiceController(
         api: api, speech: speech, speaker: speaker, player: player,
@@ -505,6 +526,247 @@ struct VoiceControllerTests {
 
         #expect(recorder.playedIDs == [104])
         #expect(controller.state == .playing(article))
+    }
+}
+
+/// A request can be longer than a sentence. When the backend asks which show
+/// she meant, her answer used to arrive as an unrelated command — so the app
+/// asked a question it could not use the answer to, every time.
+@Suite("Exchanges that take more than one turn")
+@MainActor
+struct VoiceConversationTests {
+    private func asking(_ question: String) -> CommandResponse {
+        CommandResponse(
+            action: .unknown, spokenResponse: question, episode: nil, expectsReply: true)
+    }
+
+    /// The two-sentence request, set up the way it actually happens.
+    private func clarified() -> (VoiceController, Recorder, FakeSpeech, FakeAPI) {
+        let speech = FakeSpeech()
+        speech.transcripts = ["play the rest is history", "the one about Agincourt"]
+        let api = FakeAPI()
+        api.responses = [
+            asking("Which episode?"),
+            CommandResponse(
+                action: .playEpisode, spokenResponse: "Playing Agincourt.", episode: episode()),
+        ]
+        let (controller, recorder, _, _, _) = makeController(speech: speech, api: api)
+        return (controller, recorder, speech, api)
+    }
+
+    @Test func aQuestionReopensTheMicrophoneWithoutATap() async {
+        // The whole point. She has just been asked something; making her find
+        // the screen to answer is what turned one request into two.
+        let (controller, recorder, speech, _) = clarified()
+
+        await controller.beginCommand()
+
+        #expect(speech.listenCount == 2)
+        #expect(recorder.playedIDs == [104])
+    }
+
+    @Test func herAnswerCarriesTheQuestionWithIt() async {
+        let (controller, _, _, api) = clarified()
+
+        await controller.beginCommand()
+
+        #expect(api.transcripts == ["play the rest is history", "the one about Agincourt"])
+        // The first request starts a subject and carries nothing.
+        #expect(api.turnsSent.first?.isEmpty == true)
+        #expect(
+            api.turnsSent.last == [
+                ConversationTurn(speaker: .her, text: "play the rest is history"),
+                ConversationTurn(speaker: .app, text: "Which episode?"),
+            ])
+    }
+
+    @Test func herLatestSentenceIsNotAlsoSentAsHistory() async {
+        // It travels as the transcript. Sent twice, the model reads a woman
+        // repeating herself.
+        let (controller, _, _, api) = clarified()
+
+        await controller.beginCommand()
+
+        #expect(api.turnsSent.last?.contains { $0.text == "the one about Agincourt" } == false)
+    }
+
+    @Test func aStatementDoesNotReopenTheMicrophone() async {
+        // "You are already subscribed to that" is the end of the matter. An
+        // open microphone after it is a listening tone she cannot explain, and
+        // then an apology for hearing nothing.
+        let speech = FakeSpeech()
+        let api = FakeAPI()
+        api.response = CommandResponse(
+            action: .unknown, spokenResponse: "You are already subscribed to that.", episode: nil)
+        let (controller, _, _, _, _) = makeController(speech: speech, api: api)
+
+        await controller.beginCommand()
+
+        #expect(speech.listenCount == 1)
+    }
+
+    @Test func anOlderBackendIsTreatedAsNeverAsking() async {
+        // No `expects_reply` in the payload at all: the field decodes as nil
+        // and the app behaves exactly as it did before any of this.
+        let json = Data(
+            #"{"action": "unknown", "spoken_response": "Which show?", "episode": null}"#.utf8)
+        let response = try! JSONDecoder().decode(CommandResponse.self, from: json)
+        let speech = FakeSpeech()
+        let api = FakeAPI()
+        api.response = response
+        let (controller, _, _, _, _) = makeController(speech: speech, api: api)
+
+        await controller.beginCommand()
+
+        #expect(response.expectsReply == nil)
+        #expect(speech.listenCount == 1)
+    }
+
+    @Test func theExchangeStopsAskingEventually() async {
+        // An app that asks forever is worse than one that gives up: it holds
+        // the microphone open and she has no way to see why.
+        let speech = FakeSpeech()
+        let api = FakeAPI()
+        api.response = asking("Which one?")
+        let (controller, _, _, _, _) = makeController(speech: speech, api: api)
+
+        await controller.beginCommand()
+
+        #expect(speech.listenCount == VoiceController.maxFollowUps + 1)
+    }
+
+    @Test func silenceEndsTheExchangeRatherThanAskingAgain() async {
+        // A question answered with silence does not get a better answer for
+        // being asked twice.
+        let speech = FakeSpeech()
+        speech.transcripts = ["play something", ""]
+        let api = FakeAPI()
+        api.response = asking("Which show?")
+        let (controller, recorder, _, _, _) = makeController(speech: speech, api: api)
+
+        await controller.beginCommand()
+
+        #expect(speech.listenCount == 2)
+        #expect(recorder.spoken.last == "I did not hear anything. Tap and try again.")
+    }
+
+    @Test func theAcknowledgementSoundsOnceForTheWholeExchange() async {
+        // On a follow-up the question she has just been asked is the
+        // acknowledgement; a tone over it is noise between question and answer.
+        let (controller, recorder, _, _) = clarified()
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.filter { $0 == .cue(.acknowledged) }.count == 1)
+    }
+
+    @Test func whatWasPlayingComesBackOnceTheExchangeIsOver() async {
+        // Not between turns: an episode resuming under a clarifying question
+        // would be talked over by the answer, and transcribed as part of it.
+        let speech = FakeSpeech()
+        speech.transcripts = ["play something", "no idea"]
+        let api = FakeAPI()
+        api.responses = [
+            asking("Which show?"),
+            CommandResponse(action: .unknown, spokenResponse: "Never mind.", episode: nil),
+        ]
+        let (controller, recorder, _, _, player) = makeController(speech: speech, api: api)
+        player.isPlaying = true
+
+        await controller.beginCommand()
+
+        #expect(recorder.events.filter { $0 == .resumed }.count == 1)
+        #expect(recorder.events.last == .resumed)
+    }
+
+    @Test func closingTheSheetDuringTheQuestionDoesNotReopenTheMicrophone() async {
+        // She has left. Nobody is going to answer, and the recogniser would
+        // wait out its silence timer and then apologise to an empty room.
+        let speech = FakeSpeech()
+        let api = FakeAPI()
+        api.response = asking("Which show?")
+        let (controller, recorder, _, _, _) = makeController(
+            speech: speech, api: api, holdsTheConfirmation: true)
+
+        Task { await controller.beginCommand() }
+        await wait { recorder.events.contains(.spoke("Which show?")) }
+        #expect(recorder.events.contains(.spoke("Which show?")))
+        controller.cancel()
+        await wait { controller.state == .idle }
+
+        #expect(speech.listenCount == 1)
+    }
+
+    // MARK: - What she can see
+
+    @Test func theTranscriptShowsBothSides() async {
+        let (controller, _, _, _) = clarified()
+
+        await controller.beginCommand()
+
+        #expect(
+            controller.conversation.turns == [
+                ConversationTurn(speaker: .her, text: "play the rest is history"),
+                ConversationTurn(speaker: .app, text: "Which episode?"),
+                ConversationTurn(speaker: .her, text: "the one about Agincourt"),
+                ConversationTurn(speaker: .app, text: "Playing Agincourt."),
+            ])
+    }
+
+    @Test func whatWasHeardIsOnScreenEvenWhenNothingWasSent() async {
+        // A transport word never leaves the phone, and a misheard one is the
+        // likeliest reason the wrong thing happened. She must be able to see it.
+        let speech = FakeSpeech()
+        speech.transcript = "pause"
+        let (controller, _, _, api, player) = makeController(speech: speech)
+        player.isPlaying = true
+
+        await controller.beginCommand()
+
+        #expect(api.transcripts.isEmpty)
+        #expect(controller.conversation.turns == [ConversationTurn(speaker: .her, text: "pause")])
+    }
+
+    @Test func theHoldingLineIsNotInTheTranscript() async {
+        // "One moment" answers "is it still there?". It is not part of the
+        // exchange, and reading it back to the model says nothing.
+        let speech = FakeSpeech()
+        let api = FakeAPI()
+        api.delay = VoiceController.noticeAfter + .milliseconds(2000)
+        api.response = CommandResponse(
+            action: .unknown, spokenResponse: "Which show?", episode: nil)
+        let (controller, recorder, _, _, _) = makeController(speech: speech, api: api)
+
+        await controller.beginCommand()
+
+        #expect(recorder.spoken.contains("One moment."))
+        #expect(controller.conversation.turns.map(\.text) == ["play something", "Which show?"])
+    }
+
+    @Test func aFailureIsInTheTranscriptToo() async {
+        // Whatever she heard is what the screen shows, including the sentences
+        // the app decided on by itself.
+        let speech = FakeSpeech()
+        let api = FakeAPI()
+        api.error = APIError(spokenResponse: "I cannot reach the internet.", underlying: "offline")
+        let (controller, _, _, _, _) = makeController(speech: speech, api: api)
+
+        await controller.beginCommand()
+
+        #expect(controller.conversation.turns.last?.text == "I cannot reach the internet.")
+    }
+
+    @Test func nothingIsRecordedForASheetThatHasGone() async {
+        let speech = FakeSpeech()
+        speech.keepsListening = true
+        let (controller, _, _, _, _) = makeController(speech: speech)
+
+        Task { await controller.beginCommand() }
+        await wait { speech.isListening }
+        controller.cancel()
+        await wait { controller.state == .idle }
+
+        #expect(controller.conversation.isEmpty)
     }
 }
 

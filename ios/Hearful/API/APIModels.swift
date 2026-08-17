@@ -100,10 +100,20 @@ nonisolated struct CommandResponse: Decodable {
     let episode: Episode?
     /// For setSpeed: the playback rate multiplier to apply.
     var speed: Double?
+    /// True when the sentence above is a question, and the app should listen
+    /// again instead of falling silent and waiting to be tapped.
+    ///
+    /// The distinction the action cannot make: "Which show did you mean?" and
+    /// "You are already subscribed to that" are both `unknown`, and she has to
+    /// answer one and not the other. Optional so a payload from before the
+    /// field existed still decodes, and reads as "no" — exactly how the app
+    /// behaved before any of this.
+    var expectsReply: Bool?
 
     enum CodingKeys: String, CodingKey {
         case action, episode, speed
         case spokenResponse = "spoken_response"
+        case expectsReply = "expects_reply"
     }
 }
 
@@ -164,9 +174,12 @@ nonisolated struct CommandRequest: Encodable {
     /// What is coming out of the speaker as she talks, so "mark this as
     /// played" has something to refer to.
     var nowPlayingEpisodeID: Int?
+    /// What has already been said in this exchange, oldest first, not counting
+    /// the transcript above. Empty for a request that starts a subject.
+    var turns: [ConversationTurn] = []
 
     enum CodingKeys: String, CodingKey {
-        case transcript
+        case transcript, turns
         case nowPlayingEpisodeID = "now_playing_episode_id"
     }
 }

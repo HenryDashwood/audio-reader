@@ -58,6 +58,31 @@ The heart of the app. Try each phrasing out loud, not typed.
 - [ ] Say nothing at all → "I did not hear anything", and the app is usable again
 - [ ] ⏱️ Ask something that takes a while → "One moment" fills the silence, then the real answer
 
+### Requests that take more than one sentence
+
+The app asks, she answers, and the two are one request. Do these out loud without touching the screen between sentences.
+
+- [ ] 📱 "Play a Rest Is History" → it asks which episode, then **listens again on its own** — the listening tone comes back with no tap
+- [ ] 📱 Answer with just the episode — "the Alexander one" → it plays that episode of **that show**. Being asked "which show?" again is the failure
+- [ ] 📱 "Play the latest one" with several subscriptions, then answer with only a show name → it plays that show's newest. It must not **subscribe** you to a show you already have
+- [ ] 📱 After it starts something, ask for something completely different → the new request wins. Carrying on with the previous subject is the failure this introduces
+- [ ] 📱 Answer a question with silence → "I did not hear anything", and the microphone **stays shut** rather than asking again
+- [ ] 📱 Let it ask the same thing three or four times over → it eventually stops asking and hands you back the screen, rather than reopening the microphone forever
+- [ ] 📱 An answer that lands after a long wait → "One moment" still fills the gap, and does **not** appear in the transcript
+- [ ] 📱 Close the sheet while it is asking you something → nothing further is said and the microphone does not reopen
+- [ ] 📱 While an episode is playing, go through a two-sentence request → the episode comes back **once**, at the end, not between the question and your answer
+- [ ] ⏱️ Ask something, wait a few minutes with the sheet open, then tap and ask something unrelated → the old exchange is not read as context for the new one
+
+### The transcript
+
+- [ ] Each thing you say appears on screen under **You**, and each reply under **Hearful**
+- [ ] A misheard word is visible there — this is the fastest way to tell a mis-hearing from a bad answer
+- [ ] Drag the sheet up to the large size → a longer exchange can be scrolled back through
+- [ ] The newest turn is the one showing; you do not have to scroll to find it
+- [ ] The microphone is still easy to hit without aiming, with the transcript on screen
+- [ ] 👁️ Swipe through the sheet → the microphone first, then the conversation as one group, then Close. Each turn reads as "You said: …" or "Hearful said: …"
+- [ ] 👁️ Turn text size up to a large accessibility size → the transcript still reads and scrolls
+
 ### Filing episodes
 
 - [ ] While an episode is **playing**, "I've already heard this, mark it as played" → confirms aloud naming that episode, and **stops** — it must not carry on playing

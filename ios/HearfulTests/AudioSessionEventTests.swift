@@ -110,15 +110,18 @@ struct InterruptionPolicyTests {
 @Suite("Interruptions reach the player")
 @MainActor
 struct PlaybackInterruptionTests {
-    /// Long enough that the synthesiser is still working through it when the
-    /// interruption arrives.
+    /// Several chunks' worth, so the interruption lands part-way through the
+    /// article rather than at its end.
     private static let articleText = String(
         repeating: "The Congress of Vienna redrew the map of Europe.\n\n", count: 20)
 
     private func makePlayer() -> (PlaybackCoordinator, FakeAPI) {
         let api = FakeAPI()
         api.articleText = Self.articleText
-        return (PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api)), api)
+        let player = PlaybackCoordinator(
+            audio: AudioPlayer(),
+            article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer()))
+        return (player, api)
     }
 
     private func article(id: Int = 1) -> Episode {
@@ -129,13 +132,8 @@ struct PlaybackInterruptionTests {
     }
 
     /// Waits for the article's text to arrive, which is what actually gates
-    /// everything below.
-    ///
-    /// Deliberately keyed on `duration` rather than on `isPlaying`: duration
-    /// is set the moment the script loads, whereas isPlaying depends on the
-    /// speech synthesiser getting going — and CI simulators are headless with
-    /// no audio route, so waiting on that stalls there while passing happily
-    /// on a Mac with speakers.
+    /// everything below: the fetch is a Task, so `play` returns before there
+    /// is anything to read.
     private func waitUntilLoaded(_ player: PlaybackCoordinator) async {
         for _ in 0..<100 where player.article.duration == 0 {
             try? await Task.sleep(for: .milliseconds(20))
@@ -216,14 +214,13 @@ struct ArticleSeekTests {
     private func loadedPlayer() async -> ArticlePlayer {
         let api = FakeAPI()
         api.articleText = Self.text
-        let player = ArticlePlayer(api: api)
+        let player = ArticlePlayer(api: api, synthesizer: SilentSynthesizer())
         player.play(
             Episode(
                 id: 1, title: "An article", description: nil, audioURL: nil,
                 durationSeconds: nil, publishedAt: nil, link: nil, imageURL: nil,
                 positionSeconds: nil, completed: nil, hasText: true))
-        // Keyed on duration, not isPlaying: see waitUntilLoaded above for
-        // why speech never starting on CI must not stall a test.
+        // Waits for the text to arrive; see waitUntilLoaded above.
         for _ in 0..<100 where player.duration == 0 {
             try? await Task.sleep(for: .milliseconds(20))
         }

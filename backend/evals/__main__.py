@@ -15,6 +15,7 @@ import logging
 import sys
 from datetime import date
 
+from audioreader.commands.intents import Speaker
 from audioreader.config import settings
 from audioreader.llm.provider import build_llm_client
 from audioreader.settings_types import LLMProvider
@@ -127,6 +128,11 @@ def print_report(report: Report, cases: tuple[corpus.Case, ...], colour: bool) -
         runs = [run_ for run_ in report.runs if run_.case.id == case.id]
         tally = "".join(run_.grade.value[0].upper() for run_ in runs)
         print(f"  {case.id}  [{tally}]")
+        # The earlier lines first: "the one about Agincourt" on its own reads
+        # like nonsense, and the exchange is what makes the failure legible.
+        for turn in case.context:
+            who = "she" if turn.speaker is Speaker.HER else "app"
+            print(f'    {who}:  "{turn.text}"')
         print(f'    said: "{case.said}"')
         for run_ in runs:
             if run_.grade in (Grade.FAIL, Grade.ERROR):

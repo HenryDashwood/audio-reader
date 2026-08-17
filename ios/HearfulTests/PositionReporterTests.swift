@@ -28,7 +28,10 @@ final class RecordingAPI: HearfulAPIProtocol, @unchecked Sendable {
 
     func reportDiagnostic(_ event: [String: any Sendable]) async throws {}
 
-    func command(transcript: String, nowPlayingEpisodeID: Int? = nil, traceparent: String? = nil) async throws
+    func command(
+        transcript: String, nowPlayingEpisodeID: Int? = nil, turns: [ConversationTurn] = [],
+        traceparent: String? = nil
+    ) async throws
         -> CommandResponse {
         CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
     }
@@ -75,7 +78,9 @@ struct PositionReporterTests {
         let api = RecordingAPI()
         // Private player instances: idle, so their published state never
         // interferes with the handler calls below.
-        let coordinator = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api))
+        let coordinator = PlaybackCoordinator(
+            audio: AudioPlayer(),
+            article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer()))
         return (PositionReporter(api: api, player: coordinator), api)
     }
 

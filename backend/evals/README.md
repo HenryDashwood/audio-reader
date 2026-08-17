@@ -75,6 +75,26 @@ Case(
 - `why` is required. It is printed with every failure.
 - `never` lists outcomes that are wrong however plausible they look.
 - `question_is_acceptable=False` where a question is itself the bug.
+- `context` is what was already said, oldest first, when the case is the second
+  half of a request. `said` is then a fragment — "the one about Agincourt" —
+  which is exactly the shape a clarification comes back in, and the case is
+  meaningless without the lines before it:
+
+  ```python
+  Case(
+      id="follow-up-picks-from-the-named-show",
+      said="the Alexander one",
+      context=(_her("Play me a Rest Is History"), _app("Which episode would you like?")),
+      expect=Expect(Action.PLAY_EPISODE, any_of=(...)),
+      why="Her answer names the episode and the earlier line names the show …",
+      question_is_acceptable=False,
+  )
+  ```
+
+  Two failures are worth writing cases for, and they pull in opposite
+  directions: the exchange being ignored, so her answer is read as a request
+  out of nowhere; and the exchange being read too hard, so a sentence that
+  stands perfectly well on its own gets dragged back to the previous subject.
 - If the episode you want is not in `world.py`, add it there — and put it near
   the top of its show's list if the case needs it to be reachable.
 

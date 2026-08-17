@@ -84,7 +84,9 @@ struct SleepCommandTests {
 @MainActor
 struct SleepTimerTests {
     private func makeTimer(recorder: Recorder) -> (SleepTimer, PlaybackCoordinator) {
-        let player = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: FakeAPI()))
+        let player = PlaybackCoordinator(
+            audio: AudioPlayer(),
+            article: ArticlePlayer(api: FakeAPI(), synthesizer: SilentSynthesizer()))
         let timer = SleepTimer(player: player, feedback: FakeFeedback(recorder))
         return (timer, player)
     }

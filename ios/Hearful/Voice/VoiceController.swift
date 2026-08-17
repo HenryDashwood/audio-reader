@@ -54,6 +54,15 @@ final class VoiceController: ObservableObject {
     /// arrives on its own, short enough that the silence never feels broken.
     static let noticeAfter = Duration.milliseconds(600)
 
+    /// How many times one exchange may go round after the first question.
+    ///
+    /// A ceiling rather than a loop, because the failure it guards against is
+    /// the app asking her the same thing over and over with the microphone
+    /// open. Three is generous: a request that has not been understood by the
+    /// fourth attempt is not going to be, and being handed back the screen is
+    /// a better answer than being asked again.
+    static let maxFollowUps = 3
+
     /// What she is told when listening is not permitted. Long, unlike every
     /// other spoken line here, because it is the only one that has to carry
     /// instructions she cannot read off the screen.
@@ -64,6 +73,14 @@ final class VoiceController: ObservableObject {
 
     @Published private(set) var state: VoiceState = .idle
     @Published private(set) var lastSpokenResponse = ""
+    /// The exchange so far: what she said, and what the app said back.
+    ///
+    /// Sent with each request, so a clarifying question and its answer are one
+    /// request in two halves rather than two unrelated ones — and shown on the
+    /// sheet, because the thing she cannot otherwise check is what the app
+    /// believes it heard. A misheard word is obvious on screen and invisible
+    /// from the answer.
+    @Published private(set) var conversation = Conversation()
     /// True once listening has been refused for want of permission. The sheet
     /// puts a button on screen so the trip to Settings is one tap rather than
     /// a hunt through someone else's app.
@@ -101,6 +118,14 @@ final class VoiceController: ObservableObject {
         self.telemetry = telemetry
     }
 
+    /// Listens, acts, and keeps going for as long as the answer was a question.
+    ///
+    /// One tap is one exchange, not one sentence. When the backend asks which
+    /// show she meant, the microphone opens again on its own and her answer is
+    /// sent with the question attached — which is the difference between a
+    /// two-sentence request and two requests, and the difference she was
+    /// paying for before: every clarification the app asked for was a question
+    /// it then could not use the answer to.
     func beginCommand() async {
         // Taps are easy to double up when you cannot see the screen.
         guard !isBusy else { return }
@@ -108,26 +133,59 @@ final class VoiceController: ObservableObject {
         isCancelled = false
         defer { isBusy = false }
 
-        // One wide event per spoken request, opened here and sent once at the
+        // A tap after a long silence starts a subject rather than continuing
+        // one. Checked here rather than on a timer so the transcript stays on
+        // screen as long as she leaves the sheet open, and is dropped only at
+        // the moment it would otherwise be read as context.
+        conversation.forgetIfStale()
+
+        // Before anything slow happens: confirm we are on it — whether she got
+        // here by tapping the sheet or by the sheet opening and starting
+        // itself. Only for the first turn of an exchange: on a follow-up the
+        // question she has just been asked is the acknowledgement, and a tone
+        // on top of it would be noise between a question and its answer.
+        feedback.play(.acknowledged)
+
+        // Anything playing would otherwise be transcribed as if she said it.
+        // Remember that we interrupted it, so the episode is not silently lost
+        // when the command turns out not to start anything new. Once for the
+        // whole exchange: it comes back when the exchange ends, however many
+        // turns that took.
+        interruptedPlayback = player.isPlaying
+        if player.isPlaying { player.pause() }
+        defer { resumeInterruptedPlayback() }
+
+        for _ in 0...Self.maxFollowUps {
+            // Anything but a question ends it: she got what she asked for, or
+            // was told why not. Cancellation ends it too — a question asked of
+            // a sheet that has gone is not one to reopen the microphone for.
+            guard await takeTurn() == .expectsReply, !isCancelled else { return }
+        }
+    }
+
+    /// What a turn leaves behind: an exchange that is over, or one waiting on
+    /// her.
+    private enum TurnOutcome {
+        case done
+        case expectsReply
+    }
+
+    /// One listen, one answer. Everything that can go wrong with a spoken
+    /// request goes wrong in here, and each pass is its own telemetry row.
+    private func takeTurn() async -> TurnOutcome {
+        // One wide event per spoken turn, opened here and sent once at the
         // end however it ends — including the ends that never reach the
         // backend, which were invisible until this existed.
         let attempt = VoiceAttempt()
+        // Which turn of the exchange this was. A first ask and an answer to a
+        // question are different requests with different failure modes, and
+        // from a single row they used to look identical.
+        attempt.conversationTurns = conversation.turns.count
         VoiceAttempt.current = attempt
         defer {
             VoiceAttempt.current = nil
             telemetry?.report(attempt)
         }
-
-        // Before anything slow happens: confirm we are on it — whether she got
-        // here by tapping the sheet or by the sheet opening and starting itself.
-        feedback.play(.acknowledged)
-
-        // Anything playing would otherwise be transcribed as if she said it.
-        // Remember that we interrupted it, so the episode is not silently lost
-        // when the command turns out not to start anything new.
-        interruptedPlayback = player.isPlaying
-        if player.isPlaying { player.pause() }
-        defer { resumeInterruptedPlayback() }
 
         do {
             state = .listening
@@ -146,16 +204,25 @@ final class VoiceController: ObservableObject {
             // it had — nothing. Left to carry on, this is precisely the path
             // that says "I did not hear anything" to a sheet that is no longer
             // there. The attempt keeps its default outcome of `abandoned`.
-            guard !isCancelled else { return }
+            guard !isCancelled else { return .done }
             // Listening worked, so whatever was missing has been granted.
             needsPermission = false
             let heard = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
             attempt.transcriptEmpty = heard.isEmpty
             guard !heard.isEmpty else {
                 attempt.outcome = .noSpeech
+                // Ends the exchange rather than asking again. A question she
+                // has answered with silence does not get a better answer for
+                // being repeated, and repeating it is how a clarification
+                // turns into the app talking to an empty room.
                 await fail(saying: "I did not hear anything. Tap and try again.")
-                return
+                return .done
             }
+            // On screen from here on, whether or not it reaches the network.
+            // What the app thought it heard is the one thing she cannot check
+            // by listening, and a misheard word explains almost every answer
+            // that looks like the model being stupid.
+            conversation.sheSaid(heard)
 
             // Transport controls and the sleep timer resolve here, with no
             // network and no model. Sleep is checked first: its phrases are
@@ -165,13 +232,13 @@ final class VoiceController: ObservableObject {
                 attempt.outcome = .sleep
                 attempt.sleepCommand = sleep == .cancel ? "cancel" : "after"
                 await perform(sleep)
-                return
+                return .done
             }
             if let transport = TransportCommand.match(transcript) {
                 attempt.outcome = .transport
                 attempt.transportCommand = String(describing: transport)
                 perform(transport)
-                return
+                return .done
             }
 
             state = .thinking
@@ -180,19 +247,26 @@ final class VoiceController: ObservableObject {
             // playing is what she was listening to when she spoke, and by the
             // time the answer comes back it may not be.
             let nowPlaying = player.currentEpisode?.id
+            // Everything except the line she has just spoken, which travels as
+            // the transcript.
+            let earlier = conversation.payload.dropLast()
             let response = try await announcingDelay {
                 try await self.api.command(
                     transcript: transcript, nowPlayingEpisodeID: nowPlaying,
-                    traceparent: attempt.traceparent())
+                    turns: Array(earlier), traceparent: attempt.traceparent())
             }
-            guard !isCancelled else { return }
+            guard !isCancelled else { return .done }
             attempt.outcome = Self.outcome(of: response)
             await handle(response)
+            // Cancelled while the answer was being spoken: there is nobody
+            // left to answer a question, whatever the backend asked.
+            guard !isCancelled else { return .done }
+            return response.expectsReply == true ? .expectsReply : .done
         } catch _ where isCancelled {
             // The recognisers that fail rather than return on cancellation end
             // up here. Our own doing, so it is neither announced nor counted
             // as an error — the outcome stays `abandoned`.
-            return
+            return .done
         } catch is SpeechPermissionDenied {
             attempt.outcome = .permissionDenied
             // Distinct from every other failure: telling her to tap and try
@@ -210,6 +284,9 @@ final class VoiceController: ObservableObject {
             attempt.error = String(describing: type(of: error))
             await fail(saying: "Sorry, I could not hear you. Please tap and try again.")
         }
+        // Every path that lands here has failed and said so. None of them is a
+        // question, so the microphone stays shut and she has the screen back.
+        return .done
     }
 
     /// Closing the sheet ends whatever it started.
@@ -398,6 +475,12 @@ final class VoiceController: ObservableObject {
         // when she is doing something else.
         guard !isCancelled else { return }
         lastSpokenResponse = text
+        // Recorded here rather than from the response, because this is the one
+        // place every spoken line passes through: an apology the app decided on
+        // by itself reaches the transcript exactly like a sentence the backend
+        // sent, and what is on screen is what she actually heard. The holding
+        // line does not come through here, which is why it stays out.
+        conversation.appSaid(text)
         await speaker.speak(text)
     }
 

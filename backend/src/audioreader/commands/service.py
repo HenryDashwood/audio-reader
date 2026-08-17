@@ -3,6 +3,7 @@
 import logging
 import operator
 import re
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from functools import reduce
 
@@ -12,7 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from audioreader import positions, telemetry
-from audioreader.commands.intents import Action, Candidate, InterpretResult, ModelDecision
+from audioreader.commands.intents import (
+    Action,
+    Candidate,
+    InterpretResult,
+    ModelDecision,
+    Speaker,
+    Turn,
+)
 from audioreader.config import settings
 from audioreader.episode_search import mentions
 from audioreader.feeds import service as feed_service
@@ -92,7 +100,20 @@ there because it answers to her words, and is very likely the one she means.
   speed: "double" is 2, "normal" is 1, "half" is 0.5. Sensible values are 0.5
   to 3. Leave spoken_response empty: the app confirms the speed itself.
 - Choose unknown when nothing matches, or when several episodes match equally
-  well and guessing would be worse than asking.
+  well and guessing would be worse than asking. Your sentence is then a
+  question, and she will answer it out loud straight away.
+- You may be shown what has already been said in this exchange. Only the last
+  thing she said is the request; the lines before it are context for it. When
+  your own last line was a question, what she has just said is almost
+  certainly the answer to it, and the two are one request: after you asked
+  "Which show did you mean?", "the Rest Is History" means play a Rest Is
+  History episode — it is not a request to subscribe to it. After "Which
+  episode?", "the one about Agincourt" names an episode of the show she asked
+  about a moment ago, not of any show in the list.
+- A request you have already carried out is finished. If what she says next
+  stands on its own, treat it as a new request and ignore what came before;
+  only read it against the earlier lines when it plainly refers back to them
+  ("no, the other one", "the one before that", "actually make it faster").
 - episode_id must be copied exactly from the list. Never invent one.
 - spoken_response is read aloud to her and she waits through every word of it
   before the episode starts, so make it as short as possible.
@@ -322,6 +343,7 @@ def build_prompt(
     candidates: list[Candidate],
     today: date | None = None,
     now_playing: Candidate | None = None,
+    turns: Sequence[Turn] = (),
 ) -> str:
     """The per-request half of the prompt.
 
@@ -333,15 +355,21 @@ def build_prompt(
     What is playing is named for the same reason: "mark this as played" is a
     sentence about something the phone can see and the backend cannot, and
     without this line the only honest answer to it is a question.
+
+    Anything already said comes first and her latest sentence last, so the
+    request is the line nearest the list it has to be answered from.
     """
     today = today or utcnow().date()
-    lines = [
-        f"Today is {today.strftime('%A %d %B %Y')}.",
-        "",
-        "She said:",
-        f'"{transcript}"',
-        "",
-    ]
+    lines = [f"Today is {today.strftime('%A %d %B %Y')}.", ""]
+    if turns:
+        lines.append("Already said in this exchange, oldest first:")
+        for turn in turns:
+            who = "She said" if turn.speaker is Speaker.HER else "You said"
+            lines.append(f'    {who}: "{turn.text}"')
+        lines += ["", "And now she said:"]
+    else:
+        lines.append("She said:")
+    lines += [f'"{transcript}"', ""]
     if now_playing is not None:
         lines += [
             f"She is listening to [{now_playing.id}] {now_playing.title} — {now_playing.feed_title} right now.",
@@ -361,6 +389,44 @@ def build_prompt(
     return "\n".join(lines)
 
 
+def spoken_so_far(transcript: str, turns: Sequence[Turn] = ()) -> str:
+    """Every word she has said in this exchange, for the candidate search.
+
+    The episode she wants may have been named a sentence ago: "play the Rest Is
+    History" — "which episode?" — "the one about Agincourt". Searching the
+    latest line alone looks for Agincourt without the show; searching the first
+    alone looks for the show without the episode. The answer is only in the two
+    together, and without this the clarification the model just asked for
+    arrives with the episode still outside the candidate window.
+
+    Her lines only. The app's own questions are our words, not hers, and
+    searching them would spend the back-catalogue slots on whatever most
+    recently mentioned "episode" or "show".
+
+    Her latest sentence first, then the earlier ones newest-first — which is
+    backwards as prose and right as a search. Only the first handful of
+    identifying words are searched for, so whatever comes first is what gets
+    looked up: put the exchange in the order it was spoken and a wordy opening
+    line spends the whole budget, dropping the one word she has just said that
+    names the episode. Order is otherwise immaterial here, since every keyword
+    is scored alike.
+    """
+    said = [transcript]
+    said += [turn.text for turn in reversed(turns) if turn.speaker is Speaker.HER]
+    return " ".join(said)
+
+
+def _asking(question: str) -> InterpretResult:
+    """An answer that is itself a question, so the app listens for the reply.
+
+    A function rather than a flag passed at each site, because the flag is easy
+    to leave off and a question with it missing is a dead end she has no way to
+    see: the app falls silent and waits to be tapped, having just asked her
+    something.
+    """
+    return InterpretResult(action=Action.UNKNOWN, spoken_response=question, expects_reply=True)
+
+
 async def interpret(
     session: AsyncSession,
     llm,
@@ -368,11 +434,12 @@ async def interpret(
     user: User,
     discovery_llm=None,
     now_playing_episode_id: int | None = None,
+    turns: Sequence[Turn] = (),
 ) -> InterpretResult:
     # Feed discovery gets its own client (web search, long timeout); without
     # one, the ordinary client still handles the easy, well-known cases.
     discovery_llm = discovery_llm if discovery_llm is not None else llm
-    candidates = await build_candidates(session, user, transcript)
+    candidates = await build_candidates(session, user, spoken_so_far(transcript, turns))
     # What she is listening to has to be choosable, and it often is not: a
     # 2003 In Our Time episode is decades outside the recency window and
     # matches none of the words in "mark this as played". Without this, the
@@ -394,7 +461,7 @@ async def interpret(
 
     raw = await llm.decide(
         system=SYSTEM_PROMPT,
-        user=build_prompt(transcript, candidates, now_playing=now_playing),
+        user=build_prompt(transcript, candidates, now_playing=now_playing, turns=turns),
         output_model=ModelDecision,
     )
 
@@ -403,7 +470,7 @@ async def interpret(
     except ValidationError as exc:
         logger.warning("model returned an unusable decision (%s): %r", exc, raw)
         telemetry.annotate(failure="invalid_decision")
-        return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
+        return _asking(_CLARIFY)
 
     # What the model asked for, which is not always what we let it have. The
     # difference between this and the `action` on the enclosing span is the
@@ -435,12 +502,14 @@ async def interpret(
     if decision.action is not Action.PLAY_EPISODE:
         # Never pass an empty sentence through: the app would simply go quiet,
         # and she has no screen to check whether anything happened at all.
-        return InterpretResult(
-            action=Action.UNKNOWN,
-            spoken_response=decision.spoken_response.strip() or _CLARIFY,
-        )
+        #
+        # An `unknown` from the model is a question by construction — the
+        # prompt allows it nothing else — so it is one she can answer aloud.
+        return _asking(decision.spoken_response.strip() or _CLARIFY)
 
     if not candidates:
+        # Not a question, and the microphone must not reopen on it: what she
+        # needs to do next is subscribe to something, which the sentence says.
         return InterpretResult(
             action=Action.UNKNOWN,
             spoken_response="You have no podcasts yet. Say subscribe, and the name of a show.",
@@ -450,12 +519,12 @@ async def interpret(
     if decision.episode_id not in {candidate.id for candidate in candidates}:
         logger.warning("model chose episode_id %r, which was not offered", decision.episode_id)
         telemetry.annotate(failure="episode_not_offered")
-        return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
+        return _asking(_CLARIFY)
 
     # Feed loaded eagerly: the router folds show artwork into the response.
     episode = await session.get(Episode, decision.episode_id, options=[joinedload(Episode.feed)])
     if episode is None:
-        return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
+        return _asking(_CLARIFY)
 
     return InterpretResult(
         action=Action.PLAY_EPISODE,
@@ -467,10 +536,7 @@ async def interpret(
 def _set_speed(speed: float | None) -> InterpretResult:
     """Hand a validated multiplier to the app; the phone applies it."""
     if speed is None or not (0.5 <= speed <= 3.0):
-        return InterpretResult(
-            action=Action.UNKNOWN,
-            spoken_response="What speed would you like? Between half and triple speed works.",
-        )
+        return _asking("What speed would you like? Between half and triple speed works.")
     # Round to the nearest quarter: the model can produce 1.499999, and "one
     # point five times speed" must never be read out as anything stranger.
     speed = round(speed * 4) / 4
@@ -526,12 +592,12 @@ async def _file_episode(
     if episode_id not in {candidate.id for candidate in candidates}:
         logger.warning("model chose episode_id %r for %s, which was not offered", episode_id, action)
         telemetry.annotate(failure="episode_not_offered")
-        return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
+        return _asking(_CLARIFY)
 
     # Feed loaded eagerly: the router folds show artwork into the response.
     episode = await session.get(Episode, episode_id, options=[joinedload(Episode.feed)])
     if episode is None:
-        return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
+        return _asking(_CLARIFY)
 
     (played, dismissed), said = _FILING[action]
     await positions.set_episode_state(session, user, episode.id, played=played, dismissed=dismissed)
@@ -605,10 +671,7 @@ async def _subscribe(
 ) -> InterpretResult:
     """Find a show or publication by spoken name and follow it."""
     if not query or not query.strip():
-        return InterpretResult(
-            action=Action.UNKNOWN,
-            spoken_response="Which show would you like to subscribe to?",
-        )
+        return _asking("Which show would you like to subscribe to?")
 
     found = await _find_show(query, transcript, discovery_llm)
     if found is None:
@@ -659,10 +722,7 @@ async def _play_from_show(
     then it only reads this one show's episodes.
     """
     if not show_query or not show_query.strip():
-        return InterpretResult(
-            action=Action.UNKNOWN,
-            spoken_response="Which show would you like to hear?",
-        )
+        return _asking("Which show would you like to hear?")
 
     found = await _find_show(show_query, transcript, discovery_llm)
     if found is None:
@@ -708,16 +768,15 @@ async def _play_from_show(
     except ValidationError as exc:
         logger.warning("model returned an unusable episode pick (%s): %r", exc, raw)
         telemetry.annotate(failure="invalid_episode_pick")
-        return InterpretResult(action=Action.UNKNOWN, spoken_response=_CLARIFY)
+        return _asking(_CLARIFY)
 
     if decision.action is not Action.PLAY_EPISODE or decision.episode_id not in {
         candidate.id for candidate in candidates
     }:
         telemetry.annotate(failure="episode_not_in_show")
-        return InterpretResult(
-            action=Action.UNKNOWN,
-            spoken_response=decision.spoken_response or f"I could not find that episode of {feed.title}.",
-        )
+        # She has the show right and the episode wrong, which is the most
+        # answerable of the dead ends: another word or two usually settles it.
+        return _asking(decision.spoken_response or f"Which episode of {feed.title} did you mean?")
 
     episode = await session.get(Episode, decision.episode_id, options=[joinedload(Episode.feed)])
     return InterpretResult(
@@ -743,10 +802,7 @@ def _wants_latest(episode_query: str | None) -> bool:
 async def _unsubscribe(session: AsyncSession, query: str | None, user: User) -> InterpretResult:
     """Stop following a show she already has."""
     if not query or not query.strip():
-        return InterpretResult(
-            action=Action.UNKNOWN,
-            spoken_response="Which show would you like to remove?",
-        )
+        return _asking("Which show would you like to remove?")
 
     feeds = (
         await session.scalars(
@@ -770,10 +826,7 @@ async def _unsubscribe(session: AsyncSession, query: str | None, user: User) -> 
     if len(matches) > 1:
         # Removing the wrong show silently is far worse than one more question.
         names = " or ".join(feed.title for feed in matches)
-        return InterpretResult(
-            action=Action.UNKNOWN,
-            spoken_response=f"Did you mean {names}?",
-        )
+        return _asking(f"Did you mean {names}?")
 
     feed = matches[0]
     title = feed.title

@@ -9,8 +9,13 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     ///
     /// `traceparent` is W3C trace context, so the backend's own telemetry
     /// for this request joins the phone's rather than sitting beside it.
-    func command(transcript: String, nowPlayingEpisodeID: Int?, traceparent: String?) async throws
-        -> CommandResponse
+    /// `turns` carries what has already been said in this exchange, so an
+    /// answer to a question the app asked arrives as the second half of a
+    /// request rather than as an unrelated one.
+    func command(
+        transcript: String, nowPlayingEpisodeID: Int?, turns: [ConversationTurn],
+        traceparent: String?
+    ) async throws -> CommandResponse
     func episode(id: Int) async throws -> Episode
     func articleText(episodeID: Int) async throws -> EpisodeText
     func recentEpisodes(limit: Int) async throws -> [Episode]
@@ -84,9 +89,10 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         self.transport = transport
     }
 
-    func command(transcript: String, nowPlayingEpisodeID: Int?, traceparent: String?) async throws
-        -> CommandResponse
-    {
+    func command(
+        transcript: String, nowPlayingEpisodeID: Int? = nil, turns: [ConversationTurn] = [],
+        traceparent: String? = nil
+    ) async throws -> CommandResponse {
         var request = URLRequest(url: baseURL.appendingPathComponent("command"))
         request.setValue(traceparent, forHTTPHeaderField: "traceparent")
         request.httpMethod = "POST"
@@ -96,7 +102,8 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         request.timeoutInterval = 300
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
-            CommandRequest(transcript: transcript, nowPlayingEpisodeID: nowPlayingEpisodeID))
+            CommandRequest(
+                transcript: transcript, nowPlayingEpisodeID: nowPlayingEpisodeID, turns: turns))
         return try await send(request)
     }
 

@@ -14,7 +14,10 @@ private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
         return stored
     }
 
-    func command(transcript: String, nowPlayingEpisodeID: Int? = nil, traceparent: String? = nil) async throws
+    func command(
+        transcript: String, nowPlayingEpisodeID: Int? = nil, turns: [ConversationTurn] = [],
+        traceparent: String? = nil
+    ) async throws
         -> CommandResponse {
         CommandResponse(action: .unknown, spokenResponse: "?", episode: nil)
     }
@@ -69,7 +72,9 @@ struct PlaybackRestoreTests {
         PlaybackRestore.remember(episodeID: 104, defaults: defaults)
         let api = OneEpisodeAPI()
         api.stored = episode(id: 104)
-        let player = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api))
+        let player = PlaybackCoordinator(
+            audio: AudioPlayer(),
+            article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer()))
 
         await PlaybackRestore.restore(api: api, player: player, defaults: defaults)
 
@@ -79,7 +84,9 @@ struct PlaybackRestoreTests {
 
     @Test func nothingRememberedMeansNothingFetched() async {
         let api = OneEpisodeAPI()
-        let player = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api))
+        let player = PlaybackCoordinator(
+            audio: AudioPlayer(),
+            article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer()))
 
         await PlaybackRestore.restore(api: api, player: player, defaults: makeDefaults())
 
@@ -92,7 +99,9 @@ struct PlaybackRestoreTests {
         PlaybackRestore.remember(episodeID: 104, defaults: defaults)
         let api = OneEpisodeAPI()
         api.stored = episode(id: 104)
-        let player = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api))
+        let player = PlaybackCoordinator(
+            audio: AudioPlayer(),
+            article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer()))
         player.restore(episode(id: 205))
 
         await PlaybackRestore.restore(api: api, player: player, defaults: defaults)
@@ -105,7 +114,9 @@ struct PlaybackRestoreTests {
         let defaults = makeDefaults()
         PlaybackRestore.remember(episodeID: 104, defaults: defaults)
         let api = OneEpisodeAPI()  // stored is nil: fetch throws
-        let player = PlaybackCoordinator(audio: AudioPlayer(), article: ArticlePlayer(api: api))
+        let player = PlaybackCoordinator(
+            audio: AudioPlayer(),
+            article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer()))
 
         await PlaybackRestore.restore(api: api, player: player, defaults: defaults)
 

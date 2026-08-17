@@ -288,6 +288,7 @@ the wrong episode is a perfectly successful 200.
 | `model_action` | what the model asked for — the gap between the two is how often we overrode it |
 | `failure` | `none`, or how it went nowhere: `invalid_decision`, `episode_not_offered`, `show_not_found`, `invalid_episode_pick`, `episode_not_in_show` |
 | `transcript`, `transcript_words` | what she said, and how much of it arrived |
+| `conversation_turns`, `expects_reply` | how far into an exchange this was, and whether we asked her something — together, whether clarifying gets anywhere |
 | `candidate_count`, `feed_count` | the size and breadth of the haystack |
 | `search_query` | the show name the model heard |
 | `episode_id`, `episode_title`, `feed_title`, `episode_age_days` | what she was given, and how far back it was reached for |
@@ -313,6 +314,11 @@ from records where span_name = 'command' group by model
 -- is the phone truncating her? short transcripts, grouped by outcome
 select attributes->>'transcript_words' as words, action, count(*) from records
 where span_name = 'command' group by words, action order by words
+
+-- does asking her a question lead anywhere? a clarification she answers
+-- arrives as a second row with conversation_turns > 0
+select attributes->>'conversation_turns' as turns, action, count(*) from records
+where span_name = 'command' group by turns, action order by turns
 ```
 
 None of that is a correctness label; nothing in a request knows whether it was

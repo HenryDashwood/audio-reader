@@ -8,6 +8,35 @@ from pydantic import BaseModel, Field
 
 from audioreader.models import Episode
 
+#: How many turns of an exchange we will read. Four questions and their
+#: answers, which is already more than any real request needs — past that the
+#: history is likelier to be a subject she has moved on from than context for
+#: what she is asking now.
+MAX_TURNS = 8
+
+
+class Speaker(StrEnum):
+    HER = "her"
+    APP = "app"
+
+
+class Turn(BaseModel):
+    """One line already spoken in this exchange.
+
+    Conversations are held by the phone and sent back with each request, rather
+    than kept here under a session id. An exchange is a handful of short
+    sentences that matter for the next thirty seconds, so keeping it on the
+    device costs a few hundred tokens and saves a table, an expiry sweep, and
+    the whole question of what happens when two devices answer at once — and
+    the backend goes on answering every request from what it was sent.
+
+    It is also, verbatim, what the app shows her on screen: the transcript in
+    the voice sheet is this list, so what she can see is what the model reads.
+    """
+
+    speaker: Speaker
+    text: str
+
 
 class Action(StrEnum):
     PLAY_EPISODE = "play_episode"
@@ -90,3 +119,13 @@ class InterpretResult:
     spoken_response: str
     episode: Episode | None = None
     speed: float | None = None
+    #: Whether the sentence above is a question we want answered.
+    #:
+    #: The difference between "which show did you mean?" and "you are already
+    #: subscribed to that", which are the same action and the same shape of
+    #: reply, and which she must answer in two completely different ways. The
+    #: app listens again for a question rather than making her find and tap
+    #: the screen to say the second half of a sentence — so getting this wrong
+    #: either strands a question nobody can answer, or opens the microphone
+    #: after a remark that was the end of the matter.
+    expects_reply: bool = False

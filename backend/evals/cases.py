@@ -14,8 +14,17 @@ passed; one that says the right thing and plays the wrong episode has not.
 
 from dataclasses import dataclass, field
 
-from audioreader.commands.intents import Action
+from audioreader.commands.intents import Action, Speaker, Turn
 from evals.world import build_world
+
+
+def _her(text: str) -> Turn:
+    return Turn(speaker=Speaker.HER, text=text)
+
+
+def _app(text: str) -> Turn:
+    return Turn(speaker=Speaker.APP, text=text)
+
 
 # Guids are derived from titles, so name them once here and let the cases read
 # in English. A typo becomes an import-time error rather than a silent miss.
@@ -94,6 +103,11 @@ class Case:
     #: at all without it, and a case that leaves it unset is asking the model
     #: to guess.
     now_playing: str | None = None
+    #: What was already said before `said`, oldest first — the exchange the app
+    #: would have been holding. Set it on any case that is the second half of a
+    #: request: "the one about Agincourt" is not a command on its own, and a
+    #: case that leaves this out is testing a sentence nobody would ever say.
+    context: tuple[Turn, ...] = field(default_factory=tuple)
 
 
 CASES: tuple[Case, ...] = (
@@ -417,6 +431,105 @@ CASES: tuple[Case, ...] = (
         expect=Expect(Action.UNKNOWN),
         why="A short question back, not silence and not a guess.",
         tags=("unknown", "test-plan"),
+    ),
+    # -- Requests that take more than one sentence --------------------------
+    Case(
+        id="follow-up-names-the-episode",
+        said="the one about Agincourt",
+        context=(
+            _her("Play something from The Rest Is History"),
+            _app("Which episode would you like?"),
+        ),
+        expect=Expect(Action.UNKNOWN),
+        why=(
+            "The shape every clarification has: the app asked, she answered, and her "
+            "answer is a fragment that means nothing on its own. The Rest Is History has "
+            "no Agincourt episode, so the right answer is another question — but it must "
+            "be a question about that show, not a blank 'which show did you mean?', and "
+            "it must never be an episode of something else that happens to mention a "
+            "battle. This is the case that fails outright if the exchange is not read."
+        ),
+        tags=("conversation", "unknown"),
+        never=(_latest("astral_codex_ten"), _latest("rest_is_politics")),
+    ),
+    Case(
+        id="follow-up-picks-from-the-named-show",
+        said="the Alexander one",
+        context=(
+            _her("Play me a Rest Is History"),
+            _app("Which episode would you like?"),
+        ),
+        expect=Expect(
+            Action.PLAY_EPISODE,
+            any_of=(
+                _guid("rest_is_history", "Alexander the Great in India"),
+                _guid("rest_is_history", "Alexander the Great: The Persian Campaign"),
+            ),
+        ),
+        why=(
+            "Her answer names the episode and the earlier line names the show. Read "
+            "together they are one unambiguous request, so a question here is the bug: "
+            "she has now said everything needed twice over."
+        ),
+        tags=("conversation", "play"),
+        question_is_acceptable=False,
+    ),
+    Case(
+        id="follow-up-answers-with-a-show-name",
+        said="In Our Time",
+        context=(
+            _her("Play the latest one"),
+            _app("Which show did you mean?"),
+        ),
+        expect=Expect(Action.PLAY_EPISODE, episode=_latest("in_our_time")),
+        why=(
+            "A show name on its own, after a question. The trap is reading it as "
+            "'subscribe to In Our Time' — a bare name is what a subscribe request looks "
+            "like — when the exchange plainly says she is choosing between shows to play "
+            "from. Subscribing to something she already has is the visible failure; the "
+            "quiet one is asking again."
+        ),
+        tags=("conversation", "play"),
+        question_is_acceptable=False,
+    ),
+    Case(
+        id="follow-up-does-not-swallow-a-new-request",
+        said="Actually, play the latest Astral Codex Ten",
+        context=(
+            _her("Play the Rest Is History about the Borgias"),
+            _app("Playing The Borgias, Part One."),
+        ),
+        expect=Expect(Action.PLAY_EPISODE, episode=_latest("astral_codex_ten")),
+        why=(
+            "The other half of reading an exchange: history is context, not gravity. She "
+            "has changed her mind, and the sentence stands on its own — carrying on with "
+            "the Borgias because they were mentioned a moment ago is the failure that "
+            "arrives the day multi-turn is switched on."
+        ),
+        tags=("conversation", "play"),
+        question_is_acceptable=False,
+        never=(
+            _guid("rest_is_history", "The Borgias, Part One"),
+            _guid("rest_is_history", "The Borgias, Part Two"),
+        ),
+    ),
+    Case(
+        id="follow-up-reaches-the-back-catalogue",
+        said="the Athelstan one",
+        context=(
+            _her("Play an In Our Time"),
+            _app("Which episode would you like?"),
+        ),
+        expect=Expect(Action.PLAY_EPISODE, episode=_guid("in_our_time", "Æthelstan")),
+        why=(
+            "The candidate search has to read both halves too, not just her latest "
+            "sentence. Athelstan is seventy episodes down: search 'the Athelstan one' "
+            "alone and the show is missing, search the first line alone and the episode "
+            "is. Either way the answer is outside the window and the clarification the "
+            "app just asked for cannot be acted on."
+        ),
+        tags=("conversation", "back-catalogue", "play"),
+        question_is_acceptable=False,
     ),
 )
 

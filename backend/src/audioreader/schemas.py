@@ -3,8 +3,9 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
+from audioreader.commands.intents import MAX_TURNS, Turn
 from audioreader.text import strip_html
 
 
@@ -174,6 +175,14 @@ class CommandRequest(BaseModel):
     #: played" has no referent at all: the backend knows her whole library and
     #: nothing about which part of it is currently coming out of the speaker.
     now_playing_episode_id: int | None = None
+    #: What has already been said in this exchange, oldest first, not including
+    #: the transcript above. Empty for a request that starts a subject.
+    #:
+    #: "The one about Agincourt" is not a command; it is the second half of
+    #: one. Without these lines the app asks which episode she meant and then
+    #: reads her answer as if she had walked up and said it — which is how a
+    #: perfectly clear two-sentence request ends in a shrug.
+    turns: list[Turn] = Field(default_factory=list)
 
     @field_validator("transcript")
     @classmethod
@@ -184,6 +193,15 @@ class CommandRequest(BaseModel):
             raise ValueError("transcript must not be blank")
         return value.strip()
 
+    @field_validator("turns")
+    @classmethod
+    def most_recent(cls, value: list[Turn]) -> list[Turn]:
+        # Trimmed rather than rejected: a phone that has been talking for a
+        # while is not making a bad request, and refusing it would fail the
+        # one turn she is waiting on. The newest lines are the ones that
+        # matter, so the oldest go.
+        return value[-MAX_TURNS:]
+
 
 class CommandResponse(BaseModel):
     action: str
@@ -191,6 +209,10 @@ class CommandResponse(BaseModel):
     episode: EpisodeRead | None = None
     # For set_speed: the playback rate multiplier the app should apply.
     speed: float | None = None
+    #: True when the sentence above is a question: the app should listen again
+    #: rather than leaving her to tap and start over. Old apps ignore it and
+    #: behave exactly as they did before.
+    expects_reply: bool = False
 
 
 class VoiceAttemptEvent(BaseModel):
@@ -231,6 +253,12 @@ class VoiceAttemptEvent(BaseModel):
     # Resolved on the phone, so the server otherwise never learns they happened
     transport_command: str | None = None
     sleep_command: str | None = None
+
+    #: How much had already been said when this turn started: 0 for a fresh
+    #: request, higher for an answer to a question the app asked. Pairs with
+    #: `conversation_turns` on the server's own span, and is the field that
+    #: says whether asking her a question actually leads anywhere.
+    conversation_turns: int | None = None
 
     # Context that turned out to matter while debugging
     voiceover: bool | None = None

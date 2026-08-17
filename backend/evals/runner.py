@@ -108,6 +108,7 @@ async def run_case(case: Case, world: tuple[Show, ...], client: LLMClient) -> Ru
                     user=user,
                     discovery_llm=metered,
                     now_playing_episode_id=await episode_id(session, case.now_playing),
+                    turns=case.context,
                 )
             except LLMError as exc:
                 return Run(

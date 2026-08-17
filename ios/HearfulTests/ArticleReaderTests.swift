@@ -255,8 +255,10 @@ struct ArticleDocumentTests {
 
 /// Fails every request, for the offline paths.
 private final class FailingAPI: HearfulAPIProtocol, @unchecked Sendable {
-    func command(transcript: String, nowPlayingEpisodeID: Int?, traceparent: String?) async throws
-        -> CommandResponse
+    func command(
+        transcript: String, nowPlayingEpisodeID: Int?, turns: [ConversationTurn],
+        traceparent: String?
+    ) async throws -> CommandResponse
     {
         throw APIError(underlying: "offline")
     }

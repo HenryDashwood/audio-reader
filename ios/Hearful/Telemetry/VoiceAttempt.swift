@@ -47,6 +47,14 @@ final class VoiceAttempt {
     var transportCommand: String?
     var sleepCommand: String?
 
+    /// How much had already been said when this turn started: 0 for the first
+    /// thing she says, higher for an answer to a question the app asked.
+    ///
+    /// The two are different requests with different ways of failing — "she
+    /// was not understood" against "she was asked something and answering it
+    /// still did not work" — and from one row they were indistinguishable.
+    var conversationTurns: Int?
+
     var error: String?
 
     /// W3C trace id, one per spoken request and shared by every call it
@@ -123,6 +131,7 @@ final class VoiceAttempt {
         fields["settled_at_end"] = settledAtEnd
         fields["transport_command"] = transportCommand
         fields["sleep_command"] = sleepCommand
+        fields["conversation_turns"] = conversationTurns
         fields["error"] = error
         if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
             fields["app_version"] = version

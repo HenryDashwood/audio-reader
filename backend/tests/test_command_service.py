@@ -1,7 +1,7 @@
 import pytest
 
 from audioreader.commands import service
-from audioreader.commands.intents import Action
+from audioreader.commands.intents import Action, Speaker, Turn
 from audioreader.llm.client import LLMError
 from audioreader.llm.fake import FakeLLMClient
 from audioreader.models import Episode, Feed, Subscription
@@ -316,3 +316,127 @@ class TestNeverSilent:
         llm = FakeLLMClient({"action": "unknown", "spoken_response": "   "})
         result = await service.interpret(session, llm, user=user, transcript="mumble")
         assert result.spoken_response.strip()
+
+
+class TestConversation:
+    """A request that takes more than one sentence.
+
+    Before this, the app could ask which episode she meant and then read her
+    answer as though she had walked up and said it — so every clarification was
+    a question the pipeline could not use the answer to.
+    """
+
+    def _turns(self):
+        return [
+            Turn(speaker=Speaker.HER, text="play the history hour"),
+            Turn(speaker=Speaker.APP, text="Which episode?"),
+        ]
+
+    async def test_what_was_said_reaches_the_model(self, session, user, library):
+        llm = FakeLLMClient({"action": "play_episode", "episode_id": 1, "spoken_response": "ok"})
+        await service.interpret(session, llm, user=user, transcript="the Vienna one", turns=self._turns())
+
+        prompt = llm.calls[0]["user"]
+        assert "play the history hour" in prompt
+        assert "Which episode?" in prompt
+
+    async def test_her_latest_sentence_comes_last(self, session, user, library):
+        # The request should be the line nearest the list it is answered from.
+        llm = FakeLLMClient({"action": "unknown", "spoken_response": "Sorry?"})
+        await service.interpret(session, llm, user=user, transcript="the Vienna one", turns=self._turns())
+
+        prompt = llm.calls[0]["user"]
+        assert prompt.index("Which episode?") < prompt.index("the Vienna one")
+
+    async def test_each_side_is_attributed(self, session, user, library):
+        # "You said" and "She said", so the model can tell its own question
+        # from her answer to it — which is the whole basis for combining them.
+        prompt = service.build_prompt("the Vienna one", [], turns=self._turns())
+        assert 'She said: "play the history hour"' in prompt
+        assert 'You said: "Which episode?"' in prompt
+
+    async def test_a_fresh_request_says_nothing_about_an_exchange(self, session, user, library):
+        prompt = service.build_prompt("play something", [])
+        assert "exchange" not in prompt
+        assert prompt.count("She said") == 1
+
+    async def test_the_search_reads_every_word_she_said(self, session, user, deep_archive):
+        # The point of the whole thing: "the one about Athelstan" narrows the
+        # library, "the In Our Time one" does not, and after a clarification
+        # only one of them is in the latest sentence. Searched apart, the
+        # episode stays outside the candidate window and the answer she just
+        # gave cannot be acted on.
+        said = service.spoken_so_far(
+            "the one about Athelstan",
+            [Turn(speaker=Speaker.HER, text="play something from the archive")],
+        )
+        offered = await service.build_candidates(session, user, said, limit=60)
+        assert "Æthelstan" in {candidate.title for candidate in offered}
+
+    async def test_our_own_questions_are_not_searched_for(self, session, user, library):
+        # They are our words, not hers, and searching them spends the
+        # back-catalogue slots on whatever last mentioned "episode".
+        said = service.spoken_so_far("the Vienna one", self._turns())
+        assert "Which episode?" not in said
+        assert said == "the Vienna one play the history hour"
+
+    async def test_the_word_she_just_said_is_searched_for_first(self, session, user, deep_archive):
+        # Only the first few identifying words are looked up. In the order it
+        # was spoken, a wordy opening line spends the whole budget and the one
+        # word naming the episode — the word she has only just said — is
+        # dropped, so the clarification cannot be acted on.
+        rambling = Turn(
+            speaker=Speaker.HER,
+            text="I wanted something about the Byzantine Empire, Constantinople, "
+            "Justinian, mosaics and the Hagia Sophia cathedral",
+        )
+        said = service.spoken_so_far("the Athelstan one", [rambling, Turn(speaker=Speaker.APP, text="Which one?")])
+
+        assert "athelstan" in service.spoken_keywords(said)
+        offered = await service.build_candidates(session, user, said, limit=60)
+        assert "Æthelstan" in {candidate.title for candidate in offered}
+
+
+class TestExpectsReply:
+    """Whether the app should listen again, which the action cannot say.
+
+    "Which show did you mean?" and "You are already subscribed to that" are
+    both `unknown`, and she has to answer one and not the other.
+    """
+
+    async def test_a_question_from_the_model_expects_an_answer(self, session, user, library):
+        llm = FakeLLMClient({"action": "unknown", "spoken_response": "Which episode did you mean?"})
+        result = await service.interpret(session, llm, user=user, transcript="play that one")
+        assert result.expects_reply
+
+    async def test_a_played_episode_does_not(self, session, user, library):
+        llm = FakeLLMClient({"action": "play_episode", "episode_id": 1, "spoken_response": "ok"})
+        result = await service.interpret(session, llm, user=user, transcript="play the Vienna one")
+        assert not result.expects_reply
+
+    async def test_an_invented_episode_id_asks_again(self, session, user, library):
+        # She said something perfectly answerable and the model fumbled the id.
+        # Falling silent here strands a question she can hear.
+        llm = FakeLLMClient({"action": "play_episode", "episode_id": 999, "spoken_response": "ok"})
+        result = await service.interpret(session, llm, user=user, transcript="play something")
+        assert result.expects_reply
+
+    async def test_an_empty_library_is_not_a_question(self, session, user):
+        # "Say subscribe, and the name of a show" is instructions, not a
+        # question — and opening the microphone on it would be a tone she has
+        # no reason to expect, followed by an apology for hearing nothing.
+        llm = FakeLLMClient({"action": "play_episode", "episode_id": 1, "spoken_response": "ok"})
+        result = await service.interpret(session, llm, user=user, transcript="play something")
+
+        assert result.action == Action.UNKNOWN
+        assert not result.expects_reply
+
+    async def test_an_unusable_speed_asks_which_one(self, session, user, library):
+        llm = FakeLLMClient({"action": "set_speed", "speed": 42, "spoken_response": ""})
+        result = await service.interpret(session, llm, user=user, transcript="play it at warp speed")
+        assert result.expects_reply
+
+    async def test_a_valid_speed_does_not(self, session, user, library):
+        llm = FakeLLMClient({"action": "set_speed", "speed": 1.5, "spoken_response": ""})
+        result = await service.interpret(session, llm, user=user, transcript="one and a half speed")
+        assert not result.expects_reply

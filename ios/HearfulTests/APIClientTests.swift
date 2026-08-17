@@ -112,9 +112,55 @@ struct CommandEndpointTests {
         #expect(request.url?.path == "/command")
         #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/json")
 
-        let body = try JSONDecoder().decode(
-            [String: String].self, from: try #require(request.httpBody))
-        #expect(body["transcript"] == "play the Vienna one")
+        let body = try JSONSerialization.jsonObject(with: try #require(request.httpBody))
+        #expect((body as? [String: Any])?["transcript"] as? String == "play the Vienna one")
+    }
+
+    @Test func sendsTheExchangeSoFar() async throws {
+        // Her answer has to arrive with the question attached, or the backend
+        // reads "the one about Agincourt" as a request out of nowhere.
+        let transport = FakeTransport(json: playJSON)
+        _ = try await makeClient(transport).command(
+            transcript: "the one about Agincourt",
+            turns: [
+                ConversationTurn(speaker: .her, text: "play the rest is history"),
+                ConversationTurn(speaker: .app, text: "Which episode?"),
+            ])
+
+        let body =
+            try JSONSerialization.jsonObject(with: try #require(transport.lastRequest?.httpBody))
+            as? [String: Any]
+        #expect(
+            body?["turns"] as? [[String: String]] == [
+                ["speaker": "her", "text": "play the rest is history"],
+                ["speaker": "app", "text": "Which episode?"],
+            ])
+    }
+
+    @Test func sendsAnEmptyExchangeForAFreshRequest() async throws {
+        let transport = FakeTransport(json: playJSON)
+        _ = try await makeClient(transport).command(transcript: "play the latest")
+
+        let body =
+            try JSONSerialization.jsonObject(with: try #require(transport.lastRequest?.httpBody))
+            as? [String: Any]
+        #expect((body?["turns"] as? [Any])?.isEmpty == true)
+    }
+
+    @Test func decodesTheQuestionFlag() async throws {
+        let json = """
+            {"action":"unknown","spoken_response":"Which show did you mean?",
+             "episode":null,"expects_reply":true}
+            """
+        let result = try await makeClient(FakeTransport(json: json)).command(transcript: "x")
+        #expect(result.expectsReply == true)
+    }
+
+    @Test func aPayloadWithoutTheFlagStillDecodes() async throws {
+        // An app newer than the backend it is talking to reads it as "no", and
+        // behaves exactly as it did before any of this existed.
+        let result = try await makeClient(FakeTransport(json: playJSON)).command(transcript: "x")
+        #expect(result.expectsReply == nil)
     }
 }
 

@@ -19,7 +19,7 @@ import UIKit
 /// items arrive as ordinary episodes with an audio_url and never reach this
 /// class — nothing here needs to change.
 @MainActor
-final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// One player for the whole app, for the same reason as AudioPlayer: Siri
     /// intents run without any UI.
     static let shared = ArticlePlayer()
@@ -31,7 +31,7 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     @Published var isScrubbing = false
     @Published private(set) var playbackRate: Float = 1.0
 
-    private let synthesizer = AVSpeechSynthesizer()
+    private let synthesizer: SpeechSynthesizing
     private let api: HearfulAPIProtocol
     private var script: ArticleScript?
     private var chunkIndex = 0
@@ -45,9 +45,12 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     /// Sounded when an article is read to the end. Injectable for tests.
     var feedback: FeedbackPlaying = Feedback.shared
 
-    init(api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)) {
+    init(
+        api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+        synthesizer: SpeechSynthesizing = SystemSpeechSynthesizer()
+    ) {
         self.api = api
-        super.init()
+        self.synthesizer = synthesizer
         synthesizer.delegate = self
         // Same stored preference as AudioPlayer: her speed is her speed,
         // whether the thing playing is streamed or spoken.
@@ -269,23 +272,14 @@ final class ArticlePlayer: NSObject, ObservableObject, AVSpeechSynthesizerDelega
         }
     }
 
-    // MARK: - AVSpeechSynthesizerDelegate
+    // MARK: - SpeechSynthesizingDelegate
 
-    nonisolated func speechSynthesizer(
-        _ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance
-    ) {
-        let finished = ObjectIdentifier(utterance)
-        Task { @MainActor in self.chunkFinished(finished) }
+    func speechFinished(_ utterance: UtteranceID) {
+        chunkFinished(utterance)
     }
 
-    nonisolated func speechSynthesizer(
-        _ synthesizer: AVSpeechSynthesizer,
-        willSpeakRangeOfSpeechString characterRange: NSRange,
-        utterance: AVSpeechUtterance
-    ) {
-        let speaking = ObjectIdentifier(utterance)
-        let fraction = Double(characterRange.location) / Double(max(utterance.speechString.count, 1))
-        Task { @MainActor in self.progressed(fraction: fraction, of: speaking) }
+    func speechProgressed(toFraction fraction: Double, of utterance: UtteranceID) {
+        progressed(fraction: fraction, of: utterance)
     }
 
     private func chunkFinished(_ finished: ObjectIdentifier) {
