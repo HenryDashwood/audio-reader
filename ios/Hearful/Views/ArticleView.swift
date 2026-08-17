@@ -21,7 +21,6 @@ import WebKit
 struct ArticleView: View {
     let episode: Episode
     @StateObject private var model = ArticleTextModel()
-    @ObservedObject private var accessory = ArticleControlsModel.shared
     /// Not read directly — it is here so a change of text size redraws the
     /// page, since the web view is sized in points we hand it rather than by
     /// anything that scales on its own.
@@ -31,16 +30,36 @@ struct ArticleView: View {
         VStack(spacing: 0) {
             content
         }
+        // The article runs to the top of the screen, under the back button
+        // and the clock, rather than starting below a bar the width of the
+        // phone. On a screen whose whole job is to hold prose, a strip of
+        // empty chrome across the top is the most expensive thing on it.
+        .ignoresSafeArea(edges: .top)
+        // Which leaves the clock sitting on the first line of the article
+        // once it has scrolled up. A band of the page's own colour, exactly as
+        // tall as the status bar, keeps both readable without looking like a
+        // second surface laid over the first.
+        .overlay(alignment: .top) { statusBarScrim }
         // No title in the bar: it is the same sentence as the heading the
         // article opens with, a foot below it, and the article's own is the
         // one that belongs to the page.
         .navigationBarTitleDisplayMode(.inline)
-        .task { await model.load(episodeID: episode.id) }
+        .toolbarBackground(.hidden, for: .navigationBar)
         // Listen and Original ride on the tab bar for as long as this screen
-        // is up. Set here rather than in the tab bar itself because the tab
-        // bar has no idea what is on top of it.
-        .onAppear { accessory.episode = episode }
-        .onDisappear { accessory.episode = nil }
+        // is up, and the back button gets out of the way when she scrolls.
+        .background(ArticleChrome { ArticleControls(episode: episode) })
+        .task { await model.load(episodeID: episode.id) }
+    }
+
+    private var statusBarScrim: some View {
+        GeometryReader { proxy in
+            Rectangle()
+                .fill(Color(.systemBackground))
+                .frame(height: proxy.safeAreaInsets.top)
+                .ignoresSafeArea(edges: .top)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -87,18 +106,104 @@ struct ArticleView: View {
     }
 }
 
-/// Which article's controls the tab bar should be carrying, if any.
+/// Whether the tab bar has shrunk out of the way of a scroll, and so whether
+/// the controls sitting on it have room for their words.
 ///
-/// The tab bar lives at the root of the app and the article three pushes deep
-/// inside one of its tabs, so the two cannot see each other. This is the note
-/// between them: the reader writes the episode it is showing, the tab bar
-/// reads it, and an empty one means no article is open and the bar is just a
-/// bar again.
+/// A shared object rather than the environment because the controls hang off
+/// the tab bar in UIKit, outside the SwiftUI tree that would otherwise carry
+/// this down to them.
 @MainActor
 final class ArticleControlsModel: ObservableObject {
     static let shared = ArticleControlsModel()
 
-    @Published var episode: Episode?
+    @Published var isInline = false
+}
+
+/// The two pieces of this screen's furniture that SwiftUI has no word for.
+///
+/// **Listen and Original ride on the tab bar.** SwiftUI's own
+/// `tabViewBottomAccessory` puts them there, but it can only ever be given
+/// different content — never taken away. Emptying it leaves the pill behind,
+/// blank, floating over the episode list for the rest of the session, and
+/// nothing said in SwiftUI takes it down: not an empty view, not a view of no
+/// height, and removing the modifier rebuilds the whole tab view, which
+/// destroys the navigation that opened the article in the first place.
+///
+/// So the accessory is hung and taken down here instead. It is a
+/// `UITabBarController` underneath either way, and `bottomAccessory` is a
+/// property that accepts nothing as readily as something: set on the way in,
+/// cleared on the way out, every time, with no state in between to get stuck.
+///
+/// **The back button gets out of the way.** `hidesBarsOnSwipe` is the
+/// system's own reading gesture — swipe up and the bar goes, swipe down and
+/// it comes back — the same bargain the tab bar strikes at the other end of
+/// the screen, and one every reading app on the phone has already taught her.
+/// Off under VoiceOver, where it is driven by a pan of the finger that
+/// VoiceOver never sends: the bar would go once and never come back.
+private struct ArticleChrome<Content: View>: UIViewControllerRepresentable {
+    @ViewBuilder let content: () -> Content
+
+    func makeUIViewController(context: Context) -> Chrome<Content> {
+        Chrome(controls: content())
+    }
+
+    func updateUIViewController(_ chrome: Chrome<Content>, context: Context) {
+        // Play/pause changes as the player ticks; the accessory is a live view
+        // of it rather than a snapshot taken when the article opened.
+        chrome.controls.rootView = content()
+    }
+}
+
+private final class Chrome<Content: View>: UIViewController {
+    let controls: UIHostingController<Content>
+    private weak var tabs: UITabBarController?
+
+    init(controls rootView: Content) {
+        controls = UIHostingController(rootView: rootView)
+        // The accessory sizes itself to what it holds, and paints no
+        // background of its own — the pill behind it is the system's.
+        controls.sizingOptions = [.intrinsicContentSize]
+        controls.view.backgroundColor = .clear
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        navigationController?.hidesBarsOnSwipe = !UIAccessibility.isVoiceOverRunning
+        guard let bar = tabBarController else { return }
+        tabs = bar
+        // Only while an article is open. Scrolling a page of prose is reading,
+        // and the bar getting out of the way is welcome; scrolling a list of
+        // episodes is looking for one, and having the way out of the list
+        // shrink to a pill while she does it is not.
+        bar.tabBarMinimizeBehavior = .onScrollDown
+        // Whether the bar has shrunk to a pill is a UIKit trait rather than
+        // anything SwiftUI publishes to a view it does not own, so it is read
+        // from here and handed to the controls to lay themselves out by.
+        controls.registerForTraitChanges([UITraitTabAccessoryEnvironment.self]) {
+            (hosted: UIViewController, _) in
+            ArticleControlsModel.shared.isInline =
+                hosted.traitCollection.tabAccessoryEnvironment == .inline
+        }
+        bar.addChild(controls)
+        bar.setBottomAccessory(UITabAccessory(contentView: controls.view), animated: true)
+        controls.didMove(toParent: bar)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // All of it undone: every other screen in the app wants its navigation
+        // bar where it left it, and none of them want these two buttons.
+        navigationController?.hidesBarsOnSwipe = false
+        navigationController?.setNavigationBarHidden(false, animated: animated)
+        controls.willMove(toParent: nil)
+        tabs?.tabBarMinimizeBehavior = .never
+        tabs?.setBottomAccessory(nil, animated: true)
+        controls.removeFromParent()
+        tabs = nil
+    }
 }
 
 /// Listen and Original, riding above the three tabs.
@@ -114,7 +219,7 @@ final class ArticleControlsModel: ObservableObject {
 struct ArticleControls: View {
     let episode: Episode
     @ObservedObject private var player = PlaybackCoordinator.shared
-    @Environment(\.tabViewBottomAccessoryPlacement) private var placement
+    @ObservedObject private var chrome = ArticleControlsModel.shared
 
     var body: some View {
         HStack(spacing: 8) {
@@ -125,7 +230,7 @@ struct ArticleControls: View {
                     try? player.play(episode)
                 }
             } label: {
-                if placement == .inline {
+                if chrome.isInline {
                     // Half the pill each, rather than two glyphs huddled in
                     // the middle of it: the target is what she is aiming at,
                     // and there is no reason for it to be smaller than the
@@ -149,12 +254,15 @@ struct ArticleControls: View {
 
             if let link = episode.link {
                 Link(destination: link) {
-                    if placement == .inline {
+                    if chrome.isInline {
                         Image(systemName: "safari")
                             .frame(maxWidth: .infinity, minHeight: 44)
                     } else {
+                        // Half the bar each, so the two sit at the centre of
+                        // their halves rather than one filling the bar and the
+                        // other hanging off the end of it.
                         Label("Original", systemImage: "safari")
-                            .frame(minHeight: 44)
+                            .frame(maxWidth: .infinity, minHeight: 44)
                     }
                 }
                 .accessibilityLabel("Open the original")
