@@ -6,8 +6,8 @@ struct LatestView: View {
     @StateObject private var model = LatestModel()
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
-    /// The article whose text is open, if any.
-    @State private var readingArticle: Episode?
+    /// The episode whose page is open, if any.
+    @State private var openEpisode: Episode?
 
     var body: some View {
         NavigationStack {
@@ -30,7 +30,11 @@ struct LatestView: View {
                 }
             }
             .navigationTitle("Latest")
-            .navigationDestination(item: $readingArticle) { ArticleView(episode: $0) }
+            // Level with the search and microphone buttons rather than on a
+            // line of its own below them: a large title in its own band costs
+            // an inch of every screen before a single episode is shown.
+            .toolbarTitleDisplayMode(.inlineLarge)
+            .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { openVoiceSheet($showingVoice) } label: {
@@ -86,10 +90,10 @@ struct LatestView: View {
         EpisodeRow(
             episode: episode,
             isCurrent: player.currentEpisode?.id == episode.id,
-            openArticle: episode.isArticle ? { readingArticle = episode } : nil
+            play: { try? player.play(episode) }
         )
         .contentShape(Rectangle())
-        .onTapGesture { try? player.play(episode) }
+        .onTapGesture { openEpisode = episode }
         .episodeFilingActions(for: episode) { filing in
             Task { await model.file(filing, episode: episode) }
         }

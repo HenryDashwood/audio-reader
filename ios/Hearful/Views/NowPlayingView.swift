@@ -199,15 +199,25 @@ struct NowPlayingView: View {
     }
 }
 
-/// The bar above the tab bar. Tapping it opens the full player.
+/// What is playing, floating just above the tab bar. Tapping it opens the
+/// full player.
+///
+/// A capsule rather than a bar across the bottom of the screen: it is one of
+/// three pieces of furniture that come and go down there — the tab bar, the
+/// reader's controls, this — and a full-width opaque strip among two floating
+/// capsules read as a different app's idea. Cut to the tab bar's own width so
+/// the three line up.
 struct MiniPlayer: View {
     @ObservedObject private var player = PlaybackCoordinator.shared
+    @ObservedObject private var metrics = TabBarMetrics.shared
     @Binding var showingNowPlaying: Bool
+
+    static let height: CGFloat = 52
 
     var body: some View {
         if let episode = player.currentEpisode {
-            HStack(spacing: 12) {
-                // A button rather than a tap gesture on the whole bar. The
+            HStack(spacing: 0) {
+                // A button rather than a tap gesture on the whole capsule. The
                 // gesture worked by sight but was invisible to VoiceOver: the
                 // container was never exposed as a control, so there was no
                 // way to reach the player screen — and with it the scrubber,
@@ -215,10 +225,10 @@ struct MiniPlayer: View {
                 Button {
                     showingNowPlaying = true
                 } label: {
-                    HStack(spacing: 12) {
-                        Artwork(url: episode.imageURL, size: 40)
+                    HStack(spacing: 10) {
+                        Artwork(url: episode.imageURL, size: 32)
                         Text(episode.title).font(.subheadline).lineLimit(1)
-                        Spacer(minLength: 4)
+                        Spacer(minLength: 2)
                     }
                     .contentShape(Rectangle())
                 }
@@ -226,53 +236,104 @@ struct MiniPlayer: View {
                 .accessibilityLabel("Now playing: \(episode.title)")
                 .accessibilityHint("Opens the player, with the scrubber and sleep timer")
 
-                // No spacing between these two: each already carries a 44pt
-                // frame, and adding gaps on top would eat the title.
-                HStack(spacing: 0) {
-                    Button { player.toggle() } label: {
-                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.title3)
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
-
-                    // The way out. Everything else on this bar assumes she
-                    // still wants the episode; nothing until now let her say
-                    // she does not, so the bar sat across the bottom of every
-                    // screen with no way to be rid of it. Deliberately a
-                    // button and not a swipe: a gesture here would be reachable
-                    // by sight only, and this is the one control on the bar
-                    // whose absence left her stuck.
-                    Button { player.clear() } label: {
-                        Image(systemName: "xmark")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Stop and close player")
-                    .accessibilityHint("Stops the episode and takes this bar away")
+                Button { player.toggle() } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.body)
+                        .frame(width: 38, height: 44)
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+
+                // The way out. Everything else here assumes she still wants
+                // the episode; nothing until now let her say she does not, so
+                // the bar sat across the bottom of every screen with no way to
+                // be rid of it. Deliberately a button and not a swipe: a
+                // gesture here would be reachable by sight only, and this is
+                // the one control whose absence left her stuck.
+                Button { player.clear() } label: {
+                    Image(systemName: "xmark")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stop and close player")
+                .accessibilityHint("Stops the episode and takes this away")
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 4)
-            .frame(height: 56)
-            .background(.regularMaterial)
-            .overlay(alignment: .top) {
-                // A hairline progress bar: enough to see where you are without
-                // taking any vertical space.
+            .padding(.leading, 10)
+            .padding(.trailing, 2)
+            .frame(width: metrics.pillWidth ?? TabBarMetrics.fallbackWidth, height: Self.height)
+            .glassEffect(in: .capsule)
+            .overlay(alignment: .bottom) {
+                // A hairline of progress along the foot of the capsule: enough
+                // to see where you are without taking any height.
                 GeometryReader { geometry in
-                    Rectangle()
+                    Capsule()
                         .fill(Color.accentColor)
                         .frame(width: geometry.size.width * player.progress, height: 2)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
                 }
                 .frame(height: 2)
+                .padding(.horizontal, 14)
                 // Purely visual, and duplicated properly by the scrubber on the
                 // player screen. As a VoiceOver element it would just be an
                 // unlabelled shape between the buttons.
                 .accessibilityHidden(true)
             }
+        }
+    }
+}
+
+/// Measures the tab bar for the capsules that float above it.
+///
+/// Lives at the root rather than in the reader, because the mini player wants
+/// the same measurements on every tab and there is no article open there.
+struct TabBarProbe: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> Probe { Probe() }
+    func updateUIViewController(_ probe: Probe, context: Context) {}
+
+    final class Probe: UIViewController {
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            measure()
+        }
+
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            measure()
+            // The tab bar is often not laid out at its final size on the pass
+            // that brings this view up, and nothing lays this view out again
+            // afterwards — so ask once more when the dust has settled.
+            DispatchQueue.main.async { [weak self] in self?.measure() }
+        }
+
+        private func measure() {
+            TabBarMetrics.shared.measure(from: Self.tabBar(near: view))
+        }
+
+        /// The tab bar, found by looking through the window rather than up the
+        /// parent chain.
+        ///
+        /// `tabBarController` only answers for a controller inside the tab bar
+        /// controller's own hierarchy, and this one is not: it hangs off the
+        /// background of the tab view, which in UIKit terms puts it alongside
+        /// the tab bar controller rather than within it. So it asked, got
+        /// nothing, measured nothing, and the mini player — having nothing to
+        /// sit on — sat on the tab bar instead.
+        private static func tabBar(near view: UIView) -> UITabBar? {
+            guard let root = view.window?.rootViewController else { return nil }
+            return search(root)
+        }
+
+        private static func search(_ controller: UIViewController) -> UITabBar? {
+            if let tabs = controller as? UITabBarController { return tabs.tabBar }
+            for child in controller.children {
+                if let found = search(child) { return found }
+            }
+            if let presented = controller.presentedViewController {
+                return search(presented)
+            }
+            return nil
         }
     }
 }

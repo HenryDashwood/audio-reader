@@ -6,8 +6,8 @@ struct ShowDetailView: View {
     @StateObject private var model = EpisodeListModel()
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Environment(\.dismiss) private var dismiss
-    /// The article whose text is open, if any.
-    @State private var readingArticle: Episode?
+    /// The episode whose page is open, if any.
+    @State private var openEpisode: Episode?
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
 
@@ -50,10 +50,10 @@ struct ShowDetailView: View {
                         EpisodeRow(
                             episode: episode,
                             isCurrent: player.currentEpisode?.id == episode.id,
-                            openArticle: episode.isArticle ? { readingArticle = episode } : nil
+                            play: { try? player.play(episode) }
                         )
                         .contentShape(Rectangle())
-                        .onTapGesture { try? player.play(episode) }
+                        .onTapGesture { openEpisode = episode }
                         // The way back. A show's page keeps every episode,
                         // filed or not, so this is where a mistake made in
                         // the Latest list — or by voice — is undone.
@@ -65,10 +65,14 @@ struct ShowDetailView: View {
             }
         }
         .listStyle(.plain)
-        .navigationTitle(show.title)
+        // No title in the bar: the show's name is the first thing on the page
+        // already, in the header a few points below it.
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $readingArticle) { ArticleView(episode: $0) }
+        .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                MicToolbarButton()
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 SearchToolbarButton(label: "Search this show", focused: $searchFocused)
             }
@@ -125,39 +129,41 @@ struct ShowDetailView: View {
 struct EpisodeRow: View {
     let episode: Episode
     var isCurrent = false
-    /// Opens the article's text on screen. Set for written episodes, and only
-    /// where there is a navigation stack to open it in.
+    /// Starts it, from the row, without going to its page first.
     ///
-    /// A control of its own rather than a change to what tapping the row does:
-    /// every row in this app plays when tapped, and an article row that
-    /// quietly navigated instead would be the one place that gesture means
-    /// something else — the kind of exception that is invisible until it
-    /// surprises you.
-    var openArticle: (() -> Void)?
+    /// Tapping the row itself opens the episode — its text, its notes, what it
+    /// is about — because that is the question a list of titles usually
+    /// raises, and hearing it is a decision made after reading one. But
+    /// listening is what the app is for, so it keeps a button of its own here
+    /// rather than becoming two taps away.
+    var play: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
-            playableContent
-            if let openArticle {
-                Button(action: openArticle) {
-                    Text("Read")
-                        .font(.footnote.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .frame(minHeight: 44)
+            summary
+            if let play {
+                Button(action: play) {
+                    Image(systemName: isCurrent ? "speaker.wave.2.fill" : "play.circle")
+                        .font(.title3)
+                        .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
+                        .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
-                // .plain so the button claims only its own label; a bordered
+                // .plain so the button claims only its own glyph; a bordered
                 // button inside a List row swallows the whole row's taps.
                 .buttonStyle(.plain)
-                .foregroundStyle(.tint)
-                .accessibilityLabel("Read \(episode.title)")
-                .accessibilityHint("Shows the article's text on screen")
+                .accessibilityLabel(playLabel)
+                .accessibilityHint(hint)
             }
         }
         .padding(.vertical, 2)
     }
 
-    private var playableContent: some View {
+    private var playLabel: String {
+        isCurrent ? "Playing \(episode.title)" : "Play \(episode.title)"
+    }
+
+    private var summary: some View {
         HStack(spacing: 12) {
             Artwork(url: episode.imageURL, size: 56)
             VStack(alignment: .leading, spacing: 4) {
@@ -203,18 +209,14 @@ struct EpisodeRow: View {
                 }
             }
             Spacer(minLength: 8)
-            Image(systemName: isCurrent ? "speaker.wave.2.fill" : "play.circle")
-                .font(.title3)
-                .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
-                .accessibilityHidden(true)
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        // The hint changes with the state, because the action does: tapping a
-        // half-finished episode picks it up where she left off.
-        .accessibilityHint(hint)
+        .accessibilityHint("Double tap to open this episode")
     }
 
+    /// The hint changes with the state, because the action does: playing a
+    /// half-finished episode picks it up where she left off.
     private var hint: String {
         switch episode.listeningProgress {
         case .inProgress: "Double tap to carry on where you left off"

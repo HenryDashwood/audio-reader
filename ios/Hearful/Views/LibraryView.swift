@@ -19,6 +19,10 @@ struct LibraryView: View {
                 }
             }
             .navigationTitle("Shows")
+            // Level with the search and microphone buttons rather than on a
+            // line of its own below them: a large title in its own band costs
+            // an inch of every screen before a single episode is shown.
+            .toolbarTitleDisplayMode(.inlineLarge)
             .navigationDestination(for: Show.self) { ShowDetailView(show: $0) }
             .navigationDestination(for: PodcastResult.self) { PodcastPreviewView(podcast: $0) }
             .toolbar {

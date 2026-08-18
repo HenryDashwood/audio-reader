@@ -8,7 +8,7 @@ struct PodcastPreviewView: View {
     @ObservedObject private var player = PlaybackCoordinator.shared
     /// The article whose text is open, if any. Reading one does not need a
     /// subscription, any more than playing one does.
-    @State private var readingArticle: Episode?
+    @State private var openEpisode: Episode?
 
     var body: some View {
         Group {
@@ -44,11 +44,10 @@ struct PodcastPreviewView: View {
                             EpisodeRow(
                                 episode: episode,
                                 isCurrent: player.currentEpisode?.id == episode.id,
-                                openArticle: episode.isArticle
-                                    ? { readingArticle = episode } : nil
+                                play: { try? player.play(episode) }
                             )
                             .contentShape(Rectangle())
-                            .onTapGesture { try? player.play(episode) }
+                            .onTapGesture { openEpisode = episode }
                         }
                     }
                 }
@@ -56,8 +55,11 @@ struct PodcastPreviewView: View {
             }
         }
         .navigationTitle(podcast.title)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { MicToolbarButton() }
+        }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $readingArticle) { ArticleView(episode: $0) }
+        .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
         .task { await model.load(url: podcast.feedURL) }
     }
 

@@ -75,6 +75,13 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { MicToolbarButton() }
+            }
+            // Level with the search and microphone buttons rather than on a
+            // line of its own below them: a large title in its own band costs
+            // an inch of every screen before a single episode is shown.
+            .toolbarTitleDisplayMode(.inlineLarge)
             // A confirmation dialog rather than an alert: it reads the
             // consequence out as part of the choice, so the destructive button
             // is never the first thing VoiceOver lands on unexplained.

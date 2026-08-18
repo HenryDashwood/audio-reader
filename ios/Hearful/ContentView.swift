@@ -13,8 +13,20 @@ struct ContentView: View {
     @State private var showingVoice = false
     @State private var showingNowPlaying = false
 
+    @ObservedObject private var metrics = TabBarMetrics.shared
+    @ObservedObject private var reader = ArticleControlsModel.shared
+
+    /// How far to raise the mini player so it sits on the tab bar rather than
+    /// wherever this overlay happens to end. Where that edge lands is
+    /// SwiftUI's business and not the same on every screen, so it is asked
+    /// rather than assumed.
+    private func lift(from proxy: GeometryProxy) -> CGFloat {
+        guard let pillTop = metrics.pillTop else { return 0 }
+        return max(0, proxy.frame(in: .global).maxY - pillTop)
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             TabView {
                 Tab("Shows", systemImage: "square.stack") {
                     LibraryView(showingVoice: $showingVoice)
@@ -26,13 +38,25 @@ struct ContentView: View {
                     SettingsView()
                 }
             }
-            // The bar grows upwards when a screen has controls of its own to
-            // put there, and shrinks out of the way of a long scroll — but
-            // both are the reader's doing rather than the whole app's, and
-            // are set up in ArticleChrome. A list of episodes is something to
-            // choose from, so the way to the rest of the app should not
-            // collapse to a pill the moment she looks down it.
-            MiniPlayer(showingNowPlaying: $showingNowPlaying)
+            // Floating over the tab bar rather than pinned under it, and
+            // taken away with everything else while she reads: the article's
+            // own controls sit above this, and three pieces of furniture
+            // leaving one at a time is what the reader looked like before.
+            .overlay(alignment: .bottom) {
+                GeometryReader { proxy in
+                    if !reader.hidden {
+                        MiniPlayer(showingNowPlaying: $showingNowPlaying)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                            // Raised by however far this overlay's own bottom
+                            // edge falls below the tab bar. Where that edge
+                            // lands is SwiftUI's business and not the same on
+                            // every screen, so it is asked rather than assumed.
+                            .padding(.bottom, lift(from: proxy) + ArticleView.gap)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
+            }
+            .background(TabBarProbe())
         }
         .sheet(isPresented: $showingNowPlaying) {
             NowPlayingView()
@@ -60,6 +84,25 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
             HearfulShortcuts.updateAppShortcutParameters()
         }
+    }
+}
+
+/// Asks for something to listen to, from wherever she is.
+///
+/// Every screen carries one, in the same corner, because the question "play me
+/// something" is not about the page she happens to be on. It posts rather than
+/// holding a binding: the sheet belongs to the root, and threading a binding
+/// down through every navigation stack to reach a toolbar button is a lot of
+/// plumbing for one notification.
+struct MicToolbarButton: View {
+    var body: some View {
+        Button {
+            Feedback.shared.play(.opened)
+            NotificationCenter.default.post(name: .hearfulAskByVoice, object: nil)
+        } label: {
+            Image(systemName: "mic.fill")
+        }
+        .accessibilityLabel("Ask for something to listen to")
     }
 }
 

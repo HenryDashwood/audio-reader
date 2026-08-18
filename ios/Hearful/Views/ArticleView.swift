@@ -25,8 +25,10 @@ struct ArticleView: View {
     /// get out of the way of. UIKit will hunt for a scroll view to track when
     /// it is not told, and it does not find this one: it belongs to a web
     /// view, three layers inside a representable, rather than to the screen.
-    @State private var articleScroll: UIScrollView?
+    @State private var articleWebView: WKWebView?
     @ObservedObject private var chrome = ArticleControlsModel.shared
+    @ObservedObject private var metrics = TabBarMetrics.shared
+    @ObservedObject private var player = PlaybackCoordinator.shared
     /// Not read directly — it is here so a change of text size redraws the
     /// page, since the web view is sized in points we hand it rather than by
     /// anything that scales on its own.
@@ -57,10 +59,46 @@ struct ArticleView: View {
         // one that belongs to the page.
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
-        // Listen and Original, in a capsule of their own directly above the
-        // tab bar and exactly as wide, so the bar itself is the same on this
-        // screen as on every other.
-        .overlay(alignment: .bottom) { controlsCapsule }
+        // Everything this page can do, in the corner it shares with the back
+        // button — so it all leaves and returns together when she scrolls,
+        // and the foot of the screen is left to the tab bar and whatever is
+        // playing. Ordered outwards from the page's own business: listening
+        // to it, leaving for it, looking through it, then asking for
+        // something else entirely.
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    if isPlayingThis { player.toggle() } else { try? player.play(episode) }
+                } label: {
+                    Image(systemName: isPlayingThis ? "pause.fill" : "play.fill")
+                }
+                .accessibilityLabel(isPlayingThis ? "Pause" : "Listen")
+                .accessibilityHint(
+                    isPlayingThis
+                        ? "Stops reading this aloud" : "Reads this aloud")
+            }
+            if let link = episode.link {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Link(destination: link) { Image(systemName: "safari") }
+                        .accessibilityLabel("Open the original")
+                        .accessibilityHint("Opens this page in your browser")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    // WebKit's own find bar: it knows where the words are, and
+                    // it highlights and steps through them without the page
+                    // being handed any script of ours.
+                    articleWebView?.findInteraction?.presentFindNavigator(showingReplace: false)
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .disabled(articleWebView == nil)
+                .accessibilityLabel("Find in this page")
+                .accessibilityHint("Searches the words on this page")
+            }
+            ToolbarItem(placement: .topBarTrailing) { MicToolbarButton() }
+        }
         // The tab bar leaves and returns on the same word as the capsule above
         // it. It used to shrink to a pill on UIKit's own reckoning of the
         // scroll while the capsule went on ours, and two clocks meant two
@@ -69,38 +107,16 @@ struct ArticleView: View {
         .toolbarVisibility(chrome.hidden ? .hidden : .visible, for: .tabBar)
         // Both bars get out of the way when she scrolls, and the capsule with
         // them; and both are told what to watch, which is the web view.
-        .background(ArticleChrome(tracking: articleScroll))
+        .background(ArticleChrome(tracking: articleWebView?.scrollView))
         .task { await model.load(episodeID: episode.id) }
     }
 
-    /// Listen and Original, in a capsule the same length as the tab bar and
-    /// sitting just above it — so the bar itself never changes shape, on this
-    /// screen or any other.
-    ///
-    /// Bottom-aligned rather than placed at a measured height: this overlay's
-    /// own bottom edge already stops at the top of the tab bar, so all that is
-    /// needed is the gap between them. Only the width has to be measured.
-    @ViewBuilder
-    private var controlsCapsule: some View {
-        if !chrome.hidden {
-            ArticleControls(episode: episode)
-                .frame(width: chrome.pillWidth ?? Self.fallbackWidth, height: Self.capsuleHeight)
-                .glassEffect(in: .capsule)
-                .padding(.bottom, Self.gap)
-                // Sliding down and out rather than blinking away: the same
-                // movement the tab bar underneath makes, at the same moment.
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-        }
-    }
+    /// The gap between one piece of floating furniture and the next.
+    static let gap: CGFloat = 10
 
-    private static let capsuleHeight: CGFloat = 52
-    /// The space between the two capsules.
-    private static let gap: CGFloat = 10
-    /// Only used if the tab bar could not be measured, which would mean UIKit
-    /// had rearranged itself under us. Controls of roughly the right size beat
-    /// no controls at all.
-    private static let fallbackWidth: CGFloat = 274
-
+    /// A band of the page's own colour behind the clock, exactly as tall as
+    /// the status bar, so the two stay readable once the article has scrolled
+    /// up under it.
     private var statusBarScrim: some View {
         GeometryReader { proxy in
             Rectangle()
@@ -120,10 +136,29 @@ struct ArticleView: View {
             ProgressView("Loading the article…")
             Spacer()
         case .failed(let message):
-            // The same sentence the player would have read out, shown instead.
-            ContentUnavailableView(
-                "Could not load this article", systemImage: "doc.questionmark",
-                description: Text(message))
+            // A podcast episode usually has no article behind it, but it does
+            // have the blurb the feed carries, and that is what she opened the
+            // page to read. An error here would be the app reporting that the
+            // episode is not the kind of thing it happens to be.
+            if let blurb = episode.description?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !blurb.isEmpty
+            {
+                ArticleWebView(
+                    document: ArticleDocument.page(
+                        body: ArticleDocument.header(
+                            title: episode.title, author: episode.author,
+                            publishedAt: episode.publishedAt)
+                            + ArticleDocument.paragraphs(blurb),
+                        pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize),
+                    baseURL: episode.link,
+                    ready: { articleWebView = $0 })
+            } else {
+                // The same sentence the player would have read out, shown
+                // instead.
+                ContentUnavailableView(
+                    "Nothing to show for this episode", systemImage: "doc.questionmark",
+                    description: Text(message))
+            }
         case .loaded(let article):
             VStack(spacing: 0) {
                 if model.isOffline {
@@ -143,9 +178,13 @@ struct ArticleView: View {
                     // site they came from, so without the article's own
                     // address every image is a broken one.
                     baseURL: episode.link,
-                    scrolling: { articleScroll = $0 })
+                    ready: { articleWebView = $0 })
             }
         }
+    }
+
+    private var isPlayingThis: Bool {
+        player.currentEpisode?.id == episode.id && player.isPlaying
     }
 
     private func document(for article: ArticleTextModel.Article) -> String {
@@ -167,13 +206,60 @@ struct ArticleView: View {
 final class ArticleControlsModel: ObservableObject {
     static let shared = ArticleControlsModel()
 
-    /// How wide the tab bar's visible capsule is, so the controls above it can
-    /// be cut to the same length. Nil when it could not be measured, which the
-    /// reader answers with a width of its own.
-    @Published var pillWidth: CGFloat?
     /// True while she is reading down the page, when the controls go the way
     /// of the two system bars.
     @Published var hidden = false
+}
+
+/// The shape of the tab bar, for the things that float above it.
+///
+/// Both the reader's controls and the mini player are capsules sitting over
+/// the tab bar, and both want to be exactly as wide as it is. UIKit will not
+/// say: `tabBar.frame` is the full width of the screen, and the capsule she
+/// can actually see is the platter inside it. So it is measured, once, by
+/// whichever screen is up.
+@MainActor
+final class TabBarMetrics: ObservableObject {
+    static let shared = TabBarMetrics()
+
+    /// The visible capsule's width. Nil when it could not be measured, which
+    /// callers answer with a width of their own.
+    @Published var pillWidth: CGFloat?
+    /// Where the top of that capsule is, in the window's own terms.
+    ///
+    /// An absolute position rather than a gap, because the thing that needs it
+    /// sits outside the tab bar's content and there is no reliable telling in
+    /// advance where its own bottom edge falls — not the screen's edge, not
+    /// the safe area's. Given both this and its own position it can work out
+    /// the difference itself, which is the one sum that cannot be wrong.
+    @Published var pillTop: CGFloat?
+
+    /// Only used if the tab bar could not be measured, which would mean UIKit
+    /// had rearranged itself under us. Furniture of roughly the right size
+    /// beats furniture in the wrong place.
+    static let fallbackWidth: CGFloat = 274
+
+    /// A measurement that fails leaves the last good one standing.
+    ///
+    /// Nothing here is ever better off with no answer than with a slightly
+    /// stale one: the tab bar does not move except on rotation, and a nil
+    /// drops the mini player onto it. This used to happen on the way out of an
+    /// article, when a last layout pass measured a tab bar the screen had
+    /// already let go of and wrote the emptiness down.
+    func measure(from tabBar: UITabBar?) {
+        guard let tabBar, let platter = tabBar.subviews.first, tabBar.window != nil else {
+            return
+        }
+        // A sanity check on a view we did not put there: anything that is not
+        // plausibly the capsule is ignored, rather than moving the furniture
+        // somewhere absurd.
+        let frame = platter.frame
+        guard frame.width > 120, frame.width <= tabBar.bounds.width, frame.height > 20 else {
+            return
+        }
+        pillWidth = frame.width
+        pillTop = tabBar.convert(frame, to: nil).minY
+    }
 }
 
 /// The bits of this screen's furniture that SwiftUI has no word for.
@@ -249,12 +335,6 @@ private final class Chrome: UIViewController {
         named = false
         track(nil)
         ArticleControlsModel.shared.hidden = false
-        measureTabBar()
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        measureTabBar()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -268,26 +348,7 @@ private final class Chrome: UIViewController {
         named = false
         tabs?.tabBarMinimizeBehavior = .never
         tabs = nil
-        ArticleControlsModel.shared.pillWidth = nil
         ArticleControlsModel.shared.hidden = false
-    }
-
-    /// How wide the tab bar's visible capsule is, so the controls can be cut
-    /// to the same length.
-    private func measureTabBar() {
-        guard let tabBar = tabs?.tabBar, let platter = tabBar.subviews.first else {
-            ArticleControlsModel.shared.pillWidth = nil
-            return
-        }
-        // A sanity check on a view we did not put there: anything that is not
-        // plausibly the capsule leaves the controls to their own fallback,
-        // rather than drawing them somewhere absurd.
-        let frame = platter.frame
-        guard frame.width > 120, frame.width <= tabBar.bounds.width, frame.height > 20 else {
-            ArticleControlsModel.shared.pillWidth = nil
-            return
-        }
-        ArticleControlsModel.shared.pillWidth = frame.width
     }
 
     /// The one signal the whole screen's furniture moves on: away while she
@@ -322,61 +383,6 @@ private final class Chrome: UIViewController {
     }
 }
 
-/// Listen and Original, riding above the three tabs.
-///
-/// They were two large buttons above the text, which is a lot of screen to
-/// give permanently to controls used once each. Down here they are always
-/// within thumb's reach without costing the article anything — the same trade
-/// the system's own accessory makes for the Music app's player.
-///
-/// The pill shrinks when the tab bar does, so this has two forms: the full one
-/// with words on it, and a compact one of nothing but glyphs for when the tab
-/// bar has collapsed out of the way of a scroll.
-struct ArticleControls: View {
-    let episode: Episode
-    @ObservedObject private var player = PlaybackCoordinator.shared
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button {
-                if isCurrent {
-                    player.toggle()
-                } else {
-                    try? player.play(episode)
-                }
-            } label: {
-                // Half the capsule each, so the two sit at the centre of
-                // their halves and the target is as big as the space allows.
-                Label(
-                    isPlaying ? "Pause" : "Listen",
-                    systemImage: isPlaying ? "pause.fill" : "play.fill"
-                )
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .accessibilityLabel(isPlaying ? "Pause" : "Listen")
-            .accessibilityHint(
-                isPlaying
-                    ? "Stops reading this article aloud"
-                    : "Reads this article aloud")
-
-            if let link = episode.link {
-                Link(destination: link) {
-                    Label("Original", systemImage: "safari")
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .accessibilityLabel("Open the original")
-                .accessibilityHint("Opens the article's own page in your browser")
-            }
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 12)
-    }
-
-    private var isCurrent: Bool { player.currentEpisode?.id == episode.id }
-    private var isPlaying: Bool { isCurrent && player.isPlaying }
-}
-
 /// The article itself. A web view because the content is HTML from somewhere
 /// on the internet, and because nothing else on iOS lays out a real article —
 /// headings, block quotes, code, tables, pictures — without reimplementing a
@@ -387,8 +393,9 @@ struct ArticleControls: View {
 private struct ArticleWebView: UIViewRepresentable {
     let document: String
     let baseURL: URL?
-    /// Handed out so the bars above and below can be told what to track.
-    let scrolling: (UIScrollView) -> Void
+    /// Handed out so the bars can be told what to track, and so the toolbar
+    /// has something to ask for a find bar.
+    let ready: (WKWebView) -> Void
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -408,7 +415,9 @@ private struct ArticleWebView: UIViewRepresentable {
         // Out of the update pass: this is a value the enclosing view keeps,
         // and handing it over while that view is being built is a write in the
         // middle of a read.
-        DispatchQueue.main.async { scrolling(view.scrollView) }
+        // WebKit's own find bar, which needs no script from us.
+        view.isFindInteractionEnabled = true
+        DispatchQueue.main.async { ready(view) }
         return view
     }
 
@@ -477,6 +486,17 @@ enum ArticleDocument {
             header += "<p class=\"meta\">\(meta.joined(separator: " · "))</p>"
         }
         return header
+    }
+
+    /// Plain text as paragraphs — a feed's blurb, which arrives as prose
+    /// rather than markup.
+    static func paragraphs(_ text: String) -> String {
+        text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map { "<p>\(ArticleTextModel.escaped($0))</p>" }
+            .joined()
     }
 
     /// Wraps an article's body in a stylesheet built for reading.
