@@ -18,7 +18,7 @@ struct ShowDetailView: View {
                     Artwork(url: show.artworkURL, size: 88)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(show.title).font(.title3.weight(.semibold))
-                        Text("\(show.episodeCount) episodes")
+                        Text(show.itemCountLabel)
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
@@ -28,9 +28,9 @@ struct ShowDetailView: View {
                 unsubscribeRow
             }
 
-            Section(model.isSearching ? "Results" : "Episodes") {
+            Section(model.isSearching ? "Results" : show.itemsSectionTitle) {
                 if model.isOffline {
-                    Label("Offline — showing saved episodes", systemImage: "wifi.slash")
+                    Label("Offline — showing saved \(show.itemNoun)s", systemImage: "wifi.slash")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -212,7 +212,7 @@ struct EpisodeRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Double tap to open this episode")
+        .accessibilityHint("Double tap to open this \(episode.isArticle ? "post" : "episode")")
     }
 
     /// The hint changes with the state, because the action does: playing a

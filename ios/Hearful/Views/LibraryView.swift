@@ -195,7 +195,7 @@ private struct ShowRow: View {
             Artwork(url: show.artworkURL)
             VStack(alignment: .leading, spacing: 2) {
                 Text(show.title).font(.headline).lineLimit(2)
-                Text("\(show.episodeCount) episodes")
+                Text(show.itemCountLabel)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 // A show that has quietly stopped updating looks identical to
@@ -212,8 +212,8 @@ private struct ShowRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             show.isFailing == true
-                ? "\(show.title), \(show.episodeCount) episodes, not updating"
-                : "\(show.title), \(show.episodeCount) episodes")
+                ? "\(show.title), \(show.itemCountLabel), not updating"
+                : "\(show.title), \(show.itemCountLabel)")
     }
 }
 

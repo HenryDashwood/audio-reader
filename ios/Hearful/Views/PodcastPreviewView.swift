@@ -29,7 +29,7 @@ struct PodcastPreviewView: View {
                                 if let publisher = podcast.publisher {
                                     Text(publisher).font(.subheadline).foregroundStyle(.secondary)
                                 }
-                                Text("\(preview.show.episodeCount) episodes")
+                                Text(preview.show.itemCountLabel)
                                     .font(.subheadline).foregroundStyle(.secondary)
                             }
                         }
@@ -39,7 +39,7 @@ struct PodcastPreviewView: View {
                         subscribeRow
                     }
 
-                    Section("Episodes") {
+                    Section(preview.show.itemsSectionTitle) {
                         ForEach(preview.episodes) { episode in
                             EpisodeRow(
                                 episode: episode,

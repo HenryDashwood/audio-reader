@@ -71,3 +71,18 @@ extension Episode {
             completed: completed)
     }
 }
+
+extension Show {
+    /// What one item in this feed is called. A blog carries posts; a podcast
+    /// carries episodes, and calling a written piece an episode is confusing
+    /// read out loud as much as it is on screen.
+    var itemNoun: String { isArticleFeed == true ? "post" : "episode" }
+
+    /// The list of them, as a section header: "Posts", "Episodes".
+    var itemsSectionTitle: String { isArticleFeed == true ? "Posts" : "Episodes" }
+
+    /// How many there are, said the way the feed's own items are named.
+    var itemCountLabel: String {
+        "\(episodeCount) \(itemNoun)\(episodeCount == 1 ? "" : "s")"
+    }
+}

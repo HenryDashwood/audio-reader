@@ -33,7 +33,7 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-def _to_feed_read(feed: Feed, episode_count: int) -> FeedRead:
+def _to_feed_read(feed: Feed, episode_count: int, audio_count: int) -> FeedRead:
     return FeedRead(
         id=feed.id,
         url=feed.url,
@@ -41,8 +41,29 @@ def _to_feed_read(feed: Feed, episode_count: int) -> FeedRead:
         description=feed.description,
         image_url=feed.image_url,
         episode_count=episode_count,
+        # An empty feed is left as a podcast: "0 posts" for a show whose
+        # episodes simply have not loaded yet would be a worse guess than the
+        # default, and the label corrects itself on the next refresh.
+        is_article_feed=episode_count > 0 and audio_count == 0,
         is_failing=feed.consecutive_failures >= settings.feed_failure_threshold,
     )
+
+
+async def _counts_for(session: AsyncSession, feed_id: int) -> tuple[int, int]:
+    """How many items the feed has, and how many of them carry audio.
+
+    Counted with a query, never len(feed.episodes): the collection is only
+    reliably in memory when the feed was created this request, and a lazy load
+    outside the session's greenlet is an error, not a query.
+    """
+    row = (
+        await session.execute(
+            # count(column) counts non-null values, which is exactly the
+            # number of items with audio.
+            select(func.count(Episode.id), func.count(Episode.audio_url)).where(Episode.feed_id == feed_id)
+        )
+    ).one()
+    return row[0] or 0, row[1] or 0
 
 
 async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Episode]) -> list[EpisodeRead]:
@@ -79,11 +100,8 @@ async def subscribe(body: FeedCreate, session: Session, user: CurrentUser) -> Fe
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except FeedParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    # Counted with a query, never len(feed.episodes): the collection is only
-    # reliably in memory when the feed was created this request, and a lazy
-    # load outside the session's greenlet is an error, not a query.
-    count = await session.scalar(select(func.count()).select_from(Episode).where(Episode.feed_id == feed.id))
-    return _to_feed_read(feed, episode_count=count or 0)
+    count, audio_count = await _counts_for(session, feed.id)
+    return _to_feed_read(feed, episode_count=count, audio_count=audio_count)
 
 
 @router.post("/preview")
@@ -98,7 +116,7 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
     except FeedParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    episode_count = await session.scalar(select(func.count()).select_from(Episode).where(Episode.feed_id == feed.id))
+    episode_count, audio_count = await _counts_for(session, feed.id)
     episodes = (
         await session.scalars(
             select(Episode)
@@ -109,7 +127,7 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
         )
     ).all()
     return FeedPreview(
-        feed=_to_feed_read(feed, episode_count=episode_count or 0),
+        feed=_to_feed_read(feed, episode_count=episode_count, audio_count=audio_count),
         episodes=await episodes_read(session, user, episodes),
         subscribed=await service.is_subscribed(session, feed.id, user),
     )
@@ -117,15 +135,23 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
 
 @router.get("")
 async def list_feeds(session: Session, user: CurrentUser) -> list[FeedRead]:
-    counts = select(Episode.feed_id, func.count(Episode.id).label("count")).group_by(Episode.feed_id).subquery()
+    counts = (
+        select(
+            Episode.feed_id,
+            func.count(Episode.id).label("count"),
+            func.count(Episode.audio_url).label("audio_count"),
+        )
+        .group_by(Episode.feed_id)
+        .subquery()
+    )
     rows = await session.execute(
-        select(Feed, func.coalesce(counts.c.count, 0))
+        select(Feed, func.coalesce(counts.c.count, 0), func.coalesce(counts.c.audio_count, 0))
         .join(Subscription, Subscription.feed_id == Feed.id)
         .where(Subscription.user_id == user.id)
         .outerjoin(counts, counts.c.feed_id == Feed.id)
         .order_by(Feed.title)
     )
-    return [_to_feed_read(feed, count) for feed, count in rows.all()]
+    return [_to_feed_read(feed, count, audio_count) for feed, count, audio_count in rows.all()]
 
 
 @router.delete("/{feed_id}", status_code=204)

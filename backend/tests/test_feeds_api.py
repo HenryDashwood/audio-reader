@@ -25,6 +25,7 @@ class TestSubscribe:
         response = await subscribe(client, respx_mock, article_xml)
         assert response.status_code == 201
         assert response.json()["title"] == "Notes on Progress"
+        assert response.json()["is_article_feed"] is True
 
     async def test_duplicate_url_conflicts(self, client, respx_mock, podcast_xml):
         await subscribe(client, respx_mock, podcast_xml)
@@ -119,6 +120,16 @@ class TestListFeeds:
         await subscribe(client, respx_mock, podcast_xml)
         body = (await client.get("/feeds")).json()
         assert [feed["title"] for feed in body] == ["The History Hour"]
+
+    # A blog's items are posts, and the app only knows to call them that
+    # because the listing says the feed carries no audio at all.
+    async def test_a_feed_without_audio_is_marked_an_article_feed(self, client, respx_mock, article_xml):
+        await subscribe(client, respx_mock, article_xml)
+        assert (await client.get("/feeds")).json()[0]["is_article_feed"] is True
+
+    async def test_a_podcast_is_not_an_article_feed(self, client, respx_mock, podcast_xml):
+        await subscribe(client, respx_mock, podcast_xml)
+        assert (await client.get("/feeds")).json()[0]["is_article_feed"] is False
 
 
 class TestListEpisodes:

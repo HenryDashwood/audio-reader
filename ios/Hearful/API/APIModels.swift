@@ -213,6 +213,10 @@ nonisolated struct Show: Codable, Identifiable, Equatable, Hashable {
     let description: String?
     let artworkURL: URL?
     let episodeCount: Int
+    /// Nothing in this feed has audio: every item is text the app reads
+    /// aloud. Its items are posts, not episodes, and the app names them so.
+    /// Optional so payloads from before the field existed still decode.
+    var isArticleFeed: Bool?
     /// The backend has failed to reload this feed repeatedly — it has probably
     /// moved or shut down. Optional so payloads from before the field existed
     /// (including anything already in the offline cache) still decode.
@@ -222,6 +226,7 @@ nonisolated struct Show: Codable, Identifiable, Equatable, Hashable {
         case id, title, description
         case artworkURL = "image_url"
         case episodeCount = "episode_count"
+        case isArticleFeed = "is_article_feed"
         case isFailing = "is_failing"
     }
 }

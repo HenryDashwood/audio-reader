@@ -121,3 +121,32 @@ struct ContinueListeningTests {
         #expect(!episode(position: 5).listeningProgress.hasStarted)
     }
 }
+
+@Suite("What a feed's items are called")
+struct FeedItemNamingTests {
+    private func show(count: Int, article: Bool?) -> Show {
+        Show(
+            id: 1, title: "Notes on Progress", description: nil, artworkURL: nil,
+            episodeCount: count, isArticleFeed: article)
+    }
+
+    @Test func aBlogHasPosts() {
+        #expect(show(count: 33, article: true).itemCountLabel == "33 posts")
+        #expect(show(count: 33, article: true).itemsSectionTitle == "Posts")
+    }
+
+    @Test func aPodcastHasEpisodes() {
+        #expect(show(count: 25, article: false).itemCountLabel == "25 episodes")
+        #expect(show(count: 25, article: false).itemsSectionTitle == "Episodes")
+    }
+
+    // Anything cached before the field existed, or from an older backend.
+    @Test func anUnknownFeedIsCalledAPodcast() {
+        #expect(show(count: 25, article: nil).itemCountLabel == "25 episodes")
+    }
+
+    @Test func oneIsNotPluralised() {
+        #expect(show(count: 1, article: true).itemCountLabel == "1 post")
+        #expect(show(count: 1, article: false).itemCountLabel == "1 episode")
+    }
+}

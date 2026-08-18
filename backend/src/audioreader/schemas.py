@@ -35,6 +35,9 @@ class FeedRead(BaseModel):
     description: str | None
     image_url: str | None
     episode_count: int
+    #: Nothing in this feed has audio: every item is text the app reads aloud.
+    #: A blog's items are posts, not episodes, and the app names them that way.
+    is_article_feed: bool = False
     #: The feed has failed to load repeatedly — it has probably moved or shut
     #: down. Surfaced so the app can say so, rather than leaving her to wonder
     #: why a show she follows has gone quiet.
