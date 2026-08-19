@@ -132,10 +132,12 @@ struct SettingsView: View {
                         + "episode. It cannot be undone."
                 )
             }
-            .confirmationDialog(
+            // An alert is centred and unambiguously modal. A confirmation
+            // dialog becomes an anchored popover on this layout, and SwiftUI
+            // was pointing its arrow at an unrelated section of the list.
+            .alert(
                 "Turn off AI data sharing?",
-                isPresented: $confirmingDisableAI,
-                titleVisibility: .visible
+                isPresented: $confirmingDisableAI
             ) {
                 Button("Turn Off", role: .destructive) {
                     Task { await disableAIDataSharing() }
@@ -152,6 +154,7 @@ struct SettingsView: View {
                     onAllowed: { showingAIChoice = false },
                     onNotNow: { showingAIChoice = false })
                     .environmentObject(auth)
+                    .presentationDetents([.fraction(0.68), .large])
             }
             .disabled(deleting)
             .overlay {

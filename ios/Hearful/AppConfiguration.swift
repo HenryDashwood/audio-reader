@@ -32,6 +32,13 @@ nonisolated enum AppConfiguration {
         if let override = environment["HEARFUL_API_URL"],
             let url = URL(string: override), url.host != nil
         {
+            // Launching a device build with the ordinary production address
+            // is not an override. Clear any older laptop address and keep the
+            // Settings screen from claiming production is a test server.
+            if url == defaultBaseURL {
+                defaults.removeObject(forKey: storageKey)
+                return defaultBaseURL
+            }
             defaults.set(override, forKey: storageKey)
             return url
         }
@@ -50,7 +57,12 @@ nonisolated enum AppConfiguration {
     /// launch pointed at a laptop follows the app around forever. On her phone
     /// that looks like an app that has simply stopped working.
     static func rememberedOverride(defaults: UserDefaults = .standard) -> String? {
-        defaults.string(forKey: storageKey)
+        guard let remembered = defaults.string(forKey: storageKey) else { return nil }
+        if URL(string: remembered) == defaultBaseURL {
+            defaults.removeObject(forKey: storageKey)
+            return nil
+        }
+        return remembered
     }
 
     /// Forget it and go back to the deployed backend.

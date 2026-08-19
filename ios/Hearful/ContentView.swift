@@ -66,10 +66,15 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingVoice) {
             VoiceSheet(accountID: auth.user?.id)
-                // Large as well as medium now that there is a transcript to
-                // read: medium fits the last few turns, and a longer exchange
-                // is worth being able to open up and scroll back through.
-                .presentationDetents([.medium, .large])
+                // Consent needs a little more room than the microphone, but
+                // still opens as a compact app-owned permission sheet rather
+                // than a full-screen document. Once accepted, the familiar
+                // medium voice sheet takes over.
+                .presentationDetents(
+                    auth.user?.aiDataSharingConsented == true
+                        ? [.medium, .large]
+                        : [.fraction(0.68), .large]
+                )
         }
         .task {
             // The Ask Hearful intent may have run before this view existed.

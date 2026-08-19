@@ -47,4 +47,20 @@ struct AppConfigurationTests {
             environment: ["HEARFUL_API_URL": ""], defaults: store())
         #expect(url == AppConfiguration.defaultBaseURL)
     }
+
+    @Test func productionAddressClearsAStaleDevelopmentOverride() {
+        let defaults = store()
+        _ = AppConfiguration.resolveBaseURL(
+            environment: ["HEARFUL_API_URL": "http://192.168.1.246:8000"],
+            defaults: defaults)
+
+        let url = AppConfiguration.resolveBaseURL(
+            environment: [
+                "HEARFUL_API_URL": AppConfiguration.defaultBaseURL.absoluteString
+            ],
+            defaults: defaults)
+
+        #expect(url == AppConfiguration.defaultBaseURL)
+        #expect(AppConfiguration.rememberedOverride(defaults: defaults) == nil)
+    }
 }
