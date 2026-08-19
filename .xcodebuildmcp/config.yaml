@@ -1,0 +1,27 @@
+schemaVersion: 1
+
+# Keep the MCP surface focused on day-to-day iOS development while allowing
+# Codex to inspect and operate the Simulator and attach LLDB when needed.
+enabledWorkflows:
+  - simulator
+  - simulator-management
+  - ui-automation
+  - debugging
+
+sentryDisabled: true
+disableXcodeAutoSync: true
+filePathRenderStyle: tree
+
+sessionDefaults:
+  projectPath: ios/Hearful.xcodeproj
+  scheme: Hearful
+  configuration: Debug
+  simulatorName: iPhone 17
+  simulatorPlatform: iOS Simulator
+  # Interactive MCP runs use the newest installed runtime; the Make targets
+  # separately exercise the oldest compatible runtime by default.
+  useLatestOS: true
+  suppressWarnings: false
+  derivedDataPath: build/DerivedData
+  preferXcodebuild: true
+  bundleId: com.henrydashwood.hearful
