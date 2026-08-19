@@ -63,7 +63,9 @@ reviewer who has never seen an app driven this way.*
 > Suggested path, which takes about two minutes:
 >
 > 1. Sign in with Apple on the first screen.
-> 2. Tap the microphone button (top right of the Shows tab). Allow the
+> 2. Tap the microphone button (top right of the Shows tab). Read and allow the
+>    AI data-sharing screen. It names OpenRouter, the data sent, the 30-day
+>    diagnostic record, and links to the privacy policy. Then allow the
 >    microphone and speech recognition prompts when they appear.
 > 3. Say: "subscribe to In Our Time". The app searches, subscribes, and confirms
 >    aloud. The show now appears in the Shows tab.
@@ -82,8 +84,11 @@ reviewer who has never seen an app driven this way.*
 > Settings, which also revokes the Sign in with Apple connection.
 >
 > **On the microphone:** speech is converted to text on the device. Only the
-> text is sent to our server, never an audio recording. This is described in
-> full in the privacy policy.
+> text is sent to our server, never an audio recording. Before the first AI
+> request, the app explicitly asks permission to send that text and recent
+> episode details to OpenRouter and its model provider. Permission can be
+> withdrawn under Settings → Privacy & Support. This is described in full in
+> the privacy policy.
 
 ---
 

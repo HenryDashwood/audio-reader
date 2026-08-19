@@ -211,6 +211,11 @@ class Settings(BaseSettings):
     # draining after an outage, not for steady use. 0 disables the endpoint's
     # limit entirely.
     event_rate_limit_per_minute: int = 60
+    # Fetching and parsing arbitrary publications is materially more expensive
+    # than reading already-cached rows. These cover subscribe, preview, typed
+    # directory search and first-time article extraction per account.
+    feed_operation_rate_limit_per_minute: int = 20
+    podcast_search_rate_limit_per_minute: int = 30
 
 
 settings = Settings()

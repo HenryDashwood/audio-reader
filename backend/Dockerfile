@@ -20,4 +20,4 @@ ENV PATH="/app/.venv/bin:$PATH" \
 # to serve requests, and Alembic is a no-op when there is nothing to apply.
 # $PORT is supplied by the platform.
 CMD alembic upgrade head && \
-    uvicorn audioreader.main:app --host 0.0.0.0 --port ${PORT:-8000}
+    uvicorn audioreader.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log

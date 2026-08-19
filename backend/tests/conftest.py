@@ -8,12 +8,24 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from audioreader.auth.dependencies import get_current_user
 from audioreader.db import get_session
+from audioreader.feeds import fetcher
 from audioreader.llm.fake import FakeLLMClient
 from audioreader.llm.provider import get_discovery_llm_client, get_llm_client
 from audioreader.main import create_app
-from audioreader.models import Base, User
+from audioreader.models import Base, User, utcnow
+from audioreader.routers.auth import AI_DATA_SHARING_CONSENT_VERSION
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def public_test_dns(monkeypatch):
+    """HTTP mocks use reserved .test/.example hosts, which intentionally have no DNS."""
+
+    async def resolve(_host: str, _port: int) -> set[str]:
+        return {"93.184.216.34"}
+
+    monkeypatch.setattr(fetcher, "resolve_host_addresses", resolve)
 
 
 @pytest.fixture
@@ -35,7 +47,14 @@ def fake_llm() -> FakeLLMClient:
 
 @pytest.fixture
 async def user(session: AsyncSession) -> User:
-    user = User(display_name="Test User")
+    # Most API tests exercise the product after onboarding. Consent itself has
+    # focused auth/command tests; keeping the shared fixture opted in avoids
+    # every unrelated command test becoming a consent setup test.
+    user = User(
+        display_name="Test User",
+        ai_consent_version=AI_DATA_SHARING_CONSENT_VERSION,
+        ai_data_sharing_consented_at=utcnow(),
+    )
     session.add(user)
     await session.commit()
     return user

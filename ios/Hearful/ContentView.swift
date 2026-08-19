@@ -10,11 +10,14 @@ func openVoiceSheet(_ showingVoice: Binding<Bool>) {
 }
 
 struct ContentView: View {
+    @EnvironmentObject private var auth: AuthController
     @State private var showingVoice = false
     @State private var showingNowPlaying = false
+    @State private var playbackSpeaker = Speaker()
 
     @ObservedObject private var metrics = TabBarMetrics.shared
     @ObservedObject private var reader = ArticleControlsModel.shared
+    @ObservedObject private var playback = PlaybackCoordinator.shared
 
     /// How far to raise the mini player so it sits on the tab bar rather than
     /// wherever this overlay happens to end. Where that edge lands is
@@ -62,7 +65,7 @@ struct ContentView: View {
             NowPlayingView()
         }
         .sheet(isPresented: $showingVoice) {
-            VoiceSheet()
+            VoiceSheet(accountID: auth.user?.id)
                 // Large as well as medium now that there is a transcript to
                 // read: medium fits the last few turns, and a longer exchange
                 // is worth being able to open up and scroll back through.
@@ -83,6 +86,25 @@ struct ContentView: View {
         // should recognise in phrases; tell it to refetch them.
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
             HearfulShortcuts.updateAppShortcutParameters()
+        }
+        .onChange(of: playback.playbackFailure) { _, failure in
+            guard let failure else { return }
+            // VoiceOver reads the alert itself. Without VoiceOver there may be
+            // nobody looking at the screen—the spoken interface still needs
+            // to explain why a promised episode became silence.
+            guard !UIAccessibility.isVoiceOverRunning else { return }
+            Task { await playbackSpeaker.speak(failure.message) }
+        }
+        .alert(
+            "Playback stopped",
+            isPresented: Binding(
+                get: { playback.playbackFailure != nil },
+                set: { if !$0 { playback.dismissPlaybackFailure() } })
+        ) {
+            Button("Try Again") { playback.retryFailedPlayback() }
+            Button("Cancel", role: .cancel) { playback.dismissPlaybackFailure() }
+        } message: {
+            Text(playback.playbackFailure?.message ?? "The episode could not be played.")
         }
     }
 }
@@ -110,10 +132,35 @@ struct MicToolbarButton: View {
 /// being the whole screen. Opening it is itself the request to speak, so it
 /// listens straight away; tapping it again asks for the next thing.
 struct VoiceSheet: View {
-    @StateObject private var controller = VoiceController.live()
+    @StateObject private var controller: VoiceController
+    @EnvironmentObject private var auth: AuthController
     @Environment(\.dismiss) private var dismiss
 
+    init(accountID: String?) {
+        _controller = StateObject(
+            wrappedValue: VoiceController.live(telemetryAccountID: accountID))
+    }
+
     var body: some View {
+        Group {
+            if auth.user?.aiDataSharingConsented == true {
+                consentedBody
+            } else if auth.user == nil {
+                VStack(spacing: 20) {
+                    ProgressView()
+                    Text("Checking your AI data-sharing choice…")
+                        .multilineTextAlignment(.center)
+                    Button("Try Again") { Task { await auth.refreshUser() } }
+                        .buttonStyle(.bordered)
+                }
+                .padding(28)
+            } else {
+                AIDataSharingConsentView(onNotNow: { dismiss() })
+            }
+        }
+    }
+
+    private var consentedBody: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 24) {
                 // The whole area is one button rather than a tap gesture over
@@ -317,7 +364,7 @@ struct TranscriptView: View {
 extension VoiceController {
     /// The real wiring. Kept out of the initialiser so tests can inject fakes.
     @MainActor
-    static func live() -> VoiceController {
+    static func live(telemetryAccountID: String? = nil) -> VoiceController {
         let canned = ProcessInfo.processInfo.environment["HEARFUL_FAKE_TRANSCRIPT"]
         // Prefer iOS 26's on-device analyser; fall back to the older recogniser
         // where its models are unavailable (notably the simulator).
@@ -330,7 +377,7 @@ extension VoiceController {
             speaker: Speaker(),
             player: PlaybackCoordinator.shared,
             feedback: Feedback.shared,
-            telemetry: TelemetryReporter(api: api))
+            telemetry: TelemetryReporter(api: api, accountID: telemetryAccountID))
     }
 }
 

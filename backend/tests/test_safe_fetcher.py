@@ -1,0 +1,53 @@
+import pytest
+
+from audioreader.feeds import fetcher
+from audioreader.feeds.fetcher import FeedFetchError
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "127.0.0.1",
+        "10.0.0.1",
+        "169.254.169.254",
+        "100.64.0.1",
+        "192.0.2.1",
+        "::1",
+        "fc00::1",
+        "fe80::1",
+    ],
+)
+def test_private_and_non_public_addresses_are_rejected(address):
+    with pytest.raises(FeedFetchError):
+        fetcher.validate_public_addresses({address})
+
+
+def test_a_public_address_is_allowed():
+    fetcher.validate_public_addresses({"1.1.1.1", "2606:4700:4700::1111"})
+
+
+async def test_credentials_and_non_web_ports_are_rejected():
+    with pytest.raises(FeedFetchError, match="credentials"):
+        await fetcher.validate_public_url("https://name:secret@example.com/feed")
+    with pytest.raises(FeedFetchError, match="standard web ports"):
+        await fetcher.validate_public_url("https://example.com:8443/feed")
+
+
+async def test_redirect_destination_is_revalidated(respx_mock, monkeypatch):
+    async def resolve(host: str, _port: int) -> set[str]:
+        return {"127.0.0.1"} if host == "localhost" else {"1.1.1.1"}
+
+    monkeypatch.setattr(fetcher, "resolve_host_addresses", resolve)
+    respx_mock.get("https://public.example/start").respond(
+        status_code=302, headers={"Location": "http://localhost/private"}
+    )
+
+    with pytest.raises(FeedFetchError, match="private or local"):
+        await fetcher.fetch_feed("https://public.example/start")
+
+
+async def test_response_size_is_bounded(respx_mock):
+    respx_mock.get("https://large.example/feed").respond(content=b"x" * 101)
+
+    with pytest.raises(FeedFetchError, match="too large"):
+        await fetcher.fetch_public_bytes("https://large.example/feed", max_bytes=100)

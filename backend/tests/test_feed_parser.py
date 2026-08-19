@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from audioreader.feeds import parser
 from audioreader.feeds.parser import FeedParseError, parse_feed
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -97,3 +98,16 @@ class TestInvalidInput:
     def test_empty_input_raises(self):
         with pytest.raises(FeedParseError):
             parse_feed(b"")
+
+
+class TestResourceBounds:
+    def test_item_count_is_capped(self, monkeypatch):
+        monkeypatch.setattr(parser, "MAX_FEED_ITEMS", 2)
+        items = "".join(f"<item><title>{number}</title><guid>{number}</guid></item>" for number in range(5))
+        feed = parse_feed(f"<rss><channel><title>Many</title>{items}</channel></rss>".encode())
+        assert [item.title for item in feed.items] == ["0", "1"]
+
+    def test_untrusted_text_fields_are_truncated(self, monkeypatch):
+        monkeypatch.setattr(parser, "MAX_TITLE_CHARS", 10)
+        raw = b"<rss><channel><title>123456789012345</title></channel></rss>"
+        assert parse_feed(raw).title == "1234567890"

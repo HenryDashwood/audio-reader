@@ -1,7 +1,17 @@
 import AVFoundation
 import Combine
 import MediaPlayer
+import OSLog
 import UIKit
+
+private let playbackLog = Logger(
+    subsystem: "com.henrydashwood.hearful", category: "playback")
+
+nonisolated struct PlaybackFailure: Identifiable, Equatable {
+    var id: Int { episode.id }
+    let episode: Episode
+    let message: String
+}
 
 /// Streams episode audio, publishes it to the lock screen, and exposes enough
 /// state for a UI to draw a scrubber.
@@ -28,6 +38,10 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     private var statusObservation: NSKeyValueObservation?
     private var playbackStateObservation: NSKeyValueObservation?
     private var endObserver: NSObjectProtocol?
+    private var failedToEndObserver: NSObjectProtocol?
+    private var stallTask: Task<Void, Never>?
+    private var playbackRequested = false
+    private var failedEpisodeID: Int?
     /// True while a seek is still landing, during which AVPlayer's clock still
     /// reads the old position and must not be published. See `seek`.
     private var isSeeking = false
@@ -40,6 +54,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     /// Announces that the current item has run out, for the coordinator to act
     /// on. The player itself does not decide what happens next.
     let finished = PassthroughSubject<Void, Never>()
+    /// A terminal failure after play() returned successfully. The coordinator
+    /// turns this into speech, an alert and a retry action.
+    let failed = PassthroughSubject<PlaybackFailure, Never>()
 
     var progress: Double {
         duration > 0 ? min(max(currentTime / duration, 0), 1) : 0
@@ -90,8 +107,11 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
             throw PlaybackError.noAudio
         }
         try AudioSession.configureForPlayback()
+        playbackRequested = true
         // Usually already loaded by prepare(); only swap if it is a new episode.
-        if currentEpisode?.id != episode.id || player.currentItem == nil {
+        if currentEpisode?.id != episode.id || player.currentItem == nil
+            || player.currentItem?.status == .failed || failedEpisodeID == episode.id
+        {
             replaceItem(url: url, episode: episode)
         }
         player.play()
@@ -99,12 +119,20 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     }
 
     func pause() {
+        playbackRequested = false
+        stallTask?.cancel()
         player.pause()
         updateNowPlayingPosition()
     }
 
     func resume() {
         try? AudioSession.configureForPlayback()
+        playbackRequested = true
+        if let episode = currentEpisode, let url = episode.audioURL,
+            player.currentItem?.status == .failed || failedEpisodeID == episode.id
+        {
+            replaceItem(url: url, episode: episode)
+        }
         player.play()
         updateNowPlayingPosition()
     }
@@ -120,6 +148,8 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     /// duration whether she finished it, so zeroing first would file a
     /// finished episode as unplayed.
     func clear() {
+        playbackRequested = false
+        stallTask?.cancel()
         player.pause()
         currentEpisode = nil
         player.replaceCurrentItem(with: nil)
@@ -127,6 +157,10 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         if let endObserver {
             NotificationCenter.default.removeObserver(endObserver)
             self.endObserver = nil
+        }
+        if let failedToEndObserver {
+            NotificationCenter.default.removeObserver(failedToEndObserver)
+            self.failedToEndObserver = nil
         }
         currentTime = 0
         duration = 0
@@ -167,6 +201,8 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     }
 
     private func replaceItem(url: URL, episode: Episode) {
+        stallTask?.cancel()
+        failedEpisodeID = nil
         let item = AVPlayerItem(url: url)
         // timeDomain keeps speech natural at raised speeds; the default
         // algorithm turns 1.5x podcasts into chipmunks-adjacent audio.
@@ -184,9 +220,17 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         // into the final seconds (an outro is worse than a fresh start).
         let resumeAt = episode.completed == true ? 0 : (episode.positionSeconds ?? 0)
         statusObservation = item.observe(\.status) { [weak self] item, _ in
-            guard item.status == .readyToPlay else { return }
             Task { @MainActor in
                 guard let self else { return }
+                if item.status == .failed {
+                    if self.playbackRequested {
+                        self.reportFailure(
+                            for: episode,
+                            underlying: item.error?.localizedDescription ?? "player item failed")
+                    }
+                    return
+                }
+                guard item.status == .readyToPlay else { return }
                 let seconds = item.duration.seconds
                 if seconds.isFinite, seconds > 0 { self.duration = seconds }
                 if resumeAt > 5, resumeAt < self.duration - 10 {
@@ -224,6 +268,26 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                 self.finished.send()
             }
         }
+        if let failedToEndObserver {
+            NotificationCenter.default.removeObserver(failedToEndObserver)
+        }
+        failedToEndObserver = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.failedToPlayToEndTimeNotification,
+            object: item,
+            queue: .main
+        ) { [weak self] note in
+            // Pull the only Sendable value we need out before entering the
+            // actor-isolated closure; Notification itself is not Sendable.
+            let underlying =
+                (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?
+                .localizedDescription ?? "failed before reaching the end"
+            MainActor.assumeIsolated {
+                guard let self, self.playbackRequested, let episode = self.currentEpisode else {
+                    return
+                }
+                self.reportFailure(for: episode, underlying: underlying)
+            }
+        }
     }
 
     private func observeTime() {
@@ -252,11 +316,49 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.isPlaying = player.timeControlStatus == .playing
+                switch player.timeControlStatus {
+                case .waitingToPlayAtSpecifiedRate where self.playbackRequested:
+                    self.scheduleStallFailure(for: self.currentEpisode)
+                default:
+                    self.stallTask?.cancel()
+                }
                 // Keep the lock screen's clock in step: it ticks on its own
                 // from the published rate, not from our elapsed-time updates.
                 self.updateNowPlayingPosition()
             }
         }
+    }
+
+    private func scheduleStallFailure(for episode: Episode?) {
+        guard let episode else { return }
+        stallTask?.cancel()
+        stallTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled, let self, self.playbackRequested,
+                self.player.timeControlStatus == .waitingToPlayAtSpecifiedRate,
+                self.currentEpisode?.id == episode.id
+            else { return }
+            self.reportFailure(for: episode, underlying: "playback remained stalled for 20 seconds")
+        }
+    }
+
+    /// Internal so the coordinator tests can exercise the asynchronous-failure
+    /// path without depending on a real network stream.
+    func reportFailure(for episode: Episode, underlying: String) {
+        guard currentEpisode?.id == episode.id, failedEpisodeID != episode.id else { return }
+        failedEpisodeID = episode.id
+        playbackRequested = false
+        stallTask?.cancel()
+        player.pause()
+        isPlaying = false
+        playbackLog.error(
+            "Playback failed for episode \(episode.id, privacy: .public): \(underlying, privacy: .private)"
+        )
+        failed.send(
+            PlaybackFailure(
+                episode: episode,
+                message: "Sorry, \(episode.title) could not be played. Check your connection and try again."
+            ))
     }
 
     // MARK: - Lock screen

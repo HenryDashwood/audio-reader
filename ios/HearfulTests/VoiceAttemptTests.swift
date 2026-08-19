@@ -122,6 +122,18 @@ struct TelemetryReporterTests {
             .appendingPathComponent("attempts-\(UUID().uuidString).json")
     }
 
+    @Test func diskQueuesAreScopedToOneAccount() {
+        let first = UUID().uuidString
+        let second = UUID().uuidString
+
+        #expect(TelemetryReporter.defaultStore(accountID: first) != nil)
+        #expect(
+            TelemetryReporter.defaultStore(accountID: first)
+                != TelemetryReporter.defaultStore(accountID: second))
+        #expect(TelemetryReporter.defaultStore(accountID: nil) == nil)
+        #expect(TelemetryReporter.defaultStore(accountID: "../someone-else") == nil)
+    }
+
     @Test func sendsAnAttempt() async throws {
         let api = TelemetryAPI()
         let file = store()

@@ -35,7 +35,7 @@ class Turn(BaseModel):
     """
 
     speaker: Speaker
-    text: str
+    text: str = Field(max_length=2_000)
 
 
 class Action(StrEnum):

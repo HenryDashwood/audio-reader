@@ -24,6 +24,8 @@ final class AuthController: ObservableObject {
         }
     }
     @Published private(set) var signInError: String?
+    /// Nil only while a restored session's /me check is in flight.
+    @Published private(set) var user: UserInfo?
 
     private let api: HearfulAPIProtocol
     private var authRequiredObserver: NSObjectProtocol?
@@ -44,12 +46,26 @@ final class AuthController: ObservableObject {
     /// should not stare at a spinner on aeroplane mode — and validated in the
     /// background; a 401 flips the app back to sign-in via the notification.
     func bootstrap() {
+        // An older build used one queue for every account. Never attach those
+        // ambiguous events to whichever account happens to open this version.
+        TelemetryReporter.removeLegacyQueue()
         guard KeychainTokenStore.token != nil else {
             state = .signedOut
             return
         }
         state = .signedIn
-        Task { _ = try? await api.me() }
+        Task { await refreshUser() }
+    }
+
+    func refreshUser() async {
+        do {
+            user = try await api.me()
+        } catch let error as APIError where error.isAuthFailure {
+            // The API client has already posted hearfulAuthRequired.
+        } catch {
+            // Offline is not sign-out. The voice sheet explains that it could
+            // not verify the privacy choice and offers another check.
+        }
     }
 
     /// Handed the result of the native Sign in with Apple sheet.
@@ -81,6 +97,7 @@ final class AuthController: ObservableObject {
                 let response = try await api.login(
                     appleIdentityToken: identityToken, authorizationCode: authorizationCode)
                 KeychainTokenStore.token = response.token
+                user = response.user
                 state = .signedIn
             } catch let error as APIError {
                 signInError = error.spokenResponse
@@ -106,6 +123,11 @@ final class AuthController: ObservableObject {
         forgetSession()
     }
 
+    func setAIDataSharing(granted: Bool) async throws {
+        user = try await api.setAIDataSharing(granted: granted)
+        if !granted { TelemetryReporter.clearStoredQueues() }
+    }
+
     private func sessionDied() {
         guard state == .signedIn else { return }
         forgetSession()
@@ -116,6 +138,10 @@ final class AuthController: ObservableObject {
         // The next person to sign in on this phone must not be shown the last
         // person's library out of the cache.
         OfflineCache.shared.clear()
+        // Events are scoped by account, but removing all queues is the safest
+        // boundary on a shared phone and fulfils deletion immediately.
+        TelemetryReporter.clearStoredQueues()
+        user = nil
         state = .signedOut
     }
 }

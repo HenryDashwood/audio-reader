@@ -84,8 +84,19 @@ class User(Base):
     # sqlalchemy.Uuid works on both Postgres (native uuid) and the SQLite test
     # database (stored as text), unlike the postgresql dialect's UUID type.
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    # An opaque label for operational telemetry. It is deliberately unrelated
+    # to the account id and never leaves the backend except as a Logfire
+    # attribute. Deleting the account destroys the only mapping between the
+    # two, while a later account made with the same Apple identity receives a
+    # new value.
+    telemetry_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True, default=uuid.uuid4)
     display_name: Mapped[str | None]
     email: Mapped[str | None]
+    # Versioned because a material change to what is shared needs a fresh
+    # affirmative choice, not a reinterpretation of an old one.
+    ai_consent_version: Mapped[int | None]
+    ai_data_sharing_consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ai_data_sharing_withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     identities: Mapped[list["UserIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")

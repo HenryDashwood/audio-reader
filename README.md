@@ -25,8 +25,15 @@ Requires Xcode with the iOS simulator runtime
 (`xcodebuild -downloadPlatform iOS` if `xcrun simctl list runtimes` is empty).
 
 ```bash
-cd ios && xcodebuild test -scheme Hearful -destination 'platform=iOS Simulator,name=iPhone 17'
+make ios-doctor       # verify Xcode and choose a compatible simulator
+make ios-build        # compile on the oldest installed iOS 26+ runtime
+make ios-test         # run the full Swift test suite there
+make ios-test-latest  # also check the newest installed runtime
 ```
+
+The commands choose an available iPhone automatically and keep DerivedData in
+the ignored `build/` directory. Set `IOS_SIMULATOR_ID` to use a specific
+simulator. Direct `xcodebuild` commands remain useful for one-off destinations.
 
 Day to day, open `ios/Hearful.xcodeproj` and press ⌘R. The app and test targets
 use file-system synchronized groups, so files added under `ios/Hearful/` are
@@ -294,7 +301,7 @@ the wrong episode is a perfectly successful 200.
 | `episode_id`, `episode_title`, `feed_title`, `episode_age_days` | what she was given, and how far back it was reached for |
 | `speed` | the multiplier, for `set_speed` |
 | `llm_calls`, `llm_input_tokens`, `llm_output_tokens`, `llm_seconds` | what it cost, summed over a request — naming a show asks the model twice |
-| `user_id`, `provider`, `model` | who, and against what |
+| `telemetry_id`, `provider`, `model` | which pseudonymous diagnostic stream, and against what |
 
 Deliberately absent: `failure` and `action` are seeded with plain strings
 (`none`, `error`) rather than left null, so a group-by buckets successes and

@@ -28,9 +28,13 @@ final class TelemetryReporter: TelemetryReporting {
     /// liability rather than an asset.
     private let queueLimit = 50
 
-    init(api: HearfulAPIProtocol, store: URL? = TelemetryReporter.defaultStore()) {
+    init(api: HearfulAPIProtocol, store: URL?) {
         self.api = api
         self.store = store
+    }
+
+    convenience init(api: HearfulAPIProtocol, accountID: String?) {
+        self.init(api: api, store: Self.defaultStore(accountID: accountID))
     }
 
     func report(_ attempt: VoiceAttempt) {
@@ -64,9 +68,33 @@ final class TelemetryReporter: TelemetryReporting {
 
     // MARK: - The queue
 
-    static func defaultStore() -> URL? {
+    static func defaultStore(accountID: String?) -> URL? {
+        // Refuse arbitrary path text and refuse an un-attributable queue while
+        // /me is still loading. Voice itself also waits for that response.
+        guard let accountID, let id = UUID(uuidString: accountID) else { return nil }
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        return directory?.appendingPathComponent("voice-attempts.json")
+        return directory?.appendingPathComponent("voice-attempts-\(id.uuidString.lowercased()).json")
+    }
+
+    static func removeLegacyQueue() {
+        guard let directory = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first else { return }
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent("voice-attempts.json"))
+    }
+
+    static func clearStoredQueues() {
+        guard let directory = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first,
+            let files = try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: nil)
+        else { return }
+        for file in files where file.lastPathComponent.hasPrefix("voice-attempts")
+            && file.pathExtension == "json"
+        {
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     private func queued() -> [[String: any Sendable]] {

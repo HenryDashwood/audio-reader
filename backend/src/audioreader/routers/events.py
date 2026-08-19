@@ -56,7 +56,7 @@ async def voice_attempt(event: VoiceAttemptEvent, user: CurrentUser) -> None:
     """
     logfire.info(
         "voice_attempt",
-        user_id=str(user.id),
+        telemetry_id=str(user.telemetry_id),
         **event.model_dump(exclude_none=True),
     )
 
@@ -71,6 +71,6 @@ async def diagnostic(event: DiagnosticEvent, user: CurrentUser) -> None:
     """
     logfire.info(
         "app_diagnostic",
-        user_id=str(user.id),
+        telemetry_id=str(user.telemetry_id),
         **event.model_dump(exclude_none=True),
     )

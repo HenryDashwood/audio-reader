@@ -10,6 +10,12 @@ from datetime import UTC, datetime
 import feedparser
 from pydantic import BaseModel
 
+MAX_FEED_ITEMS = 2_000
+MAX_TITLE_CHARS = 1_000
+MAX_DESCRIPTION_CHARS = 100_000
+MAX_CONTENT_CHARS = 500_000
+MAX_URL_CHARS = 4_096
+
 
 class FeedParseError(Exception):
     """The input could not be interpreted as an RSS/Atom feed."""
@@ -50,12 +56,14 @@ def parse_feed(raw: bytes) -> ParsedFeed:
 
     feed_author = _author(parsed.feed)
     return ParsedFeed(
-        title=parsed.feed.get("title", "Untitled feed"),
-        description=parsed.feed.get("description") or None,
+        title=_bounded(parsed.feed.get("title", "Untitled feed"), MAX_TITLE_CHARS) or "Untitled feed",
+        description=_bounded(parsed.feed.get("description"), MAX_DESCRIPTION_CHARS),
         author=feed_author,
         image_url=(parsed.feed.get("image") or {}).get("href"),
         site_url=parsed.feed.get("link"),
-        items=[item for entry in parsed.entries if (item := _parse_entry(entry, feed_author)) is not None],
+        items=[
+            item for entry in parsed.entries[:MAX_FEED_ITEMS] if (item := _parse_entry(entry, feed_author)) is not None
+        ],
     )
 
 
@@ -68,10 +76,10 @@ def _parse_entry(entry: feedparser.util.FeedParserDict, feed_author: str | None)
         return None
 
     return ParsedItem(
-        guid=guid,
-        title=entry.get("title") or "Untitled",
-        description=entry.get("summary") or None,
-        content_html=_content_html(entry),
+        guid=_bounded(guid, MAX_URL_CHARS) or "",
+        title=_bounded(entry.get("title"), MAX_TITLE_CHARS) or "Untitled",
+        description=_bounded(entry.get("summary"), MAX_DESCRIPTION_CHARS),
+        content_html=_bounded(_content_html(entry), MAX_CONTENT_CHARS),
         author=_author(entry) or feed_author,
         audio_url=audio_url,
         duration_seconds=_parse_duration(entry.get("itunes_duration")),
@@ -80,6 +88,13 @@ def _parse_entry(entry: feedparser.util.FeedParserDict, feed_author: str | None)
         # feedparser maps a per-item <itunes:image href=…> to entry.image.href.
         image_url=(entry.get("image") or {}).get("href"),
     )
+
+
+def _bounded(value: object | None, limit: int) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text[:limit] if text else None
 
 
 def _first_audio_enclosure(entry: feedparser.util.FeedParserDict) -> str | None:

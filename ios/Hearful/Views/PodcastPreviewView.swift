@@ -44,7 +44,7 @@ struct PodcastPreviewView: View {
                             EpisodeRow(
                                 episode: episode,
                                 isCurrent: player.currentEpisode?.id == episode.id,
-                                play: { try? player.play(episode) }
+                                play: { player.playReportingFailure(episode) }
                             )
                             .contentShape(Rectangle())
                             .onTapGesture { openEpisode = episode }

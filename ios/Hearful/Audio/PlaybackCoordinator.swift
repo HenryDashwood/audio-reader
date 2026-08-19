@@ -28,6 +28,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var playbackRate: Float = 1.0
+    @Published private(set) var playbackFailure: PlaybackFailure?
 
     let audio: AudioPlayer
     let article: ArticlePlayer
@@ -59,6 +60,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         wireRemoteCommands()
         wireAudioSessionEvents()
         wireCompletion()
+        wireFailures()
     }
 
     var progress: Double {
@@ -92,6 +94,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     }
 
     func play(_ episode: Episode) throws {
+        playbackFailure = nil
         wantsPlayback = true
         if Self.playsAsArticle(episode) {
             audio.pause()
@@ -100,8 +103,36 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         } else {
             article.deactivate()
             activate(.audio)
-            try audio.play(episode)
+            do {
+                try audio.play(episode)
+            } catch {
+                wantsPlayback = false
+                throw error
+            }
         }
+    }
+
+    /// Used by on-screen controls, where throwing into `try?` would turn the
+    /// only explanation into silence.
+    func playReportingFailure(_ episode: Episode) {
+        do {
+            try play(episode)
+        } catch {
+            playbackFailure = PlaybackFailure(
+                episode: episode,
+                message: "Sorry, \(episode.title) could not be played. Check your connection and try again."
+            )
+            wantsPlayback = false
+        }
+    }
+
+    func retryFailedPlayback() {
+        guard let failure = playbackFailure else { return }
+        playReportingFailure(failure.episode)
+    }
+
+    func dismissPlaybackFailure() {
+        playbackFailure = nil
     }
 
     /// Loads the last-played item paused at launch, whichever kind it is.
@@ -251,6 +282,18 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
                 MainActor.assumeIsolated {
                     guard let self, self.mode == .article else { return }
                     self.clear()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func wireFailures() {
+        audio.failed
+            .sink { [weak self] failure in
+                MainActor.assumeIsolated {
+                    guard let self, self.mode == .audio else { return }
+                    self.wantsPlayback = false
+                    self.playbackFailure = failure
                 }
             }
             .store(in: &cancellables)

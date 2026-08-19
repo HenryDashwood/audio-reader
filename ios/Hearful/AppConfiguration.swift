@@ -22,6 +22,12 @@ nonisolated enum AppConfiguration {
             environment: ProcessInfo.processInfo.environment, defaults: .standard)
     }
 
+    static var privacyURL: URL {
+        apiBaseURL.appendingPathComponent("privacy")
+    }
+
+    static let supportURL = URL(string: "mailto:hcndashwood@gmail.com")!
+
     static func resolveBaseURL(environment: [String: String], defaults: UserDefaults) -> URL {
         if let override = environment["HEARFUL_API_URL"],
             let url = URL(string: override), url.host != nil

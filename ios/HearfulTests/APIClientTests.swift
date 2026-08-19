@@ -376,12 +376,30 @@ struct AuthAndPositionTests {
         }
 
         #expect(response.token == "session-1")
+        #expect(response.user.aiDataSharingConsented == false)
         let request = try #require(transport.lastRequest)
         #expect(request.httpMethod == "POST")
         #expect(request.url?.path == "/auth/apple")
         let body = try JSONDecoder().decode(
             [String: String].self, from: try #require(request.httpBody))
         #expect(body["identity_token"] == "apple-jwt")
+    }
+
+    @Test func consentChoiceSendsAPutAndDecodesTheCurrentState() async throws {
+        let json = #"{"id":"u1","display_name":null,"ai_data_sharing_consented":true}"#
+        let transport = FakeTransport(json: json)
+
+        let user = try await withToken("tok") {
+            try await makeClient(transport).setAIDataSharing(granted: true)
+        }
+
+        #expect(user.aiDataSharingConsented)
+        let request = try #require(transport.lastRequest)
+        #expect(request.httpMethod == "PUT")
+        #expect(request.url?.path == "/me/ai-data-sharing")
+        let body = try JSONDecoder().decode(
+            [String: Bool].self, from: try #require(request.httpBody))
+        #expect(body["granted"] == true)
     }
 
     @Test func loginForwardsTheAuthorizationCode() async throws {

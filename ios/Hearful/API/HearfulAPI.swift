@@ -36,6 +36,9 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func login(appleIdentityToken: String, authorizationCode: String?) async throws -> AuthResponse
     func logout() async throws
     func me() async throws -> UserInfo
+    /// Records or withdraws the explicit choice required before a transcript
+    /// and library context may be sent to the AI provider.
+    func setAIDataSharing(granted: Bool) async throws -> UserInfo
     func deleteAccount() async throws
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws
     /// Files an episode: heard, put aside, or back in the list. A nil flag is
@@ -46,6 +49,14 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String?) async throws
     /// A crash or hang, as the phone's own diagnostics described it.
     func reportDiagnostic(_ event: [String: any Sendable]) async throws
+}
+
+extension HearfulAPIProtocol {
+    // Keeps small test doubles source-compatible; any test that exercises the
+    // choice supplies a real implementation rather than accidentally passing.
+    func setAIDataSharing(granted: Bool) async throws -> UserInfo {
+        throw APIError(underlying: "AI data sharing is not implemented by this API client")
+    }
 }
 
 extension Notification.Name {
@@ -214,6 +225,15 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
 
     func me() async throws -> UserInfo {
         try await send(URLRequest(url: baseURL.appendingPathComponent("me")))
+    }
+
+    func setAIDataSharing(granted: Bool) async throws -> UserInfo {
+        var request = URLRequest(
+            url: baseURL.appendingPathComponent("me/ai-data-sharing"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["granted": granted])
+        return try await send(request)
     }
 
     func deleteAccount() async throws {

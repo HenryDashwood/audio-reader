@@ -144,6 +144,11 @@ class UserRead(BaseModel):
 
     id: uuid.UUID
     display_name: str | None
+    ai_data_sharing_consented: bool = False
+
+
+class AIDataSharingConsentUpdate(BaseModel):
+    granted: bool
 
 
 class AuthResponse(BaseModel):
@@ -176,7 +181,7 @@ class EpisodeStateUpdate(BaseModel):
 
 
 class CommandRequest(BaseModel):
-    transcript: str
+    transcript: str = Field(max_length=2_000)
     #: What she is listening to as she speaks. Without it "mark this as
     #: played" has no referent at all: the backend knows her whole library and
     #: nothing about which part of it is currently coming out of the speaker.

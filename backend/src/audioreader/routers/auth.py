@@ -15,8 +15,13 @@ from audioreader.auth.apple import (
 )
 from audioreader.auth.dependencies import bearer, get_current_user
 from audioreader.db import get_session
-from audioreader.models import User
-from audioreader.schemas import AppleLoginRequest, AuthResponse, UserRead
+from audioreader.models import User, utcnow
+from audioreader.schemas import (
+    AIDataSharingConsentUpdate,
+    AppleLoginRequest,
+    AuthResponse,
+    UserRead,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +31,23 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 Verifier = Annotated[AppleTokenVerifier, Depends(get_verifier)]
 Revoker = Annotated[AppleRevoker | None, Depends(get_revoker)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+# Increment this whenever the consent screen's description of the data or the
+# receiving providers changes materially. Existing permission then stops being
+# sufficient until the user sees and accepts the new wording.
+AI_DATA_SHARING_CONSENT_VERSION = 1
+
+
+def user_read(user: User) -> UserRead:
+    return UserRead(
+        id=user.id,
+        display_name=user.display_name,
+        ai_data_sharing_consented=(
+            user.ai_data_sharing_consented_at is not None
+            and user.ai_data_sharing_withdrawn_at is None
+            and user.ai_consent_version == AI_DATA_SHARING_CONSENT_VERSION
+        ),
+    )
 
 
 @router.post("/auth/apple")
@@ -45,7 +67,7 @@ async def apple_login(body: AppleLoginRequest, session: Session, verifier: Verif
             logger.warning("no refresh token obtained; this account cannot be revoked with Apple")
 
     user, token = await service.login(session, identity, refresh_token=refresh_token)
-    return AuthResponse(token=token, user=UserRead.model_validate(user))
+    return AuthResponse(token=token, user=user_read(user))
 
 
 @router.post("/auth/logout", status_code=204)
@@ -63,7 +85,28 @@ async def logout(
 async def me(user: CurrentUser) -> UserRead:
     """Cheap session probe: the app calls this at launch to notice a revoked
     or stale token before the user tries anything else."""
-    return UserRead.model_validate(user)
+    return user_read(user)
+
+
+@router.put("/me/ai-data-sharing", response_model=UserRead)
+async def set_ai_data_sharing(body: AIDataSharingConsentUpdate, session: Session, user: CurrentUser) -> UserRead:
+    """Record or withdraw the explicit choice made in the app.
+
+    Revocation takes effect before the response: /command checks these fields
+    on every request, so there is no cache or propagation window in which a
+    withdrawn choice can still reach the AI provider.
+    """
+    if body.granted:
+        user.ai_consent_version = AI_DATA_SHARING_CONSENT_VERSION
+        user.ai_data_sharing_consented_at = utcnow()
+        user.ai_data_sharing_withdrawn_at = None
+    else:
+        # Keep the version and timestamps until account deletion as the audit
+        # record of what was accepted and when it was withdrawn. The command
+        # gate checks withdrawn_at, so this does not preserve permission.
+        user.ai_data_sharing_withdrawn_at = utcnow()
+    await session.commit()
+    return user_read(user)
 
 
 @router.delete("/me", status_code=204)

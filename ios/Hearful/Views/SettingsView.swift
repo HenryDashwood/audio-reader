@@ -6,8 +6,11 @@ struct SettingsView: View {
     @State private var voiceID: String = SpeechVoice.current?.identifier ?? ""
     @State private var previewSpeaker = Speaker()
     @State private var confirmingDelete = false
+    @State private var confirmingDisableAI = false
+    @State private var showingAIChoice = false
     @State private var deleting = false
     @State private var deleteError: String?
+    @State private var privacyError: String?
     @State private var serverOverride = AppConfiguration.rememberedOverride()
     private let voices = SpeechVoice.englishVoices()
 
@@ -57,6 +60,35 @@ struct SettingsView: View {
                     }
                 }
 
+                Section {
+                    Link("Privacy Policy", destination: AppConfiguration.privacyURL)
+                    Link("Email Support", destination: AppConfiguration.supportURL)
+
+                    if auth.user?.aiDataSharingConsented == true {
+                        Button("Turn Off AI Data Sharing", role: .destructive) {
+                            confirmingDisableAI = true
+                        }
+                        .accessibilityHint(
+                            "Stops future spoken requests and library details being sent to AI providers"
+                        )
+                    } else {
+                        Button("Review AI Data Sharing") {
+                            showingAIChoice = true
+                        }
+                    }
+
+                    if let privacyError {
+                        Text(privacyError).font(.callout).foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("Privacy & Support")
+                } footer: {
+                    Text(
+                        "Voice requests use OpenRouter and an AI model provider only after you allow it. "
+                            + "Turning it off leaves the rest of Hearful available."
+                    )
+                }
+
                 Section("Account") {
                     Button("Sign Out", role: .destructive) {
                         Task { await auth.signOut() }
@@ -100,6 +132,27 @@ struct SettingsView: View {
                         + "episode. It cannot be undone."
                 )
             }
+            .confirmationDialog(
+                "Turn off AI data sharing?",
+                isPresented: $confirmingDisableAI,
+                titleVisibility: .visible
+            ) {
+                Button("Turn Off", role: .destructive) {
+                    Task { await disableAIDataSharing() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "Hearful will stop sending spoken requests and episode details to AI providers. "
+                        + "You can turn it on again here later."
+                )
+            }
+            .sheet(isPresented: $showingAIChoice) {
+                AIDataSharingConsentView(
+                    onAllowed: { showingAIChoice = false },
+                    onNotNow: { showingAIChoice = false })
+                    .environmentObject(auth)
+            }
             .disabled(deleting)
             .overlay {
                 if deleting {
@@ -130,6 +183,20 @@ struct SettingsView: View {
             // Announced as well as shown — she is not watching the screen for
             // a red line to appear under a button she just tapped.
             AccessibilityNotification.Announcement(message).post()
+        }
+    }
+
+    private func disableAIDataSharing() async {
+        privacyError = nil
+        do {
+            try await auth.setAIDataSharing(granted: false)
+            AccessibilityNotification.Announcement("AI data sharing is off.").post()
+        } catch let error as APIError {
+            privacyError = error.spokenResponse
+            AccessibilityNotification.Announcement(error.spokenResponse).post()
+        } catch {
+            privacyError = APIError.genericSpokenResponse
+            AccessibilityNotification.Announcement(APIError.genericSpokenResponse).post()
         }
     }
 

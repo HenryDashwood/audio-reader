@@ -193,6 +193,15 @@ class TestPrivacy:
 
         assert "her@example.com" not in str(capfire.exporter.exported_spans_as_dict())
 
+    async def test_telemetry_uses_only_the_severable_identifier(self, capfire, client, fake_llm, library, user):
+        fake_llm.respond_with({"action": "unknown", "spoken_response": "Sorry?"})
+        await client.post("/command", json={"transcript": TRANSCRIPT})
+
+        attributes = command_span(capfire)["attributes"]
+        assert attributes["telemetry_id"] == str(user.telemetry_id)
+        assert "user_id" not in attributes
+        assert str(user.id) not in str(capfire.exporter.exported_spans_as_dict())
+
     def test_client_ip_is_scrubbed(self):
         """The ASGI instrumentation records the caller's IP; we throw it away.
 

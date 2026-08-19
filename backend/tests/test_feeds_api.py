@@ -215,6 +215,10 @@ class TestRecentEpisodes:
         await subscribe(client, respx_mock, podcast_xml)
         assert len((await client.get("/episodes?limit=2")).json()) == 2
 
+    async def test_rejects_unbounded_limits(self, client):
+        assert (await client.get("/episodes?limit=0")).status_code == 422
+        assert (await client.get("/episodes?limit=1000000")).status_code == 422
+
 
 class TestUnsubscribeEndpoint:
     async def test_removes_the_subscription(self, client, respx_mock, podcast_xml):

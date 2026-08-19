@@ -68,7 +68,7 @@ struct ArticleView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    if isPlayingThis { player.toggle() } else { try? player.play(episode) }
+                    if isPlayingThis { player.toggle() } else { player.playReportingFailure(episode) }
                 } label: {
                     Image(systemName: isPlayingThis ? "pause.fill" : "play.fill")
                 }
@@ -400,6 +400,10 @@ private struct ArticleWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        // Article images still come from their publishers, but cookies and
+        // other website data must not become a lasting browsing profile inside
+        // a podcast app.
+        configuration.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         // The page paints no background of its own, so the app's shows

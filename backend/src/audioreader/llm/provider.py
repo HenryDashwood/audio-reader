@@ -6,6 +6,13 @@ from audioreader.llm.client import LLMClient
 from audioreader.llm.openai_compatible import OpenAICompatibleClient
 from audioreader.settings_types import LLMProvider
 
+# Fail closed: a provider endpoint that may retain or train on a listener's
+# words is not an acceptable fallback just because it happens to be faster or
+# more available. OpenRouter documents both controls as per-request routing
+# constraints, so they travel with every command even if account settings are
+# changed later.
+OPENROUTER_PRIVACY = {"data_collection": "deny", "zdr": True}
+
 
 def build_llm_client() -> LLMClient:
     """Construct the configured provider's client.
@@ -26,7 +33,10 @@ def build_llm_client() -> LLMClient:
                 base_url=settings.openrouter_base_url,
                 api_key=settings.openrouter_api_key,
                 model=settings.openrouter_model,
-                extra_payload={"reasoning": {"enabled": settings.openrouter_reasoning}},
+                extra_payload={
+                    "reasoning": {"enabled": settings.openrouter_reasoning},
+                    "provider": OPENROUTER_PRIVACY,
+                },
             )
 
 
@@ -46,7 +56,10 @@ def build_discovery_llm_client() -> LLMClient:
         case LLMProvider.OPENROUTER:
             if not settings.openrouter_api_key:
                 raise RuntimeError("OPENROUTER_API_KEY is not set")
-            extra: dict = {"reasoning": {"enabled": True}}
+            extra: dict = {
+                "reasoning": {"enabled": True},
+                "provider": OPENROUTER_PRIVACY,
+            }
             if settings.discovery_web_search:
                 extra["plugins"] = [{"id": "web"}]
             return OpenAICompatibleClient(

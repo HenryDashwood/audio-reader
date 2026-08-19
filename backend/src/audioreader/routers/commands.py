@@ -14,6 +14,7 @@ from audioreader.llm.client import LLMClient, LLMError
 from audioreader.llm.provider import get_discovery_llm_client, get_llm_client
 from audioreader.models import User, utcnow
 from audioreader.ratelimit import SlidingWindow
+from audioreader.routers.auth import AI_DATA_SHARING_CONSENT_VERSION
 from audioreader.routers.feeds import episodes_read
 from audioreader.schemas import CommandRequest, CommandResponse
 from audioreader.settings_types import LLMProvider
@@ -64,6 +65,18 @@ def check_rate_limit(user: CurrentUser) -> None:
 async def command(
     body: CommandRequest, session: Session, llm: LLM, discovery_llm: DiscoveryLLM, user: CurrentUser
 ) -> CommandResponse:
+    # This is deliberately enforced server-side as well as in the app. An old
+    # client, a Siri shortcut, or a hand-written request must not be able to
+    # send personal data to the model without the recorded current choice.
+    if (
+        user.ai_data_sharing_consented_at is None
+        or user.ai_data_sharing_withdrawn_at is not None
+        or user.ai_consent_version != AI_DATA_SHARING_CONSENT_VERSION
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={"spoken_response": ("Before using voice commands, open Hearful and allow AI data sharing.")},
+        )
     # One wide event per spoken request. Everything the pipeline learns is
     # attached here rather than scattered across log lines, because the
     # question worth asking spans the whole request — "which commands were
@@ -81,7 +94,7 @@ async def command(
     with (
         logfire.span(
             "command",
-            user_id=str(user.id),
+            telemetry_id=str(user.telemetry_id),
             provider=settings.llm_provider.value,
             model=settings.openrouter_model if settings.llm_provider is LLMProvider.OPENROUTER else settings.llm_model,
             # How much she actually said. A request that arrives as two or

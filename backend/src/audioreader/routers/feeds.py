@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -15,6 +15,7 @@ from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import PodcastSearchError, search_podcasts
 from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User
+from audioreader.ratelimit import SlidingWindow
 from audioreader.schemas import (
     EpisodeRead,
     EpisodeStateUpdate,
@@ -31,6 +32,38 @@ router = APIRouter(prefix="/feeds", tags=["feeds"])
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+_feed_operation_limit = SlidingWindow(settings.feed_operation_rate_limit_per_minute, window_seconds=60)
+_podcast_search_limit = SlidingWindow(settings.podcast_search_rate_limit_per_minute, window_seconds=60)
+
+
+def _check_limit(window: SlidingWindow, user: User, message: str) -> None:
+    if window.limit <= 0:
+        return
+    decision = window.check(str(user.id))
+    if not decision.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={"spoken_response": message},
+            headers={"Retry-After": str(decision.retry_after)},
+        )
+    window.prune()
+
+
+def check_feed_operation_limit(user: CurrentUser) -> None:
+    _check_limit(
+        _feed_operation_limit,
+        user,
+        "You have checked several publications very quickly. Please wait a moment and try again.",
+    )
+
+
+def check_podcast_search_limit(user: CurrentUser) -> None:
+    _check_limit(
+        _podcast_search_limit,
+        user,
+        "You have searched several times very quickly. Please wait a moment and try again.",
+    )
 
 
 def _to_feed_read(feed: Feed, episode_count: int, audio_count: int) -> FeedRead:
@@ -90,7 +123,7 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
     return reads
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(check_feed_operation_limit)])
 async def subscribe(body: FeedCreate, session: Session, user: CurrentUser) -> FeedRead:
     try:
         feed = await service.subscribe(session, str(body.url), user)
@@ -104,7 +137,7 @@ async def subscribe(body: FeedCreate, session: Session, user: CurrentUser) -> Fe
     return _to_feed_read(feed, episode_count=count, audio_count=audio_count)
 
 
-@router.post("/preview")
+@router.post("/preview", dependencies=[Depends(check_feed_operation_limit)])
 async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> FeedPreview:
     """A show's page before subscribing: ingest the feed into the shared
     catalog (without following it) so its episodes have real ids and can be
@@ -163,7 +196,11 @@ async def unsubscribe(feed_id: int, session: Session, user: CurrentUser) -> None
 
 @router.get("/{feed_id}/episodes")
 async def list_episodes(
-    feed_id: int, session: Session, user: CurrentUser, limit: int = 50, q: str | None = None
+    feed_id: int,
+    session: Session,
+    user: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    q: Annotated[str | None, Query(max_length=200)] = None,
 ) -> list[EpisodeRead]:
     """A show's episodes, newest first — or the ones matching `q`.
 
@@ -194,8 +231,8 @@ async def list_episodes(
 search_router = APIRouter(prefix="/search", tags=["search"])
 
 
-@search_router.get("/podcasts")
-async def search_directory(q: str, user: CurrentUser) -> list[PodcastSearchResult]:
+@search_router.get("/podcasts", dependencies=[Depends(check_podcast_search_limit)])
+async def search_directory(q: Annotated[str, Query(max_length=200)], user: CurrentUser) -> list[PodcastSearchResult]:
     """Typed search against the public podcast directory.
 
     Unlike the voice path, no relevance guard: the results are on screen, so
@@ -215,7 +252,11 @@ episodes_router = APIRouter(prefix="/episodes", tags=["episodes"])
 
 
 @episodes_router.get("")
-async def recent_episodes(session: Session, user: CurrentUser, limit: int = 30) -> list[EpisodeRead]:
+async def recent_episodes(
+    session: Session,
+    user: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=100)] = 30,
+) -> list[EpisodeRead]:
     """Newest playable items — episodes and articles — across the user's
     subscriptions, minus the ones she has already dealt with.
 
@@ -257,7 +298,7 @@ async def get_episode(episode_id: int, session: Session, user: CurrentUser) -> E
     return (await episodes_read(session, user, [episode]))[0]
 
 
-@episodes_router.get("/{episode_id}/text")
+@episodes_router.get("/{episode_id}/text", dependencies=[Depends(check_feed_operation_limit)])
 async def get_episode_text(episode_id: int, session: Session, user: CurrentUser) -> EpisodeTextRead:
     """The full article for a written episode — speech-ready text and the
     sanitised HTML behind it — extracted on first request and cached. Like

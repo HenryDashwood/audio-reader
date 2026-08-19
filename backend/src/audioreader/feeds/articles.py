@@ -14,11 +14,11 @@ with trafilatura.
 
 import logging
 
-import httpx
 import nh3
 import trafilatura
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes
 from audioreader.latex import with_mathml
 from audioreader.models import Episode
 from audioreader.text import article_text
@@ -158,13 +158,9 @@ def rendered(html: str | None) -> str | None:
 
 async def _extract_from_page(url: str) -> str | None:
     try:
-        async with httpx.AsyncClient(
-            timeout=20, follow_redirects=True, headers={"User-Agent": "audioreader/0.1"}
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            html = response.text
-    except httpx.HTTPError as exc:
+        raw, _ = await fetch_public_bytes(url, max_bytes=MAX_ARTICLE_BYTES)
+        html = raw.decode("utf-8", errors="replace")
+    except FeedFetchError as exc:
         logger.warning("could not fetch article page %s: %s", url, exc)
         return None
 

@@ -173,6 +173,20 @@ class TestSessions:
         token = (await login(auth_client, make_identity_token())).json()["token"]
         response = await auth_client.get("/me", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 200
+        assert response.json()["ai_data_sharing_consented"] is False
+
+    async def test_ai_data_sharing_choice_can_be_granted_and_withdrawn(self, auth_client, make_identity_token):
+        token = (await login(auth_client, make_identity_token())).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        granted = await auth_client.put("/me/ai-data-sharing", headers=headers, json={"granted": True})
+        assert granted.status_code == 200
+        assert granted.json()["ai_data_sharing_consented"] is True
+        assert (await auth_client.get("/me", headers=headers)).json()["ai_data_sharing_consented"] is True
+
+        withdrawn = await auth_client.put("/me/ai-data-sharing", headers=headers, json={"granted": False})
+        assert withdrawn.status_code == 200
+        assert withdrawn.json()["ai_data_sharing_consented"] is False
 
     async def test_no_token_is_401(self, auth_client):
         response = await auth_client.get("/me")

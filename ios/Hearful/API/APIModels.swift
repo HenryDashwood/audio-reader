@@ -165,10 +165,31 @@ nonisolated struct AuthResponse: Decodable {
 nonisolated struct UserInfo: Decodable, Equatable {
     let id: String
     let displayName: String?
+    let aiDataSharingConsented: Bool
+
+    init(id: String, displayName: String?, aiDataSharingConsented: Bool = false) {
+        self.id = id
+        self.displayName = displayName
+        self.aiDataSharingConsented = aiDataSharingConsented
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        // A build may reach an older server briefly during a rolling deploy.
+        // Treat a missing consent field as no consent, which is both backwards
+        // compatible and the privacy-preserving default.
+        aiDataSharingConsented = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .aiDataSharingConsented
+        ) ?? false
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
         case displayName = "display_name"
+        case aiDataSharingConsented = "ai_data_sharing_consented"
     }
 }
 
