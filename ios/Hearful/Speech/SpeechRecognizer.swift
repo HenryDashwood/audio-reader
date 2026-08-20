@@ -76,11 +76,12 @@ final class SpeechRecognizer: SpeechRecognizing {
         }
         arrivals = BufferArrivals()
         let arrivals = self.arrivals
+        let requestSink = AudioBufferRequestSink(request)
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) {
             @Sendable buffer, _ in
             arrivals.record()
-            request.append(buffer)
+            requestSink.append(buffer)
         }
         engine.prepare()
         try engine.start()
@@ -190,6 +191,26 @@ final class SpeechRecognizer: SpeechRecognizing {
         guard micGranted else {
             log.error("microphone permission denied")
             throw SpeechPermissionDenied()
+        }
+    }
+
+    /// Bridges Apple's unannotated recognition request into the realtime tap.
+    ///
+    /// This is the API's intended ownership pattern: the audio engine invokes
+    /// its tap serially, and `cancel()` stops the engine and removes that tap
+    /// before ending the request. The request therefore never receives a new
+    /// buffer after teardown begins. The framework type predates Sendable, so
+    /// this narrow wrapper states the lifecycle guarantee without weakening
+    /// concurrency checking for the rest of the Speech framework.
+    private nonisolated final class AudioBufferRequestSink: @unchecked Sendable {
+        private let request: SFSpeechAudioBufferRecognitionRequest
+
+        init(_ request: SFSpeechAudioBufferRecognitionRequest) {
+            self.request = request
+        }
+
+        func append(_ buffer: AVAudioPCMBuffer) {
+            request.append(buffer)
         }
     }
 

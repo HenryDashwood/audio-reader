@@ -3,10 +3,16 @@ import Foundation
 /// nonisolated: read by App Intents off the main actor; UserDefaults and
 /// ProcessInfo are both thread-safe.
 nonisolated enum AppConfiguration {
-    /// The deployed backend. Being the default means a fresh install works
-    /// with no configuration — which matters because the person using this
-    /// cannot be talked through setting a server address.
-    static let defaultBaseURL = URL(string: "https://audio-reader-production.up.railway.app")!
+    static let productionBaseURL = URL(
+        string: "https://audio-reader-production.up.railway.app")!
+
+    /// Debug builds are for local development and pair with `make backend-dev`.
+    /// Release keeps the deployed backend as its zero-configuration default.
+    #if DEBUG
+        static let defaultBaseURL = URL(string: "http://localhost:8000")!
+    #else
+        static let defaultBaseURL = productionBaseURL
+    #endif
     private static let storageKey = "HearfulAPIBaseURL"
 
     /// The simulator shares the Mac's network, so localhost reaches the dev
@@ -35,9 +41,9 @@ nonisolated enum AppConfiguration {
             // Launching a device build with the ordinary production address
             // is not an override. Clear any older laptop address and keep the
             // Settings screen from claiming production is a test server.
-            if url == defaultBaseURL {
+            if url == productionBaseURL {
                 defaults.removeObject(forKey: storageKey)
-                return defaultBaseURL
+                return productionBaseURL
             }
             defaults.set(override, forKey: storageKey)
             return url

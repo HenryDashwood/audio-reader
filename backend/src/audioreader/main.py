@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 
 from audioreader import telemetry
+from audioreader.auth import service as auth_service
 from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
 from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_feeds
@@ -65,6 +66,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.openrouter_model if settings.llm_provider is LLMProvider.OPENROUTER else settings.llm_model,
         settings.poll_interval_seconds,
     )
+
+    if settings.development_auth_enabled:
+        async with SessionMaker() as session:
+            await auth_service.development_user(session)
+        logger.warning("development authentication is enabled for the local simulator")
 
     poll_task = None
     if settings.poll_interval_seconds > 0:

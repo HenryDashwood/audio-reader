@@ -39,9 +39,24 @@ Day to day, open `ios/Hearful.xcodeproj` and press ⌘R. The app and test target
 use file-system synchronized groups, so files added under `ios/Hearful/` are
 picked up automatically without editing the project file.
 
-The app talks to `http://localhost:8000` by default, which the simulator can
-reach but a physical device cannot. Override with the `HEARFUL_API_URL`
-environment variable in the scheme.
+Debug builds talk to `http://localhost:8000` by default, which the simulator
+can reach but a physical device cannot. Start the local database and backend
+with development authentication enabled:
+
+```bash
+make backend-dev
+```
+
+Then run Hearful from Xcode or Codex. A Debug build pointed at a loopback
+server uses the matching local development account automatically, so Sign in
+with Apple is not part of the simulator loop. The token is a non-secret marker:
+the backend accepts it only when `AUDIOREADER_DEVELOPMENT_AUTH_TOKEN` is set in
+the `development` environment, and refuses that setting in production. Release
+builds compile out the client-side bypass and default to the deployed backend.
+
+Override the server with the `HEARFUL_API_URL` environment variable when
+needed. Set `HEARFUL_DEVELOPMENT_AUTH_TOKEN` as well if the local backend uses
+a token other than the repository's development default.
 
 ### Deploying to a physical device
 
@@ -236,6 +251,9 @@ development needs no configuration.
   In-process, so with several replicas the effective limit multiplies.
 - `AUDIOREADER_SESSION_IDLE_TIMEOUT_DAYS` — how long a session token stays
   valid after its last use (default 180; 0 disables expiry)
+- `AUDIOREADER_DEVELOPMENT_AUTH_TOKEN` — enables the fixed local simulator
+  account only when `AUDIOREADER_ENVIRONMENT=development`; production rejects
+  any non-empty value
 - `AUDIOREADER_FEED_FAILURE_THRESHOLD` — consecutive failed polls before a
   feed is reported as broken and flagged to the app (default 5)
 - `AUDIOREADER_ORPHAN_FEED_RETENTION_DAYS` — how long a feed nobody

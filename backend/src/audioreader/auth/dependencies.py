@@ -1,3 +1,4 @@
+import secrets
 from typing import Annotated
 
 from fastapi import Depends, HTTPException
@@ -5,6 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.auth import service
+from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.models import User
 
@@ -27,6 +29,11 @@ async def get_current_user(
 ) -> User:
     if credentials is None:
         raise _UNAUTHENTICATED
+
+    if settings.development_auth_enabled and secrets.compare_digest(
+        credentials.credentials.encode(), settings.development_auth_token.encode()
+    ):
+        return await service.development_user(session)
 
     user = await service.user_for_token(session, credentials.credentials)
     if user is None:

@@ -15,6 +15,16 @@ nonisolated enum KeychainTokenStore {
 
     static var token: String? {
         get {
+            #if DEBUG
+                if !TestEnvironment.isRunningTests,
+                    let token = DevelopmentAuthentication.token(
+                        baseURL: AppConfiguration.apiBaseURL,
+                        environment: ProcessInfo.processInfo.environment)
+                {
+                    return token
+                }
+            #endif
+
             var query = baseQuery
             query[kSecReturnData as String] = true
             query[kSecMatchLimit as String] = kSecMatchLimitOne

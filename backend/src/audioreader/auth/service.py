@@ -31,6 +31,21 @@ from audioreader.models import (
 # kept only to name that row, and as the guard the tests assert against.
 LEGACY_USER_ID = uuid.UUID("e1423896-70e0-4270-b809-982fc7730e21")
 
+# Stable so the simulator sees the same library and listening positions across
+# backend restarts. It is never reachable unless development authentication is
+# explicitly enabled in the backend settings.
+DEVELOPMENT_USER_ID = uuid.UUID("8e1e2490-364b-4c34-9d02-8f04a3d84fd1")
+
+
+async def development_user(session: AsyncSession) -> User:
+    """Return the local simulator account, creating it on first use."""
+    user = await session.get(User, DEVELOPMENT_USER_ID)
+    if user is None:
+        user = User(id=DEVELOPMENT_USER_ID, display_name="Simulator Tester")
+        session.add(user)
+        await session.commit()
+    return user
+
 
 def new_token() -> str:
     return secrets.token_urlsafe(32)

@@ -25,3 +25,6 @@ sessionDefaults:
   derivedDataPath: build/DerivedData
   preferXcodebuild: true
   bundleId: com.henrydashwood.hearful
+  env:
+    HEARFUL_API_URL: http://localhost:8000
+    HEARFUL_DEVELOPMENT_AUTH_TOKEN: hearful-local-development

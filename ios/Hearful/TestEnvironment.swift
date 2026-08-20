@@ -10,7 +10,8 @@ import Foundation
 ///
 /// Deliberately the only place the check lives: scattered test detection is
 /// how production behaviour starts quietly differing under test.
-enum TestEnvironment {
+/// nonisolated: both inputs are immutable process-wide runtime metadata.
+nonisolated enum TestEnvironment {
     static let isRunningTests: Bool = {
         let environment = ProcessInfo.processInfo.environment
         // Xcode sets these for the test host; the class check covers a test

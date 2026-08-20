@@ -10,6 +10,12 @@ private func store() -> UserDefaults {
 
 @Suite("API base URL")
 struct AppConfigurationTests {
+    @Test func debugBuildDefaultsToTheLocalBackend() {
+        #if DEBUG
+            #expect(AppConfiguration.defaultBaseURL.absoluteString == "http://localhost:8000")
+        #endif
+    }
+
     @Test func usesTheEnvironmentOverrideWhenGiven() {
         let url = AppConfiguration.resolveBaseURL(
             environment: ["HEARFUL_API_URL": "http://192.168.1.246:8000"], defaults: store())
@@ -56,11 +62,11 @@ struct AppConfigurationTests {
 
         let url = AppConfiguration.resolveBaseURL(
             environment: [
-                "HEARFUL_API_URL": AppConfiguration.defaultBaseURL.absoluteString
+                "HEARFUL_API_URL": AppConfiguration.productionBaseURL.absoluteString
             ],
             defaults: defaults)
 
-        #expect(url == AppConfiguration.defaultBaseURL)
+        #expect(url == AppConfiguration.productionBaseURL)
         #expect(AppConfiguration.rememberedOverride(defaults: defaults) == nil)
     }
 }

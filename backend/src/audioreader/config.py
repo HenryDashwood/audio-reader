@@ -1,6 +1,7 @@
 from pathlib import Path
+from typing import Self
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from audioreader.settings_types import LLMProvider
@@ -54,6 +55,22 @@ class Settings(BaseSettings):
         default="development",
         validation_alias=AliasChoices("AUDIOREADER_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"),
     )
+
+    # A fixed bearer token for simulator development. Empty by default: the
+    # ordinary server still requires Sign in with Apple unless the developer
+    # deliberately starts it with this setting. Production rejects the
+    # setting outright rather than trusting deployment convention alone.
+    development_auth_token: str = ""
+
+    @model_validator(mode="after")
+    def _development_auth_never_runs_in_production(self) -> Self:
+        if self.development_auth_token and self.environment.casefold() != "development":
+            raise ValueError("development_auth_token is allowed only in the development environment")
+        return self
+
+    @property
+    def development_auth_enabled(self) -> bool:
+        return self.environment.casefold() == "development" and bool(self.development_auth_token)
 
     # The Logfire write token. Read through settings rather than left to the
     # SDK's own lookup because that only reads the process environment, and on

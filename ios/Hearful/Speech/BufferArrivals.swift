@@ -8,9 +8,10 @@ import Foundation
 /// different answer, and for a long time got the same one.
 ///
 /// Locked rather than actor-isolated because the tap runs on the realtime
-/// audio queue, which must never touch the main actor. `@unchecked Sendable`
-/// is honest: the lock is the whole implementation.
-final class BufferArrivals: @unchecked Sendable {
+/// audio queue, which must never touch the main actor. `nonisolated` opts out
+/// of the target's default MainActor isolation, and `@unchecked Sendable` is
+/// honest: the lock is the whole mutable implementation.
+nonisolated final class BufferArrivals: @unchecked Sendable {
     /// How long to give the microphone to start delivering. Long enough to
     /// cover a cold audio route, short enough that she is not left waiting for
     /// a go-ahead that is never coming.
@@ -42,6 +43,9 @@ final class BufferArrivals: @unchecked Sendable {
     /// flowing. `AVAudioEngine.start()` returns before the route is
     /// necessarily live, and a tone sounded then invites her to speak a whole
     /// sentence into a microphone that is not recording yet.
+    /// Main-actor-isolated because the successful path records telemetry on
+    /// the current voice attempt. Counting buffers remains nonisolated.
+    @MainActor
     func waitForFirst() async -> Bool {
         let started = ContinuousClock.now
         let deadline = started + .seconds(Self.wait)
