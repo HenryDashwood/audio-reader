@@ -17,7 +17,7 @@ from audioreader.feeds.discovery import (
     discover_feeds,
     find_feed_by_name,
 )
-from audioreader.feeds.fetcher import FeedFetchError
+from audioreader.feeds.fetcher import FeedFetchError, FeedRateLimitedError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import PodcastSearchError, search_podcasts
 from audioreader.llm.client import LLMClient
@@ -150,6 +150,12 @@ def _raise_discovery_error(exc: Exception) -> None:
             504,
             exc.code,
             "That site took too long while Hearful looked for its feeds. Please try again.",
+        ) from exc
+    if isinstance(exc, FeedRateLimitedError):
+        raise _discovery_error(
+            503,
+            exc.code,
+            "That site is temporarily limiting feed requests. Please wait a minute and try again.",
         ) from exc
     if isinstance(exc, FeedDiscoveryError):
         raise _discovery_error(

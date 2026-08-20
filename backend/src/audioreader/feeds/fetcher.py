@@ -10,6 +10,8 @@ import ipaddress
 import socket
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -26,6 +28,10 @@ ALLOWED_PORTS = {80, 443}
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 MAX_ETAG_CHARS = 1_024
 MAX_LAST_MODIFIED_CHARS = 256
+MAX_UPSTREAM_RETRIES = 1
+DEFAULT_RETRY_DELAY_SECONDS = 0.5
+MAX_RETRY_DELAY_SECONDS = 2.0
+RETRYABLE_STATUSES = {429, 502, 503, 504}
 FEED_ACCEPT = (
     "application/rss+xml, application/atom+xml, application/feed+json, "
     "application/json;q=0.9, application/xml;q=0.8, text/xml;q=0.8, text/html;q=0.7, */*;q=0.1"
@@ -34,6 +40,18 @@ FEED_ACCEPT = (
 
 class FeedFetchError(Exception):
     """The requested public resource could not be fetched safely."""
+
+    code = "site_unreachable"
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class FeedRateLimitedError(FeedFetchError):
+    """The upstream site temporarily refused a polite feed request."""
+
+    code = "site_rate_limited"
 
 
 @dataclass(frozen=True)
@@ -134,7 +152,9 @@ async def _fetch_public_resource(
             trust_env=False,
             headers={"User-Agent": user_agent},
         ) as client:
-            for redirect_count in range(MAX_REDIRECTS + 1):
+            redirect_count = 0
+            retry_count = 0
+            while redirect_count <= MAX_REDIRECTS:
                 await validate_public_url(current)
                 async with client.stream("GET", current, headers=request_headers) as response:
                     if response.status_code in REDIRECT_STATUSES:
@@ -144,6 +164,8 @@ async def _fetch_public_resource(
                         if redirect_count == MAX_REDIRECTS:
                             raise FeedFetchError("the address redirected too many times")
                         current = urljoin(str(response.url), location)
+                        redirect_count += 1
+                        retry_count = 0
                         continue
 
                     if accept_not_modified and response.status_code == 304:
@@ -158,7 +180,24 @@ async def _fetch_public_resource(
                             link_headers=tuple(response.headers.get_list("link")),
                         )
 
-                    response.raise_for_status()
+                    if response.status_code in RETRYABLE_STATUSES:
+                        delay = _retry_delay_seconds(response.headers.get("retry-after"))
+                        if retry_count < MAX_UPSTREAM_RETRIES and delay <= MAX_RETRY_DELAY_SECONDS:
+                            retry_count += 1
+                            await asyncio.sleep(delay)
+                            continue
+                        if response.status_code == 429:
+                            raise FeedRateLimitedError(
+                                "the site temporarily limited Hearful's feed requests",
+                                status_code=429,
+                            )
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        raise FeedFetchError(
+                            f"the site returned HTTP {response.status_code}",
+                            status_code=response.status_code,
+                        ) from exc
                     declared = response.headers.get("content-length")
                     if declared:
                         try:
@@ -188,6 +227,23 @@ async def _fetch_public_resource(
         raise FeedFetchError(f"could not fetch the address: {exc}") from exc
 
     raise FeedFetchError("the address could not be fetched")
+
+
+def _retry_delay_seconds(value: str | None) -> float:
+    """A bounded-server retry hint; large delays are surfaced to the user."""
+
+    if not value:
+        return DEFAULT_RETRY_DELAY_SECONDS
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return DEFAULT_RETRY_DELAY_SECONDS
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=UTC)
+        return max(0.0, (retry_at - datetime.now(UTC)).total_seconds())
 
 
 def _bounded_header(value: str | None, max_chars: int) -> str | None:

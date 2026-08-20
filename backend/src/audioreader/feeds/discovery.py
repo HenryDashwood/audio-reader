@@ -22,7 +22,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, ValidationError
 
-from audioreader.feeds.fetcher import FeedFetchError, fetch_feed_resource
+from audioreader.feeds.fetcher import FeedFetchError, FeedRateLimitedError, fetch_feed_resource
 from audioreader.feeds.parser import FeedParseError, ParsedFeed, parse_feed
 from audioreader.feeds.search import (
     PodcastSearchError,
@@ -53,6 +53,7 @@ COMMON_FEED_PATHS = (
 MAX_CANDIDATES = 12
 DISCOVERY_DEADLINE_SECONDS = 25
 DISCOVERY_CONCURRENCY = 3
+SAME_ORIGIN_PROBE_DELAY_SECONDS = 0.2
 DISCOVERY_CACHE_SECONDS = 15 * 60
 DISCOVERY_NEGATIVE_CACHE_SECONDS = 45
 DISCOVERY_CACHE_ENTRIES = 256
@@ -61,7 +62,6 @@ _FEED_MIME_TYPES = {
     "application/rss+xml",
     "application/atom+xml",
     "application/feed+json",
-    "application/json",
 }
 
 
@@ -127,9 +127,7 @@ def advertised_feed_links_in_html(html: str, base_url: str) -> list[AdvertisedFe
         if key in seen:
             continue
         seen.add(key)
-        links.append(
-            AdvertisedFeedLink(url=absolute, mime_type=mime_type, title=title, source="html")
-        )
+        links.append(AdvertisedFeedLink(url=absolute, mime_type=mime_type, title=title, source="html"))
     return links
 
 
@@ -260,7 +258,7 @@ async def discover_feeds(url: str, *, preference: str | None = None) -> list[Fee
     key = _feed_key(url)
     if cached := _cache_get(key):
         if cached.error_code:
-            raise FeedDiscoveryError(cached.error_message or "no feed found", code=cached.error_code)
+            _raise_cached_error(cached)
         logger.info("feed discovery cache hit for %s (%d candidates)", url, len(cached.candidates))
         return _rank_summaries(list(cached.candidates), preference)
 
@@ -273,7 +271,7 @@ async def discover_feeds(url: str, *, preference: str | None = None) -> list[Fee
     except TimeoutError as exc:
         raise FeedDiscoveryTimeout() from exc
     except FeedFetchError as exc:
-        _cache_error(key, "site_unreachable", str(exc))
+        _cache_error(key, exc.code, str(exc))
         raise
     except FeedDiscoveryError as exc:
         _cache_error(key, exc.code, str(exc))
@@ -311,7 +309,7 @@ async def resolve_feed(
     key = _feed_key(url)
     if cached := _cache_get(key):
         if cached.error_code:
-            raise FeedDiscoveryError(cached.error_message or "no feed found", code=cached.error_code)
+            _raise_cached_error(cached)
         chosen = _rank_summaries(list(cached.candidates), preference)[0]
         fetched = await fetch_feed_resource(chosen.feed_url)
         if fetched.content is None:
@@ -324,7 +322,7 @@ async def resolve_feed(
     except TimeoutError as exc:
         raise FeedDiscoveryTimeout() from exc
     except FeedFetchError as exc:
-        _cache_error(key, "site_unreachable", str(exc))
+        _cache_error(key, exc.code, str(exc))
         raise
     except FeedDiscoveryError as exc:
         _cache_error(key, exc.code, str(exc))
@@ -357,10 +355,7 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
 
     advertised = feed_links_in_headers(fetched.link_headers, fetched.final_url)
     advertised += advertised_feed_links_in_html(html, fetched.final_url)
-    locations = [
-        _CandidateLocation(link.url, link.source, link.title, order)
-        for order, link in enumerate(advertised)
-    ]
+    locations = [_CandidateLocation(link.url, link.source, link.title, order) for order, link in enumerate(advertised)]
     # Explicit metadata is authoritative and may intentionally advertise
     # several feeds. Conventional paths are a fallback only; probing them as
     # well creates noise, extra load and false category/comment candidates.
@@ -381,30 +376,79 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
         if len(unique) == MAX_CANDIDATES:
             break
 
+    # WordPress and other shared hosts commonly rate-limit a burst from one
+    # origin. Probe one address at a time per origin, while still allowing
+    # genuinely separate feed hosts to proceed concurrently. Main feeds go
+    # before comment/response feeds even when a page advertises them first.
+    unique.sort(key=_candidate_probe_priority)
+    by_origin: OrderedDict[str, list[_CandidateLocation]] = OrderedDict()
+    for location in unique:
+        by_origin.setdefault(_origin_key(location.url), []).append(location)
+
     semaphore = asyncio.Semaphore(DISCOVERY_CONCURRENCY)
+    fetch_failures: list[FeedFetchError] = []
 
     async def inspect(location: _CandidateLocation) -> _ResolvedCandidate | None:
-        async with semaphore:
-            try:
-                result = await fetch_feed_resource(location.url)
-                if result.content is None:
-                    return None
-                parsed = parse_feed(result.content)
-            except (FeedFetchError, FeedParseError):
+        try:
+            result = await fetch_feed_resource(location.url)
+            if result.content is None:
                 return None
-            return _resolved_candidate(
-                parsed,
-                result.final_url,
-                location.source,
-                location.title,
-                location.order,
-            )
+            parsed = parse_feed(result.content)
+        except FeedFetchError as exc:
+            fetch_failures.append(exc)
+            logger.info("feed discovery candidate fetch failed for %s: %s", location.url, exc)
+            return None
+        except FeedParseError as exc:
+            logger.info("feed discovery candidate was not a feed at %s: %s", location.url, exc)
+            return None
+        return _resolved_candidate(
+            parsed,
+            result.final_url,
+            location.source,
+            location.title,
+            location.order,
+        )
 
-    inspected = await asyncio.gather(*(inspect(location) for location in unique))
+    async def inspect_origin(locations: list[_CandidateLocation]) -> list[_ResolvedCandidate | None]:
+        async with semaphore:
+            inspected = []
+            follows_homepage = _origin_key(locations[0].url) == _origin_key(fetched.final_url)
+            for index, location in enumerate(locations):
+                # The homepage itself was just fetched, so leave a small gap
+                # before the first same-origin feed as well as between feeds.
+                # This is imperceptible in the UI and avoids host burst limits.
+                if follows_homepage or index > 0:
+                    await asyncio.sleep(SAME_ORIGIN_PROBE_DELAY_SECONDS)
+                inspected.append(await inspect(location))
+            return inspected
+
+    groups = await asyncio.gather(*(inspect_origin(locations) for locations in by_origin.values()))
+    inspected = [candidate for group in groups for candidate in group]
     candidates = _deduplicate_candidates([candidate for candidate in inspected if candidate])
     if not candidates:
+        if limited := next(
+            (failure for failure in fetch_failures if isinstance(failure, FeedRateLimitedError)),
+            None,
+        ):
+            raise limited
+        if unavailable := next(
+            (failure for failure in fetch_failures if failure.status_code not in {404, 410}),
+            None,
+        ):
+            raise unavailable
         raise FeedDiscoveryError(f"no RSS, Atom or JSON feed was found at {url}")
     return _rank_resolved(candidates, None)
+
+
+def _candidate_probe_priority(location: _CandidateLocation) -> tuple[bool, int]:
+    label = f"{location.title or ''} {urlsplit(location.url).path}".casefold()
+    is_secondary = any(word in label for word in ("comment", "repl", "response"))
+    return is_secondary, location.order
+
+
+def _origin_key(url: str) -> str:
+    parsed = urlsplit(url)
+    return f"{parsed.scheme.casefold()}://{parsed.netloc.casefold()}"
 
 
 def _resolved_candidate(
@@ -438,9 +482,7 @@ def _resolved_candidate(
     return _ResolvedCandidate(candidate, parsed, source_score + bonus - penalty - order)
 
 
-def _rank_resolved(
-    candidates: list[_ResolvedCandidate], preference: str | None
-) -> list[_ResolvedCandidate]:
+def _rank_resolved(candidates: list[_ResolvedCandidate], preference: str | None) -> list[_ResolvedCandidate]:
     ranked = sorted(
         candidates,
         key=lambda candidate: (
@@ -577,6 +619,15 @@ def _cache_error(key: str, code: str, message: str) -> None:
             error_message=message,
         ),
     )
+
+
+def _raise_cached_error(entry: _CacheEntry) -> None:
+    message = entry.error_message or "feed discovery failed"
+    if entry.error_code == FeedRateLimitedError.code:
+        raise FeedRateLimitedError(message, status_code=429)
+    if entry.error_code == FeedFetchError.code:
+        raise FeedFetchError(message)
+    raise FeedDiscoveryError(message, code=entry.error_code or "no_feed_found")
 
 
 FEED_DISCOVERY_PROMPT = """You find the RSS feed for a publication a blind \

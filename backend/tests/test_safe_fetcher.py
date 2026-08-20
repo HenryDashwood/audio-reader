@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from audioreader.feeds import fetcher
@@ -60,3 +61,23 @@ async def test_feed_limit_accepts_a_normal_feed_larger_than_five_mebibytes(respx
     fetched, _ = await fetcher.fetch_feed("https://large.example/podcast.xml")
 
     assert fetched == content
+
+
+async def test_a_short_upstream_rate_limit_is_retried_once(respx_mock, monkeypatch):
+    monkeypatch.setattr(fetcher, "DEFAULT_RETRY_DELAY_SECONDS", 0)
+    responses = [httpx.Response(429), httpx.Response(200, content=b"feed")]
+    route = respx_mock.get("https://busy.example/feed").mock(side_effect=responses)
+
+    fetched, _ = await fetcher.fetch_feed("https://busy.example/feed")
+
+    assert fetched == b"feed"
+    assert route.call_count == 2
+
+
+async def test_a_long_retry_after_is_reported_without_hammering(respx_mock):
+    route = respx_mock.get("https://busy.example/feed").respond(status_code=429, headers={"Retry-After": "60"})
+
+    with pytest.raises(fetcher.FeedRateLimitedError):
+        await fetcher.fetch_feed("https://busy.example/feed")
+
+    assert route.call_count == 1

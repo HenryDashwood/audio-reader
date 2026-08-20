@@ -2,6 +2,7 @@
 
 import asyncio
 
+import httpx
 import pytest
 from sqlalchemy import func, select
 
@@ -45,9 +46,7 @@ class TestFeedLinksInHtml:
         <link rel="alternate" type="application/rss+xml" href="main.xml">
         </head></html>
         """
-        assert feed_links_in_html(html, base_url=SITE_URL) == [
-            "https://cdn.example.com/publication/main.xml"
-        ]
+        assert feed_links_in_html(html, base_url=SITE_URL) == ["https://cdn.example.com/publication/main.xml"]
 
     def test_link_elements_in_user_generated_body_content_are_ignored(self):
         html = """
@@ -67,6 +66,15 @@ class TestFeedLinksInHtml:
         )
         assert [link.url for link in links] == [f"{SITE_URL}/feed.json"]
         assert links[0].title == "Main feed"
+
+    def test_generic_json_alternate_is_not_mistaken_for_a_json_feed(self):
+        html = """
+        <html><head>
+        <link rel="alternate" type="application/json" href="/wp-json/wp/v2/pages/5">
+        <link rel="alternate" type="application/feed+json" href="/feed.json">
+        </head></html>
+        """
+        assert feed_links_in_html(html, base_url=SITE_URL) == [f"{SITE_URL}/feed.json"]
 
 
 class TestSubscribeByHomepage:
@@ -149,6 +157,55 @@ class TestSubscribeByHomepage:
 
 
 class TestRankedDiscovery:
+    async def test_same_origin_candidates_are_polite_and_main_feed_is_tried_first(
+        self, client, respx_mock, article_xml, monkeypatch
+    ):
+        monkeypatch.setattr(discovery, "SAME_ORIGIN_PROBE_DELAY_SECONDS", 0)
+        comments_url = f"{SITE_URL}/comments/feed/"
+        homepage = b"""
+        <html><head>
+        <link rel="alternate" type="application/rss+xml" title="Comments" href="/comments/feed/">
+        <link rel="alternate" type="application/json" href="/wp-json/wp/v2/pages/5">
+        <link rel="alternate" type="application/rss+xml" title="Main feed" href="/feed">
+        </head><body></body></html>
+        """
+        request_order: list[str] = []
+        active = 0
+        max_active = 0
+
+        async def feed_response(request):
+            nonlocal active, max_active
+            request_order.append(request.url.path)
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return httpx.Response(200, content=article_xml)
+
+        respx_mock.get(f"{SITE_URL}/").respond(content=homepage, content_type="text/html")
+        respx_mock.get(FEED_URL).mock(side_effect=feed_response)
+        respx_mock.get(comments_url).mock(side_effect=feed_response)
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 200
+        assert request_order == ["/feed", "/comments/feed/"]
+        assert max_active == 1
+        assert not any("wp-json" in str(call.request.url) for call in respx_mock.calls)
+
+    async def test_rate_limited_feed_has_a_temporary_error_that_survives_cache(self, client, respx_mock, monkeypatch):
+        monkeypatch.setattr("audioreader.feeds.fetcher.MAX_UPSTREAM_RETRIES", 0)
+        feed = respx_mock.get(FEED_URL).respond(status_code=429, headers={"Retry-After": "60"})
+
+        first = await client.post("/feeds/discover", json={"url": FEED_URL})
+        second = await client.post("/feeds/discover", json={"url": FEED_URL})
+
+        assert first.status_code == 503
+        assert first.json()["detail"]["code"] == "site_rate_limited"
+        assert second.status_code == 503
+        assert second.json()["detail"]["code"] == "site_rate_limited"
+        assert feed.call_count == 1
+
     async def test_returns_multiple_feeds_without_ingesting_them(self, client, session, respx_mock, article_xml):
         comments_url = f"{SITE_URL}/comments.xml"
         homepage = b"""
@@ -186,9 +243,7 @@ class TestRankedDiscovery:
         respx_mock.get(f"{SITE_URL}/").respond(
             content=HOMEPAGE_NO_LINK,
             content_type="text/html",
-            headers={
-                "Link": '</feed.json>; rel="alternate"; type="application/feed+json"; title="JSON"'
-            },
+            headers={"Link": '</feed.json>; rel="alternate"; type="application/feed+json"; title="JSON"'},
         )
         respx_mock.get(json_url).respond(content=raw, content_type="application/feed+json")
 
