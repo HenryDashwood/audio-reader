@@ -5,6 +5,9 @@ struct SettingsView: View {
     @EnvironmentObject private var auth: AuthController
     @State private var voiceID: String = SpeechVoice.current?.identifier ?? ""
     @State private var previewSpeaker = Speaker()
+    @State private var naturalVoiceName: String = SpeechVoice.naturalVoice?.name ?? ""
+    @State private var naturalVoices: [KokoroVoice] = []
+    @State private var naturalPreview: KokoroSynthesizer?
     @State private var confirmingDelete = false
     @State private var confirmingDisableAI = false
     @State private var showingAIChoice = false
@@ -33,6 +36,31 @@ struct SettingsView: View {
                             + "Settings → Accessibility → Spoken Content → Voices, "
                             + "and appear here once installed."
                     )
+                }
+
+                // Only on a build that has the Kokoro package and the model
+                // files. On any other, this section does not exist and the app
+                // behaves exactly as it did before.
+                if KokoroEngines.isAvailable {
+                    Section {
+                        Picker("Natural voice", selection: $naturalVoiceName) {
+                            Text("Off — use the system voice").tag("")
+                            ForEach(naturalVoices) { voice in
+                                Text(voice.displayName).tag(voice.name)
+                            }
+                        }
+                        .pickerStyle(.navigationLink)
+                    } header: {
+                        Text("Natural voice (experimental)")
+                    } footer: {
+                        Text(
+                            "Reads articles with a voice generated on this iPhone. It "
+                                + "sounds closer to a person and needs no connection, but it "
+                                + "takes a moment to start and uses more battery. Spoken "
+                                + "replies keep the system voice. A change applies to the "
+                                + "next article you open."
+                        )
+                    }
                 }
 
                 // Only ever visible on a phone that has been launched from
@@ -168,6 +196,25 @@ struct SettingsView: View {
                 SpeechVoice.select(identifier: identifier)
                 // Hearing it is the only way to choose it.
                 Task { await previewSpeaker.speak("This voice will read your articles.") }
+            }
+            // Asked of the engine rather than assumed: the catalogue is a
+            // shortlist of names, and only the file on the device says which
+            // of them are really there.
+            .task {
+                naturalVoices = await KokoroEngines.shared?.availableVoices() ?? []
+            }
+            .onChange(of: naturalVoiceName) { _, name in
+                let voice = KokoroVoice.named(name)
+                SpeechVoice.selectNatural(voice)
+                naturalPreview?.stopSpeaking(at: .immediate)
+                naturalPreview = nil
+                // Hearing it is the only way to choose it — the same rule as
+                // the system voices above, and more important here, where the
+                // whole point is what it sounds like.
+                guard let voice, let engine = KokoroEngines.shared else { return }
+                let preview = KokoroSynthesizer(engine: engine, voice: voice)
+                naturalPreview = preview
+                preview.speak(AVSpeechUtterance(string: "This voice will read your articles."))
             }
         }
     }

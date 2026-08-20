@@ -26,6 +26,31 @@ nonisolated enum SpeechVoice {
         UserDefaults.standard.set(identifier, forKey: storageKey)
     }
 
+    /// Where a chosen Kokoro voice is remembered.
+    static let naturalVoiceKey = "HearfulNaturalVoice"
+
+    /// The natural voice she has chosen, if any.
+    ///
+    /// Kept apart from the system voice rather than mixed into the same key:
+    /// turning the natural voice off has to put her back on exactly the Apple
+    /// voice she had before, and the spoken confirmations go on using that
+    /// one either way — they are a sentence long, where the wait to render is
+    /// worse than the voice is better.
+    static var naturalVoice: KokoroVoice? {
+        guard let identifier = UserDefaults.standard.string(forKey: naturalVoiceKey),
+            let name = KokoroVoice.name(fromIdentifier: identifier)
+        else { return nil }
+        return KokoroVoice.named(name)
+    }
+
+    static func selectNatural(_ voice: KokoroVoice?) {
+        if let voice {
+            UserDefaults.standard.set(voice.identifier, forKey: naturalVoiceKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: naturalVoiceKey)
+        }
+    }
+
     /// Every installed English voice, best first: quality descending, natural
     /// voices before Eloquence/novelty, then by name. What the picker shows.
     static func englishVoices() -> [AVSpeechSynthesisVoice] {
