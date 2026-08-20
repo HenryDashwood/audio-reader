@@ -122,14 +122,7 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var searchResults: some View {
-        let pastedFeed = pastedFeedURL(searchText).map { url in
-            PodcastResult(
-                title: url.host() ?? url.absoluteString,
-                feedURL: url,
-                publisher: nil,
-                episodeCount: nil,
-                artworkURL: nil)
-        }
+        let pastedFeed = pastedFeedURL(searchText)
         let localShows = searchScope.includesShows
             ? showsMatching(model.availableShows, query: searchText) : []
         let localTitles = Set(localShows.map { searchIdentity($0.title) })
@@ -144,8 +137,10 @@ struct LibraryView: View {
         if let pastedFeed {
             List {
                 Section {
-                    NavigationLink(value: pastedFeed) {
-                        OpenFeedRow(host: pastedFeed.title)
+                    NavigationLink {
+                        FeedDiscoveryView(url: pastedFeed)
+                    } label: {
+                        OpenFeedRow(host: pastedFeed.host() ?? pastedFeed.absoluteString)
                     }
                 } footer: {
                     Text("Hearful will check the address and find its RSS or Atom feed before adding it.")

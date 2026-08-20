@@ -44,6 +44,20 @@ class Feed(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     episodes: Mapped[list["Episode"]] = relationship(back_populates="feed", cascade="all, delete-orphan")
+    aliases: Mapped[list["FeedAlias"]] = relationship(back_populates="feed", cascade="all, delete-orphan")
+
+
+class FeedAlias(Base):
+    """An old, redirected or discovery URL that identifies one canonical feed."""
+
+    __tablename__ = "feed_aliases"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str] = mapped_column(unique=True)
+    feed_id: Mapped[int] = mapped_column(ForeignKey("feeds.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    feed: Mapped[Feed] = relationship(back_populates="aliases")
 
 
 class Episode(Base):

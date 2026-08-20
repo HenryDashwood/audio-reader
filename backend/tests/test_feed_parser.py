@@ -90,6 +90,43 @@ class TestArticleFeed:
         assert feed.items[1].author is None
 
 
+class TestJSONFeed:
+    def test_parses_metadata_text_and_audio_attachments(self):
+        raw = b"""{
+          "version":"https://jsonfeed.org/version/1.1",
+          "title":"Notes in JSON",
+          "home_page_url":"https://notes.example/",
+          "feed_url":"https://notes.example/feed.json",
+          "authors":[{"name":"Ada"}],
+          "items":[{
+            "id":"post-1",
+            "url":"https://notes.example/one",
+            "title":"First note",
+            "content_text":"Readable plain text",
+            "date_published":"2026-08-20T09:30:00Z",
+            "attachments":[{
+              "url":"https://cdn.example/one.mp3",
+              "mime_type":"audio/mpeg",
+              "duration_in_seconds":61
+            }]
+          }]
+        }"""
+
+        feed = parse_feed(raw)
+
+        assert feed.format == "json"
+        assert feed.self_url == "https://notes.example/feed.json"
+        assert feed.author == "Ada"
+        assert feed.items[0].description == "Readable plain text"
+        assert feed.items[0].audio_url == "https://cdn.example/one.mp3"
+        assert feed.items[0].duration_seconds == 61
+        assert feed.items[0].published_at == datetime(2026, 8, 20, 9, 30, tzinfo=UTC)
+
+    def test_an_unrelated_json_document_is_not_a_feed(self):
+        with pytest.raises(FeedParseError):
+            parse_feed(b'{"title":"not a JSON Feed"}')
+
+
 class TestInvalidInput:
     def test_not_a_feed_raises(self):
         with pytest.raises(FeedParseError):

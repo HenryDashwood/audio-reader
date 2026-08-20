@@ -1,6 +1,13 @@
 """Pasting a homepage must work as well as pasting the feed itself."""
 
-from audioreader.feeds.discovery import feed_links_in_html
+import asyncio
+
+import pytest
+from sqlalchemy import func, select
+
+from audioreader.feeds import discovery
+from audioreader.feeds.discovery import FeedDiscoveryTimeout, feed_links_in_headers, feed_links_in_html
+from audioreader.models import Feed, FeedAlias
 
 SITE_URL = "https://notesonprogress.example.com"
 FEED_URL = "https://notesonprogress.example.com/feed"
@@ -31,6 +38,35 @@ class TestFeedLinksInHtml:
 
     def test_broken_markup_does_not_raise(self):
         assert feed_links_in_html("<link rel=<<<>>", base_url=SITE_URL) == []
+
+    def test_relative_links_respect_the_html_base_element(self):
+        html = """
+        <html><head><base href="https://cdn.example.com/publication/">
+        <link rel="alternate" type="application/rss+xml" href="main.xml">
+        </head></html>
+        """
+        assert feed_links_in_html(html, base_url=SITE_URL) == [
+            "https://cdn.example.com/publication/main.xml"
+        ]
+
+    def test_link_elements_in_user_generated_body_content_are_ignored(self):
+        html = """
+        <html><head><title>Safe page</title></head><body>
+        <link rel="alternate" type="application/rss+xml" href="https://attacker.example/feed">
+        </body></html>
+        """
+        assert feed_links_in_html(html, base_url=SITE_URL) == []
+
+    def test_http_link_headers_are_supported(self):
+        links = feed_links_in_headers(
+            (
+                '</style.css>; rel="stylesheet", </feed.json>; rel="alternate"; '
+                'type="application/feed+json"; title="Main feed"',
+            ),
+            base_url=SITE_URL,
+        )
+        assert [link.url for link in links] == [f"{SITE_URL}/feed.json"]
+        assert links[0].title == "Main feed"
 
 
 class TestSubscribeByHomepage:
@@ -110,3 +146,142 @@ class TestSubscribeByHomepage:
         assert response.json()["feed"]["url"] == podcast_feed
         assert lookup.calls.last.request.url.params["id"] == "123456789"
         assert lookup.calls.last.request.url.params["country"] == "gb"
+
+
+class TestRankedDiscovery:
+    async def test_returns_multiple_feeds_without_ingesting_them(self, client, session, respx_mock, article_xml):
+        comments_url = f"{SITE_URL}/comments.xml"
+        homepage = b"""
+        <html><head>
+        <link rel="alternate" type="application/rss+xml" title="Comments" href="/comments.xml">
+        <link rel="alternate" type="application/rss+xml" title="Main articles" href="/feed">
+        </head><body></body></html>
+        """
+        comments = article_xml.replace(b"Notes on Progress", b"Notes on Progress Comments").replace(
+            b"sewers-1", b"comment-1"
+        )
+        respx_mock.get(f"{SITE_URL}/").respond(content=homepage, content_type="text/html")
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+        respx_mock.get(comments_url).respond(content=comments, content_type="application/rss+xml")
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 200
+        candidates = response.json()["candidates"]
+        assert [candidate["title"] for candidate in candidates] == [
+            "Notes on Progress",
+            "Notes on Progress Comments",
+        ]
+        assert candidates[0]["is_primary"] is True
+        assert candidates[1]["is_primary"] is False
+        assert await session.scalar(select(func.count()).select_from(Feed)) == 0
+
+    async def test_http_link_header_and_json_feed_discovery(self, client, respx_mock):
+        json_url = f"{SITE_URL}/feed.json"
+        raw = b"""{
+          "version":"https://jsonfeed.org/version/1.1",
+          "title":"Notes in JSON",
+          "items":[{"id":"one","title":"First note","content_text":"Hello"}]
+        }"""
+        respx_mock.get(f"{SITE_URL}/").respond(
+            content=HOMEPAGE_NO_LINK,
+            content_type="text/html",
+            headers={
+                "Link": '</feed.json>; rel="alternate"; type="application/feed+json"; title="JSON"'
+            },
+        )
+        respx_mock.get(json_url).respond(content=raw, content_type="application/feed+json")
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 200
+        candidate = response.json()["candidates"][0]
+        assert candidate["feed_url"] == json_url
+        assert candidate["format"] == "json"
+
+    async def test_spoken_feed_kind_can_override_the_visual_primary(self, respx_mock, article_xml, podcast_xml):
+        podcast_url = f"{SITE_URL}/podcast.xml"
+        homepage = b"""
+        <html><head>
+        <link rel="alternate" type="application/rss+xml" title="Main articles" href="/feed">
+        <link rel="alternate" type="application/rss+xml" title="Podcast" href="/podcast.xml">
+        </head><body></body></html>
+        """
+        respx_mock.get(f"{SITE_URL}/").respond(content=homepage, content_type="text/html")
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+        respx_mock.get(podcast_url).respond(content=podcast_xml, content_type="application/rss+xml")
+
+        resolved, parsed = await discovery.resolve_feed(
+            SITE_URL,
+            preference="subscribe to the podcast feed",
+        )
+
+        assert resolved == podcast_url
+        assert parsed.title == "The History Hour"
+
+    async def test_successful_discovery_is_cached(self, client, respx_mock, article_xml):
+        homepage = respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
+        feed = respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+
+        assert (await client.post("/feeds/discover", json={"url": SITE_URL})).status_code == 200
+        assert (await client.post("/feeds/discover", json={"url": SITE_URL})).status_code == 200
+
+        assert homepage.call_count == 1
+        assert feed.call_count == 1
+
+    async def test_no_feed_has_a_specific_speakable_error(self, client, respx_mock):
+        respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE_NO_LINK, content_type="text/html")
+        respx_mock.route().respond(status_code=404)
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "no_feed_found"
+        assert response.json()["detail"]["spoken_response"]
+
+    async def test_total_deadline_is_reported(self, monkeypatch):
+        async def never_finishes(_url: str):
+            await asyncio.sleep(1)
+            return []
+
+        monkeypatch.setattr(discovery, "_discover_uncached", never_finishes)
+        monkeypatch.setattr(discovery, "DISCOVERY_DEADLINE_SECONDS", 0.001)
+
+        with pytest.raises(FeedDiscoveryTimeout):
+            await discovery.discover_feeds("https://slow.example")
+
+
+class TestCanonicalFeedIdentity:
+    async def test_redirect_and_final_url_share_one_feed_and_record_an_alias(
+        self, client, session, respx_mock, article_xml
+    ):
+        old_url = "https://old.example.com/feed"
+        new_url = "https://new.example.com/feed.xml"
+        respx_mock.get(old_url).respond(status_code=301, headers={"Location": new_url})
+        respx_mock.get(new_url).respond(content=article_xml, content_type="application/rss+xml")
+
+        old = await client.post("/feeds/preview", json={"url": old_url})
+        new = await client.post("/feeds/preview", json={"url": new_url})
+
+        assert old.status_code == 200
+        assert old.json()["feed"]["url"] == new_url
+        assert new.json()["feed"]["id"] == old.json()["feed"]["id"]
+        assert await session.scalar(select(func.count()).select_from(Feed)) == 1
+        assert await session.scalar(select(FeedAlias.url)) == old_url
+
+    async def test_same_origin_self_link_becomes_canonical(self, client, respx_mock, article_xml):
+        alias_url = f"{SITE_URL}/current"
+        canonical_url = f"{SITE_URL}/canonical.xml"
+        with_self = article_xml.replace(
+            b"<channel>",
+            (
+                b'<channel xmlns:atom="http://www.w3.org/2005/Atom">'
+                + f'<atom:link href="{canonical_url}" rel="self" type="application/rss+xml"/>'.encode()
+            ),
+        )
+        respx_mock.get(alias_url).respond(content=with_self, content_type="application/rss+xml")
+
+        response = await client.post("/feeds/preview", json={"url": alias_url})
+
+        assert response.status_code == 200
+        assert response.json()["feed"]["url"] == canonical_url

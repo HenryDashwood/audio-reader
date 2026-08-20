@@ -11,15 +11,18 @@ publication — and each candidate is fetched, resolved, and checked against
 what she actually said before anything is trusted.
 """
 
+import asyncio
 import logging
 import re
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
-from urllib.parse import urljoin
+from time import monotonic
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, ValidationError
 
-from audioreader.feeds.fetcher import FeedFetchError, fetch_feed, fetch_feed_bytes
+from audioreader.feeds.fetcher import FeedFetchError, fetch_feed_resource
 from audioreader.feeds.parser import FeedParseError, ParsedFeed, parse_feed
 from audioreader.feeds.search import (
     PodcastSearchError,
@@ -33,13 +36,33 @@ logger = logging.getLogger(__name__)
 
 #: Where blog engines put their feed when the page does not say. Ordered by
 #: how common they are: WordPress, generic, then the static-site generators.
-COMMON_FEED_PATHS = ("/feed", "/rss", "/feed.xml", "/rss.xml", "/atom.xml", "/index.xml")
+COMMON_FEED_PATHS = (
+    "/feed",
+    "/feed/",
+    "/rss",
+    "/rss/",
+    "/feed.xml",
+    "/rss.xml",
+    "/atom.xml",
+    "/index.xml",
+    "/feed.json",
+)
 
 #: Hard cap on candidate fetches per resolution, so one bad page cannot turn
 #: into a crawl.
-MAX_CANDIDATES = 8
+MAX_CANDIDATES = 12
+DISCOVERY_DEADLINE_SECONDS = 25
+DISCOVERY_CONCURRENCY = 3
+DISCOVERY_CACHE_SECONDS = 15 * 60
+DISCOVERY_NEGATIVE_CACHE_SECONDS = 45
+DISCOVERY_CACHE_ENTRIES = 256
 
-_FEED_MIME_TYPES = {"application/rss+xml", "application/atom+xml"}
+_FEED_MIME_TYPES = {
+    "application/rss+xml",
+    "application/atom+xml",
+    "application/feed+json",
+    "application/json",
+}
 
 
 def _looks_like_html(text: str) -> bool:
@@ -47,85 +70,513 @@ def _looks_like_html(text: str) -> bool:
     return "<html" in head or "<!doctype html" in head
 
 
+@dataclass(frozen=True)
+class AdvertisedFeedLink:
+    url: str
+    mime_type: str
+    title: str | None
+    source: str
+
+
 class _FeedLinkFinder(HTMLParser):
-    """Collects <link rel="alternate" type="application/rss+xml" href=…>."""
+    """Collect feed links from the trusted metadata portion of an HTML page."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.hrefs: list[str] = []
+        self.links: list[tuple[str, str, str | None]] = []
+        self.base_href: str | None = None
+        self.in_body = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.casefold()
+        if tag == "body":
+            self.in_body = True
+            return
+        if self.in_body:
+            return
+        by_name = {name.casefold(): (value or "") for name, value in attrs}
+        if tag == "base" and self.base_href is None and by_name.get("href"):
+            self.base_href = by_name["href"]
+            return
         if tag != "link":
             return
-        by_name = {name: (value or "") for name, value in attrs}
-        if "alternate" not in by_name.get("rel", "").lower():
+        if "alternate" not in by_name.get("rel", "").casefold().split():
             return
-        if by_name.get("type", "").split(";")[0].strip().lower() not in _FEED_MIME_TYPES:
+        mime_type = by_name.get("type", "").split(";")[0].strip().casefold()
+        if mime_type not in _FEED_MIME_TYPES:
             return
         if href := by_name.get("href"):
-            self.hrefs.append(href)
+            self.links.append((href, mime_type, by_name.get("title") or None))
 
 
-def feed_links_in_html(html: str, base_url: str) -> list[str]:
-    """The feed URLs a page advertises, absolute, in page order."""
+def advertised_feed_links_in_html(html: str, base_url: str) -> list[AdvertisedFeedLink]:
+    """Feed metadata from an HTML head, respecting its first ``<base>``."""
+
     finder = _FeedLinkFinder()
     try:
         finder.feed(html)
         finder.close()
     except Exception:  # noqa: BLE001 - broken markup must never break discovery
         pass
+    resolution_base = urljoin(base_url, finder.base_href) if finder.base_href else base_url
     seen: set[str] = set()
     links = []
-    for href in finder.hrefs:
-        absolute = urljoin(base_url, href)
-        if absolute not in seen:
-            seen.add(absolute)
-            links.append(absolute)
+    for href, mime_type, title in finder.links:
+        absolute = urljoin(resolution_base, href)
+        key = _feed_key(absolute)
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append(
+            AdvertisedFeedLink(url=absolute, mime_type=mime_type, title=title, source="html")
+        )
     return links
 
 
-async def resolve_feed(url: str, country: str | None = None) -> tuple[str, ParsedFeed]:
-    """The feed at (or advertised by) `url`: its canonical URL and its content.
+def feed_links_in_html(html: str, base_url: str) -> list[str]:
+    """The feed URLs a page advertises, absolute, in page order."""
+    return [link.url for link in advertised_feed_links_in_html(html, base_url)]
 
-    Raises FeedFetchError when the URL itself is unreachable, FeedParseError
-    when it is reachable but no feed can be found through it.
-    """
+
+def feed_links_in_headers(headers: tuple[str, ...], base_url: str) -> list[AdvertisedFeedLink]:
+    """RSS/Atom/JSON Feed alternates advertised through HTTP Link headers."""
+
+    links = []
+    seen: set[str] = set()
+    for header in headers:
+        for value in _split_link_values(header):
+            match = re.match(r"\s*<([^>]*)>(.*)$", value)
+            if not match:
+                continue
+            params = {
+                key.casefold(): quoted or bare or ""
+                for key, quoted, bare in re.findall(
+                    r";\s*([A-Za-z][\w-]*)\s*=\s*(?:\"([^\"]*)\"|([^;,\s]+))",
+                    match.group(2),
+                )
+            }
+            if "alternate" not in params.get("rel", "").casefold().split():
+                continue
+            mime_type = params.get("type", "").split(";")[0].strip().casefold()
+            if mime_type not in _FEED_MIME_TYPES:
+                continue
+            absolute = urljoin(base_url, match.group(1))
+            key = _feed_key(absolute)
+            if key in seen:
+                continue
+            seen.add(key)
+            links.append(
+                AdvertisedFeedLink(
+                    url=absolute,
+                    mime_type=mime_type,
+                    title=params.get("title") or None,
+                    source="http_header",
+                )
+            )
+    return links
+
+
+def _split_link_values(header: str) -> list[str]:
+    values = []
+    start = 0
+    quoted = False
+    angled = False
+    for index, character in enumerate(header):
+        if character == '"':
+            quoted = not quoted
+        elif not quoted and character == "<":
+            angled = True
+        elif not quoted and character == ">":
+            angled = False
+        elif character == "," and not quoted and not angled:
+            values.append(header[start:index])
+            start = index + 1
+    values.append(header[start:])
+    return values
+
+
+@dataclass(frozen=True)
+class FeedCandidate:
+    feed_url: str
+    title: str
+    description: str | None
+    site_url: str | None
+    format: str
+    item_count: int
+    audio_item_count: int
+    recent_item_titles: tuple[str, ...]
+    source: str
+    is_primary: bool = False
+
+
+@dataclass(frozen=True)
+class _ResolvedCandidate:
+    candidate: FeedCandidate
+    parsed: ParsedFeed
+    base_score: int
+
+
+@dataclass(frozen=True)
+class _CandidateLocation:
+    url: str
+    source: str
+    title: str | None
+    order: int
+
+
+@dataclass(frozen=True)
+class _CacheEntry:
+    expires_at: float
+    candidates: tuple[FeedCandidate, ...] = ()
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class FeedDiscoveryError(FeedParseError):
+    def __init__(self, message: str, *, code: str = "no_feed_found") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class FeedDiscoveryTimeout(FeedDiscoveryError):
+    def __init__(self) -> None:
+        super().__init__(
+            "the site took too long while Hearful looked for its feeds",
+            code="discovery_timed_out",
+        )
+
+
+_discovery_cache: OrderedDict[str, _CacheEntry] = OrderedDict()
+
+
+def clear_discovery_cache() -> None:
+    _discovery_cache.clear()
+
+
+async def discover_feeds(url: str, *, preference: str | None = None) -> list[FeedCandidate]:
+    """All distinct feeds advertised by a URL, best candidate first."""
+
+    url = await _shared_link_target(url)
+    key = _feed_key(url)
+    if cached := _cache_get(key):
+        if cached.error_code:
+            raise FeedDiscoveryError(cached.error_message or "no feed found", code=cached.error_code)
+        logger.info("feed discovery cache hit for %s (%d candidates)", url, len(cached.candidates))
+        return _rank_summaries(list(cached.candidates), preference)
+
+    started = monotonic()
     try:
-        if shared_feed := await feed_for_shared_link(url, country=country):
-            url = shared_feed
+        resolved = await asyncio.wait_for(
+            _discover_uncached(url),
+            timeout=DISCOVERY_DEADLINE_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise FeedDiscoveryTimeout() from exc
+    except FeedFetchError as exc:
+        _cache_error(key, "site_unreachable", str(exc))
+        raise
+    except FeedDiscoveryError as exc:
+        _cache_error(key, exc.code, str(exc))
+        raise
+
+    summaries = tuple(candidate.candidate for candidate in resolved)
+    _cache_put(key, _CacheEntry(monotonic() + DISCOVERY_CACHE_SECONDS, candidates=summaries))
+    for summary in summaries:
+        _cache_put(
+            _feed_key(summary.feed_url),
+            _CacheEntry(
+                monotonic() + DISCOVERY_CACHE_SECONDS,
+                candidates=(replace(summary, is_primary=True),),
+            ),
+        )
+    logger.info(
+        "feed discovery completed for %s in %.3fs (%d candidates; primary source=%s)",
+        url,
+        monotonic() - started,
+        len(summaries),
+        summaries[0].source,
+    )
+    return _rank_summaries(list(summaries), preference)
+
+
+async def resolve_feed(
+    url: str,
+    country: str | None = None,
+    *,
+    preference: str | None = None,
+) -> tuple[str, ParsedFeed]:
+    """The best feed at (or advertised by) ``url`` and its current content."""
+
+    url = await _shared_link_target(url, country=country)
+    key = _feed_key(url)
+    if cached := _cache_get(key):
+        if cached.error_code:
+            raise FeedDiscoveryError(cached.error_message or "no feed found", code=cached.error_code)
+        chosen = _rank_summaries(list(cached.candidates), preference)[0]
+        fetched = await fetch_feed_resource(chosen.feed_url)
+        if fetched.content is None:
+            raise FeedFetchError("the server returned no content")
+        parsed = parse_feed(fetched.content)
+        return _canonical_feed_url(fetched.final_url, parsed.self_url), parsed
+
+    try:
+        resolved = await asyncio.wait_for(_discover_uncached(url), timeout=DISCOVERY_DEADLINE_SECONDS)
+    except TimeoutError as exc:
+        raise FeedDiscoveryTimeout() from exc
+    except FeedFetchError as exc:
+        _cache_error(key, "site_unreachable", str(exc))
+        raise
+    except FeedDiscoveryError as exc:
+        _cache_error(key, exc.code, str(exc))
+        raise
+
+    summaries = tuple(candidate.candidate for candidate in resolved)
+    _cache_put(key, _CacheEntry(monotonic() + DISCOVERY_CACHE_SECONDS, candidates=summaries))
+    ranked = _rank_resolved(resolved, preference)
+    return ranked[0].candidate.feed_url, ranked[0].parsed
+
+
+async def _shared_link_target(url: str, country: str | None = None) -> str:
+    try:
+        return await feed_for_shared_link(url, country=country) or url
     except PodcastSearchError as exc:
         raise FeedFetchError("could not resolve the podcast sharing link") from exc
 
-    raw, final_url = await fetch_feed(url)
-    html = raw.decode("utf-8", errors="ignore")
+
+async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
+    fetched = await fetch_feed_resource(url)
+    if fetched.content is None:
+        raise FeedFetchError("the server returned no content")
+    html = fetched.content.decode("utf-8", errors="ignore")
     try:
-        parsed = parse_feed(raw)
-        # feedparser salvages an HTML page's <title> as a "feed" with no
-        # items. A titled but empty parse of an HTML document is a web page,
-        # and the real feed is whatever that page advertises.
+        parsed = parse_feed(fetched.content)
         if parsed.items or not _looks_like_html(html):
-            return url, parsed
+            return [_resolved_candidate(parsed, fetched.final_url, "direct", None, 0)]
     except FeedParseError:
         pass
 
-    # Candidates resolve against where the page actually came from, not what
-    # was typed: astralcodexten.com redirects to www., and its "/feed" link
-    # only exists on the www host.
-    candidates = feed_links_in_html(html, base_url=final_url)
-    candidates += [urljoin(final_url, path) for path in COMMON_FEED_PATHS]
+    advertised = feed_links_in_headers(fetched.link_headers, fetched.final_url)
+    advertised += advertised_feed_links_in_html(html, fetched.final_url)
+    locations = [
+        _CandidateLocation(link.url, link.source, link.title, order)
+        for order, link in enumerate(advertised)
+    ]
+    # Explicit metadata is authoritative and may intentionally advertise
+    # several feeds. Conventional paths are a fallback only; probing them as
+    # well creates noise, extra load and false category/comment candidates.
+    if not locations:
+        locations = [
+            _CandidateLocation(urljoin(fetched.final_url, path), "common_path", None, order)
+            for order, path in enumerate(COMMON_FEED_PATHS)
+        ]
 
-    tried: set[str] = set()
-    for candidate in candidates:
-        if candidate in tried or candidate == url:
+    unique: list[_CandidateLocation] = []
+    seen = {_request_key(fetched.final_url)}
+    for location in locations:
+        key = _request_key(location.url)
+        if key in seen:
             continue
-        tried.add(candidate)
-        if len(tried) > MAX_CANDIDATES:
+        seen.add(key)
+        unique.append(location)
+        if len(unique) == MAX_CANDIDATES:
             break
-        try:
-            return candidate, parse_feed(await fetch_feed_bytes(candidate))
-        except (FeedFetchError, FeedParseError):
+
+    semaphore = asyncio.Semaphore(DISCOVERY_CONCURRENCY)
+
+    async def inspect(location: _CandidateLocation) -> _ResolvedCandidate | None:
+        async with semaphore:
+            try:
+                result = await fetch_feed_resource(location.url)
+                if result.content is None:
+                    return None
+                parsed = parse_feed(result.content)
+            except (FeedFetchError, FeedParseError):
+                return None
+            return _resolved_candidate(
+                parsed,
+                result.final_url,
+                location.source,
+                location.title,
+                location.order,
+            )
+
+    inspected = await asyncio.gather(*(inspect(location) for location in unique))
+    candidates = _deduplicate_candidates([candidate for candidate in inspected if candidate])
+    if not candidates:
+        raise FeedDiscoveryError(f"no RSS, Atom or JSON feed was found at {url}")
+    return _rank_resolved(candidates, None)
+
+
+def _resolved_candidate(
+    parsed: ParsedFeed,
+    final_url: str,
+    source: str,
+    title_hint: str | None,
+    order: int,
+) -> _ResolvedCandidate:
+    audio_count = sum(item.audio_url is not None for item in parsed.items)
+    title = parsed.title or title_hint or "Untitled feed"
+    candidate = FeedCandidate(
+        feed_url=_canonical_feed_url(final_url, parsed.self_url),
+        title=title,
+        description=parsed.description,
+        site_url=parsed.site_url,
+        format=parsed.format,
+        item_count=len(parsed.items),
+        audio_item_count=audio_count,
+        recent_item_titles=tuple(item.title for item in parsed.items[:3]),
+        source=source,
+    )
+    source_score = {"direct": 1_000, "http_header": 800, "html": 760, "common_path": 400}[source]
+    label = f"{title_hint or ''} {title}".casefold()
+    penalty = 0
+    if any(word in label for word in ("comment", "repl", "response")):
+        penalty += 300
+    if any(word in label for word in ("category", "tag feed", "author feed")):
+        penalty += 100
+    bonus = 30 if any(word in label for word in ("main", "all posts", "articles")) else 0
+    return _ResolvedCandidate(candidate, parsed, source_score + bonus - penalty - order)
+
+
+def _rank_resolved(
+    candidates: list[_ResolvedCandidate], preference: str | None
+) -> list[_ResolvedCandidate]:
+    ranked = sorted(
+        candidates,
+        key=lambda candidate: (
+            -candidate.base_score - _preference_score(candidate.candidate, preference),
+            candidate.candidate.title.casefold(),
+        ),
+    )
+    return [
+        replace(candidate, candidate=replace(candidate.candidate, is_primary=index == 0))
+        for index, candidate in enumerate(ranked)
+    ]
+
+
+def _rank_summaries(candidates: list[FeedCandidate], preference: str | None) -> list[FeedCandidate]:
+    ranked = sorted(
+        enumerate(candidates),
+        key=lambda pair: (
+            -_preference_score(pair[1], preference),
+            not pair[1].is_primary,
+            pair[0],
+        ),
+    )
+    return [replace(candidate, is_primary=index == 0) for index, (_, candidate) in enumerate(ranked)]
+
+
+def _preference_score(candidate: FeedCandidate, preference: str | None) -> int:
+    if not preference:
+        return 0
+    words = {word for word in re.sub(r"[^a-z0-9 ]", " ", preference.casefold()).split() if len(word) > 2}
+    label = re.sub(r"[^a-z0-9 ]", " ", candidate.title.casefold())
+    score = sum(80 for word in words if word in label.split())
+    if candidate.audio_item_count and words & {"podcast", "audio", "episodes"}:
+        score += 180
+    if not candidate.audio_item_count and words & {"article", "articles", "blog", "posts", "writing"}:
+        score += 120
+    return score
+
+
+def _deduplicate_candidates(candidates: list[_ResolvedCandidate]) -> list[_ResolvedCandidate]:
+    by_url: dict[str, _ResolvedCandidate] = {}
+    by_content: dict[tuple[str, tuple[str, ...]], _ResolvedCandidate] = {}
+    for candidate in candidates:
+        url_key = _feed_key(candidate.candidate.feed_url)
+        if url_key in by_url:
             continue
-    raise FeedParseError(f"no RSS or Atom feed found at {url}")
+        content_key = (
+            candidate.candidate.title.casefold(),
+            tuple(item.guid for item in candidate.parsed.items[:3]),
+        )
+        existing = by_content.get(content_key) if content_key[1] else None
+        if existing is not None:
+            if candidate.base_score > existing.base_score:
+                by_url.pop(_feed_key(existing.candidate.feed_url), None)
+                by_url[url_key] = candidate
+                by_content[content_key] = candidate
+            continue
+        by_url[url_key] = candidate
+        if content_key[1]:
+            by_content[content_key] = candidate
+    return list(by_url.values())
+
+
+def _without_fragment(url: str) -> str:
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+
+
+def _canonical_feed_url(final_url: str, self_url: str | None) -> str:
+    """Prefer a same-origin ``rel=self`` URL, otherwise the final redirect."""
+
+    final = urlsplit(final_url)
+    if self_url:
+        candidate_url = urljoin(final_url, self_url)
+        try:
+            candidate = urlsplit(candidate_url)
+            port = candidate.port
+        except ValueError:
+            candidate = None
+        if (
+            candidate is not None
+            and candidate.scheme in {"http", "https"}
+            and candidate.hostname == final.hostname
+            and candidate.username is None
+            and candidate.password is None
+            and port in {None, 80, 443}
+        ):
+            return _without_fragment(candidate_url)
+    return _without_fragment(final_url)
+
+
+def _feed_key(url: str) -> str:
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").casefold()
+    try:
+        port = parsed.port
+    except ValueError:
+        return _without_fragment(url)
+    authority = host if port in {None, 80, 443} else f"{host}:{port}"
+    path = parsed.path.rstrip("/") or "/"
+    return urlunsplit(("https", authority, path, parsed.query, ""))
+
+
+def _request_key(url: str) -> str:
+    """A fetch identity that keeps meaningful trailing-slash variants apart."""
+
+    parsed = urlsplit(url)
+    return urlunsplit((parsed.scheme.casefold(), parsed.netloc.casefold(), parsed.path, parsed.query, ""))
+
+
+def _cache_get(key: str) -> _CacheEntry | None:
+    entry = _discovery_cache.get(key)
+    if entry is None:
+        return None
+    if entry.expires_at <= monotonic():
+        _discovery_cache.pop(key, None)
+        return None
+    _discovery_cache.move_to_end(key)
+    return entry
+
+
+def _cache_put(key: str, entry: _CacheEntry) -> None:
+    _discovery_cache[key] = entry
+    _discovery_cache.move_to_end(key)
+    while len(_discovery_cache) > DISCOVERY_CACHE_ENTRIES:
+        _discovery_cache.popitem(last=False)
+
+
+def _cache_error(key: str, code: str, message: str) -> None:
+    _cache_put(
+        key,
+        _CacheEntry(
+            monotonic() + DISCOVERY_NEGATIVE_CACHE_SECONDS,
+            error_code=code,
+            error_message=message,
+        ),
+    )
 
 
 FEED_DISCOVERY_PROMPT = """You find the RSS feed for a publication a blind \
@@ -227,7 +678,7 @@ async def find_feed_by_name(query: str, llm: LLMClient) -> DiscoveredFeed | None
     for guess in substack_guesses(query):
         tried.append(guess)
         try:
-            feed_url, parsed = await resolve_feed(guess)
+            feed_url, parsed = await resolve_feed(guess, preference=query)
         except (FeedFetchError, FeedParseError):
             continue
         if loosely_identifies(query, f"{parsed.title} {feed_url}"):
@@ -256,7 +707,7 @@ async def find_feed_by_name(query: str, llm: LLMClient) -> DiscoveredFeed | None
                 continue
             tried.append(url)
             try:
-                feed_url, parsed = await resolve_feed(url)
+                feed_url, parsed = await resolve_feed(url, preference=query)
             except (FeedFetchError, FeedParseError):
                 continue
             # The guard against a confidently wrong model: the feed counts

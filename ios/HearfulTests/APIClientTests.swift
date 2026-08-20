@@ -306,6 +306,34 @@ struct DirectorySearchTests {
         #expect(body["url"] == "https://feeds.example.com/x")
     }
 
+    @Test func discoveryDecodesRankedCandidatesAndPostsTheWebsite() async throws {
+        let json = """
+            {"submitted_url":"https://publication.example/","candidates":[
+              {"title":"Main articles","feed_url":"https://publication.example/feed",
+               "description":"All writing","site_url":"https://publication.example/",
+               "format":"rss","item_count":42,"audio_item_count":0,
+               "recent_item_titles":["The newest post"],"source":"html","is_primary":true},
+              {"title":"Comments","feed_url":"https://publication.example/comments.xml",
+               "description":null,"site_url":null,"format":"atom","item_count":12,
+               "audio_item_count":0,"recent_item_titles":[],"source":"html","is_primary":false}
+            ]}
+            """
+        let transport = FakeTransport(json: json)
+        let response = try await makeClient(transport)
+            .discoverFeeds(url: URL(string: "https://publication.example")!)
+
+        #expect(response.candidates.count == 2)
+        #expect(response.candidates[0].isPrimary)
+        #expect(response.candidates[0].isArticleFeed)
+        #expect(response.candidates[0].recentItemTitles == ["The newest post"])
+        let request = try #require(transport.lastRequest)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/feeds/discover")
+        let body = try JSONDecoder().decode(
+            [String: String].self, from: try #require(request.httpBody))
+        #expect(body["url"] == "https://publication.example")
+    }
+
     @Test func searchesTheWholeLibraryForEpisodes() async throws {
         let json = """
             [{"id":31,"title":"The Fall of Constantinople","description":null,

@@ -11,7 +11,12 @@ from audioreader.auth.dependencies import get_current_user
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.feeds import articles, service
-from audioreader.feeds.discovery import find_feed_by_name
+from audioreader.feeds.discovery import (
+    FeedDiscoveryError,
+    FeedDiscoveryTimeout,
+    discover_feeds,
+    find_feed_by_name,
+)
 from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import PodcastSearchError, search_podcasts
@@ -25,6 +30,8 @@ from audioreader.schemas import (
     EpisodeStateUpdate,
     EpisodeTextRead,
     FeedCreate,
+    FeedDiscoveryCandidateRead,
+    FeedDiscoveryRead,
     FeedPreview,
     FeedRead,
     PodcastSearchResult,
@@ -130,18 +137,79 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
     return reads
 
 
+def _discovery_error(status_code: int, code: str, spoken_response: str) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code, "spoken_response": spoken_response},
+    )
+
+
+def _raise_discovery_error(exc: Exception) -> None:
+    if isinstance(exc, FeedDiscoveryTimeout):
+        raise _discovery_error(
+            504,
+            exc.code,
+            "That site took too long while Hearful looked for its feeds. Please try again.",
+        ) from exc
+    if isinstance(exc, FeedDiscoveryError):
+        raise _discovery_error(
+            422,
+            exc.code,
+            "Hearful reached that site, but could not find an RSS, Atom or JSON feed.",
+        ) from exc
+    if isinstance(exc, FeedFetchError):
+        raise _discovery_error(
+            502,
+            "site_unreachable",
+            "Hearful could not reach that site. Check the address and try again.",
+        ) from exc
+    if isinstance(exc, FeedParseError):
+        raise _discovery_error(
+            422,
+            "invalid_feed",
+            "Hearful reached that address, but it did not contain a readable feed.",
+        ) from exc
+    raise exc
+
+
 @router.post("", status_code=201, dependencies=[Depends(check_feed_operation_limit)])
 async def subscribe(body: FeedCreate, session: Session, user: CurrentUser) -> FeedRead:
     try:
         feed = await service.subscribe(session, str(body.url), user)
     except service.AlreadySubscribedError as exc:
         raise HTTPException(status_code=409, detail="already subscribed to this feed") from exc
-    except FeedFetchError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except FeedParseError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (FeedFetchError, FeedParseError) as exc:
+        _raise_discovery_error(exc)
     count, audio_count = await _counts_for(session, feed.id)
     return _to_feed_read(feed, episode_count=count, audio_count=audio_count)
+
+
+@router.post("/discover", dependencies=[Depends(check_feed_operation_limit)])
+async def discover(body: FeedCreate, user: CurrentUser) -> FeedDiscoveryRead:
+    """Verify and rank every distinct feed advertised by an address."""
+
+    try:
+        candidates = await discover_feeds(str(body.url))
+    except (FeedFetchError, FeedParseError) as exc:
+        _raise_discovery_error(exc)
+    return FeedDiscoveryRead(
+        submitted_url=str(body.url),
+        candidates=[
+            FeedDiscoveryCandidateRead(
+                title=candidate.title,
+                feed_url=candidate.feed_url,
+                description=candidate.description,
+                site_url=candidate.site_url,
+                format=candidate.format,
+                item_count=candidate.item_count,
+                audio_item_count=candidate.audio_item_count,
+                recent_item_titles=list(candidate.recent_item_titles),
+                source=candidate.source,
+                is_primary=candidate.is_primary,
+            )
+            for candidate in candidates
+        ],
+    )
 
 
 @router.post("/preview", dependencies=[Depends(check_feed_operation_limit)])
@@ -151,10 +219,8 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
     played, resumed, and subscribed to instantly."""
     try:
         feed = await service.ensure_feed(session, str(body.url))
-    except FeedFetchError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except FeedParseError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (FeedFetchError, FeedParseError) as exc:
+        _raise_discovery_error(exc)
 
     episode_count, audio_count = await _counts_for(session, feed.id)
     episodes = (

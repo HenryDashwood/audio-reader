@@ -1,9 +1,12 @@
-"""Turn raw RSS/Atom bytes into clean, typed feed data.
+"""Turn raw RSS, Atom or JSON Feed bytes into clean, typed feed data.
 
 feedparser tolerates the malformed XML that real feeds are full of; this module
 wraps it so the rest of the codebase only ever sees validated Pydantic models.
+JSON Feed is small enough to parse directly, and doing so keeps the same typed
+shape for every syndication format.
 """
 
+import json
 from calendar import timegm
 from datetime import UTC, datetime
 
@@ -43,10 +46,15 @@ class ParsedFeed(BaseModel):
     author: str | None = None
     image_url: str | None = None
     site_url: str | None = None
+    self_url: str | None = None
+    format: str = "rss"
     items: list[ParsedItem]
 
 
 def parse_feed(raw: bytes) -> ParsedFeed:
+    if raw.lstrip().startswith((b"{", b"[")):
+        return _parse_json_feed(raw)
+
     parsed = feedparser.parse(raw)
     # feedparser almost never raises: it records problems in `bozo` and returns
     # whatever it could salvage. Only reject input when there is no usable feed
@@ -61,10 +69,106 @@ def parse_feed(raw: bytes) -> ParsedFeed:
         author=feed_author,
         image_url=(parsed.feed.get("image") or {}).get("href"),
         site_url=parsed.feed.get("link"),
+        self_url=_self_link(parsed.feed),
+        format=_xml_format(parsed.version),
         items=[
             item for entry in parsed.entries[:MAX_FEED_ITEMS] if (item := _parse_entry(entry, feed_author)) is not None
         ],
     )
+
+
+def _parse_json_feed(raw: bytes) -> ParsedFeed:
+    try:
+        document = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise FeedParseError("input does not look like an RSS, Atom or JSON feed") from exc
+    if not isinstance(document, dict) or not str(document.get("version", "")).startswith(
+        "https://jsonfeed.org/version/"
+    ):
+        raise FeedParseError("input does not look like a JSON Feed")
+
+    raw_items = document.get("items")
+    if not isinstance(raw_items, list):
+        raw_items = []
+    feed_author = _json_author(document)
+    items = [
+        item
+        for source in raw_items[:MAX_FEED_ITEMS]
+        if isinstance(source, dict) and (item := _parse_json_item(source, feed_author)) is not None
+    ]
+    return ParsedFeed(
+        title=_bounded(document.get("title"), MAX_TITLE_CHARS) or "Untitled feed",
+        description=_bounded(document.get("description"), MAX_DESCRIPTION_CHARS),
+        author=feed_author,
+        image_url=_bounded(document.get("icon") or document.get("favicon"), MAX_URL_CHARS),
+        site_url=_bounded(document.get("home_page_url"), MAX_URL_CHARS),
+        self_url=_bounded(document.get("feed_url"), MAX_URL_CHARS),
+        format="json",
+        items=items,
+    )
+
+
+def _parse_json_item(source: dict, feed_author: str | None) -> ParsedItem | None:
+    audio_url = None
+    duration_seconds = None
+    for attachment in source.get("attachments") or []:
+        if not isinstance(attachment, dict) or not str(attachment.get("mime_type", "")).startswith("audio/"):
+            continue
+        audio_url = _bounded(attachment.get("url"), MAX_URL_CHARS)
+        duration = attachment.get("duration_in_seconds")
+        duration_seconds = int(duration) if isinstance(duration, (int, float)) and duration >= 0 else None
+        if audio_url:
+            break
+
+    guid = source.get("id") or source.get("url") or source.get("external_url") or audio_url
+    if guid is None:
+        return None
+    content_text = _bounded(source.get("content_text"), MAX_DESCRIPTION_CHARS)
+    return ParsedItem(
+        guid=_bounded(guid, MAX_URL_CHARS) or "",
+        title=_bounded(source.get("title"), MAX_TITLE_CHARS) or "Untitled",
+        description=_bounded(source.get("summary"), MAX_DESCRIPTION_CHARS) or content_text,
+        content_html=_bounded(source.get("content_html"), MAX_CONTENT_CHARS),
+        author=_json_author(source) or feed_author,
+        audio_url=audio_url,
+        duration_seconds=duration_seconds,
+        published_at=_json_date(source.get("date_published") or source.get("date_modified")),
+        link=_bounded(source.get("url") or source.get("external_url"), MAX_URL_CHARS),
+        image_url=_bounded(source.get("image") or source.get("banner_image"), MAX_URL_CHARS),
+    )
+
+
+def _json_author(source: dict) -> str | None:
+    authors = source.get("authors")
+    if isinstance(authors, list):
+        for author in authors:
+            if isinstance(author, dict) and (name := _bounded(author.get("name"), MAX_TITLE_CHARS)):
+                return name
+    author = source.get("author")
+    if isinstance(author, dict):
+        return _bounded(author.get("name"), MAX_TITLE_CHARS)
+    return None
+
+
+def _json_date(value: object | None) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+def _self_link(feed: feedparser.util.FeedParserDict) -> str | None:
+    for link in feed.get("links", []):
+        if str(link.get("rel", "")).casefold() == "self" and link.get("href"):
+            return _bounded(link["href"], MAX_URL_CHARS)
+    return None
+
+
+def _xml_format(version: str) -> str:
+    return "atom" if version.casefold().startswith("atom") else "rss"
 
 
 def _parse_entry(entry: feedparser.util.FeedParserDict, feed_author: str | None) -> ParsedItem | None:

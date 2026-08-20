@@ -29,6 +29,7 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func searchPodcasts(query: String) async throws -> [PodcastResult]
     func searchLibraryEpisodes(query: String) async throws -> [Episode]
     func searchPublicationOnWeb(query: String) async throws -> PodcastResult?
+    func discoverFeeds(url: URL) async throws -> FeedDiscoveryResponse
     func previewFeed(url: URL) async throws -> FeedPreview
     func subscribe(feedURL: URL) async throws -> Show
     func unsubscribe(showID: Int) async throws
@@ -63,6 +64,10 @@ extension HearfulAPIProtocol {
     func searchLibraryEpisodes(query: String) async throws -> [Episode] { [] }
 
     func searchPublicationOnWeb(query: String) async throws -> PodcastResult? { nil }
+
+    func discoverFeeds(url: URL) async throws -> FeedDiscoveryResponse {
+        throw APIError(underlying: "Feed discovery is not implemented by this API client")
+    }
 }
 
 extension Notification.Name {
@@ -206,6 +211,15 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["query": query])
+        return try await send(request)
+    }
+
+    func discoverFeeds(url: URL) async throws -> FeedDiscoveryResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("feeds/discover"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["url": url])
         return try await send(request)
     }
 

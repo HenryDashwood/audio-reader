@@ -26,6 +26,10 @@ ALLOWED_PORTS = {80, 443}
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 MAX_ETAG_CHARS = 1_024
 MAX_LAST_MODIFIED_CHARS = 256
+FEED_ACCEPT = (
+    "application/rss+xml, application/atom+xml, application/feed+json, "
+    "application/json;q=0.9, application/xml;q=0.8, text/xml;q=0.8, text/html;q=0.7, */*;q=0.1"
+)
 
 
 class FeedFetchError(Exception):
@@ -40,6 +44,8 @@ class FeedFetchResult:
     final_url: str
     etag: str | None
     last_modified: str | None
+    content_type: str | None = None
+    link_headers: tuple[str, ...] = ()
 
     @property
     def not_modified(self) -> bool:
@@ -148,6 +154,8 @@ async def _fetch_public_resource(
                             last_modified=_bounded_header(
                                 response.headers.get("last-modified"), MAX_LAST_MODIFIED_CHARS
                             ),
+                            content_type=response.headers.get("content-type"),
+                            link_headers=tuple(response.headers.get_list("link")),
                         )
 
                     response.raise_for_status()
@@ -171,6 +179,8 @@ async def _fetch_public_resource(
                         final_url=str(response.url),
                         etag=_bounded_header(response.headers.get("etag"), MAX_ETAG_CHARS),
                         last_modified=_bounded_header(response.headers.get("last-modified"), MAX_LAST_MODIFIED_CHARS),
+                        content_type=response.headers.get("content-type"),
+                        link_headers=tuple(response.headers.get_list("link")),
                     )
     except FeedFetchError:
         raise
@@ -186,12 +196,25 @@ def _bounded_header(value: str | None, max_chars: int) -> str | None:
 
 
 async def fetch_feed(url: str) -> tuple[bytes, str]:
-    return await fetch_public_bytes(url, max_bytes=MAX_FEED_BYTES)
+    result = await fetch_feed_resource(url)
+    if result.content is None:
+        raise FeedFetchError("the server returned no content")
+    return result.content, result.final_url
+
+
+async def fetch_feed_resource(url: str) -> FeedFetchResult:
+    """Fetch a possible feed or homepage, retaining discovery metadata."""
+
+    return await _fetch_public_resource(
+        url,
+        max_bytes=MAX_FEED_BYTES,
+        request_headers={"Accept": FEED_ACCEPT},
+    )
 
 
 async def fetch_feed_update(url: str, *, etag: str | None = None, last_modified: str | None = None) -> FeedFetchResult:
     """Fetch a feed conditionally when validators from its last poll exist."""
-    headers = {}
+    headers = {"Accept": FEED_ACCEPT}
     if etag:
         headers["If-None-Match"] = etag
     if last_modified:

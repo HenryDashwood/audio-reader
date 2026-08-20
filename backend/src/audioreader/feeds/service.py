@@ -1,9 +1,11 @@
+from urllib.parse import urljoin, urlsplit
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.feeds.discovery import resolve_feed
 from audioreader.feeds.parser import ParsedFeed
-from audioreader.models import Episode, Feed, Subscription, User, utcnow
+from audioreader.models import Episode, Feed, FeedAlias, Subscription, User, utcnow
 
 
 class AlreadySubscribedError(Exception):
@@ -18,20 +20,58 @@ async def ensure_feed(session: AsyncSession, url: str) -> Feed:
     subscribes to it. The URL need not be the feed itself — a homepage is
     resolved to its advertised feed, and the feed is stored under the
     resolved URL so both routes lead to one catalog entry."""
-    feed = await session.scalar(select(Feed).where(Feed.url == url))
+    feed = await _feed_for_url(session, url)
     if feed is not None:
         return feed
     resolved_url, parsed = await resolve_feed(url)
-    if resolved_url != url:
-        feed = await session.scalar(select(Feed).where(Feed.url == resolved_url))
-        if feed is not None:
-            return feed
+    aliases = {url}
+    if parsed.self_url:
+        aliases.add(urljoin(resolved_url, parsed.self_url))
+    feed = await _feed_for_url(session, resolved_url)
+    if feed is not None:
+        if await _remember_aliases(session, feed, aliases):
+            await session.commit()
+        return feed
     feed = Feed(url=resolved_url, title=parsed.title)
     apply_feed_metadata(feed, parsed)
     feed.episodes.extend(new_episodes(parsed, known_guids=set()))
     session.add(feed)
+    await session.flush()
+    await _remember_aliases(session, feed, aliases)
     await session.commit()
     return feed
+
+
+async def _feed_for_url(session: AsyncSession, url: str) -> Feed | None:
+    feed = await session.scalar(select(Feed).where(Feed.url == url))
+    if feed is not None:
+        return feed
+    return await session.scalar(select(Feed).join(FeedAlias).where(FeedAlias.url == url))
+
+
+async def _remember_aliases(session: AsyncSession, feed: Feed, urls: set[str]) -> bool:
+    """Record safe alternate URLs without stealing one from another feed."""
+
+    changed = False
+    for alias in urls:
+        try:
+            parsed = urlsplit(alias)
+            port = parsed.port
+        except ValueError:
+            continue
+        if (
+            alias == feed.url
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or port not in {None, 80, 443}
+            or await _feed_for_url(session, alias) is not None
+        ):
+            continue
+        session.add(FeedAlias(url=alias, feed_id=feed.id))
+        changed = True
+    return changed
 
 
 async def is_subscribed(session: AsyncSession, feed_id: int, user: User) -> bool:

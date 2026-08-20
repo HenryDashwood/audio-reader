@@ -283,6 +283,54 @@ nonisolated struct PodcastResult: Decodable, Identifiable, Equatable, Hashable, 
     }
 }
 
+/// A verified feed advertised by a website. Discovery does not ingest it;
+/// opening the candidate performs the ordinary preview and catalogues only
+/// the feed the user actually chose.
+nonisolated struct FeedDiscoveryCandidate: Decodable, Identifiable, Equatable, Hashable, Sendable {
+    let title: String
+    let feedURL: URL
+    let description: String?
+    let siteURL: URL?
+    let format: String
+    let itemCount: Int
+    let audioItemCount: Int
+    let recentItemTitles: [String]
+    let source: String
+    let isPrimary: Bool
+
+    var id: URL { feedURL }
+    var isArticleFeed: Bool { itemCount > 0 && audioItemCount == 0 }
+
+    var podcastResult: PodcastResult {
+        PodcastResult(
+            title: title,
+            feedURL: feedURL,
+            publisher: nil,
+            episodeCount: itemCount,
+            artworkURL: nil)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case title, description, format, source
+        case feedURL = "feed_url"
+        case siteURL = "site_url"
+        case itemCount = "item_count"
+        case audioItemCount = "audio_item_count"
+        case recentItemTitles = "recent_item_titles"
+        case isPrimary = "is_primary"
+    }
+}
+
+nonisolated struct FeedDiscoveryResponse: Decodable, Equatable, Sendable {
+    let submittedURL: URL
+    let candidates: [FeedDiscoveryCandidate]
+
+    enum CodingKeys: String, CodingKey {
+        case candidates
+        case submittedURL = "submitted_url"
+    }
+}
+
 /// A show's page as seen before (or after) subscribing.
 nonisolated struct FeedPreview: Decodable {
     let show: Show

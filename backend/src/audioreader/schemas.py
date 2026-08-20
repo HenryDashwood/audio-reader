@@ -56,6 +56,33 @@ class FeedRead(BaseModel):
         return secure_url(value)
 
 
+class FeedDiscoveryCandidateRead(BaseModel):
+    """One verified feed advertised by a submitted page."""
+
+    title: str
+    feed_url: str
+    description: str | None = None
+    site_url: str | None = None
+    format: str
+    item_count: int
+    audio_item_count: int
+    recent_item_titles: list[str] = Field(default_factory=list)
+    source: str
+    is_primary: bool = False
+
+    @field_validator("description")
+    @classmethod
+    def plain_description(cls, value: str | None) -> str | None:
+        return strip_html(value) if value else value
+
+
+class FeedDiscoveryRead(BaseModel):
+    """All distinct feeds found through one website or feed address."""
+
+    submitted_url: str
+    candidates: list[FeedDiscoveryCandidateRead]
+
+
 class EpisodeRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

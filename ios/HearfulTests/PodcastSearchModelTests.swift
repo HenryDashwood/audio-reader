@@ -15,10 +15,12 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
     var results: [PodcastResult] = []
     var episodeResults: [Episode] = []
     var webResult: PodcastResult?
+    var discoveryResponse: FeedDiscoveryResponse?
     var error: Error?
     private(set) var queries: [String] = []
     private(set) var episodeQueries: [String] = []
     private(set) var webQueries: [String] = []
+    private(set) var discoveryURLs: [URL] = []
 
     func searchPodcasts(query: String) async throws -> [PodcastResult] {
         queries.append(query)
@@ -36,6 +38,13 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
         webQueries.append(query)
         if let error { throw error }
         return webResult
+    }
+
+    func discoverFeeds(url: URL) async throws -> FeedDiscoveryResponse {
+        discoveryURLs.append(url)
+        if let error { throw error }
+        guard let discoveryResponse else { throw APIError(underlying: "no discovery response") }
+        return discoveryResponse
     }
 
     func command(
@@ -65,6 +74,20 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }
     func subscribe(feedURL: URL) async throws -> Show { throw APIError(underlying: "unused") }
     func unsubscribe(showID: Int) async throws {}
+}
+
+private func discoveredFeed(_ title: String, primary: Bool = true) -> FeedDiscoveryCandidate {
+    FeedDiscoveryCandidate(
+        title: title,
+        feedURL: URL(string: "https://feeds.example.com/\(title.lowercased())")!,
+        description: nil,
+        siteURL: URL(string: "https://example.com"),
+        format: "rss",
+        itemCount: 10,
+        audioItemCount: 0,
+        recentItemTitles: ["Newest"],
+        source: "html",
+        isPrimary: primary)
 }
 
 private func result(_ title: String) -> PodcastResult {
@@ -191,6 +214,44 @@ struct PodcastSearchModelTests {
 
         #expect(api.webQueries == ["notes on progress"])
         #expect(model.webPublication?.title == "Notes on Progress")
+    }
+}
+
+@MainActor
+@Suite("Feed discovery model")
+struct FeedDiscoveryModelTests {
+    @Test func keepsEveryRankedCandidateForVisualSelection() async {
+        let api = SearchAPI()
+        let url = URL(string: "https://example.com")!
+        api.discoveryResponse = FeedDiscoveryResponse(
+            submittedURL: url,
+            candidates: [
+                discoveredFeed("Main articles"),
+                discoveredFeed("Comments", primary: false),
+            ])
+        let model = FeedDiscoveryModel(api: api)
+
+        await model.load(url: url)
+
+        #expect(
+            model.state
+                == .loaded([
+                    discoveredFeed("Main articles"),
+                    discoveredFeed("Comments", primary: false),
+                ]))
+        #expect(api.discoveryURLs == [url])
+    }
+
+    @Test func failureUsesTheBackendSentence() async {
+        let api = SearchAPI()
+        api.error = APIError(
+            spokenResponse: "Hearful reached that site, but found no feed.",
+            underlying: "no_feed_found")
+        let model = FeedDiscoveryModel(api: api)
+
+        await model.load(url: URL(string: "https://example.com")!)
+
+        #expect(model.state == .failed("Hearful reached that site, but found no feed."))
     }
 }
 
