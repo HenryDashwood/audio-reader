@@ -42,16 +42,25 @@ nonisolated struct KokoroVoice: Equatable, Identifiable, Sendable {
         catalogue.first { $0.name == name }
     }
 
-    /// The voices worth offering, best-supported first within each accent.
+    /// The voices worth offering, ordered by the grade upstream gives them —
+    /// its estimate of how much training data stands behind each one.
+    ///
+    /// Verified against `voices.npz`: all thirteen are present. Worth knowing
+    /// before choosing a default: no British voice is graded above **B**,
+    /// while `af_heart` and `af_bella` reach **A**. If the American voices
+    /// audibly beat the British ones on real articles, that is why.
     static let catalogue: [KokoroVoice] = [
+        // British, grade B.
         KokoroVoice(name: "bf_emma", displayName: "Emma (UK)"),
         KokoroVoice(name: "bf_isabella", displayName: "Isabella (UK)"),
+        KokoroVoice(name: "bm_george", displayName: "George (UK)"),
+        KokoroVoice(name: "bm_fable", displayName: "Fable (UK)"),
+        // British, grade C — thinner training data, audibly so.
         KokoroVoice(name: "bf_alice", displayName: "Alice (UK)"),
         KokoroVoice(name: "bf_lily", displayName: "Lily (UK)"),
-        KokoroVoice(name: "bm_george", displayName: "George (UK)"),
-        KokoroVoice(name: "bm_lewis", displayName: "Lewis (UK)"),
         KokoroVoice(name: "bm_daniel", displayName: "Daniel (UK)"),
-        KokoroVoice(name: "bm_fable", displayName: "Fable (UK)"),
+        KokoroVoice(name: "bm_lewis", displayName: "Lewis (UK)"),
+        // American, grade A then B.
         KokoroVoice(name: "af_heart", displayName: "Heart (US)"),
         KokoroVoice(name: "af_bella", displayName: "Bella (US)"),
         KokoroVoice(name: "af_nicole", displayName: "Nicole (US)"),

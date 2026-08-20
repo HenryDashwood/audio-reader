@@ -11,14 +11,54 @@ Kokoro files that need MLX are behind `#if canImport(KokoroSwift)`, and the
 Settings section is behind `KokoroEngines.isAvailable`. Adding the package is
 what switches it on.
 
+## Status: blocked on the packages, not on us
+
+Attempted on 20 August 2026 against **Xcode 27 / iOS 26 SDK**. The app code is
+fine — it compiles, and the full suite passes. Two upstream problems stop the
+package being usable on this toolchain, both established rather than guessed:
+
+1. **MLX Swift does not build for the iOS simulator.** Linking fails on
+   `_MTLIOErrorDomain`, which the simulator SDK does not provide. Every
+   Kokoro build has to target a physical device, which also means no
+   simulator-based test can ever cover the engine.
+2. **The packages' resource bundles cannot be codesigned by Xcode 27.**
+   Both `KokoroSwift` and `MisakiSwift` declare `.copy("../../Resources/")`,
+   which produces a bundle with an iOS-style root `Info.plist` *and* a
+   macOS-style `Resources/` subdirectory. Codesign rejects it:
+
+   ```
+   KokoroSwift_KokoroSwift.bundle: bundle format unrecognized, invalid, or unsuitable
+   ```
+
+   Confirmed directly: copy the built bundle, move `Resources/*` to the root,
+   and the identical `codesign` invocation succeeds. The build fails at the
+   signing step for simulator and device alike.
+
+The second one is **not a one-line fix**. Both packages read their resources
+with `Bundle.module.url(forResource:withExtension:subdirectory: "Resources")`,
+so the nested directory is deliberate: flattening the layout means also
+changing every lookup — one call site in `KokoroSwift/KokoroConfig.swift`, four
+in `MisakiSwift`. Making this work means forking both packages, or persuading
+upstream to change them.
+
+What *is* verified and ready:
+
+- `kokoro-v1_0.safetensors` (327,115,152 bytes, sha256 `4e9ecdf0…`, matching
+  the upstream LFS pointer) and `voices.npz` (28 English voices) are downloaded
+  and sit in `ios/Hearful/Resources/`, gitignored.
+- All thirteen voices in `KokoroVoice.catalogue` exist in that file.
+- The Metal toolchain is installed (`xcodebuild -downloadComponent MetalToolchain`,
+  839MB), which MLX needs and Xcode 27 omits by default.
+- The exact `project.pbxproj` edit that adds the package is known and was
+  reverted only to keep the build green.
+
 ## Setting it up
 
 1. **Add the package.** In Xcode, *File → Add Package Dependencies…* and enter
    `https://github.com/mlalma/kokoro-ios` (MIT). It pulls MLX Swift, MisakiSwift
    and MLXUtilsLibrary with it. Add the `KokoroSwift` product to the `Hearful`
-   target. This is the one step that has to be done in Xcode rather than here:
-   it edits `project.pbxproj`, and the repository's own rule is not to hand-edit
-   that file.
+   target. Until the codesigning problem above is solved, point it at forks with
+   the resource layout fixed rather than at upstream.
 
 2. **Get the weights.** `kokoro-v1_0.safetensors` (~330MB) from
    [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M).
@@ -85,10 +125,11 @@ Three things are worth knowing about the design:
 ## What is not done yet
 
 - **Nothing is measured.** The published figure is 3.3x real time on an
-  iPhone 13 Pro; this has been run on nothing. The first thing to do is time a
-  render on an **iPhone 11** — the oldest phone iOS 26 supports, and the one
-  that decides whether this ships — at 1x, 2x and 3x. If it cannot stay ahead
-  of the playhead, that is the answer.
+  iPhone 13 Pro; this has been run on nothing, because the package cannot yet
+  be linked (see above). The first thing to do once it can is time a render on
+  an **iPhone 11** — the oldest phone iOS 26 supports, and the one that decides
+  whether this ships — at 1x, 2x and 3x. If it cannot stay ahead of the
+  playhead, that is the answer.
 - **No automatic fallback.** If the device is too slow, or the model is
   missing, she gets silence-then-skip rather than a graceful drop back to the
   Apple voice. `KokoroSynthesizer` already releases the chunk when a render
