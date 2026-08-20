@@ -312,3 +312,88 @@ only reading channel get a good voice without a meter running.
   [mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift)
 - [Picovoice on-device TTS benchmark](https://picovoice.ai/blog/on-device-tts/)
 - [iOS 26 device support](https://en.wikipedia.org/wiki/IOS_26)
+
+## Kokoro's voices
+
+v1.0 ships **54 voices** across nine languages, named `[language][gender]_name`:
+
+| Prefix | Language | Count |
+| --- | --- | --- |
+| `af_` / `am_` | American English | 11F, 9M |
+| `bf_` / `bm_` | British English | 4F, 4M |
+| `jf_` / `jm_` | Japanese | 4F, 1M |
+| `zf_` / `zm_` | Mandarin | 4F, 4M |
+| `ef_`/`em_`, `ff_`, `hf_`/`hm_`, `if_`/`im_`, `pf_`/`pm_` | Spanish, French, Hindi, Italian, Brazilian Portuguese | 1–2 each |
+
+The important structural fact: **a voice is not a model**. Each one is a
+(510, 256) style tensor of about 500KB, loaded alongside the single 82M-parameter
+network. So the marginal cost of offering another voice is half a megabyte and a
+row in the picker — unlike the hosted services, where every voice we offer
+multiplies the render cache. Style vectors can also be averaged to blend voices,
+which is a tempting party trick and probably a support burden we do not want.
+
+The catch is that quality is uneven. The upstream `VOICES.md` grades each voice
+by how much training data stands behind it, and only a handful are top-graded
+(`af_heart` and `af_bella` are the usual picks); a good number are audibly
+weaker. The British voices in particular have less data behind them than the
+best American ones — which matters for us, since the app defaults to en-GB.
+Audition `bf_emma`, `bf_isabella`, `bm_george` and `bm_lewis` against the top
+American voices on real article text before deciding what to default to; it is
+possible the honest answer is an American voice, or that we ship one polished
+British default rather than a long list.
+
+## How it would slot into this app
+
+Reading `SpeechSynthesizing` changes the picture in one useful way: the reader
+does **not** need word-level timings. The protocol wants `speak`, `stop`,
+`pause`, `continue`, and a delegate that reports `speechProgressed(toFraction:)`
+— a fraction through the chunk, which an `AVAudioPlayerNode` playhead gives you
+directly. So an alignment-free engine is fine; what duration prediction actually
+buys us is Kokoro's native `speed` parameter, which scales predicted phoneme
+durations instead of time-stretching the waveform. `setPlaybackRate` at 2x would
+sound like a person reading quickly rather than a tape played fast, and would no
+longer need to restart the chunk.
+
+`ArticleScript` already caps chunks at 320 characters, comfortably inside
+Kokoro's ~510-token context, so the chunking is done. Keep the estimated 170wpm
+timeline as it is even though real audio gives exact durations — positions saved
+by existing builds are expressed in that timeline and must keep resolving to the
+same place.
+
+### The plan
+
+1. **Add `KokoroSynthesizer: SpeechSynthesizing`** next to `SystemSpeechSynthesizer`
+   and pick between them in `SpeechSynthesizers.make()`. Nothing in
+   `ArticlePlayer` changes. Tests keep getting `SilentSynthesizer`.
+2. **Prototype on MLX Swift** (`mlalma/kokoro-ios`, MIT) — dynamic shapes, days
+   rather than weeks, 3.3x real time on an iPhone 13 Pro. **Move the hot path to
+   Core ML on the ANE** if battery testing demands it; that port runs five
+   sub-models on the Neural Engine at roughly 2.8x the Metal throughput, at the
+   cost of fixed-shape bucketed exports. The protocol makes this swap invisible.
+3. **Render ahead, cache to disk.** Synthesise chunk *n+1* while *n* plays, key
+   the cache on (article, voice, model version), and cap it. Re-listening, a
+   seek backwards and a resumed article then cost nothing, and the ANE work
+   stays bursty rather than continuous — which is what keeps a two-hour listen
+   off the battery.
+4. **Deliver the model with On-Demand Resources**, not in the IPA: Apple-hosted,
+   no server of ours, purgeable, and voices become separate half-megabyte tags.
+   Prefetch on Wi-Fi at first run and stay on the Apple voice until it lands, so
+   a fresh install is never mute.
+5. **Budget real time for the text front-end.** This is where the work actually
+   is. `AVSpeechSynthesizer` normalises numbers, dates, currency, "Dr.", URLs
+   and acronyms for free; Kokoro takes phonemes and will happily mispronounce
+   anything the lexicon misses. Use **MisakiSwift** (MIT), never espeak-ng
+   (GPLv3). Build a regression corpus out of real feed text — Substack posts are
+   full of em-dashes, footnote markers, block quotes and stray markdown — and
+   consider shipping pronunciation overrides from the backend alongside feeds so
+   a bad reading can be fixed without an App Store release.
+6. **Measure and fall back.** Time the first render, and if the device cannot
+   sustain comfortably above her chosen playback rate, drop to the Apple voice
+   and say so once. The iPhone 11 is the case this protects.
+7. **Keep the licences straight**: Apache-2.0 weights, MIT Swift packages, and a
+   NOTICE file in the app's acknowledgements.
+
+The Settings voice picker gains a natural-voice section above the installed
+system voices; `SpeechVoice` already stores a chosen identifier in
+`UserDefaults`, so a `kokoro:bf_emma`-style identifier slots into the same
+mechanism.
