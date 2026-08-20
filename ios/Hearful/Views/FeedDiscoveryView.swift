@@ -37,7 +37,13 @@ struct FeedDiscoveryView: View {
         List {
             Section {
                 ForEach(candidates) { candidate in
-                    NavigationLink(value: candidate.podcastResult) {
+                    // This screen was itself opened by a destination-style
+                    // NavigationLink. Mixing a value link here made SwiftUI
+                    // reorder the opaque and typed destinations, briefly
+                    // pushing another copy of this screen above the preview.
+                    NavigationLink {
+                        PodcastPreviewView(podcast: candidate.podcastResult)
+                    } label: {
                         FeedCandidateRow(candidate: candidate)
                     }
                 }
