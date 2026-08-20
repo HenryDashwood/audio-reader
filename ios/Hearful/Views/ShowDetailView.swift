@@ -170,6 +170,12 @@ struct EpisodeRow: View {
                 Text(episode.title)
                     .font(.body.weight(isCurrent ? .semibold : .regular))
                     .lineLimit(2)
+                if let feedTitle = episode.feedTitle, !feedTitle.isEmpty {
+                    Text(feedTitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 HStack(spacing: 6) {
                     if let published = episode.publishedAt {
                         Text(published, format: .dateTime.day().month(.abbreviated))

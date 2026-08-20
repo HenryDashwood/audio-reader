@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from audioreader.auth.dependencies import get_current_user
 from audioreader.db import get_session
-from audioreader.feeds import fetcher
+from audioreader.feeds import fetcher, search
 from audioreader.llm.fake import FakeLLMClient
 from audioreader.llm.provider import get_discovery_llm_client, get_llm_client
 from audioreader.main import create_app
@@ -26,6 +26,15 @@ def public_test_dns(monkeypatch):
         return {"93.184.216.34"}
 
     monkeypatch.setattr(fetcher, "resolve_host_addresses", resolve)
+
+
+@pytest.fixture(autouse=True)
+def isolated_podcast_directory():
+    """No query cache or upstream-rate history may leak between tests."""
+
+    search.clear_podcast_search_state()
+    yield
+    search.clear_podcast_search_state()
 
 
 @pytest.fixture

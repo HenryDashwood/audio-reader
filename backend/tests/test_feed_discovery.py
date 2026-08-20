@@ -4,6 +4,7 @@ from audioreader.feeds.discovery import feed_links_in_html
 
 SITE_URL = "https://notesonprogress.example.com"
 FEED_URL = "https://notesonprogress.example.com/feed"
+APPLE_LOOKUP_URL = "https://itunes.apple.com/lookup"
 
 HOMEPAGE = b"""
 <html><head>
@@ -85,3 +86,27 @@ class TestSubscribeByHomepage:
 
         assert (await client.post("/feeds", json={"url": SITE_URL})).status_code == 201
         assert (await client.post("/feeds", json={"url": SITE_URL})).status_code == 409
+
+    async def test_an_apple_podcasts_share_link_resolves_to_its_feed(self, client, respx_mock, podcast_xml):
+        shared = "https://podcasts.apple.com/gb/podcast/the-history-hour/id123456789?i=987654321"
+        podcast_feed = "https://feeds.example.com/history-hour.xml"
+        lookup = respx_mock.get(APPLE_LOOKUP_URL).respond(
+            json={
+                "resultCount": 1,
+                "results": [
+                    {
+                        "collectionId": 123456789,
+                        "collectionName": "The History Hour",
+                        "feedUrl": podcast_feed,
+                    }
+                ],
+            }
+        )
+        respx_mock.get(podcast_feed).respond(content=podcast_xml, content_type="application/rss+xml")
+
+        response = await client.post("/feeds/preview", json={"url": shared})
+
+        assert response.status_code == 200
+        assert response.json()["feed"]["url"] == podcast_feed
+        assert lookup.calls.last.request.url.params["id"] == "123456789"
+        assert lookup.calls.last.request.url.params["country"] == "gb"

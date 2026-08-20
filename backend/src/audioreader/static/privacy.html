@@ -30,7 +30,7 @@
 <body>
 
 <h1>Hearful — Privacy Policy</h1>
-<p class="updated">Last updated 19 August 2026</p>
+<p class="updated">Last updated 20 August 2026</p>
 
 <p>
   Hearful is a podcast and article player you control by speaking. It is built
@@ -42,7 +42,7 @@
 <h2>The short version</h2>
 <ul>
   <li>We keep your email address, the shows you follow, and how far through each episode you are.</li>
-  <li>Only after you allow AI data sharing, what you say is turned into text and sent to OpenRouter and an AI model provider so the app can work out which episode you meant. The text of your request is sent, never a recording.</li>
+  <li>Only after you allow AI data sharing, what you say is turned into text and sent to OpenRouter and an AI model provider so the app can work out which episode you meant. If you explicitly choose <strong>Search the web</strong>, the publication name you typed is sent to the same providers to find its feed. The text is sent, never a voice recording.</li>
   <li>That request is sent along with a list of recent episodes from the shows you follow, so the AI has something to choose between.</li>
   <li>A record of each request, including the words you said, is kept for 30 days so that mistakes can be found and put right.</li>
   <li>The app also reports how well its own microphone and speech recognition worked, so that times it could not hear you can be found and fixed. That report contains timings only — never your words, and never any audio.</li>
@@ -94,12 +94,15 @@
   </li>
 </ul>
 
-<h2>When you speak to the app</h2>
+<h2>When you use voice or AI web search</h2>
 <p>
   Before Hearful sends anything to an AI provider, the app explains what will
   be shared and asks you to choose <strong>Allow AI Data Sharing</strong>. If
   you choose <strong>Not Now</strong>, nothing is sent to an AI provider. You
-  can allow it later, or turn it off again, under
+  Ordinary on-screen library and podcast-directory search does not use an AI
+  provider. The separate <strong>Search the web</strong> fallback does, so it
+  is unavailable until you allow sharing. You can allow it later, or turn it
+  off again, under
   <strong>Settings → Privacy &amp; Support</strong>. Turning it off stops future
   AI requests immediately; the rest of the on-screen app remains available.
 </p>
@@ -113,7 +116,9 @@
 </p>
 <p>
   The resulting <strong>text</strong> is sent to our server. We do not receive,
-  store or transmit any audio recording of your voice at any point.
+  store or transmit any audio recording of your voice at any point. If you
+  choose <strong>Search the web</strong> after an ordinary search finds no
+  publication, the typed publication name is sent to our server instead.
 </p>
 <p>
   To work out which episode you meant, our server sends that text to an AI
@@ -122,13 +127,17 @@
   request to a model provider on our behalf. Alongside your words, we send a
   list of recent episodes from the shows you follow: their titles, the show
   names, publication dates, and a short extract of each description. The AI
-  needs that list in order to have something to choose between.
+  needs that list in order to have something to choose between. A typed web
+  search sends the publication name and, if the first suggestions fail, the
+  addresses already checked; it does not send your listening library.
 </p>
 <p>
-  In plain terms: <strong>the AI provider sees what you asked for, and part of
-  your listening library.</strong> It does not see your name, your email
-  address, or your account identifier. If you ask to follow a publication we do
-  not recognise, the name you said is also used to search the web for its feed.
+  In plain terms: for voice, <strong>the AI provider sees what you asked for,
+  and part of your listening library.</strong> For an explicit typed web
+  search, it sees the publication name you entered and the failed addresses
+  described above. It does not see your name, your email address, or your
+  account identifier. If you ask by voice to follow a publication we do not
+  recognise, the name you said is also used to search the web for its feed.
 </p>
 <p>
   Every request tells OpenRouter to use only a model endpoint that declares
@@ -193,7 +202,8 @@
   </li>
   <li>
     <strong>OpenRouter and the model provider it routes to</strong> — your
-    spoken requests as text, and the episode list described above.
+    spoken requests as text and the episode list described above; or the
+    publication name from an explicit typed web search.
   </li>
   <li>
     <strong>Railway</strong> — our hosting provider, which runs the servers and
@@ -272,8 +282,8 @@
 </p>
 <p>
   We use different lawful bases for different purposes. Account, library,
-  playback and the processing needed to answer a voice request are necessary
-  to provide the service you ask for. We separately require the explicit
+  playback and the processing needed to answer a voice or web-search request
+  are necessary to provide the service you ask for. We separately require the explicit
   in-app permission described above before sharing a request with third-party
   AI, and you can withdraw that permission at any time. Limited security,
   reliability and accessibility diagnostics are used for our legitimate

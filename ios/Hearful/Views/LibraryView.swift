@@ -1,12 +1,17 @@
 import SwiftUI
 
-/// The shows the user subscribes to, plus search over the public directory.
+/// The shows the user subscribes to, plus search across her library and public
+/// discovery sources.
 struct LibraryView: View {
+    @EnvironmentObject private var auth: AuthController
     @StateObject private var model = LibraryModel()
     @StateObject private var searchModel = PodcastSearchModel()
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
     @State private var searchText = ""
+    @State private var searchScope: LibrarySearchScope = .all
+    @State private var showingAIConsent = false
+    @State private var openEpisode: Episode?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -19,17 +24,14 @@ struct LibraryView: View {
                 }
             }
             .navigationTitle("Shows")
-            // Level with the search and microphone buttons rather than on a
-            // line of its own below them: a large title in its own band costs
-            // an inch of every screen before a single episode is shown.
             .toolbarTitleDisplayMode(.inlineLarge)
             .navigationDestination(for: Show.self) { ShowDetailView(show: $0) }
             .navigationDestination(for: PodcastResult.self) { PodcastPreviewView(podcast: $0) }
+            .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
             .toolbar {
-                // Ahead of the microphone, which stays where it has always
-                // been: it is the button she reaches for without looking.
                 ToolbarItem(placement: .topBarTrailing) {
-                    SearchToolbarButton(label: "Search podcasts", focused: $searchFocused)
+                    SearchToolbarButton(
+                        label: "Search shows and episodes", focused: $searchFocused)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { openVoiceSheet($showingVoice) } label: {
@@ -38,22 +40,44 @@ struct LibraryView: View {
                     .accessibilityLabel("Ask for something to listen to")
                 }
             }
-            // Hidden until a pull-down, so the list of shows is the whole
-            // screen. The toolbar button above is what keeps it findable —
-            // see SearchToolbarButton.
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .automatic),
-                prompt: "Search podcasts, or paste a feed URL")
+                prompt: "Shows, episodes, or a web address")
+            .searchScopes($searchScope) {
+                Text("All").tag(LibrarySearchScope.all)
+                Text("Shows").tag(LibrarySearchScope.shows)
+                Text("Episodes").tag(LibrarySearchScope.episodes)
+            }
             .searchFocused($searchFocused)
-            .onSubmit(of: .search) { searchModel.searchNow(for: searchText) }
+            .onSubmit(of: .search) {
+                if pastedFeedURL(searchText) == nil {
+                    searchModel.searchNow(for: searchText)
+                }
+            }
             .onChange(of: searchText) { _, text in
-                searchModel.queryChanged(text)
+                // A URL is a complete, deterministic result. It must never
+                // wait on—or disappear behind—a directory request.
+                if pastedFeedURL(text) != nil {
+                    searchModel.clear()
+                } else {
+                    searchModel.queryChanged(text)
+                }
             }
         }
         .task { await model.load() }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
             Task { await model.load() }
+        }
+        .sheet(isPresented: $showingAIConsent) {
+            AIDataSharingConsentView(
+                onAllowed: {
+                    showingAIConsent = false
+                    searchModel.searchWebNow(for: searchText)
+                },
+                onNotNow: { showingAIConsent = false }
+            )
+            .presentationDetents([.fraction(0.72), .large])
         }
     }
 
@@ -70,9 +94,7 @@ struct LibraryView: View {
             ContentUnavailableView {
                 Label("No shows yet", systemImage: "waveform")
             } description: {
-                Text(
-                    "Tap the microphone and say the name of a podcast, or search for one above."
-                )
+                Text("Tap the microphone and say the name of a podcast, or search for one above.")
             } actions: {
                 Button("Add a show by voice") { openVoiceSheet($showingVoice) }
             }
@@ -86,17 +108,12 @@ struct LibraryView: View {
     private func showList(_ shows: [Show], offline: Bool) -> some View {
         List {
             if offline {
-                // A row rather than a banner: VoiceOver reaches it in the same
-                // swipe order as everything else, instead of it living in a
-                // corner of the screen she never visits.
                 Label("Offline — showing your saved shows", systemImage: "wifi.slash")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
             ForEach(shows) { show in
-                NavigationLink(value: show) {
-                    ShowRow(show: show)
-                }
+                NavigationLink(value: show) { ShowRow(show: show) }
             }
         }
         .listStyle(.plain)
@@ -105,64 +122,216 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var searchResults: some View {
-        // A pasted URL is its own kind of result: any RSS/Atom feed — or a
-        // site that advertises one — can be previewed and subscribed to
-        // directly, no directory involved.
         let pastedFeed = pastedFeedURL(searchText).map { url in
             PodcastResult(
                 title: url.host() ?? url.absoluteString,
-                feedURL: url, publisher: nil, episodeCount: nil, artworkURL: nil)
+                feedURL: url,
+                publisher: nil,
+                episodeCount: nil,
+                artworkURL: nil)
         }
-        switch searchModel.state {
-        case .idle where pastedFeed == nil:
-            ContentUnavailableView(
-                "Search every podcast", systemImage: "magnifyingglass",
-                description: Text("Results appear as you type."))
-        case .searching where pastedFeed == nil:
-            ProgressView("Searching…")
-        case .failed(let message):
-            ContentUnavailableView(
-                "Could not search", systemImage: "wifi.exclamationmark",
-                description: Text(message))
-        case .loaded(let results) where results.isEmpty && pastedFeed == nil:
-            ContentUnavailableView.search(text: searchText)
-        default:
+        let localShows = searchScope.includesShows
+            ? showsMatching(model.availableShows, query: searchText) : []
+        let localTitles = Set(localShows.map { searchIdentity($0.title) })
+        let directoryResults = searchScope.includesShows
+            ? searchModel.podcasts.filter { !localTitles.contains(searchIdentity($0.title)) } : []
+        let episodeResults = searchScope.includesEpisodes ? searchModel.episodes : []
+        let webResult = searchScope.includesShows ? searchModel.webPublication : nil
+        let hasResults =
+            pastedFeed != nil || !localShows.isEmpty || !directoryResults.isEmpty
+            || !episodeResults.isEmpty || webResult != nil
+
+        if let pastedFeed {
             List {
-                if let pastedFeed {
-                    Section {
-                        NavigationLink(value: pastedFeed) {
-                            OpenFeedRow(host: pastedFeed.title)
+                Section {
+                    NavigationLink(value: pastedFeed) {
+                        OpenFeedRow(host: pastedFeed.title)
+                    }
+                } footer: {
+                    Text("Hearful will check the address and find its RSS or Atom feed before adding it.")
+                }
+            }
+            .listStyle(.plain)
+        } else if !hasResults {
+            emptySearchResults
+        } else {
+            List {
+                if !localShows.isEmpty {
+                    Section("In your library") {
+                        ForEach(localShows) { show in
+                            NavigationLink(value: show) { ShowRow(show: show) }
                         }
                     }
                 }
-                if case .loaded(let results) = searchModel.state {
-                    ForEach(results) { result in
-                        NavigationLink(value: result) {
-                            PodcastResultRow(result: result)
+
+                if !episodeResults.isEmpty {
+                    Section("Episodes in your library") {
+                        ForEach(episodeResults) { episode in
+                            EpisodeRow(
+                                episode: episode,
+                                isCurrent: player.currentEpisode?.id == episode.id,
+                                play: { player.playReportingFailure(episode) }
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture { openEpisode = episode }
                         }
                     }
                 }
+
+                if !directoryResults.isEmpty {
+                    Section("Podcasts") {
+                        ForEach(directoryResults) { result in
+                            NavigationLink(value: result) { PodcastResultRow(result: result) }
+                        }
+                    }
+                }
+
+                if let webResult {
+                    Section("Found on the web") {
+                        NavigationLink(value: webResult) { PodcastResultRow(result: webResult) }
+                    }
+                }
+
+                searchStatusRows(
+                    localShows: localShows,
+                    directoryResults: directoryResults,
+                    episodeResults: episodeResults
+                )
             }
             .listStyle(.plain)
         }
     }
+
+    @ViewBuilder
+    private var emptySearchResults: some View {
+        switch searchModel.state {
+        case .idle:
+            ContentUnavailableView(
+                "Keep typing", systemImage: "magnifyingglass",
+                description: Text("Enter at least two letters, or paste a podcast or feed address."))
+        case .searching:
+            ProgressView("Searching your library and podcasts…")
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Could not finish the search", systemImage: "wifi.exclamationmark")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again") { searchModel.searchNow(for: searchText) }
+                if searchScope.includesShows { webSearchButton }
+            }
+        case .loaded:
+            ContentUnavailableView {
+                Label("No matches", systemImage: "magnifyingglass")
+            } description: {
+                if let message = searchModel.webMessage {
+                    Text(message)
+                } else {
+                    Text("Nothing in your library or the podcast directory matches “\(searchText)”.")
+                }
+            } actions: {
+                if searchScope.includesShows { webSearchButton }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func searchStatusRows(
+        localShows: [Show], directoryResults: [PodcastResult], episodeResults: [Episode]
+    ) -> some View {
+        if searchModel.state == .searching {
+            Section { ProgressView("Updating results…") }
+        }
+        if let message = searchModel.noticeMessage {
+            Section {
+                Label(message, systemImage: "wifi.exclamationmark")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Button("Try Again") { searchModel.searchNow(for: searchText) }
+            }
+        }
+        if case .failed(let message) = searchModel.state {
+            Section {
+                Label(message, systemImage: "wifi.exclamationmark")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Button("Try Again") { searchModel.searchNow(for: searchText) }
+            }
+        }
+        if let message = searchModel.webMessage {
+            Section { Text(message).font(.footnote).foregroundStyle(.secondary) }
+        }
+        if searchScope.includesShows, localShows.isEmpty, directoryResults.isEmpty,
+            episodeResults.isEmpty,
+            searchModel.webPublication == nil
+        {
+            Section { webSearchButton }
+        }
+    }
+
+    private var webSearchButton: some View {
+        Button {
+            requestWebSearch()
+        } label: {
+            if searchModel.isSearchingWeb {
+                ProgressView().frame(maxWidth: .infinity)
+            } else {
+                Label("Search the web for a publication", systemImage: "globe")
+            }
+        }
+        .disabled(searchModel.isSearchingWeb)
+        .accessibilityHint(
+            "Uses AI to look for a publication that is not in the podcast directory")
+    }
+
+    private func requestWebSearch() {
+        if auth.user?.aiDataSharingConsented == true {
+            searchModel.searchWebNow(for: searchText)
+        } else {
+            showingAIConsent = true
+        }
+    }
+}
+
+enum LibrarySearchScope: Hashable {
+    case all
+    case shows
+    case episodes
+
+    var includesShows: Bool { self != .episodes }
+    var includesEpisodes: Bool { self != .shows }
 }
 
 /// The search text is a web address, not a show name.
 ///
-/// Accepts full feed URLs, homepages, and bare domains ("example.com"):
-/// the backend resolves a page to its advertised feed either way.
+/// Accepts feeds, homepages, Apple Podcasts sharing links and the common
+/// `itpc://`/`pcast://` feed schemes. The backend resolves every accepted
+/// address and still applies its normal redirect and private-network checks.
 nonisolated func pastedFeedURL(_ text: String) -> URL? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty, !trimmed.contains(" ") else { return nil }
-    let candidate =
-        trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")
-        ? trimmed : "https://\(trimmed)"
-    guard let url = URL(string: candidate),
-        let host = url.host(),
-        host.contains("."),
-        // "The History Hour." is a sentence, not a domain.
-        !host.hasSuffix(".")
+    guard !trimmed.isEmpty, !trimmed.contains(where: { $0.isWhitespace }) else { return nil }
+
+    let lowercased = trimmed.lowercased()
+    let candidate: String
+    if lowercased.hasPrefix("itpc://") {
+        candidate = "https://" + trimmed.dropFirst("itpc://".count)
+    } else if lowercased.hasPrefix("pcast://") {
+        candidate = "https://" + trimmed.dropFirst("pcast://".count)
+    } else if lowercased.hasPrefix("http://") || lowercased.hasPrefix("https://") {
+        candidate = trimmed
+    } else {
+        candidate = "https://\(trimmed)"
+    }
+
+    guard let components = URLComponents(string: candidate),
+        components.scheme == "http" || components.scheme == "https",
+        components.user == nil,
+        components.password == nil,
+        components.port == nil || components.port == 80 || components.port == 443,
+        let host = components.host,
+        (host.contains(".") || host.contains(":")),
+        !host.hasSuffix("."),
+        let url = components.url
     else { return nil }
     return url
 }
@@ -177,13 +346,13 @@ private struct OpenFeedRow: View {
                 .foregroundStyle(.tint)
                 .frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Open feed").font(.headline)
+                Text("Open podcast or feed").font(.headline)
                 Text(host).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Open the feed at \(host)")
+        .accessibilityLabel("Open the podcast or feed at \(host)")
     }
 }
 
@@ -198,9 +367,6 @@ private struct ShowRow: View {
                 Text(show.itemCountLabel)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                // A show that has quietly stopped updating looks identical to
-                // one that simply has nothing new. Saying so is the difference
-                // between "they must be on a break" and knowing to remove it.
                 if show.isFailing == true {
                     Label("Not updating", systemImage: "exclamationmark.triangle")
                         .font(.caption)
@@ -231,6 +397,16 @@ private struct PodcastResultRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+                let details = [
+                    result.primaryGenre,
+                    result.episodeCount.map { "\($0) episodes" },
+                ].compactMap { $0 }
+                if !details.isEmpty {
+                    Text(details.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
         }
         .padding(.vertical, 4)
@@ -240,6 +416,54 @@ private struct PodcastResultRow: View {
     }
 }
 
+/// Local matching remains available offline and deliberately tolerates one
+/// missing, extra or transposed character in words of four letters or more.
+nonisolated func showsMatching(_ shows: [Show], query: String) -> [Show] {
+    let terms = searchWords(query)
+    guard !terms.isEmpty else { return [] }
+    return shows.filter { show in
+        let words = searchWords("\(show.title) \(show.description ?? "")")
+        return terms.allSatisfy { term in
+            words.contains { word in
+                word.hasPrefix(term) || term.hasPrefix(word) || withinOneSearchEdit(term, word)
+            }
+        }
+    }
+}
+
+nonisolated func searchIdentity(_ value: String) -> String {
+    searchWords(value).joined(separator: " ")
+}
+
+nonisolated private func searchWords(_ value: String) -> [String] {
+    value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        .lowercased()
+        .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        .map(String.init)
+}
+
+nonisolated private func withinOneSearchEdit(_ left: String, _ right: String) -> Bool {
+    if left == right { return true }
+    guard min(left.count, right.count) >= 4, abs(left.count - right.count) <= 1 else {
+        return false
+    }
+    let left = Array(left)
+    let right = Array(right)
+    if left.count == right.count {
+        let differences = left.indices.filter { left[$0] != right[$0] }
+        if differences.count == 1 { return true }
+        return differences.count == 2
+            && differences[1] == differences[0] + 1
+            && left[differences[0]] == right[differences[1]]
+            && left[differences[1]] == right[differences[0]]
+    }
+    let shorter = left.count < right.count ? left : right
+    let longer = left.count < right.count ? right : left
+    var index = 0
+    while index < shorter.count, shorter[index] == longer[index] { index += 1 }
+    return Array(shorter[index...]) == Array(longer.dropFirst(index + 1))
+}
+
 @MainActor
 final class LibraryModel: ObservableObject {
     enum State {
@@ -247,14 +471,19 @@ final class LibraryModel: ObservableObject {
         case loaded([Show])
         case empty
         case failed(String)
-        /// The request failed but we still have the last answer. She sees her
-        /// shows; the note explains why nothing is new.
         case stale([Show])
     }
 
     @Published private(set) var state: State = .loading
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
+
+    var availableShows: [Show] {
+        switch state {
+        case .loaded(let shows), .stale(let shows): shows
+        case .loading, .empty, .failed: []
+        }
+    }
 
     init(
         api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
@@ -270,11 +499,7 @@ final class LibraryModel: ObservableObject {
             cache.save(shows, for: .shows)
             state = shows.isEmpty ? .empty : .loaded(shows)
         } catch {
-            let message =
-                (error as? APIError)?.spokenResponse ?? "Something went wrong."
-            // An expired session is the one failure the cache must not paper
-            // over: showing her library while every tap fails would be worse
-            // than saying plainly that she needs to sign in.
+            let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             if (error as? APIError)?.isAuthFailure != true,
                 let cached = cache.load([Show].self, for: .shows), !cached.isEmpty
             {
@@ -291,18 +516,25 @@ final class PodcastSearchModel: ObservableObject {
     enum State: Equatable {
         case idle
         case searching
-        case loaded([PodcastResult])
+        case loaded
         case failed(String)
     }
 
     @Published private(set) var state: State = .idle
+    @Published private(set) var podcasts: [PodcastResult] = []
+    @Published private(set) var episodes: [Episode] = []
+    @Published private(set) var webPublication: PodcastResult?
+    @Published private(set) var noticeMessage: String?
+    @Published private(set) var webMessage: String?
+    @Published private(set) var isSearchingWeb = false
     private let api: HearfulAPIProtocol
     private let debounce: Duration
     private var pending: Task<Void, Never>?
+    private var webPending: Task<Void, Never>?
+    private var activeQuery = ""
 
-    /// The debounce collapses a burst of keystrokes into one request: the
-    /// iTunes directory rate-limits by IP, and every keystroke as a request
-    /// would trip that on a single fast typist.
+    /// One pause produces one pair of requests: a cached public-directory
+    /// lookup and a search of the user's full stored episode library.
     init(
         api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
         debounce: Duration = .milliseconds(350)
@@ -311,50 +543,120 @@ final class PodcastSearchModel: ObservableObject {
         self.debounce = debounce
     }
 
-    /// Called on every keystroke: search after a pause in typing. Existing
-    /// results stay on screen until fresher ones replace them, so the list
-    /// updates in place rather than flickering through a spinner.
     func queryChanged(_ query: String) {
         schedule(query, after: debounce)
     }
 
-    /// Called from the keyboard's Search key: no waiting.
     func searchNow(for query: String) {
         schedule(query, after: .zero)
     }
 
+    func searchWebNow(for query: String) {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard query.count >= 2 else { return }
+        webPending?.cancel()
+        activeQuery = query
+        webPublication = nil
+        webMessage = nil
+        isSearchingWeb = true
+        webPending = Task { [weak self] in
+            await self?.performWebSearch(query)
+        }
+    }
+
     func clear() {
         pending?.cancel()
+        webPending?.cancel()
+        activeQuery = ""
+        podcasts = []
+        episodes = []
+        webPublication = nil
+        noticeMessage = nil
+        webMessage = nil
+        isSearchingWeb = false
         state = .idle
     }
 
     private func schedule(_ query: String, after delay: Duration) {
         pending?.cancel()
+        webPending?.cancel()
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else {
+        activeQuery = query
+        podcasts = []
+        episodes = []
+        webPublication = nil
+        noticeMessage = nil
+        webMessage = nil
+        isSearchingWeb = false
+        guard query.count >= 2 else {
             state = .idle
             return
         }
-        if case .loaded = state {} else { state = .searching }
-        pending = Task {
+        state = .searching
+        pending = Task { [weak self] in
             if delay > .zero {
                 try? await Task.sleep(for: delay)
             }
-            guard !Task.isCancelled else { return }
-            await perform(query)
+            guard !Task.isCancelled, let self else { return }
+            await self.perform(query)
         }
     }
 
     private func perform(_ query: String) async {
+        async let directoryRequest: [PodcastResult] = api.searchPodcasts(query: query)
+        async let episodeRequest: [Episode] = api.searchLibraryEpisodes(query: query)
+
+        var directoryResults: [PodcastResult]?
+        var episodeResults: [Episode]?
+        var failures: [String] = []
         do {
-            let results = try await api.searchPodcasts(query: query)
-            guard !Task.isCancelled else { return }
-            state = .loaded(results)
+            directoryResults = try await directoryRequest
         } catch {
-            // A newer keystroke cancelled this request; its failure is noise.
-            guard !Task.isCancelled else { return }
-            state = .failed(
-                (error as? APIError)?.spokenResponse ?? "Something went wrong.")
+            failures.append(searchMessage(for: error))
         }
+        do {
+            episodeResults = try await episodeRequest
+        } catch {
+            failures.append(searchMessage(for: error))
+        }
+
+        guard !Task.isCancelled, activeQuery == query else { return }
+        podcasts = directoryResults ?? []
+        episodes = episodeResults ?? []
+        let uniqueFailures = failures.reduce(into: [String]()) { messages, message in
+            if !messages.contains(message) { messages.append(message) }
+        }
+        if directoryResults == nil, episodeResults == nil {
+            state = .failed(uniqueFailures.joined(separator: " "))
+        } else {
+            noticeMessage = uniqueFailures.first
+            state = .loaded
+            let count = podcasts.count + episodes.count
+            AccessibilityNotification.Announcement(
+                count == 0 ? "No search results" : "\(count) search results"
+            ).post()
+        }
+    }
+
+    private func performWebSearch(_ query: String) async {
+        do {
+            let result = try await api.searchPublicationOnWeb(query: query)
+            guard !Task.isCancelled, activeQuery == query else { return }
+            webPublication = result
+            webMessage = result == nil ? "No matching publication was found on the web." : nil
+            AccessibilityNotification.Announcement(
+                result.map { "Found \($0.title) on the web" }
+                    ?? "No matching publication was found on the web"
+            ).post()
+        } catch {
+            guard !Task.isCancelled, activeQuery == query else { return }
+            webMessage = searchMessage(for: error)
+            AccessibilityNotification.Announcement(webMessage ?? "Web search failed").post()
+        }
+        isSearchingWeb = false
+    }
+
+    private func searchMessage(for error: Error) -> String {
+        (error as? APIError)?.spokenResponse ?? "Something went wrong."
     }
 }

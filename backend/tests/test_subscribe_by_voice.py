@@ -107,6 +107,35 @@ class TestSubscribeByVoice:
         assert result.action == Action.UNKNOWN
         assert result.spoken_response
 
+    async def test_two_plausible_shows_are_read_back_instead_of_guessing(self, session, user, respx_mock):
+        respx_mock.get(SEARCH_URL).respond(
+            json=itunes(
+                show("History Daily", "https://feeds.example.com/history-daily"),
+                show("History Extra", "https://feeds.example.com/history-extra"),
+            )
+        )
+        llm = FakeLLMClient(subscribe_decision("history"))
+
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to a history podcast")
+
+        assert result.action == Action.UNKNOWN
+        assert "History Daily" in result.spoken_response
+        assert "History Extra" in result.spoken_response
+
+    async def test_voice_search_uses_the_listener_storefront(self, session, user, respx_mock, podcast_xml):
+        route = respx_mock.get(SEARCH_URL).respond(json=itunes(show("The Rest Is History")))
+        respx_mock.get(FEED_URL).respond(content=podcast_xml)
+
+        await service.interpret(
+            session,
+            FakeLLMClient(subscribe_decision("the rest is history")),
+            user=user,
+            transcript="subscribe to the rest is history",
+            country="gb",
+        )
+
+        assert route.calls.last.request.url.params["country"] == "gb"
+
 
 class TestSubscribeDoesNotBreakPlayback:
     async def test_playing_still_works_with_the_larger_action_set(self, session, user, respx_mock, podcast_xml):

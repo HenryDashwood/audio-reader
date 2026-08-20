@@ -3,16 +3,25 @@ import json
 import httpx
 import pytest
 
-from audioreader.feeds.search import PodcastSearchError, search_podcasts
+from audioreader.feeds.search import (
+    PodcastMatch,
+    PodcastSearchError,
+    search_podcasts,
+    select_unambiguous_match,
+)
 
 SEARCH_URL = "https://itunes.apple.com/search"
+DEFAULT_FEED = object()
 
 
 def itunes(*shows: dict) -> dict:
     return {"resultCount": len(shows), "results": list(shows)}
 
 
-def show(name: str, feed: str | None = "https://feeds.example.com/x", **extra) -> dict:
+def show(name: str, feed: str | None | object = DEFAULT_FEED, **extra) -> dict:
+    if feed is DEFAULT_FEED:
+        slug = name.casefold().replace(" ", "-").replace(":", "").replace("!", "")
+        feed = f"https://feeds.example.com/{slug}"
     return {
         "collectionName": name,
         "artistName": extra.get("artist", "Some Publisher"),
@@ -41,6 +50,20 @@ class TestSearchPodcasts:
         assert params["term"] == "in our time"
         assert params["entity"] == "podcast"
 
+    async def test_sends_the_listener_storefront(self, respx_mock):
+        route = respx_mock.get(SEARCH_URL).respond(json=itunes(show("In Our Time")))
+        await search_podcasts("in our time", country="GB")
+
+        assert route.calls.last.request.url.params["country"] == "gb"
+
+    async def test_reuses_a_recent_result_without_an_upstream_call(self, respx_mock):
+        route = respx_mock.get(SEARCH_URL).respond(json=itunes(show("In Our Time")))
+
+        await search_podcasts("in our time")
+        await search_podcasts("In Our Time")
+
+        assert route.call_count == 1
+
     async def test_skips_results_with_no_feed(self, respx_mock):
         # A podcast with no RSS feed is useless to us, however well it matches.
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("History Weekly", feed=None), show("History Daily")))
@@ -66,6 +89,16 @@ class TestSearchPodcasts:
         respx_mock.get(SEARCH_URL).respond(content=b"not json")
         with pytest.raises(PodcastSearchError):
             await search_podcasts("anything")
+
+    async def test_skips_a_malformed_feed_address(self, respx_mock):
+        respx_mock.get(SEARCH_URL).respond(
+            json=itunes(
+                show("Broken", "https://feeds.example.com:not-a-port/show"),
+                show("Working"),
+            )
+        )
+
+        assert [match.title for match in await search_podcasts("working")] == ["Working"]
 
 
 class TestStrictness:
@@ -126,6 +159,39 @@ class TestRanking:
         respx_mock.get(SEARCH_URL).respond(json=itunes(show("History Weekly"), show("History Daily")))
         results = await search_podcasts("history")
         assert [r.title for r in results] == ["History Weekly", "History Daily"]
+
+    async def test_accepts_an_adjacent_typo(self, respx_mock):
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("The Rest Is History")))
+
+        results = await search_podcasts("the rest is hsitory")
+
+        assert results[0].title == "The Rest Is History"
+
+    async def test_deduplicates_http_and_https_aliases(self, respx_mock):
+        respx_mock.get(SEARCH_URL).respond(
+            json=itunes(
+                show("History Daily", "http://feeds.example.com/history/"),
+                show("History Daily Podcast", "https://feeds.example.com/history#about"),
+            )
+        )
+
+        results = await search_podcasts("history daily", strict=False)
+
+        assert [match.title for match in results] == ["History Daily"]
+
+
+class TestVoiceAmbiguity:
+    def test_a_unique_exact_title_is_safe(self):
+        exact = PodcastMatch(title="History Daily", feed_url="https://feeds.example/daily")
+        other = PodcastMatch(title="History Daily Extra", feed_url="https://feeds.example/extra")
+
+        assert select_unambiguous_match([other, exact], "history daily") == exact
+
+    def test_a_generic_query_needs_a_question(self):
+        first = PodcastMatch(title="History Daily", feed_url="https://feeds.example/daily")
+        second = PodcastMatch(title="History Extra", feed_url="https://feeds.example/extra")
+
+        assert select_unambiguous_match([first, second], "history") is None
 
 
 class TestRelevance:

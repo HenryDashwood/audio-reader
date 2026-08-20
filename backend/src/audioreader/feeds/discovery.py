@@ -21,7 +21,12 @@ from pydantic import BaseModel, Field, ValidationError
 
 from audioreader.feeds.fetcher import FeedFetchError, fetch_feed, fetch_feed_bytes
 from audioreader.feeds.parser import FeedParseError, ParsedFeed, parse_feed
-from audioreader.feeds.search import loosely_identifies, meaningful_words
+from audioreader.feeds.search import (
+    PodcastSearchError,
+    feed_for_shared_link,
+    loosely_identifies,
+    meaningful_words,
+)
 from audioreader.llm.client import LLMClient, LLMError
 
 logger = logging.getLogger(__name__)
@@ -79,12 +84,18 @@ def feed_links_in_html(html: str, base_url: str) -> list[str]:
     return links
 
 
-async def resolve_feed(url: str) -> tuple[str, ParsedFeed]:
+async def resolve_feed(url: str, country: str | None = None) -> tuple[str, ParsedFeed]:
     """The feed at (or advertised by) `url`: its canonical URL and its content.
 
     Raises FeedFetchError when the URL itself is unreachable, FeedParseError
     when it is reachable but no feed can be found through it.
     """
+    try:
+        if shared_feed := await feed_for_shared_link(url, country=country):
+            url = shared_feed
+    except PodcastSearchError as exc:
+        raise FeedFetchError("could not resolve the podcast sharing link") from exc
+
     raw, final_url = await fetch_feed(url)
     html = raw.decode("utf-8", errors="ignore")
     try:

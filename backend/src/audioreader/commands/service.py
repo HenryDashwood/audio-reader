@@ -32,7 +32,13 @@ from audioreader.feeds.discovery import (
 )
 from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
-from audioreader.feeds.search import PodcastSearchError, matches_name, search_podcasts
+from audioreader.feeds.search import (
+    PodcastMatch,
+    PodcastSearchError,
+    matches_name,
+    search_podcasts,
+    select_unambiguous_match,
+)
 from audioreader.feeds.service import AlreadySubscribedError
 from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User, utcnow
 from audioreader.text import search_key, summarise
@@ -110,6 +116,10 @@ there because it answers to her words, and is very likely the one she means.
   History episode — it is not a request to subscribe to it. After "Which
   episode?", "the one about Agincourt" names an episode of the show she asked
   about a moment ago, not of any show in the list.
+- When your last line offered two similarly named shows, her answer chooses
+  between them and completes the action she originally requested. Preserve
+  whether that action was subscribe or play; do not turn the answer into a
+  new, unrelated request.
 - A request you have already carried out is finished. If what she says next
   stands on its own, treat it as a new request and ignore what came before;
   only read it against the earlier lines when it plainly refers back to them
@@ -435,6 +445,7 @@ async def interpret(
     discovery_llm=None,
     now_playing_episode_id: int | None = None,
     turns: Sequence[Turn] = (),
+    country: str | None = None,
 ) -> InterpretResult:
     # Feed discovery gets its own client (web search, long timeout); without
     # one, the ordinary client still handles the easy, well-known cases.
@@ -483,11 +494,17 @@ async def interpret(
     telemetry.annotate(model_action=decision.action.value, search_query=decision.search_query)
 
     if decision.action is Action.SUBSCRIBE:
-        return await _subscribe(session, decision.search_query, transcript, user, discovery_llm)
+        return await _subscribe(session, decision.search_query, transcript, user, discovery_llm, country=country)
 
     if decision.action is Action.PLAY_FROM_SHOW:
         return await _play_from_show(
-            session, llm, transcript, decision.search_query, decision.episode_query, discovery_llm
+            session,
+            llm,
+            transcript,
+            decision.search_query,
+            decision.episode_query,
+            discovery_llm,
+            country=country,
         )
 
     if decision.action is Action.UNSUBSCRIBE:
@@ -637,7 +654,19 @@ def _spoken_speed(speed: float) -> str:
     return f"{speed:g} times"
 
 
-async def _find_show(query: str, transcript: str, discovery_llm) -> DiscoveredFeed | None:
+class AmbiguousShowError(Exception):
+    """Several directory results are plausible enough that voice must ask."""
+
+    def __init__(self, matches: list[PodcastMatch]) -> None:
+        self.matches = matches
+
+
+async def _find_show(
+    query: str,
+    transcript: str,
+    discovery_llm,
+    country: str | None = None,
+) -> DiscoveredFeed | None:
     """A show or publication by spoken name.
 
     A spoken domain wins outright: "the RSS feed of astralcodexten.com"
@@ -656,24 +685,49 @@ async def _find_show(query: str, transcript: str, discovery_llm) -> DiscoveredFe
         return DiscoveredFeed(feed_url=feed_url, title=parsed.title)
 
     try:
-        matches = await search_podcasts(query)
+        matches = await search_podcasts(query, country=country)
     except PodcastSearchError as exc:
         # The directory being down does not stop web discovery from working.
         logger.warning("podcast search failed for %r: %s", query, exc)
         matches = []
     if matches:
-        return DiscoveredFeed(feed_url=matches[0].feed_url, title=matches[0].title)
+        if chosen := select_unambiguous_match(matches, query):
+            return DiscoveredFeed(feed_url=chosen.feed_url, title=chosen.title)
+        raise AmbiguousShowError(matches)
     return await find_feed_by_name(query, discovery_llm)
 
 
+def _ambiguous_show_question(matches: list[PodcastMatch]) -> str:
+    named: list[str] = []
+    for match in matches:
+        label = match.title
+        if match.publisher:
+            label += f" by {match.publisher}"
+        if label not in named:
+            named.append(label)
+        if len(named) == 2:
+            break
+    if len(named) == 1:
+        return f"I found more than one version of {named[0]}. Which did you mean?"
+    return f"I found {named[0]} and {named[1]}. Which did you mean?"
+
+
 async def _subscribe(
-    session: AsyncSession, query: str | None, transcript: str, user: User, discovery_llm
+    session: AsyncSession,
+    query: str | None,
+    transcript: str,
+    user: User,
+    discovery_llm,
+    country: str | None = None,
 ) -> InterpretResult:
     """Find a show or publication by spoken name and follow it."""
     if not query or not query.strip():
         return _asking("Which show would you like to subscribe to?")
 
-    found = await _find_show(query, transcript, discovery_llm)
+    try:
+        found = await _find_show(query, transcript, discovery_llm, country=country)
+    except AmbiguousShowError as exc:
+        return _asking(_ambiguous_show_question(exc.matches))
     if found is None:
         # Worth separating from the other dead ends: this one is usually the
         # directory and the web search both coming up empty on a name that was
@@ -711,6 +765,7 @@ async def _play_from_show(
     show_query: str | None,
     episode_query: str | None,
     discovery_llm,
+    country: str | None = None,
 ) -> InterpretResult:
     """Play an episode of a show she is not subscribed to.
 
@@ -724,7 +779,10 @@ async def _play_from_show(
     if not show_query or not show_query.strip():
         return _asking("Which show would you like to hear?")
 
-    found = await _find_show(show_query, transcript, discovery_llm)
+    try:
+        found = await _find_show(show_query, transcript, discovery_llm, country=country)
+    except AmbiguousShowError as exc:
+        return _asking(_ambiguous_show_question(exc.matches))
     if found is None:
         return InterpretResult(
             action=Action.UNKNOWN,

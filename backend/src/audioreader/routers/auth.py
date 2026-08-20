@@ -35,18 +35,24 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 # Increment this whenever the consent screen's description of the data or the
 # receiving providers changes materially. Existing permission then stops being
 # sufficient until the user sees and accepts the new wording.
-AI_DATA_SHARING_CONSENT_VERSION = 1
+AI_DATA_SHARING_CONSENT_VERSION = 2
+
+
+def has_current_ai_data_sharing_consent(user: User) -> bool:
+    """Whether this account accepted the current description of AI use."""
+
+    return (
+        user.ai_data_sharing_consented_at is not None
+        and user.ai_data_sharing_withdrawn_at is None
+        and user.ai_consent_version == AI_DATA_SHARING_CONSENT_VERSION
+    )
 
 
 def user_read(user: User) -> UserRead:
     return UserRead(
         id=user.id,
         display_name=user.display_name,
-        ai_data_sharing_consented=(
-            user.ai_data_sharing_consented_at is not None
-            and user.ai_data_sharing_withdrawn_at is None
-            and user.ai_consent_version == AI_DATA_SHARING_CONSENT_VERSION
-        ),
+        ai_data_sharing_consented=has_current_ai_data_sharing_consent(user),
     )
 
 

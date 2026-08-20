@@ -65,6 +65,9 @@ class EpisodeRead(BaseModel):
     #: The byline, where the feed gives one. None for most podcasts, which
     #: name a show rather than a person.
     author: str | None = None
+    #: The containing publication. Included on cross-library search results;
+    #: optional so every older client and cached payload remains valid.
+    feed_title: str | None = None
     audio_url: str | None
     duration_seconds: int | None
     published_at: datetime | None
@@ -115,11 +118,28 @@ class PodcastSearchResult(BaseModel):
     publisher: str | None = None
     episode_count: int | None = None
     artwork_url: str | None = None
+    itunes_id: int | None = None
+    country: str | None = None
+    primary_genre: str | None = None
+    latest_release_date: datetime | None = None
 
     @field_validator("artwork_url")
     @classmethod
     def https_only(cls, value: str | None) -> str | None:
         return secure_url(value)
+
+
+class PublicationSearchRequest(BaseModel):
+    """An explicit, user-submitted request for AI-assisted web discovery."""
+
+    query: str = Field(min_length=1, max_length=200)
+
+    @field_validator("query")
+    @classmethod
+    def not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("query must not be blank")
+        return value.strip()
 
 
 class FeedPreview(BaseModel):
@@ -182,6 +202,9 @@ class EpisodeStateUpdate(BaseModel):
 
 class CommandRequest(BaseModel):
     transcript: str = Field(max_length=2_000)
+    #: Device storefront used for public-directory ranking. Optional for old
+    #: clients and hand-written requests, which retain Apple's default.
+    country: str | None = Field(default=None, min_length=2, max_length=2)
     #: What she is listening to as she speaks. Without it "mark this as
     #: played" has no referent at all: the backend knows her whole library and
     #: nothing about which part of it is currently coming out of the speaker.
@@ -203,6 +226,15 @@ class CommandRequest(BaseModel):
         if not value.strip():
             raise ValueError("transcript must not be blank")
         return value.strip()
+
+    @field_validator("country")
+    @classmethod
+    def normalised_country(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.isalpha():
+            raise ValueError("country must be a two-letter code")
+        return value.lower()
 
     @field_validator("turns")
     @classmethod

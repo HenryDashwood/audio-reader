@@ -100,6 +100,20 @@ struct PastedFeedURLTests {
         #expect(pastedFeedURL("astralcodexten.com")?.absoluteString == "https://astralcodexten.com")
     }
 
+    @Test func podcastFeedSchemesBecomeSafeWebURLs() {
+        #expect(
+            pastedFeedURL("itpc://feeds.example.com/show")?.absoluteString
+                == "https://feeds.example.com/show")
+        #expect(
+            pastedFeedURL("pcast://feeds.example.com/show")?.absoluteString
+                == "https://feeds.example.com/show")
+    }
+
+    @Test func credentialsAndUnusualPortsAreRejected() {
+        #expect(pastedFeedURL("https://person:secret@example.com/feed") == nil)
+        #expect(pastedFeedURL("https://example.com:8443/feed") == nil)
+    }
+
     @Test func showNamesAreNotURLs() {
         #expect(pastedFeedURL("the rest is history") == nil)
         #expect(pastedFeedURL("History Hour.") == nil)

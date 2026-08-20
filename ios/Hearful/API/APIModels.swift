@@ -34,7 +34,7 @@ nonisolated enum CommandAction: String, Decodable {
 /// offline cache.
 /// Hashable as well, so an episode can be a navigation destination in its own
 /// right — which is what opening an article's text on screen is.
-nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable {
+nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable {
     let id: Int
     let title: String
     let description: String?
@@ -42,6 +42,9 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable {
     /// nil for most podcasts, which name a show rather than a person, and for
     /// anything stored before the field existed.
     var author: String?
+    /// Present on cross-library search results so identical episode titles
+    /// can be distinguished without opening each one.
+    var feedTitle: String? = nil
     let audioURL: URL?
     let durationSeconds: Int?
     let publishedAt: Date?
@@ -63,6 +66,7 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, author, link, completed, dismissed
+        case feedTitle = "feed_title"
         case audioURL = "audio_url"
         case durationSeconds = "duration_seconds"
         case publishedAt = "published_at"
@@ -202,9 +206,10 @@ nonisolated struct CommandRequest: Encodable {
     /// What has already been said in this exchange, oldest first, not counting
     /// the transcript above. Empty for a request that starts a subject.
     var turns: [ConversationTurn] = []
+    var country: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case transcript, turns
+        case transcript, turns, country
         case nowPlayingEpisodeID = "now_playing_episode_id"
     }
 }
@@ -228,7 +233,7 @@ nonisolated struct PositionUpdate: Encodable {
 }
 
 /// A podcast the user subscribes to.
-nonisolated struct Show: Codable, Identifiable, Equatable, Hashable {
+nonisolated struct Show: Codable, Identifiable, Equatable, Hashable, Sendable {
     let id: Int
     let title: String
     let description: String?
@@ -254,20 +259,27 @@ nonisolated struct Show: Codable, Identifiable, Equatable, Hashable {
 
 /// One show from the public directory; it may not be in our catalog yet, so
 /// its identity is its feed URL rather than a database id.
-nonisolated struct PodcastResult: Decodable, Identifiable, Equatable, Hashable {
+nonisolated struct PodcastResult: Decodable, Identifiable, Equatable, Hashable, Sendable {
     let title: String
     let feedURL: URL
     let publisher: String?
     let episodeCount: Int?
     let artworkURL: URL?
+    var itunesID: Int? = nil
+    var country: String? = nil
+    var primaryGenre: String? = nil
+    var latestReleaseDate: Date? = nil
 
     var id: URL { feedURL }
 
     enum CodingKeys: String, CodingKey {
-        case title, publisher
+        case title, publisher, country
         case feedURL = "feed_url"
         case episodeCount = "episode_count"
         case artworkURL = "artwork_url"
+        case itunesID = "itunes_id"
+        case primaryGenre = "primary_genre"
+        case latestReleaseDate = "latest_release_date"
     }
 }
 

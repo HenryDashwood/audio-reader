@@ -27,6 +27,8 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     /// that: a feed like In Our Time carries its archive back to 1998.
     func episodes(showID: Int, query: String?) async throws -> [Episode]
     func searchPodcasts(query: String) async throws -> [PodcastResult]
+    func searchLibraryEpisodes(query: String) async throws -> [Episode]
+    func searchPublicationOnWeb(query: String) async throws -> PodcastResult?
     func previewFeed(url: URL) async throws -> FeedPreview
     func subscribe(feedURL: URL) async throws -> Show
     func unsubscribe(showID: Int) async throws
@@ -57,6 +59,10 @@ extension HearfulAPIProtocol {
     func setAIDataSharing(granted: Bool) async throws -> UserInfo {
         throw APIError(underlying: "AI data sharing is not implemented by this API client")
     }
+
+    func searchLibraryEpisodes(query: String) async throws -> [Episode] { [] }
+
+    func searchPublicationOnWeb(query: String) async throws -> PodcastResult? { nil }
 }
 
 extension Notification.Name {
@@ -114,7 +120,10 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
             CommandRequest(
-                transcript: transcript, nowPlayingEpisodeID: nowPlayingEpisodeID, turns: turns))
+                transcript: transcript,
+                nowPlayingEpisodeID: nowPlayingEpisodeID,
+                turns: turns,
+                country: Self.countryCode))
         return try await send(request)
     }
 
@@ -178,7 +187,26 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         var components = URLComponents(
             url: baseURL.appendingPathComponent("search/podcasts"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "q", value: query)]
+        if let country = Self.countryCode {
+            components.queryItems?.append(URLQueryItem(name: "country", value: country))
+        }
         return try await send(URLRequest(url: components.url!))
+    }
+
+    func searchLibraryEpisodes(query: String) async throws -> [Episode] {
+        var components = URLComponents(
+            url: baseURL.appendingPathComponent("search/episodes"),
+            resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        return try await send(URLRequest(url: components.url!))
+    }
+
+    func searchPublicationOnWeb(query: String) async throws -> PodcastResult? {
+        var request = URLRequest(url: baseURL.appendingPathComponent("search/publications"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["query": query])
+        return try await send(request)
     }
 
     func previewFeed(url: URL) async throws -> FeedPreview {
@@ -340,4 +368,8 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
     }()
 
     private nonisolated(unsafe) static let plainFormatter = ISO8601DateFormatter()
+
+    private static var countryCode: String? {
+        Locale.current.region?.identifier
+    }
 }

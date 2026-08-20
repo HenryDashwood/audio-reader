@@ -24,12 +24,13 @@ struct AIDataSharingConsentView: View {
             ScrollView {
                 VStack(spacing: 14) {
                     VStack(spacing: 6) {
-                        Text("Use AI for voice requests?")
+                        Text("Use AI for voice and web search?")
                             .font(.title2.bold())
 
                         Text(
                             "Hearful uses OpenRouter and an AI model provider to understand "
-                                + "what you ask it to play."
+                                + "what you ask it to play and to find publications missing "
+                                + "from the podcast directory."
                         )
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -40,7 +41,7 @@ struct AIDataSharingConsentView: View {
                         DisclosureRow(
                             icon: "text.bubble",
                             title: "What is shared",
-                            detail: "Recognised words and relevant episode titles, shows, dates and short descriptions."
+                            detail: "Recognised words or a publication search, plus relevant episode titles, shows, dates and short descriptions."
                         )
 
                         Divider().padding(.leading, 42)
@@ -99,7 +100,7 @@ struct AIDataSharingConsentView: View {
                 .disabled(saving)
                 .accessibilityLabel("Allow AI data sharing")
                 .accessibilityHint(
-                    "Allows recognised words and relevant episode details to be sent to OpenRouter and an AI model provider"
+                    "Allows recognised words, publication searches and relevant episode details to be sent to OpenRouter and an AI model provider"
                 )
 
                 Button("Not Now", action: onNotNow)

@@ -14,7 +14,7 @@ from audioreader.llm.client import LLMClient, LLMError
 from audioreader.llm.provider import get_discovery_llm_client, get_llm_client
 from audioreader.models import User, utcnow
 from audioreader.ratelimit import SlidingWindow
-from audioreader.routers.auth import AI_DATA_SHARING_CONSENT_VERSION
+from audioreader.routers.auth import has_current_ai_data_sharing_consent
 from audioreader.routers.feeds import episodes_read
 from audioreader.schemas import CommandRequest, CommandResponse
 from audioreader.settings_types import LLMProvider
@@ -68,11 +68,7 @@ async def command(
     # This is deliberately enforced server-side as well as in the app. An old
     # client, a Siri shortcut, or a hand-written request must not be able to
     # send personal data to the model without the recorded current choice.
-    if (
-        user.ai_data_sharing_consented_at is None
-        or user.ai_data_sharing_withdrawn_at is not None
-        or user.ai_consent_version != AI_DATA_SHARING_CONSENT_VERSION
-    ):
+    if not has_current_ai_data_sharing_consent(user):
         raise HTTPException(
             status_code=403,
             detail={"spoken_response": ("Before using voice commands, open Hearful and allow AI data sharing.")},
@@ -132,6 +128,7 @@ async def command(
                 discovery_llm=discovery_llm,
                 now_playing_episode_id=body.now_playing_episode_id,
                 turns=body.turns,
+                country=body.country,
             )
         except LLMError as exc:
             raise HTTPException(

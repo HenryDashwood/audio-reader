@@ -114,6 +114,9 @@ struct CommandEndpointTests {
 
         let body = try JSONSerialization.jsonObject(with: try #require(request.httpBody))
         #expect((body as? [String: Any])?["transcript"] as? String == "play the Vienna one")
+        if let region = Locale.current.region?.identifier {
+            #expect((body as? [String: Any])?["country"] as? String == region)
+        }
     }
 
     @Test func sendsTheExchangeSoFar() async throws {
@@ -247,7 +250,8 @@ struct DirectorySearchTests {
     private let resultsJSON = """
         [{"title":"The Rest Is History","feed_url":"https://feeds.megaphone.fm/GLT4787413333",
           "publisher":"Goalhanger","episode_count":967,
-          "artwork_url":"https://img.example.com/trih.jpg"},
+          "artwork_url":"https://img.example.com/trih.jpg","itunes_id":123,
+          "country":"GB","primary_genre":"History","latest_release_date":"2026-08-19T08:00:00Z"},
          {"title":"Sparse Show","feed_url":"https://feeds.example.com/sparse",
           "publisher":null,"episode_count":null,"artwork_url":null}]
         """
@@ -260,9 +264,15 @@ struct DirectorySearchTests {
         #expect(results[0].title == "The Rest Is History")
         #expect(results[0].publisher == "Goalhanger")
         #expect(results[0].artworkURL?.absoluteString == "https://img.example.com/trih.jpg")
+        #expect(results[0].itunesID == 123)
+        #expect(results[0].primaryGenre == "History")
+        #expect(results[0].latestReleaseDate != nil)
         let url = try #require(transport.lastRequest?.url)
         #expect(url.path == "/search/podcasts")
         #expect(url.query?.contains("q=rest%20is%20history") == true)
+        if let region = Locale.current.region?.identifier {
+            #expect(url.query?.contains("country=\(region)") == true)
+        }
     }
 
     @Test func toleratesResultsWithoutPublisherOrArtwork() async throws {
@@ -294,6 +304,42 @@ struct DirectorySearchTests {
         let body = try JSONDecoder().decode(
             [String: String].self, from: try #require(request.httpBody))
         #expect(body["url"] == "https://feeds.example.com/x")
+    }
+
+    @Test func searchesTheWholeLibraryForEpisodes() async throws {
+        let json = """
+            [{"id":31,"title":"The Fall of Constantinople","description":null,
+              "author":null,"feed_title":"The History Hour",
+              "audio_url":"https://cdn.example.com/hh/103.mp3","duration_seconds":3723,
+              "published_at":null,"link":null}]
+            """
+        let transport = FakeTransport(json: json)
+
+        let episodes = try await makeClient(transport)
+            .searchLibraryEpisodes(query: "constantinople")
+
+        #expect(episodes.first?.feedTitle == "The History Hour")
+        #expect(transport.lastRequest?.url?.path == "/search/episodes")
+        #expect(transport.lastRequest?.url?.query?.contains("q=constantinople") == true)
+    }
+
+    @Test func explicitWebSearchPostsOnlyTheQuery() async throws {
+        let json = """
+            {"title":"Notes on Progress","feed_url":"https://notesonprogress.example/feed",
+             "publisher":null,"episode_count":null,"artwork_url":null}
+            """
+        let transport = FakeTransport(json: json)
+
+        let result = try await makeClient(transport)
+            .searchPublicationOnWeb(query: "Notes on Progress")
+
+        #expect(result?.title == "Notes on Progress")
+        let request = try #require(transport.lastRequest)
+        #expect(request.httpMethod == "POST")
+        #expect(request.url?.path == "/search/publications")
+        let body = try JSONDecoder().decode(
+            [String: String].self, from: try #require(request.httpBody))
+        #expect(body == ["query": "Notes on Progress"])
     }
 
     @Test func subscribePostsToFeeds() async throws {

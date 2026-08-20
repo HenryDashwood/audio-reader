@@ -185,8 +185,14 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 ## 7. Screens and navigation (visual)
 
 - [ ] **Shows**: list shows artwork, title, episode count
-- [ ] Search as you type → results appear without pressing Search
-- [ ] Paste a feed URL or a bare domain into search → "Open feed" row appears, and previewing works
+- [ ] Search as you type → subscribed shows, whole-library episodes and public podcasts appear in labelled sections without pressing Search
+- [ ] Switch between **All**, **Shows** and **Episodes** → only the requested result types remain
+- [ ] Search with the podcast directory unavailable → matching subscribed shows and episodes remain usable, with the failure explained separately
+- [ ] Paste a feed URL, bare domain, Apple Podcasts sharing link, `itpc://` URL or `pcast://` URL → "Open podcast or feed" appears immediately and previewing works
+- [ ] Paste a URL while the directory is unavailable → the URL result remains present and usable
+- [ ] Make a one-letter typo or transpose adjacent letters in a show name → the intended local/directory result is still found
+- [ ] Search for an episode older than the newest 50 in a show → it is returned under **Episodes in your library**, with its show name
+- [ ] Search for a publication absent from the directory → **Search the web** appears; it asks for AI permission if needed and returns only a feed that can be verified
 - [ ] Tap a search result → preview page, Subscribe works
 - [ ] Subscribe to something already subscribed → says so rather than duplicating
 - [ ] Show detail → episodes newest first, Unsubscribe present

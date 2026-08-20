@@ -66,3 +66,25 @@ class TestSearchPodcasts:
         respx_mock.get(SEARCH_URL).respond(status_code=503)
         response = await client.get("/search/podcasts", params={"q": "anything"})
         assert response.status_code == 502
+
+
+class TestPublicationWebSearch:
+    async def test_explicit_web_search_returns_a_verified_feed(self, client, fake_llm, respx_mock, article_xml):
+        feed_url = "https://notesonprogress.example.com/feed"
+        fake_llm.respond_with({"publication": "Notes on Progress", "urls": [feed_url]})
+        respx_mock.get(feed_url).respond(content=article_xml, content_type="application/rss+xml")
+
+        response = await client.post("/search/publications", json={"query": "Notes on Progress"})
+
+        assert response.status_code == 200
+        assert response.json()["feed_url"] == feed_url
+        assert response.json()["title"] == "Notes on Progress"
+
+    async def test_web_search_requires_current_ai_permission(self, client, fake_llm, user):
+        user.ai_consent_version = None
+        user.ai_data_sharing_consented_at = None
+
+        response = await client.post("/search/publications", json={"query": "Notes on Progress"})
+
+        assert response.status_code == 403
+        assert fake_llm.calls == []

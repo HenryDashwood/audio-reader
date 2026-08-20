@@ -73,8 +73,11 @@ reviewer who has never seen an app driven this way.*
 >    confirms what it found and starts playing.
 > 5. Tap the microphone and say "pause", then "carry on".
 >
-> Shows can also be found by typing in the search field on the Shows tab, and
-> episodes played by tapping them, if that is easier to verify.
+> The Shows search also finds subscribed shows, episodes anywhere in the
+> listener's stored library, public podcasts, pasted feed/homepage addresses,
+> and Apple Podcasts sharing links. If a publication is absent from the public
+> directory, the explicit **Search the web** button offers the consented AI
+> fallback. Episodes can be played by tapping them, if that is easier to verify.
 >
 > **On requiring an account:** an account is needed because the app's entire
 > content is the user's own library — the shows they follow and their position
@@ -86,7 +89,9 @@ reviewer who has never seen an app driven this way.*
 > **On the microphone:** speech is converted to text on the device. Only the
 > text is sent to our server, never an audio recording. Before the first AI
 > request, the app explicitly asks permission to send that text and recent
-> episode details to OpenRouter and its model provider. Permission can be
+> episode details to OpenRouter and its model provider. The same screen covers
+> an explicit typed AI web search; that sends the publication name, not the
+> listener's library. Permission can be
 > withdrawn under Settings → Privacy & Support. This is described in full in
 > the privacy policy.
 

@@ -11,11 +11,15 @@ from audioreader.auth.dependencies import get_current_user
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.feeds import articles, service
+from audioreader.feeds.discovery import find_feed_by_name
 from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import PodcastSearchError, search_podcasts
+from audioreader.llm.client import LLMClient
+from audioreader.llm.provider import get_discovery_llm_client
 from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User
 from audioreader.ratelimit import SlidingWindow
+from audioreader.routers.auth import has_current_ai_data_sharing_consent
 from audioreader.schemas import (
     EpisodeRead,
     EpisodeStateUpdate,
@@ -25,6 +29,7 @@ from audioreader.schemas import (
     FeedRead,
     PodcastSearchResult,
     PositionUpdate,
+    PublicationSearchRequest,
     secure_url,
 )
 
@@ -32,6 +37,7 @@ router = APIRouter(prefix="/feeds", tags=["feeds"])
 
 Session = Annotated[AsyncSession, Depends(get_session)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
+DiscoveryLLM = Annotated[LLMClient, Depends(get_discovery_llm_client)]
 
 _feed_operation_limit = SlidingWindow(settings.feed_operation_rate_limit_per_minute, window_seconds=60)
 _podcast_search_limit = SlidingWindow(settings.podcast_search_rate_limit_per_minute, window_seconds=60)
@@ -110,6 +116,7 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
     reads = []
     for episode in episodes:
         read = EpisodeRead.model_validate(episode)
+        read.feed_title = episode.feed.title
         # Item-level artwork is the exception; most feeds only set show art.
         read.image_url = secure_url(episode.image_url or episode.feed.image_url)
         # Mirrors the fallback chain in feeds/articles.py: anything that can
@@ -231,8 +238,16 @@ async def list_episodes(
 search_router = APIRouter(prefix="/search", tags=["search"])
 
 
-@search_router.get("/podcasts", dependencies=[Depends(check_podcast_search_limit)])
-async def search_directory(q: Annotated[str, Query(max_length=200)], user: CurrentUser) -> list[PodcastSearchResult]:
+@search_router.get(
+    "/podcasts",
+    dependencies=[Depends(check_podcast_search_limit)],
+    response_model_exclude_none=True,
+)
+async def search_directory(
+    q: Annotated[str, Query(max_length=200)],
+    user: CurrentUser,
+    country: Annotated[str | None, Query(min_length=2, max_length=2)] = None,
+) -> list[PodcastSearchResult]:
     """Typed search against the public podcast directory.
 
     Unlike the voice path, no relevance guard: the results are on screen, so
@@ -242,10 +257,61 @@ async def search_directory(q: Annotated[str, Query(max_length=200)], user: Curre
     if not query:
         return []
     try:
-        matches = await search_podcasts(query, limit=25, strict=False)
+        matches = await search_podcasts(query, limit=25, strict=False, country=country)
     except PodcastSearchError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=502,
+            detail={"spoken_response": "The podcast directory is unavailable right now. Please try again shortly."},
+        ) from exc
     return [PodcastSearchResult(**match.model_dump()) for match in matches]
+
+
+@search_router.get("/episodes")
+async def search_library_episodes(
+    q: Annotated[str, Query(max_length=200)],
+    session: Session,
+    user: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+) -> list[EpisodeRead]:
+    """Search every playable item in this listener's subscriptions.
+
+    This is the visual counterpart of the existing voice candidate search:
+    it searches the whole stored back catalogue rather than whichever fifty
+    items happen to be on the phone.
+    """
+
+    query = q.strip()
+    if not query:
+        return []
+    statement = (
+        select(Episode)
+        .join(Subscription, Subscription.feed_id == Episode.feed_id)
+        .options(joinedload(Episode.feed))
+        .where(Subscription.user_id == user.id, PLAYABLE_EPISODE)
+        .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
+        .limit(limit)
+    )
+    episodes = (await session.scalars(episode_search.matching(query, statement))).all()
+    return await episodes_read(session, user, episodes)
+
+
+@search_router.post("/publications", dependencies=[Depends(check_feed_operation_limit)])
+async def search_publication_on_web(
+    body: PublicationSearchRequest,
+    discovery_llm: DiscoveryLLM,
+    user: CurrentUser,
+) -> PodcastSearchResult | None:
+    """Explicit AI-assisted fallback for a publication absent from directories."""
+
+    if not has_current_ai_data_sharing_consent(user):
+        raise HTTPException(
+            status_code=403,
+            detail={"spoken_response": ("Before searching the web with AI, allow AI data sharing in Hearful.")},
+        )
+    found = await find_feed_by_name(body.query, discovery_llm)
+    if found is None:
+        return None
+    return PodcastSearchResult(title=found.title, feed_url=found.feed_url)
 
 
 episodes_router = APIRouter(prefix="/episodes", tags=["episodes"])

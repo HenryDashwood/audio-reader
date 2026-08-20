@@ -13,13 +13,29 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
     func reportDiagnostic(_ event: [String: any Sendable]) async throws {}
 
     var results: [PodcastResult] = []
+    var episodeResults: [Episode] = []
+    var webResult: PodcastResult?
     var error: Error?
     private(set) var queries: [String] = []
+    private(set) var episodeQueries: [String] = []
+    private(set) var webQueries: [String] = []
 
     func searchPodcasts(query: String) async throws -> [PodcastResult] {
         queries.append(query)
         if let error { throw error }
         return results
+    }
+
+    func searchLibraryEpisodes(query: String) async throws -> [Episode] {
+        episodeQueries.append(query)
+        if let error { throw error }
+        return episodeResults
+    }
+
+    func searchPublicationOnWeb(query: String) async throws -> PodcastResult? {
+        webQueries.append(query)
+        if let error { throw error }
+        return webResult
     }
 
     func command(
@@ -95,7 +111,9 @@ struct PodcastSearchModelTests {
         await settleUntilDone(model)
 
         #expect(api.queries == ["rest is history"])
-        #expect(model.state == .loaded([result("The Rest Is History")]))
+        #expect(api.episodeQueries == ["rest is history"])
+        #expect(model.state == .loaded)
+        #expect(model.podcasts == [result("The Rest Is History")])
     }
 
     @Test func searchNowSkipsTheDebounce() async {
@@ -142,5 +160,85 @@ struct PodcastSearchModelTests {
         await settleUntilDone(model)
 
         #expect(model.state == .failed("I cannot reach the internet right now."))
+    }
+
+    @Test func libraryEpisodesAndDirectoryResultsAreKeptSeparately() async {
+        let api = SearchAPI()
+        api.results = [result("The Rest Is History")]
+        api.episodeResults = [episode("Agincourt")]
+        let model = makeModel(api)
+
+        model.searchNow(for: "agincourt")
+        await settleUntilDone(model)
+
+        #expect(model.podcasts.map(\.title) == ["The Rest Is History"])
+        #expect(model.episodes.map(\.title) == ["Agincourt"])
+    }
+
+    @Test func explicitWebSearchIsNeverTriggeredByTyping() async {
+        let api = SearchAPI()
+        api.webResult = result("Notes on Progress")
+        let model = makeModel(api)
+
+        model.searchNow(for: "notes on progress")
+        await settleUntilDone(model)
+        #expect(api.webQueries.isEmpty)
+
+        model.searchWebNow(for: "notes on progress")
+        for _ in 0..<100 where model.isSearchingWeb {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(api.webQueries == ["notes on progress"])
+        #expect(model.webPublication?.title == "Notes on Progress")
+    }
+}
+
+private func episode(_ title: String) -> Episode {
+    Episode(
+        id: 1,
+        title: title,
+        description: nil,
+        author: nil,
+        feedTitle: "History Show",
+        audioURL: URL(string: "https://cdn.example.com/1.mp3"),
+        durationSeconds: nil,
+        publishedAt: nil,
+        link: nil,
+        imageURL: nil,
+        positionSeconds: nil,
+        completed: nil,
+        dismissed: nil,
+        hasText: nil)
+}
+
+@Suite("Local show search")
+struct LocalShowSearchTests {
+    private let shows = [
+        Show(
+            id: 1,
+            title: "The Rest Is History",
+            description: "World history",
+            artworkURL: nil,
+            episodeCount: 10,
+            isArticleFeed: false,
+            isFailing: false),
+        Show(
+            id: 2,
+            title: "Café Europa",
+            description: "Politics from the continent",
+            artworkURL: nil,
+            episodeCount: 5,
+            isArticleFeed: false,
+            isFailing: false),
+    ]
+
+    @Test func aTranspositionStillFindsTheShow() {
+        #expect(showsMatching(shows, query: "hsitory").map(\.id) == [1])
+    }
+
+    @Test func accentsAndDescriptionsAreSearchable() {
+        #expect(showsMatching(shows, query: "cafe").map(\.id) == [2])
+        #expect(showsMatching(shows, query: "politics continent").map(\.id) == [2])
     }
 }

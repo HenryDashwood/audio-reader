@@ -113,3 +113,23 @@ class TestEpisodeSearch:
         feed_id = await make_feed(session, [("Roman roads", "")])
 
         assert (await client.get(f"/feeds/{feed_id}/episodes?q=roman")).status_code == 404
+
+
+class TestLibraryWideEpisodeSearch:
+    async def test_finds_an_episode_across_all_subscribed_shows(self, client, session):
+        feed_id = await make_feed(
+            session,
+            [("The eruption of Krakatoa", "Volcanoes in Indonesia"), ("Roman roads", "")],
+        )
+        await subscribe_to(client, session, feed_id)
+
+        response = await client.get("/search/episodes", params={"q": "krakatoa"})
+
+        assert response.status_code == 200
+        assert [episode["title"] for episode in response.json()] == ["The eruption of Krakatoa"]
+        assert response.json()[0]["feed_title"] == "The Archive"
+
+    async def test_never_searches_an_unsubscribed_show(self, client, session):
+        await make_feed(session, [("A private Krakatoa episode", "")])
+
+        assert (await client.get("/search/episodes", params={"q": "krakatoa"})).json() == []
