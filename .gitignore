@@ -21,3 +21,8 @@ xcuserdata/
 # committed, `git add .` records each one as a submodule pointing at a commit
 # that exists on nobody else's machine.
 .claude/worktrees/
+
+# Kokoro model weights and voice packs. Hundreds of megabytes, fetched per
+# docs/kokoro-prototype.md rather than committed.
+*.safetensors
+voices.npz

@@ -25,7 +25,14 @@ enum SpeechSynthesizers {
     /// A test wanting to watch what would have been said builds its own
     /// SilentSynthesizer and passes it in.
     static func make() -> SpeechSynthesizing {
-        TestEnvironment.isRunningTests ? SilentSynthesizer() : SystemSpeechSynthesizer()
+        if TestEnvironment.isRunningTests { return SilentSynthesizer() }
+        // Both conditions have to hold: she has chosen a natural voice, and
+        // this build can actually render one. Either missing means the system
+        // voice, which is the behaviour every build has had until now.
+        if let voice = SpeechVoice.naturalVoice, let engine = KokoroEngines.shared {
+            return KokoroSynthesizer(engine: engine, voice: voice)
+        }
+        return SystemSpeechSynthesizer()
     }
 }
 
