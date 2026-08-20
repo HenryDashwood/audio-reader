@@ -18,7 +18,10 @@ nonisolated struct KokoroAudio: Sendable {
 /// It exists so the synthesiser can be tested without MLX, without model
 /// files and without a GPU — and so the MLX engine can be swapped for a Core
 /// ML one later without the reader noticing.
-protocol KokoroRendering: Sendable {
+/// nonisolated: the engine is an actor, and the project's default isolation
+/// would otherwise pin this protocol to the main actor — where no actor could
+/// conform to it, and inference would be back on the main thread.
+nonisolated protocol KokoroRendering: Sendable {
     /// The voices this engine actually holds, which is the catalogue
     /// intersected with what is in the file on disk.
     func availableVoices() async -> [KokoroVoice]
@@ -29,7 +32,7 @@ protocol KokoroRendering: Sendable {
     func render(text: String, voice: KokoroVoice, speed: Float) async throws -> KokoroAudio
 }
 
-enum KokoroEngineError: Error {
+nonisolated enum KokoroEngineError: Error {
     /// The weights or the voice file are not on this device.
     case modelMissing
     /// The engine loaded, but has no style vector under that name.

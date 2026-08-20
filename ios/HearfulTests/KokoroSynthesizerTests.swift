@@ -11,9 +11,9 @@ private actor FakeKokoroEngine: KokoroRendering {
     private(set) var renderedSegments: [String] = []
     private(set) var speeds: [Float] = []
 
-    static let sampleRate = 24_000.0
+    nonisolated static let sampleRate = 24_000.0
     /// Enough that a longer segment really is longer.
-    static let secondsPerCharacter = 0.05
+    nonisolated static let secondsPerCharacter = 0.05
 
     init(failing: Bool = false) {
         self.failing = failing
