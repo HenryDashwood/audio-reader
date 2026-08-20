@@ -10,7 +10,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
-from audioreader.feeds.fetcher import FeedFetchError, fetch_feed_bytes
+from audioreader.feeds.fetcher import FeedFetchError, fetch_feed_update
 from audioreader.feeds.parser import FeedParseError, parse_feed
 from audioreader.feeds.service import apply_feed_metadata, new_episodes
 from audioreader.models import Episode, Feed, PlaybackPosition, Subscription, utcnow
@@ -24,13 +24,29 @@ POLL_LOCK_KEY = 0x4155_4449  # "AUDI"
 
 async def poll_feed(session: AsyncSession, feed: Feed) -> int:
     """Fetch one feed and store its new episodes. Returns how many were added."""
-    parsed = parse_feed(await fetch_feed_bytes(feed.url))
+    fetched = await fetch_feed_update(feed.url, etag=feed.etag, last_modified=feed.last_modified)
+    if fetched.not_modified:
+        # A 304 is a successful poll: the publisher confirmed that the stored
+        # episodes are current, so a previous transient failure must clear.
+        feed.etag = fetched.etag or feed.etag
+        feed.last_modified = fetched.last_modified or feed.last_modified
+        feed.last_polled_at = utcnow()
+        feed.consecutive_failures = 0
+        feed.last_error = None
+        await session.commit()
+        return 0
+
+    if fetched.content is None:  # Narrowing for the type checker; handled above.
+        raise FeedFetchError("the server returned no content")
+    parsed = parse_feed(fetched.content)
     known_guids = set(await session.scalars(select(Episode.guid).where(Episode.feed_id == feed.id)))
     episodes = new_episodes(parsed, known_guids)
     for episode in episodes:
         episode.feed_id = feed.id
     session.add_all(episodes)
     apply_feed_metadata(feed, parsed)
+    feed.etag = fetched.etag
+    feed.last_modified = fetched.last_modified
     feed.consecutive_failures = 0
     feed.last_error = None
     await session.commit()

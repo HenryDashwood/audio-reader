@@ -29,6 +29,7 @@ make ios-doctor       # verify Xcode and choose a compatible simulator
 make ios-build        # compile on the oldest installed iOS 26+ runtime
 make ios-test         # run the full Swift test suite there
 make ios-test-latest  # also check the newest installed runtime
+make ios-phone        # Release build, install over Wi-Fi, and launch on the paired iPhone
 ```
 
 The commands choose an available iPhone automatically and keep DerivedData in
@@ -66,15 +67,17 @@ binary — so Siri shortcuts silently never register from a Debug build.
 (`ENABLE_DEBUG_DYLIB = NO` is set for Debug for the same reason.)
 
 ```bash
-cd ios
-xcodebuild build -scheme Hearful -configuration Release \
-  -destination 'platform=iOS,id=<device-id>' -allowProvisioningUpdates
-xcrun devicectl device install app --device <device-id> \
-  ~/Library/Developer/Xcode/DerivedData/Hearful-*/Build/Products/Release-iphoneos/Hearful.app
-xcrun devicectl device process launch --device <device-id> \
-  --environment-variables '{"HEARFUL_API_URL":"http://<mac-lan-ip>:8000"}' \
-  com.henrydashwood.hearful
+make ios-phone
 ```
+
+The command finds the one paired physical iPhone, builds a signed Release app,
+installs it over the existing copy, and opens it. The phone may connect by USB
+or over the same Wi-Fi network. It launches against the deployed Railway API,
+clearing any laptop address remembered by an older development run. Set
+`IOS_DEVICE_API_URL=http://<mac-lan-ip>:8000` when local phone-to-Mac testing is
+intentional. If more than one iPhone is paired, select one with
+`IOS_DEVICE_ID=<udid> make ios-phone`. To verify device selection without
+building or touching the phone, run `IOS_DEVICE_DRY_RUN=1 make ios-phone`.
 
 Gotchas that cost real time, in the order they bite:
 

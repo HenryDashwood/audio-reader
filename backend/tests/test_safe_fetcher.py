@@ -51,3 +51,12 @@ async def test_response_size_is_bounded(respx_mock):
 
     with pytest.raises(FeedFetchError, match="too large"):
         await fetcher.fetch_public_bytes("https://large.example/feed", max_bytes=100)
+
+
+async def test_feed_limit_accepts_a_normal_feed_larger_than_five_mebibytes(respx_mock):
+    content = b"x" * (5 * 1024 * 1024 + 1)
+    respx_mock.get("https://large.example/podcast.xml").respond(content=content)
+
+    fetched, _ = await fetcher.fetch_feed("https://large.example/podcast.xml")
+
+    assert fetched == content

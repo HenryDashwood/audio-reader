@@ -8,11 +8,15 @@ scheme="Hearful"
 derived_data="${IOS_DERIVED_DATA_PATH:-$repo_root/build/DerivedData}"
 minimum_os="${IOS_MINIMUM_OS:-26.0}"
 preferred_name="${IOS_SIMULATOR_NAME:-iPhone 17}"
+device_derived_data="${IOS_DEVICE_DERIVED_DATA_PATH:-$repo_root/build/Device}"
+bundle_id="com.henrydashwood.hearful"
+device_api_url="${IOS_DEVICE_API_URL:-https://audio-reader-production.up.railway.app}"
 
 usage() {
-  echo "Usage: $0 {doctor|build|test|test-latest}"
+  echo "Usage: $0 {doctor|build|test|test-latest|device}"
   echo
   echo "Overrides: IOS_SIMULATOR_ID, IOS_SIMULATOR_NAME, IOS_MINIMUM_OS, IOS_DERIVED_DATA_PATH"
+  echo "           IOS_DEVICE_ID, IOS_DEVICE_API_URL, IOS_DEVICE_DERIVED_DATA_PATH, IOS_DEVICE_DRY_RUN"
 }
 
 require() {
@@ -29,7 +33,7 @@ if [[ "$action" == "test-latest" ]]; then
   action="test"
 fi
 
-if [[ "$action" != "doctor" && "$action" != "build" && "$action" != "test" ]]; then
+if [[ "$action" != "doctor" && "$action" != "build" && "$action" != "test" && "$action" != "device" ]]; then
   usage >&2
   exit 2
 fi
@@ -41,6 +45,56 @@ require jq
 simulator_id="${IOS_SIMULATOR_ID:-}"
 runtime_version=""
 simulator_name=""
+
+run_xcodebuild() {
+  if command -v xcbeautify >/dev/null 2>&1; then
+    NSUnbufferedIO=YES xcodebuild "$@" 2>&1 | xcbeautify
+  else
+    xcodebuild "$@"
+  fi
+}
+
+choose_device() {
+  local inventory matches count requested
+  requested="${IOS_DEVICE_ID:-}"
+  inventory="$(
+    xcrun devicectl list devices --quiet --json-output - --omit-deprecated-fields-in-json
+  )"
+  matches="$(jq --arg requested "$requested" '
+    [
+      .result.devices[]
+      | select(.properties.hardware.reality == "physical")
+      | select(.properties.hardware.deviceType == "iPhone")
+      | select(.properties.connection.pairingState == "paired")
+      | select(
+          $requested == ""
+          or .identifier == $requested
+          or .properties.hardware.udid == $requested
+        )
+    ]
+  ' <<<"$inventory")"
+  count="$(jq 'length' <<<"$matches")"
+
+  if [[ "$count" -eq 0 ]]; then
+    if [[ -n "$requested" ]]; then
+      echo "error: IOS_DEVICE_ID '$requested' is not a paired physical iPhone" >&2
+    else
+      echo "error: no paired physical iPhone is visible" >&2
+    fi
+    echo "Unlock the phone, keep it on this Mac's network, and check Xcode > Window > Devices and Simulators." >&2
+    exit 1
+  fi
+
+  if [[ "$count" -gt 1 ]]; then
+    echo "error: more than one paired physical iPhone is visible; choose one with IOS_DEVICE_ID:" >&2
+    jq -r '.[] | "  \(.properties.state.name): \(.properties.hardware.udid // .identifier)"' <<<"$matches" >&2
+    exit 1
+  fi
+
+  device_id="$(jq -r '.[0].properties.hardware.udid // .[0].identifier' <<<"$matches")"
+  device_name="$(jq -r '.[0].properties.state.name // .[0].properties.hardware.marketingName' <<<"$matches")"
+  device_os="$(jq -r '.[0].properties.software.osVersionNumber.stringValue // "unknown"' <<<"$matches")"
+}
 
 choose_simulator() {
   if [[ -n "$simulator_id" ]]; then
@@ -109,13 +163,44 @@ choose_simulator() {
   ' <<<"$device_json")"
 }
 
-run_xcodebuild() {
-  if command -v xcbeautify >/dev/null 2>&1; then
-    NSUnbufferedIO=YES xcodebuild "$@" 2>&1 | xcbeautify
-  else
-    xcodebuild "$@"
+if [[ "$action" == "device" ]]; then
+  choose_device
+  app_path="$device_derived_data/Build/Products/Release-iphoneos/Hearful.app"
+
+  echo "Using $device_name on iOS $device_os ($device_id)"
+  echo "Release app: $app_path"
+  echo "API: $device_api_url"
+
+  if [[ "${IOS_DEVICE_DRY_RUN:-0}" == "1" ]]; then
+    echo "Dry run only; nothing was built, installed, or launched."
+    exit 0
   fi
-}
+
+  mkdir -p "$device_derived_data"
+  run_xcodebuild build \
+    -project "$project" \
+    -scheme "$scheme" \
+    -configuration Release \
+    -destination "platform=iOS,id=$device_id" \
+    -derivedDataPath "$device_derived_data" \
+    -allowProvisioningUpdates
+
+  if [[ ! -d "$app_path" ]]; then
+    echo "error: Release app was not produced at '$app_path'" >&2
+    exit 1
+  fi
+
+  # Install over the existing copy. Never uninstall here: doing so clears the
+  # app's data, developer trust, and Local Network permission on the phone.
+  xcrun devicectl device install app --device "$device_id" "$app_path"
+  launch_environment="$(jq -cn --arg url "$device_api_url" '{HEARFUL_API_URL: $url}')"
+  xcrun devicectl device process launch \
+    --device "$device_id" \
+    --terminate-existing \
+    --environment-variables "$launch_environment" \
+    "$bundle_id"
+  exit 0
+fi
 
 choose_simulator
 

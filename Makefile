@@ -1,4 +1,4 @@
-.PHONY: backend-dev ios-doctor ios-build ios-test ios-test-latest
+.PHONY: backend-dev ios-doctor ios-build ios-test ios-test-latest ios-phone
 
 backend-dev:
 	docker compose up -d db
@@ -16,3 +16,6 @@ ios-test:
 
 ios-test-latest:
 	@./scripts/ios-dev.sh test-latest
+
+ios-phone:
+	@./scripts/ios-dev.sh device

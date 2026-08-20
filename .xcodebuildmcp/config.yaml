@@ -1,10 +1,11 @@
 schemaVersion: 1
 
 # Keep the MCP surface focused on day-to-day iOS development while allowing
-# Codex to inspect and operate the Simulator and attach LLDB when needed.
+# Codex to operate paired physical devices and the Simulator, and attach LLDB.
 enabledWorkflows:
   - simulator
   - simulator-management
+  - device
   - ui-automation
   - debugging
 

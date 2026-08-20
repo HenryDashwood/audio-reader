@@ -8,20 +8,42 @@ proxy for localhost, cloud metadata, or the hosting provider's private network.
 import asyncio
 import ipaddress
 import socket
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-MAX_FEED_BYTES = 5 * 1024 * 1024
+# Podcast feeds routinely include the full HTML description for hundreds of
+# episodes. Latent Space's ordinary Substack feed is already about 13 MiB once
+# decompressed, so 5 MiB rejected a healthy feed. This remains a hard limit on
+# decompressed bytes; parser-level item and field limits provide the next
+# boundary after the document is accepted.
+MAX_FEED_BYTES = 32 * 1024 * 1024
 MAX_ARTICLE_BYTES = 8 * 1024 * 1024
 MAX_REDIRECTS = 5
 ALLOWED_PORTS = {80, 443}
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+MAX_ETAG_CHARS = 1_024
+MAX_LAST_MODIFIED_CHARS = 256
 
 
 class FeedFetchError(Exception):
     """The requested public resource could not be fetched safely."""
+
+
+@dataclass(frozen=True)
+class FeedFetchResult:
+    """A feed body, or a successful conditional response with no new body."""
+
+    content: bytes | None
+    final_url: str
+    etag: str | None
+    last_modified: str | None
+
+    @property
+    def not_modified(self) -> bool:
+        return self.content is None
 
 
 async def resolve_host_addresses(host: str, port: int) -> set[str]:
@@ -83,6 +105,21 @@ async def fetch_public_bytes(
     user_agent: str = "audioreader/0.1",
 ) -> tuple[bytes, str]:
     """Fetch one bounded public resource, revalidating every redirect hop."""
+    result = await _fetch_public_resource(url, max_bytes=max_bytes, user_agent=user_agent)
+    if result.content is None:  # Conditional requests are not used through this API.
+        raise FeedFetchError("the server returned no content")
+    return result.content, result.final_url
+
+
+async def _fetch_public_resource(
+    url: str,
+    *,
+    max_bytes: int,
+    user_agent: str = "audioreader/0.1",
+    request_headers: Mapping[str, str] | None = None,
+    accept_not_modified: bool = False,
+) -> FeedFetchResult:
+    """Fetch one bounded public resource, revalidating every redirect hop."""
     current = url
     try:
         async with httpx.AsyncClient(
@@ -93,7 +130,7 @@ async def fetch_public_bytes(
         ) as client:
             for redirect_count in range(MAX_REDIRECTS + 1):
                 await validate_public_url(current)
-                async with client.stream("GET", current) as response:
+                async with client.stream("GET", current, headers=request_headers) as response:
                     if response.status_code in REDIRECT_STATUSES:
                         location = response.headers.get("location")
                         if not location:
@@ -102,6 +139,16 @@ async def fetch_public_bytes(
                             raise FeedFetchError("the address redirected too many times")
                         current = urljoin(str(response.url), location)
                         continue
+
+                    if accept_not_modified and response.status_code == 304:
+                        return FeedFetchResult(
+                            content=None,
+                            final_url=str(response.url),
+                            etag=_bounded_header(response.headers.get("etag"), MAX_ETAG_CHARS),
+                            last_modified=_bounded_header(
+                                response.headers.get("last-modified"), MAX_LAST_MODIFIED_CHARS
+                            ),
+                        )
 
                     response.raise_for_status()
                     declared = response.headers.get("content-length")
@@ -119,7 +166,12 @@ async def fetch_public_bytes(
                         # compressed response can otherwise expand without a cap.
                         if len(content) > max_bytes:
                             raise FeedFetchError("the response is too large")
-                    return bytes(content), str(response.url)
+                    return FeedFetchResult(
+                        content=bytes(content),
+                        final_url=str(response.url),
+                        etag=_bounded_header(response.headers.get("etag"), MAX_ETAG_CHARS),
+                        last_modified=_bounded_header(response.headers.get("last-modified"), MAX_LAST_MODIFIED_CHARS),
+                    )
     except FeedFetchError:
         raise
     except httpx.HTTPError as exc:
@@ -128,8 +180,28 @@ async def fetch_public_bytes(
     raise FeedFetchError("the address could not be fetched")
 
 
+def _bounded_header(value: str | None, max_chars: int) -> str | None:
+    """Keep untrusted cache validators useful without storing unbounded text."""
+    return value[:max_chars] if value else None
+
+
 async def fetch_feed(url: str) -> tuple[bytes, str]:
     return await fetch_public_bytes(url, max_bytes=MAX_FEED_BYTES)
+
+
+async def fetch_feed_update(url: str, *, etag: str | None = None, last_modified: str | None = None) -> FeedFetchResult:
+    """Fetch a feed conditionally when validators from its last poll exist."""
+    headers = {}
+    if etag:
+        headers["If-None-Match"] = etag
+    if last_modified:
+        headers["If-Modified-Since"] = last_modified
+    return await _fetch_public_resource(
+        url,
+        max_bytes=MAX_FEED_BYTES,
+        request_headers=headers,
+        accept_not_modified=True,
+    )
 
 
 async def fetch_feed_bytes(url: str) -> bytes:

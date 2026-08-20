@@ -66,6 +66,38 @@ class TestPollFeed:
 
         assert feed.description == "A weekly podcast about history, now with bonus episodes."
 
+    async def test_stores_cache_validators(self, session, user, respx_mock, podcast_xml, podcast_updated_xml):
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        respx_mock.get(FEED_URL).respond(
+            content=podcast_updated_xml,
+            headers={"ETag": '"feed-v2"', "Last-Modified": "Wed, 19 Aug 2026 20:00:00 GMT"},
+        )
+
+        await poll_feed(session, feed)
+
+        assert feed.etag == '"feed-v2"'
+        assert feed.last_modified == "Wed, 19 Aug 2026 20:00:00 GMT"
+
+    async def test_not_modified_is_a_successful_conditional_poll(self, session, user, respx_mock, podcast_xml):
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        previous_poll = feed.last_polled_at
+        feed.etag = '"feed-v1"'
+        feed.last_modified = "Tue, 18 Aug 2026 20:00:00 GMT"
+        feed.consecutive_failures = 6
+        feed.last_error = "temporary failure"
+        await session.commit()
+        response = respx_mock.get(FEED_URL).respond(status_code=304)
+
+        assert await poll_feed(session, feed) == 0
+
+        assert response.calls.last.request.headers["if-none-match"] == '"feed-v1"'
+        assert response.calls.last.request.headers["if-modified-since"] == "Tue, 18 Aug 2026 20:00:00 GMT"
+        assert feed.last_polled_at is not None
+        assert previous_poll is not None
+        assert feed.last_polled_at > previous_poll
+        assert feed.consecutive_failures == 0
+        assert feed.last_error is None
+
 
 class TestPollAllFeeds:
     async def test_polls_every_feed(self, session, user, respx_mock, podcast_xml, article_xml, podcast_updated_xml):
