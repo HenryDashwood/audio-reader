@@ -70,8 +70,20 @@
             return read
         }
 
+        /// MLX's defaults are sized for a Mac. Left alone on a phone it asks
+        /// the GPU for more than iOS will allow and the process is killed
+        /// outright — signal 9, no crash report, while `os_proc_available_memory`
+        /// still reports gigabytes free. These two lines are the difference
+        /// between working and being killed; the values follow upstream's
+        /// own sample app.
+        private static let configureGPU: Void = {
+            GPU.set(cacheLimit: 50 * 1024 * 1024)
+            GPU.set(memoryLimit: 900 * 1024 * 1024)
+        }()
+
         private func loadEngine() -> KokoroTTS {
             if let engine { return engine }
+            _ = Self.configureGPU
             let built = KokoroTTS(modelPath: modelURL)
             engine = built
             return built
