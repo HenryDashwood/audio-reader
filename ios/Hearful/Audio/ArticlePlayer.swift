@@ -276,6 +276,16 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         utterance.postUtteranceDelay = 0.15
         currentUtterance = ObjectIdentifier(utterance)
         synthesizer.speak(utterance)
+        // Say what is coming while this chunk plays. For the system voice this
+        // does nothing; for a synthesiser that has to render the audio first
+        // it is the difference between chunks running together and a silence
+        // at every paragraph.
+        if chunkIndex + 1 < script.chunks.count {
+            let next = AVSpeechUtterance(string: script.chunks[chunkIndex + 1].text)
+            next.voice = utterance.voice
+            next.rate = utterance.rate
+            synthesizer.prepare(next)
+        }
         isPlaying = true
         updateNowPlayingPosition()
     }

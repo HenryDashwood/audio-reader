@@ -50,6 +50,51 @@ Also unverified: the audio was generated with **fp16** weights (see below) and
 has not been listened to critically. Correct duration and clean completion are
 not the same as sounding right.
 
+## The 110-character limit, and why it is not negotiable
+
+Give this model more than about 120 characters in one call and it stops
+speaking and emits a **sustained tone** instead — one held note, seconds long,
+in the middle of the sentence. It was immediately audible as "every other few
+words is a high-pitched note".
+
+Measured on device, longest run of held tone against input length, on two
+unrelated paragraphs:
+
+| characters per call | longest tone |
+| ---: | ---: |
+| 110 | 0.2s |
+| 120 | 0.8s |
+| 130 | 0.8s |
+| 140 | 1.9s |
+| 150 | 2.6s |
+| 180 | 3.1s |
+| 240 | 6.9s |
+| 261 | 6.7s |
+
+What it is not: not the playback path (the tone is in the raw samples, dumped
+straight from the engine before anything of ours touches them); not the fp16
+weights (fp32 produces the identical artefact at the identical position); not
+the accent (British and American voices both); not punctuation or any single
+word (two unrelated paragraphs degrade the same way, and the same text is clean
+when shortened). It is also far below the 510-token ceiling the library
+documents.
+
+The note **replaces** speech rather than adding to it, which is why the fix
+makes renders longer: the same paragraph went from 14.70s (of which 8.96s was
+tone) to 16.82s of actual words.
+
+`KokoroSynthesizer.segmentCharacterLimit` is therefore **110** — a correctness
+limit, not a latency tuning knob. Segmenting a paragraph at that size, then
+joining the pieces the way the player does, leaves a longest tone run of 0.26s,
+which is ordinary phoneme transition:
+
+| | total tone | longest run |
+| --- | ---: | ---: |
+| one 261-character call | 8.96s | 6.74s |
+| same text, segmented at 110 | 1.19s | 0.26s |
+
+If the model or the port is ever updated, re-run the sweep before raising it.
+
 ## What it takes to get there
 
 Four things stand between a fresh checkout and that table, and none of them are
@@ -126,11 +171,10 @@ it breaks the simulator build for everyone.
   [KokoroTestApp](https://github.com/mlalma/KokoroTestApp) LFS store — which is
   also where `voices.npz` (28 English voices) comes from, already in the format
   MLX wants, so no PyTorch conversion is needed.
-- The benchmark above ran on an **fp16** copy, halved to 164MB by casting every
-  F32 tensor in the safetensors file. That was an attempt to rule out memory as
-  the cause of the kills; it made no difference to the crash, but it halves the
-  download and it works. Whether it costs anything audible is untested — worth
-  an A/B before choosing.
+- An **fp16** copy, halved to 164MB by casting every F32 tensor in the
+  safetensors file, renders identically to fp32 — same durations, same output,
+  including reproducing the tone artefact at exactly the same position before
+  the segment limit was fixed. Half the download for no measured difference.
 - All thirteen voices in `KokoroVoice.catalogue` were confirmed present on the
   device, loaded in 0.39s.
 

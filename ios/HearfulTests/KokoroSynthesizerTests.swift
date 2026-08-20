@@ -47,9 +47,22 @@ private final class FakeKokoroOutput: KokoroAudioOutputting {
     func pause() { isPaused = true }
     func resume() { isPaused = false }
 
+    private(set) var shutDowns = 0
+
+    func shutDown() {
+        shutDowns += 1
+        stop()
+    }
+
     func stop() {
         stops += 1
         onDrained = nil
+        enqueued = []
+        isFinished = false
+    }
+
+    /// Forgets what it was given, without counting as a stop.
+    func reset() {
         enqueued = []
         isFinished = false
     }
@@ -78,6 +91,14 @@ private final class SpyDelegate: SpeechSynthesizingDelegate {
 @Suite("Kokoro synthesiser")
 struct KokoroSynthesizerTests {
     private static let voice = KokoroVoice(name: "bf_emma", displayName: "Emma (UK)")
+
+    private func waitUntilRendered(_ engine: FakeKokoroEngine, atLeast count: Int) async -> Bool {
+        for _ in 0..<200 {
+            if await engine.renderedSegments.count >= count { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return await engine.renderedSegments.count >= count
+    }
 
     private func waitUntil(_ condition: @MainActor () -> Bool) async -> Bool {
         for _ in 0..<200 {
@@ -115,7 +136,7 @@ struct KokoroSynthesizerTests {
         let segments = KokoroSynthesizer.segments(of: String(repeating: sentence, count: 8))
 
         #expect(segments.count > 1)
-        #expect(segments.allSatisfy { $0.count <= KokoroSynthesizer.hardSegmentCharacterLimit })
+        #expect(segments.allSatisfy { $0.count <= KokoroSynthesizer.segmentCharacterLimit })
         // Splitting must never lose words.
         let words = segments.flatMap { $0.split(separator: " ") }.count
         #expect(words == 8 * sentence.split(separator: " ").count)
@@ -128,7 +149,7 @@ struct KokoroSynthesizerTests {
         let segments = KokoroSynthesizer.segments(of: runOn)
 
         #expect(segments.count > 1)
-        #expect(segments.allSatisfy { $0.count <= KokoroSynthesizer.hardSegmentCharacterLimit })
+        #expect(segments.allSatisfy { $0.count <= KokoroSynthesizer.segmentCharacterLimit })
         #expect(segments.allSatisfy { !$0.contains("wordword") })
     }
 
@@ -216,6 +237,48 @@ struct KokoroSynthesizerTests {
 
         #expect(await waitUntil { !delegate.finished.isEmpty })
         #expect(delegate.finished == [UtteranceID(utterance)])
+    }
+
+    @Test func whatWasPreparedIsNotRenderedAgain() async {
+        // The point of preparing: by the time the reader asks for the next
+        // chunk the audio already exists, so there is no silence at the
+        // paragraph break while it is made.
+        let engine = FakeKokoroEngine()
+        let output = FakeKokoroOutput()
+        let synthesizer = KokoroSynthesizer(engine: engine, voice: Self.voice, output: output)
+        let current = "The paragraph being read aloud right now, at some length."
+        let next = "The paragraph that comes after the one being read aloud."
+        let expected = KokoroSynthesizer.segments(of: next)
+        let all = KokoroSynthesizer.segments(of: current).count + expected.count
+
+        synthesizer.speak(AVSpeechUtterance(string: current))
+        #expect(await waitUntil { output.isFinished })
+        synthesizer.prepare(AVSpeechUtterance(string: next))
+        #expect(await waitUntilRendered(engine, atLeast: all))
+
+        let renderedBefore = await engine.renderedSegments.count
+        output.reset()
+        synthesizer.speak(AVSpeechUtterance(string: next))
+        #expect(await waitUntil { output.isFinished })
+
+        // Nothing new was rendered, and all of it still reached the speaker.
+        let renderedAfter = await engine.renderedSegments.count
+        #expect(renderedAfter == renderedBefore)
+        #expect(output.enqueued.count == expected.count)
+    }
+
+    @Test func aDeliberateStopGivesTheAudioSessionBack() async {
+        let output = FakeKokoroOutput()
+        let synthesizer = KokoroSynthesizer(engine: FakeKokoroEngine(), voice: Self.voice, output: output)
+
+        synthesizer.speak(AVSpeechUtterance(string: "Something being read."))
+        // Moving between chunks must not tear the engine down: doing that
+        // between every chunk is audible.
+        synthesizer.speak(AVSpeechUtterance(string: "The next chunk."))
+        #expect(output.shutDowns == 0)
+
+        synthesizer.stopSpeaking(at: .immediate)
+        #expect(output.shutDowns == 1)
     }
 
     @Test func pausingKeepsTheUtteranceButStopsTheSound() async {
