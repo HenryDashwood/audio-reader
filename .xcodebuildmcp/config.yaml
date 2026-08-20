@@ -19,9 +19,9 @@ sessionDefaults:
   configuration: Debug
   simulatorName: iPhone 17
   simulatorPlatform: iOS Simulator
-  # Interactive MCP runs use the newest installed runtime; the Make targets
-  # separately exercise the oldest compatible runtime by default.
-  useLatestOS: true
+  # Match routine MCP runs to the Make targets' oldest compatible runtime.
+  # Use `make ios-test-latest` for explicit coverage of the newest runtime.
+  useLatestOS: false
   suppressWarnings: false
   derivedDataPath: build/DerivedData
   preferXcodebuild: true
