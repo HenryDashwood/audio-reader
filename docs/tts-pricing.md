@@ -207,3 +207,108 @@ the final cap.
 - [Cartesia pricing](https://www.cloudtalk.io/blog/cartesia-pricing/)
 - [Self-hosted Kokoro deployment costs](https://www.spheron.network/blog/deploy-open-source-tts-gpu-cloud-2026/)
 - [Speechify pricing](https://texttolab.com/blog/speechify-pricing)
+
+---
+
+# Running the voice on the phone instead
+
+Everything above is a cost model for renting a voice. The alternative is to ship
+one. A neural voice running on the device has **no marginal cost at all**, which
+deletes the cap, the metering, the fair-use language and most of the risk from
+the section above — and it keeps articles readable on the Tube, which the hosted
+option does not. What it costs instead is a quality ceiling, battery, app size,
+and a chunk of engineering.
+
+## What the app's own constraints rule out
+
+1. **The device floor is an iPhone 11.** iOS 26 requires A13 with 3GB of RAM, so
+   the deployment target commits us to a 4GB phone with a 2019 Neural Engine and
+   roughly 1.3GB of app memory before jetsam. A model that only behaves on an
+   A17 Pro is not a feature we can sell.
+2. **Real-time factor has to beat the playback rate, not 1x.** VoiceOver
+   listeners routinely run at 2–3x. A model at 3x real time on an iPhone 13 Pro
+   is comfortable at 1x, marginal at 2x on that phone, and probably behind on an
+   iPhone 11. Render ahead of the playhead rather than streaming at the playhead.
+3. **`ArticlePlayer` needs word timings.** The scrubber, the saved position, the
+   lock-screen elapsed time and the seek logic all hang off
+   `willSpeakRangeOfSpeechString`. Models with an explicit duration predictor
+   (Kokoro, Supertonic, Piper — all non-autoregressive) hand you per-phoneme
+   durations, so word boundaries fall out for free. Autoregressive codec models
+   (Marvis, Orpheus, CSM, Chatterbox) do not: you would need forced alignment
+   afterwards, and they can drift or loop on long text, which is exactly the
+   workload here. This alone is close to decisive.
+4. **Licence has to survive the App Store.** Prefer Apache-2.0/MIT weights.
+   Kokoro's usual G2P front-end shells out to **espeak-ng, which is GPLv3** — a
+   genuine problem in a closed-source binary. `MisakiSwift` (MIT) is the way
+   round it and is what the iOS ports default to. Supertonic's *code* is MIT but
+   its *weights* are OpenRAIL-M, which carries use-based restrictions; worth a
+   read before shipping rather than after.
+
+## The candidates
+
+| Model | Params | Type | Apple path | Measured | Licence |
+| --- | ---: | --- | --- | --- | --- |
+| **Kokoro-82M** | 82M | non-AR (StyleTTS2 lineage) | MLX Swift (`mlalma/kokoro-ios`, MIT) or Core ML/ANE (`mattmireles/kokoro-coreml`) | **3.3x real time on iPhone 13 Pro** after warm-up (MLX); 22x on an M1 Mac mini via ANE, ~2.8x faster than Metal | Apache-2.0 weights |
+| **Supertonic 3** | 99M | non-AR | ONNX Runtime, official Swift/iOS example | ~1,200 chars/s, up to 167x real time on an M4 Pro; no published iPhone figure | MIT code, **OpenRAIL-M weights** |
+| Piper | ~20–30MB/voice | non-AR (VITS) | none official; C library | real time on a Raspberry Pi 4 | MIT |
+| Marvis-TTS | 250M | AR codec LM | MLX, built explicitly for iPhone/iPad | streams in real time; ~500MB quantised | Apache-2.0 |
+| Kitten TTS | ~15–25M | non-AR | ONNX | fast, but experimental | permissive |
+| Chatterbox / CSM-1B / Orpheus-3B / Higgs 3 | 0.5B–4B | AR codec LM | MLX on Macs | not viable in a 1.3GB budget on an A13 | mixed |
+
+Sizes matter more than parameter counts here: Kokoro is ~165MB at fp16 and ~90MB
+int8, Supertonic similar, Marvis ~500MB quantised, and anything at 1B+ is out on
+the phones we support. Whatever we choose gets downloaded on first use rather
+than shipped in the IPA.
+
+## Recommendation
+
+**Kokoro-82M, via MLX Swift for the prototype, moving to Core ML on the ANE if
+it ships.** It is the only candidate that is simultaneously small enough for an
+iPhone 11, fast enough at 2x, permissively licensed, already ported to iOS twice
+by other people, and *aligned* — the token timestamps drop straight into
+`ArticlePlayer`'s existing progress model. MLX gets a demo working in days; Core
+ML on the ANE is the version you want in a battery-sensitive app, at the cost of
+fixed-shape bucketed exports.
+
+Practical notes for whoever picks this up:
+
+- Benchmark on an **iPhone 11**, at 1x, 2x and 3x, before believing any of it.
+  The published numbers are all from 13 Pro and newer.
+- **Render each chunk to a file ahead of the playhead** and play it with the
+  normal audio path, rather than synthesising continuously. The ANE work becomes
+  bursty, battery survives a two-hour listen, and seeking stays trivial.
+- Use **MisakiSwift**, not espeak-ng, and keep the licence audit in the repo.
+- Benchmark **Supertonic 3** against it in the same harness — on paper it is
+  faster and covers 31 languages, and the only thing holding it back is the
+  weights licence.
+- Quality expectation: Kokoro scores around 4.2 MOS in small-model comparisons,
+  which puts it clearly above Apple's compact voices and roughly level with
+  mid-tier cloud neural voices — but not level with ElevenLabs v3.
+
+## What that does to the pricing above
+
+It splits the ladder cleanly, and makes the middle rung free to serve:
+
+- **Free** — Apple's on-device voices. Unchanged, works everywhere.
+- **Better voice, on-device (Kokoro)** — no marginal cost, works offline, no cap
+  to explain. This can be free, or bundled into a cheap tier, and it is what
+  most subscribers would actually live on.
+- **Premium hosted voice (ElevenLabs et al.)** — the paid tier, priced and
+  capped as in the first half of this document, for people who want the best
+  narration and will pay $9.99+ for it.
+
+That is a better shape than the hosted-only plan: the expensive tier stops
+having to carry every heavy listener, and the users for whom this app is their
+only reading channel get a good voice without a meter running.
+
+## Further sources
+
+- [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) ·
+  [kokoro-ios (MLX Swift, MIT)](https://github.com/mlalma/kokoro-ios) ·
+  [kokoro-coreml (ANE)](https://github.com/mattmireles/kokoro-coreml) ·
+  [espeak-ng GPL discussion](https://github.com/hexgrad/kokoro/issues/247)
+- [Supertonic](https://github.com/supertone-inc/supertonic)
+- [Marvis-TTS](https://github.com/Marvis-Labs/marvis-tts) ·
+  [mlx-audio-swift](https://github.com/Blaizzy/mlx-audio-swift)
+- [Picovoice on-device TTS benchmark](https://picovoice.ai/blog/on-device-tts/)
+- [iOS 26 device support](https://en.wikipedia.org/wiki/IOS_26)
