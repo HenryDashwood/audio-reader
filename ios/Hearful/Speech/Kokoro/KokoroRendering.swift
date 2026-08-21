@@ -13,27 +13,29 @@ nonisolated struct KokoroAudio: Sendable {
 }
 
 nonisolated extension KokoroAudio {
-    /// Cuts the junk off both ends of a rendered segment.
+    /// Removes the noise the model puts around — and sometimes inside — its
+    /// speech.
     ///
-    /// The model brackets its speech with two different artefacts, and both
-    /// are audible when segments are played one after another:
+    /// Two artefacts, both audible when segments play back to back:
     ///
-    /// - a **decaying low tone** after the last word, up to 0.75s of it;
+    /// - a **decaying low tone** after the last word, up to 0.75s of it, and
+    ///   *louder* than the speech it follows;
     /// - a **periodic buzz** before the first word, up to 0.9s, with energy
-    ///   only at DC, 4.8kHz and 9.6kHz. It is quiet — a fifth of the speech
-    ///   level — but that 9.6kHz component is piercing, and it is what a
-    ///   listener describes as a high-pitched note between sentences.
+    ///   only at DC, 4.8kHz and 9.6kHz. Quiet — a fifth of the speech level —
+    ///   but that 9.6kHz component is piercing, and it is the squeak heard
+    ///   between sentences. It appears on some segments and not others; on one
+    ///   real article, two of the first six.
     ///
-    /// Neither can be found by loudness: the tone is louder than the speech
-    /// around it, the buzz much quieter. Nor by high-frequency energy, which
-    /// was the first attempt here — over half the buzz's energy is above 4kHz,
-    /// so gating on that kept it.
+    /// Neither can be found by loudness, and neither by high-frequency energy
+    /// (over half the buzz sits above 4kHz). What separates them is the
+    /// **speech band**: speech always carries energy between 300Hz and 4kHz,
+    /// where the formants are, and both artefacts carry effectively none.
     ///
-    /// What separates them is the **speech band**. Voiced or unvoiced, speech
-    /// always has energy between 300Hz and 4kHz, where the formants are. The
-    /// measured buzz has *exactly none* there, and neither does the tone. So
-    /// the test is a band-pass and a gate on the median frame energy, which
-    /// removes both and leaves every clean segment untouched to within 10ms.
+    /// So this silences any stretch that is audible but has no speech in it,
+    /// wherever it falls, and then trims the silence off the ends. Silencing
+    /// rather than trimming matters: an edge trim can only ever shorten the
+    /// buzz — whatever margin it leaves is more buzz — which is what three
+    /// earlier attempts here did.
     ///
     /// Returns itself unchanged if nothing passes the gate, so a quiet or
     /// unusual render is never emptied out.
@@ -43,33 +45,62 @@ nonisolated extension KokoroAudio {
         var filtered = samples
         for _ in 0..<Self.stages { Self.bandPass(&filtered, sampleRate: sampleRate) }
 
-        var energies: [Float] = []
+        var speechBand: [Float] = []
+        var overall: [Float] = []
         var start = 0
         while start + Self.window <= filtered.count {
-            var sum: Float = 0
-            for index in start..<(start + Self.window) { sum += filtered[index] * filtered[index] }
-            energies.append((sum / Float(Self.window)).squareRoot())
+            var band: Float = 0
+            var total: Float = 0
+            for index in start..<(start + Self.window) {
+                band += filtered[index] * filtered[index]
+                total += samples[index] * samples[index]
+            }
+            speechBand.append((band / Float(Self.window)).squareRoot())
+            overall.append((total / Float(Self.window)).squareRoot())
             start += Self.hop
         }
-        let positive = energies.filter { $0 > 0 }.sorted()
-        guard !positive.isEmpty else { return self }
-        let gate = positive[positive.count / 2] * Self.gateFraction
-
-        // Speech has to *persist* to count. A single frame over the gate is
-        // the buzz's own onset — it steps up from nothing, and a step is
-        // broadband, so one frame of it looks exactly like a consonant. That
-        // one frame was enough to make the whole buzz survive.
-        guard let firstLoud = Self.startOfRun(in: energies, over: gate, reversed: false),
-            let lastLoud = Self.startOfRun(in: energies, over: gate, reversed: true)
+        guard let bandMedian = Self.median(of: speechBand),
+            let overallMedian = Self.median(of: overall)
         else { return self }
 
-        let guardSamples = Int(Self.guardSeconds * sampleRate)
-        let from = max(0, firstLoud * Self.hop - guardSamples)
-        let to = min(samples.count, lastLoud * Self.hop + Self.window + guardSamples)
+        let gate = bandMedian * Self.gateFraction
+        let audible = overallMedian * Self.audibleFraction
+        var cleaned = samples
+
+        // Anything audible with no speech in it is noise, wherever it is.
+        // A frame is junk only if its whole window lacks speech-band energy,
+        // so silencing the run's full extent cannot take speech with it.
+        var runStart: Int?
+        for index in 0...speechBand.count {
+            let isJunk =
+                index < speechBand.count
+                && speechBand[index] <= gate && overall[index] > audible
+            if isJunk {
+                if runStart == nil { runStart = index }
+            } else if let first = runStart {
+                let last = index - 1
+                if (last - first + 1) * Self.hop >= Int(Self.minimumJunk * sampleRate) {
+                    Self.silence(
+                        &cleaned, from: first * Self.hop,
+                        to: min(cleaned.count, last * Self.hop + Self.window),
+                        sampleRate: sampleRate)
+                }
+                runStart = nil
+            }
+        }
+
+        // What is left of the ends is silence, so cut it. Speech has to
+        // persist for a few frames to count: a single frame over the gate is
+        // an onset transient, which is broadband and looks like a consonant.
+        guard let firstLoud = Self.startOfRun(in: speechBand, over: gate, reversed: false),
+            let lastLoud = Self.startOfRun(in: speechBand, over: gate, reversed: true)
+        else { return self }
+
+        let from = firstLoud * Self.hop
+        let to = min(cleaned.count, lastLoud * Self.hop + Self.window)
         guard to > from else { return self }
 
-        // Faded at both ends, or cutting into speech would click.
-        var trimmed = Array(samples[from..<to])
+        var trimmed = Array(cleaned[from..<to])
         let fade = min(Int(Self.fadeSeconds * sampleRate), trimmed.count / 2)
         if fade > 0 {
             for index in 0..<fade {
@@ -79,6 +110,31 @@ nonisolated extension KokoroAudio {
             }
         }
         return KokoroAudio(samples: trimmed, sampleRate: sampleRate)
+    }
+
+    /// Zeroes a range, ramping the speech either side of it so the join does
+    /// not click. The ramps eat a few milliseconds of neighbouring speech,
+    /// which is inaudible; leaving them off is not.
+    private static func silence(
+        _ signal: inout [Float], from: Int, to: Int, sampleRate: Double
+    ) {
+        guard to > from else { return }
+        for index in from..<to { signal[index] = 0 }
+        let ramp = Int(fadeSeconds * sampleRate)
+        guard ramp > 0 else { return }
+        for step in 0..<ramp {
+            let scale = Float(step) / Float(ramp)
+            let before = from - ramp + step
+            if before >= 0 { signal[before] *= 1 - scale }
+            let after = to + step
+            if after < signal.count { signal[after] *= scale }
+        }
+    }
+
+    private static func median(of values: [Float]) -> Float? {
+        let positive = values.filter { $0 > 0 }.sorted()
+        guard !positive.isEmpty else { return nil }
+        return positive[positive.count / 2]
     }
 
     /// The first frame of the earliest (or latest) unbroken run of frames
@@ -124,15 +180,27 @@ nonisolated extension KokoroAudio {
     private static let quality = 0.8
     private static let stages = 2
     /// Frames of speech-band energy needed before it counts as speech —
-    /// about 30ms. Two is enough to reject the onset transient; three leaves
+    /// about 30ms. Two is enough to reject an onset transient; three leaves
     /// margin, and measures identically on every segment tested.
     private static let minimumRun = 3
     private static let window = 512
     private static let hop = 128
     /// Fraction of the median frame energy that still counts as speech.
     private static let gateFraction: Float = 0.15
-    /// Kept either side, so nothing is clipped off a quiet first consonant.
-    private static let guardSeconds = 0.04
+    /// Above this share of the median level, non-speech is loud enough to
+    /// hear and worth silencing. Below it, it is already inaudible.
+    private static let audibleFraction: Float = 0.05
+    /// Shortest stretch of audible non-speech worth silencing.
+    ///
+    /// Deliberately well clear of a plosive. The closure in a /p/ or /t/ is
+    /// audible, lasts 60–110ms and carries little speech-band energy, so a
+    /// shorter threshold silences consonants — measured on this article, in
+    /// every segment including a 34-character one. The buzz this guards
+    /// against ran 310ms and 890ms. Nothing real sits in between.
+    ///
+    /// With the segment limit at 90 characters the model does not produce the
+    /// buzz at all, so this is a safety net rather than the fix.
+    private static let minimumJunk = 0.15
     private static let fadeSeconds = 0.01
 }
 

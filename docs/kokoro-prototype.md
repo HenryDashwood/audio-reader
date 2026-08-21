@@ -95,6 +95,26 @@ which is ordinary phoneme transition:
 
 If the model or the port is ever updated, re-run the sweep before raising it.
 
+## The buzz eats words, so it has to be prevented, not filtered
+
+The decisive fact, found late: **the buzz replaces speech rather than covering
+it**. On a live article at a 110-character limit, the model rendered 310ms of
+buzz where the word "From" should have been, and 890ms elsewhere. Silencing it
+does not recover the word — it just turns a squeak into a skipped word, which
+is exactly what happened when the silencing gate first worked.
+
+So the fix is the segment limit, not the filter. At **90 characters** the buzz
+does not appear at all on any segment of that article; at 110 it appeared on
+two of the first six, both of them among the longest segments. The earlier
+sweep put the cliff near 120 because it used synthetic prose — real article
+text, with Greek, curly quotes and long clauses, falls over sooner.
+
+The audio filtering below stays as a safety net, with one threshold changed:
+nothing shorter than 150ms is silenced. A plosive closure is audible, lasts
+60–110ms and carries little speech-band energy, so a shorter threshold eats
+consonants — measured in every segment of the article, including a
+34-character one. The buzz ran 310ms and 890ms. Nothing real sits in between.
+
 ## Two artefacts, and why loudness cannot find either
 
 Real article text — Greek, curly quotes, en-dashes — produces a second

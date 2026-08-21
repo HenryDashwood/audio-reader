@@ -65,9 +65,16 @@ final class KokoroSynthesizer: SpeechSynthesizing {
     /// 110ch: 0.2s · 120ch: 0.8s · 130ch: 0.8s · 140ch: 1.9s · 150ch: 2.6s ·
     /// 180ch: 3.1s · 240ch: 6.9s
     ///
+    /// Synthetic prose survives 110; real article text does not. At 110 the
+    /// model dropped whole words on a live article — replacing "From" with a
+    /// 310ms buzz, and another word with 890ms of it — which is what the
+    /// artefact does: it consumes speech rather than adding noise, so no
+    /// filtering can bring the word back. At 90 the buzz does not appear at
+    /// all, on any segment of that article. Hence 90, not 110.
+    ///
     /// So: keep every call at or under this, and check it again if the model
     /// or the port is ever updated.
-    nonisolated static let segmentCharacterLimit = 110
+    nonisolated static let segmentCharacterLimit = 90
     /// Fallback pace, used only until the first segment has been rendered.
     nonisolated private static let charactersPerSecond = 16.4
     private static let progressInterval: TimeInterval = 0.1
