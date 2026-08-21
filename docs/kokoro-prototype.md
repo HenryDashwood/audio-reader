@@ -95,6 +95,53 @@ which is ordinary phoneme transition:
 
 If the model or the port is ever updated, re-run the sweep before raising it.
 
+## Two artefacts, and why loudness cannot find either
+
+Real article text — Greek, curly quotes, en-dashes — produces a second
+artefact that synthetic prose never did, and it is the one that made the app
+unlistenable. Both are now trimmed by `KokoroAudio.trimmedToSpeech()`.
+
+| | when | length | character |
+| --- | --- | ---: | --- |
+| **ring** | after the last word | up to 0.75s | loud decaying low sinusoid |
+| **buzz** | before the first word | up to 0.9s | quiet, periodic, energy only at DC, 4.8kHz and 9.6kHz |
+
+The buzz is the high-pitched note a listener hears between sentences: quiet —
+a fifth of the speech level — but that 9.6kHz component is piercing. It does
+not appear on every segment; on the article tested it was on two of the first
+six, one of them right after the opening sentence, which is exactly where it
+was reported.
+
+**Loudness cannot separate either from speech**: the ring is *louder* than the
+speech around it, the buzz much quieter. **High-frequency energy cannot
+either** — that was the first attempt, and over half the buzz's energy is above
+4kHz, so it sailed through.
+
+What does separate them is the **speech band**. Speech always has energy
+between 300Hz and 4kHz, where the formants are. Both artefacts have *none*:
+measured at 0.0% of their energy. So the trim band-passes at 1.1kHz (two RBJ
+biquads — one-pole cascades leak too much 9.6kHz to work), gates at 15% of the
+median frame energy, and takes the first and last **run of three consecutive
+frames** over that gate.
+
+That last part matters more than it looks. The buzz begins with a step, and a
+step is broadband: a single frame of it is indistinguishable from a consonant.
+Requiring speech to persist for ~30ms rejects the onset while leaving every
+real segment identical — measured, two frames is already enough, and two,
+three and four all give the same answer on every segment tested.
+
+Measured on the article, before and after:
+
+| segment | before | after | removed |
+| --- | ---: | ---: | ---: |
+| 1 (buzz) | 6.50s | 6.21s | 0.29s |
+| 4 (buzz) | 7.09s | 6.22s | 0.87s |
+| 0, 2, 3, 5 (clean) | — | unchanged | 0.00s |
+
+`HEARFUL_KOKORO_RAW=1` renders untrimmed, which is how the raw artefacts above
+were measured; without it there is no way to see what the model actually
+produced.
+
 ## The ring at the end of every segment
 
 Shortening the segments removed the long held notes, but left a shorter one

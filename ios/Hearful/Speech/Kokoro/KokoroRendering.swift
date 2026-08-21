@@ -13,41 +13,36 @@ nonisolated struct KokoroAudio: Sendable {
 }
 
 nonisolated extension KokoroAudio {
-    /// Cuts the lead-in and the ring off a rendered segment.
+    /// Cuts the junk off both ends of a rendered segment.
     ///
-    /// Every render comes back with roughly a quarter-second of silence before
-    /// the first word, and — the audible part — a decaying pure tone after the
-    /// last one, lasting up to three quarters of a second. Played one segment
-    /// after another that is a held note every few words, which is exactly
-    /// what it sounds like.
+    /// The model brackets its speech with two different artefacts, and both
+    /// are audible when segments are played one after another:
     ///
-    /// Speech always carries energy above 1kHz; the ring is a low-frequency
-    /// sinusoid and carries almost none. So the test is not loudness — the
-    /// ring is loud — but where the high-frequency energy is. A one-pole
-    /// high-pass and a gate on the median frame energy find the first and last
-    /// frames that are really speech.
+    /// - a **decaying low tone** after the last word, up to 0.75s of it;
+    /// - a **periodic buzz** before the first word, up to 0.9s, with energy
+    ///   only at DC, 4.8kHz and 9.6kHz. It is quiet — a fifth of the speech
+    ///   level — but that 9.6kHz component is piercing, and it is what a
+    ///   listener describes as a high-pitched note between sentences.
+    ///
+    /// Neither can be found by loudness: the tone is louder than the speech
+    /// around it, the buzz much quieter. Nor by high-frequency energy, which
+    /// was the first attempt here — over half the buzz's energy is above 4kHz,
+    /// so gating on that kept it.
+    ///
+    /// What separates them is the **speech band**. Voiced or unvoiced, speech
+    /// always has energy between 300Hz and 4kHz, where the formants are. The
+    /// measured buzz has *exactly none* there, and neither does the tone. So
+    /// the test is a band-pass and a gate on the median frame energy, which
+    /// removes both and leaves every clean segment untouched to within 10ms.
     ///
     /// Returns itself unchanged if nothing passes the gate, so a quiet or
     /// unusual render is never emptied out.
     func trimmedToSpeech() -> KokoroAudio {
         guard sampleRate > 0, samples.count > Self.window else { return self }
 
-        // High-pass at 1kHz, two poles. One is not steep enough: it leaves a
-        // 200Hz ring only ~14dB down, which is still above the gate.
-        let coefficient = Float(exp(-2 * Double.pi * Self.cutoff / sampleRate))
         var filtered = samples
-        for _ in 0..<Self.poles {
-            var previousInput: Float = 0
-            var previousOutput: Float = 0
-            for index in filtered.indices {
-                let input = filtered[index]
-                previousOutput = coefficient * (previousOutput + input - previousInput)
-                previousInput = input
-                filtered[index] = previousOutput
-            }
-        }
+        for _ in 0..<Self.stages { Self.bandPass(&filtered, sampleRate: sampleRate) }
 
-        // Frame energies of what is left.
         var energies: [Float] = []
         var start = 0
         while start + Self.window <= filtered.count {
@@ -60,8 +55,12 @@ nonisolated extension KokoroAudio {
         guard !positive.isEmpty else { return self }
         let gate = positive[positive.count / 2] * Self.gateFraction
 
-        guard let firstLoud = energies.firstIndex(where: { $0 > gate }),
-            let lastLoud = energies.lastIndex(where: { $0 > gate })
+        // Speech has to *persist* to count. A single frame over the gate is
+        // the buzz's own onset — it steps up from nothing, and a step is
+        // broadband, so one frame of it looks exactly like a consonant. That
+        // one frame was enough to make the whole buzz survive.
+        guard let firstLoud = Self.startOfRun(in: energies, over: gate, reversed: false),
+            let lastLoud = Self.startOfRun(in: energies, over: gate, reversed: true)
         else { return self }
 
         let guardSamples = Int(Self.guardSeconds * sampleRate)
@@ -82,8 +81,52 @@ nonisolated extension KokoroAudio {
         return KokoroAudio(samples: trimmed, sampleRate: sampleRate)
     }
 
-    private static let cutoff = 1000.0
-    private static let poles = 2
+    /// The first frame of the earliest (or latest) unbroken run of frames
+    /// above the gate, or nil if no run is long enough.
+    private static func startOfRun(
+        in energies: [Float], over gate: Float, reversed: Bool
+    ) -> Int? {
+        let order = reversed ? Array(energies.indices.reversed()) : Array(energies.indices)
+        var run = 0
+        for index in order {
+            run = energies[index] > gate ? run + 1 : 0
+            if run >= minimumRun {
+                return reversed ? index + minimumRun - 1 : index - minimumRun + 1
+            }
+        }
+        return nil
+    }
+
+    /// One RBJ band-pass biquad, in place. Two of these are steep enough to
+    /// reject a 9.6kHz buzz; cascaded one-pole filters are not — they leak
+    /// enough of it to pass the gate.
+    private static func bandPass(_ signal: inout [Float], sampleRate: Double) {
+        let omega = 2 * Double.pi * centre / sampleRate
+        let alpha = sin(omega) / (2 * quality)
+        let norm = 1 + alpha
+        let b0 = Float(alpha / norm)
+        let b2 = Float(-alpha / norm)
+        let a1 = Float(-2 * cos(omega) / norm)
+        let a2 = Float((1 - alpha) / norm)
+
+        var x1: Float = 0, x2: Float = 0, y1: Float = 0, y2: Float = 0
+        for index in signal.indices {
+            let input = signal[index]
+            let output = b0 * input + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = input
+            y2 = y1; y1 = output
+            signal[index] = output
+        }
+    }
+
+    /// Centre of the speech band the gate listens to.
+    private static let centre = 1100.0
+    private static let quality = 0.8
+    private static let stages = 2
+    /// Frames of speech-band energy needed before it counts as speech —
+    /// about 30ms. Two is enough to reject the onset transient; three leaves
+    /// margin, and measures identically on every segment tested.
+    private static let minimumRun = 3
     private static let window = 512
     private static let hop = 128
     /// Fraction of the median frame energy that still counts as speech.

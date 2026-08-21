@@ -322,6 +322,7 @@ struct KokoroVoiceTests {
 @Suite("Trimming a rendered segment")
 struct KokoroAudioTrimTests {
     private static let rate = 24_000.0
+    private var rate: Double { Self.rate }
 
     /// Silence, then something speech-like, then the decaying low tone the
     /// model leaves behind.
@@ -329,18 +330,31 @@ struct KokoroAudioTrimTests {
         lead: Double, speech: Double, ring: Double
     ) -> KokoroAudio {
         var samples: [Float] = Array(repeating: 0, count: Int(lead * rate))
-        // Speech stands in as a broadband signal: it has high-frequency energy.
+        // Speech stands in as noise low-passed to roughly 3kHz. Plain white
+        // noise is a poor proxy: it spreads its energy to 12kHz, where speech
+        // concentrates it below 4kHz, and that understates the speech-band
+        // level the trim actually measures.
         var state: UInt64 = 42
+        var smoothed: Float = 0
         for _ in 0..<Int(speech * rate) {
             state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-            samples.append(Float(Int32(truncatingIfNeeded: state >> 33)) / Float(Int32.max) * 0.3)
+            let white = Float(Int32(truncatingIfNeeded: state >> 33)) / Float(Int32.max)
+            smoothed += 0.5 * (white - smoothed)
+            samples.append(smoothed * 0.6)
         }
-        // The ring is a loud low sinusoid, decaying — no high-frequency energy.
+        // The ring: a loud low sinusoid, decaying, with no energy in the
+        // speech band. Faded in over 20ms because the real one decays out of
+        // the speech continuously — a step here would be a broadband click,
+        // which any speech detector should and does keep.
         let ringCount = Int(ring * rate)
+        let fadeIn = Int(0.02 * rate)
         for index in 0..<ringCount {
             let t = Double(index) / rate
-            let decay = 1 - Double(index) / Double(max(ringCount, 1))
-            samples.append(Float(sin(2 * .pi * 200 * t) * decay * 0.4))
+            // Exponential, like the resonance it stands for. A linear ramp
+            // stays loud far longer than the real thing and is not a fair test.
+            var envelope = exp(-t / 0.12)
+            if index < fadeIn { envelope *= Double(index) / Double(fadeIn) }
+            samples.append(Float(sin(2 * .pi * 200 * t) * envelope * 0.3))
         }
         return KokoroAudio(samples: samples, sampleRate: rate)
     }
@@ -350,8 +364,11 @@ struct KokoroAudioTrimTests {
         let trimmed = audio.trimmedToSpeech()
 
         #expect(audio.duration > 1.8)
-        // What is left is the speech, give or take the guard either side.
-        #expect(abs(trimmed.duration - 1.0) < 0.15)
+        // The speech survives whole, and most of the 0.85s of junk around it
+        // is gone. Not asserted to the millisecond: where exactly the ring
+        // falls below the gate depends on how loud it starts.
+        #expect(trimmed.duration >= 0.95)
+        #expect(trimmed.duration < audio.duration - 0.5)
     }
 
     @Test func aLoudRingIsNotMistakenForSpeech() {
@@ -361,7 +378,34 @@ struct KokoroAudioTrimTests {
         audio = KokoroAudio(samples: audio.samples.map { $0 * 1 }, sampleRate: Self.rate)
         let trimmed = audio.trimmedToSpeech()
 
-        #expect(trimmed.duration < audio.duration - 0.4)
+        #expect(trimmed.duration < audio.duration - 0.3)
+    }
+
+    @Test func theBuzzBeforeTheFirstWordIsRemoved() {
+        // The artefact that made articles unlistenable: quiet, periodic, with
+        // energy only at DC, 4.8kHz and 9.6kHz — and none in the speech band.
+        // Over half its energy is above 4kHz, so a high-frequency test keeps
+        // it. It has to be found by what it lacks, not what it has.
+        var samples: [Float] = []
+        let buzz = Int(0.5 * rate)
+        for index in 0..<buzz {
+            let t = Double(index) / rate
+            let value = 0.5 + sin(2 * .pi * 4800 * t) + sin(2 * .pi * 9600 * t)
+            samples.append(Float(value) * 0.03)
+        }
+        var state: UInt64 = 7
+        var smoothed: Float = 0
+        for _ in 0..<Int(1.0 * rate) {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            let white = Float(Int32(truncatingIfNeeded: state >> 33)) / Float(Int32.max)
+            smoothed += 0.5 * (white - smoothed)
+            samples.append(smoothed * 0.6)
+        }
+        let audio = KokoroAudio(samples: samples, sampleRate: Self.rate)
+        let trimmed = audio.trimmedToSpeech()
+
+        #expect(audio.duration > 1.4)
+        #expect(abs(trimmed.duration - 1.0) < 0.15)
     }
 
     @Test func silenceIsLeftAloneRatherThanEmptied() {

@@ -45,44 +45,74 @@
             else { return }
 
             Task.detached(priority: .userInitiated) {
-                // Clear of the launch watchdog.
                 try? await Task.sleep(for: .seconds(3))
                 guard let documents = FileManager.default.urls(
                     for: .documentDirectory, in: .userDomainMask).first
                 else { return }
-                print("BENCH \(os_proc_available_memory() / 1_048_576)MB of headroom")
 
-                for (name, text) in [("para-a", paragraph), ("para-b", other)] {
-                    // Exactly what the reader does: the same segmentation, in
-                    // the same order, joined as the player would hear them.
-                    let segments = KokoroSynthesizer.segments(of: text)
-                    var joined: [Float] = []
-                    var rate = 24000.0
-                    let start = Date()
-                    for (index, segment) in segments.enumerated() {
+                // Real article text if it has been pushed to the container,
+                // since synthetic prose has never reproduced this.
+                let source = documents.appendingPathComponent("article.txt")
+                let text = (try? String(contentsOf: source, encoding: .utf8)) ?? paragraph
+                print("BENCH text \(text.count) characters")
+
+                // Chunked exactly as the reader chunks it, then segmented
+                // exactly as the synthesiser segments it.
+                let script = ArticleScript(text: text)
+                var index = 0
+                outer: for chunk in script.chunks {
+                    for segment in KokoroSynthesizer.segments(of: chunk.text) {
+                        guard index < 14 else { break outer }
                         guard let audio = try? await engine.render(
-                            text: segment, voice: voice, speed: 1)
-                        else { continue }
-                        joined.append(contentsOf: audio.samples)
-                        rate = audio.sampleRate
+                            text: segment, voice: voice, speed: 1) else { continue }
                         try? wav(audio).write(
-                            to: documents.appendingPathComponent("seg-\(name)-\(index).wav"))
-                        print(String(
-                            format: "BENCH   seg %d  %3d chars  %5.2fs  ends %@  |%@|",
-                            index, segment.count, audio.duration,
-                            (segment.hasSuffix(".") ? "stop " : "mid  ") as NSString,
-                            String(segment.suffix(28)) as NSString))
+                            to: documents.appendingPathComponent("a-\(index).wav"))
+                        print(String(format: "BENCH seg %2d  %3d chars  %5.2fs  |%@|",
+                                     index, segment.count, audio.duration,
+                                     segment as NSString))
+                        index += 1
                     }
-                    let whole = KokoroAudio(samples: joined, sampleRate: rate)
-                    try? wav(whole).write(
-                        to: documents.appendingPathComponent("joined-\(name).wav"))
-                    print(String(
-                        format: "BENCH %@ %d chars, %d segments (longest %d)  audio %6.2fs  render %5.2fs",
-                        name as NSString, text.count, segments.count,
-                        segments.map(\.count).max() ?? 0, whole.duration,
-                        -start.timeIntervalSinceNow))
                 }
                 print("BENCH done")
+            }
+        }
+
+        /// Renders and plays exactly as the reader does, capturing what the
+        /// audio engine puts out.
+        @MainActor
+        private static func playThrough(
+            engine: KokoroRendering, voice: KokoroVoice, text: String, to url: URL
+        ) async {
+            print("BENCH play: start")
+            let output = KokoroAudioEngineOutput()
+            let segments = KokoroSynthesizer.segments(of: text)
+            print("BENCH play: \(segments.count) segments")
+            var rendered: [KokoroAudio] = []
+            for segment in segments {
+                guard let audio = try? await engine.render(text: segment, voice: voice, speed: 1)
+                else { continue }
+                rendered.append(audio)
+            }
+            print("BENCH play: rendered \(rendered.count)")
+            var capture: KokoroAudioEngineOutput.Capture?
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                output.onDrained = { continuation.resume() }
+                // The first buffer starts the engine, so the tap can only go on
+                // once one has been handed over.
+                print("BENCH play: enqueue first")
+                if let first = rendered.first { output.enqueue(first) }
+                print("BENCH play: installing tap")
+                capture = output.startCapture()
+                print("BENCH play: tap installed")
+                for audio in rendered.dropFirst() { output.enqueue(audio) }
+                output.finishEnqueueing()
+            }
+            output.stopCapture()
+            output.shutDown()
+            if let heard = capture?.take() {
+                try? wav(heard).write(to: url)
+                print(String(format: "BENCH played back %.2fs at %.0fHz -> %@",
+                             heard.duration, heard.sampleRate, url.lastPathComponent as NSString))
             }
         }
 

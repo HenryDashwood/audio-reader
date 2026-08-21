@@ -126,6 +126,52 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
         format = nil
     }
 
+    /// Debug: records what actually reaches the speaker, past the scheduling,
+    /// the mixer and any rate conversion — the part a rendered WAV cannot tell
+    /// you anything about.
+    ///
+    /// Collects samples rather than using AVAudioFile: the mixer's format is
+    /// non-interleaved, which AVAudioFile will not write, and finding that out
+    /// costs a SIGTRAP rather than an error.
+    nonisolated final class Capture: @unchecked Sendable {
+        private let lock = NSLock()
+        private var samples: [Float] = []
+        var sampleRate: Double = 0
+
+        func append(_ buffer: AVAudioPCMBuffer) {
+            guard let channel = buffer.floatChannelData else { return }
+            let count = Int(buffer.frameLength)
+            lock.lock()
+            samples.append(contentsOf: UnsafeBufferPointer(start: channel[0], count: count))
+            lock.unlock()
+        }
+
+        func take() -> KokoroAudio {
+            lock.lock(); defer { lock.unlock() }
+            return KokoroAudio(samples: samples, sampleRate: sampleRate)
+        }
+    }
+
+    func startCapture() -> Capture? {
+        let format = engine.mainMixerNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { return nil }
+        let capture = Capture()
+        capture.sampleRate = format.sampleRate
+        engine.mainMixerNode.removeTap(onBus: 0)
+        // @Sendable: the tap is called on an audio thread, and a closure made
+        // inside this @MainActor class would otherwise inherit main-actor
+        // isolation and trap on the first buffer.
+        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 4096, format: format) {
+            @Sendable buffer, _ in
+            capture.append(buffer)
+        }
+        return capture
+    }
+
+    func stopCapture() {
+        engine.mainMixerNode.removeTap(onBus: 0)
+    }
+
     private func bufferPlayed() {
         played += 1
         drainIfFinished()
