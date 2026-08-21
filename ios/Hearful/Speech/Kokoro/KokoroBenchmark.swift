@@ -58,13 +58,16 @@
 
                 // Chunked exactly as the reader chunks it, then segmented
                 // exactly as the synthesiser segments it.
+                let speed = Float(
+                    ProcessInfo.processInfo.environment["HEARFUL_KOKORO_SPEED"] ?? "1") ?? 1
+                print("BENCH speed \(speed)")
                 let script = ArticleScript(text: text)
                 var index = 0
                 outer: for chunk in script.chunks {
                     for segment in KokoroSynthesizer.segments(of: chunk.text) {
                         guard index < 14 else { break outer }
                         guard let audio = try? await engine.render(
-                            text: segment, voice: voice, speed: 1) else { continue }
+                            text: segment, voice: voice, speed: speed) else { continue }
                         try? wav(audio).write(
                             to: documents.appendingPathComponent("a-\(index).wav"))
                         print(String(format: "BENCH seg %2d  %3d chars  %5.2fs  |%@|",

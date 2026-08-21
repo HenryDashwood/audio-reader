@@ -95,6 +95,28 @@ which is ordinary phoneme transition:
 
 If the model or the port is ever updated, re-run the sweep before raising it.
 
+## Sibilants are speech too
+
+A voiced-only test drops the first sound of words beginning /s/, /f/ or /ʃ/,
+which is audible as a swallowed syllable — reported at 1.5x, where there is
+less of the word left to recognise. Measured on the /s/ opening "cinematic":
+
+| | 300Hz–4kHz | 5.5–8.5kHz |
+| --- | ---: | ---: |
+| /s/ | 0.4% | **50%** |
+| the vowel after it | 75% | 0.1% |
+| the buzz | 0.0% | **0.0%** |
+
+So a frame counts as speech if it is voiced **or** sibilant, and 5.5–8.5kHz is
+the band to ask: it sits between the buzz's two lines at 4.8kHz and 9.6kHz,
+which is why the buzz still reads as silence there.
+
+The sibilant test is a **share of the frame's own energy**, not a level. That
+band is nearly empty through most of a segment, so a median-relative gate there
+sits on the noise floor and lets the buzz back in — measured, at every filter
+width from Q=2.5 to Q=6. As a share it is unambiguous: an /s/ is about half its
+frame, the buzz is none of it, and anything from 0.1 to 0.3 behaves identically.
+
 ## The buzz eats words, so it has to be prevented, not filtered
 
 The decisive fact, found late: **the buzz replaces speech rather than covering

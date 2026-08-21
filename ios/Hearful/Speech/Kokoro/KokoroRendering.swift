@@ -42,20 +42,30 @@ nonisolated extension KokoroAudio {
     func trimmedToSpeech() -> KokoroAudio {
         guard sampleRate > 0, samples.count > Self.window else { return self }
 
-        var filtered = samples
-        for _ in 0..<Self.stages { Self.bandPass(&filtered, sampleRate: sampleRate) }
+        var voiced = samples
+        for _ in 0..<Self.stages { Self.bandPass(&voiced, sampleRate: sampleRate, centre: Self.centre, quality: Self.quality) }
+        var sibilant = samples
+        for _ in 0..<Self.stages {
+            Self.bandPass(
+                &sibilant, sampleRate: sampleRate, centre: Self.sibilantCentre,
+                quality: Self.sibilantQuality)
+        }
 
         var speechBand: [Float] = []
+        var hissBand: [Float] = []
         var overall: [Float] = []
         var start = 0
-        while start + Self.window <= filtered.count {
+        while start + Self.window <= voiced.count {
             var band: Float = 0
+            var hiss: Float = 0
             var total: Float = 0
             for index in start..<(start + Self.window) {
-                band += filtered[index] * filtered[index]
+                band += voiced[index] * voiced[index]
+                hiss += sibilant[index] * sibilant[index]
                 total += samples[index] * samples[index]
             }
             speechBand.append((band / Float(Self.window)).squareRoot())
+            hissBand.append((hiss / Float(Self.window)).squareRoot())
             overall.append((total / Float(Self.window)).squareRoot())
             start += Self.hop
         }
@@ -65,16 +75,30 @@ nonisolated extension KokoroAudio {
 
         let gate = bandMedian * Self.gateFraction
         let audible = overallMedian * Self.audibleFraction
+
+        // A frame is speech if it is voiced *or* a sibilant. Formants live in
+        // the 300Hz–4kHz band, but /s/, /f/ and /ʃ/ do not: measured here, the
+        // /s/ opening "cinematic" put 50% of its energy in 5.5–8.5kHz and 0.4%
+        // in the speech band, so a voiced-only test cut the word's first sound
+        // off — audible as a dropped syllable.
+        //
+        // The sibilant test is a share of the frame's own energy, not a level.
+        // The band is nearly empty through most of a segment, so a
+        // median-relative gate there sits on the noise floor and lets the buzz
+        // back in whatever the filter's shape.
+        let isSpeech = (0..<speechBand.count).map { index in
+            speechBand[index] > gate
+                || (hissBand[index] > Self.sibilantShare * overall[index]
+                    && overall[index] > audible)
+        }
         var cleaned = samples
 
         // Anything audible with no speech in it is noise, wherever it is.
         // A frame is junk only if its whole window lacks speech-band energy,
         // so silencing the run's full extent cannot take speech with it.
         var runStart: Int?
-        for index in 0...speechBand.count {
-            let isJunk =
-                index < speechBand.count
-                && speechBand[index] <= gate && overall[index] > audible
+        for index in 0...isSpeech.count {
+            let isJunk = index < isSpeech.count && !isSpeech[index] && overall[index] > audible
             if isJunk {
                 if runStart == nil { runStart = index }
             } else if let first = runStart {
@@ -92,8 +116,8 @@ nonisolated extension KokoroAudio {
         // What is left of the ends is silence, so cut it. Speech has to
         // persist for a few frames to count: a single frame over the gate is
         // an onset transient, which is broadband and looks like a consonant.
-        guard let firstLoud = Self.startOfRun(in: speechBand, over: gate, reversed: false),
-            let lastLoud = Self.startOfRun(in: speechBand, over: gate, reversed: true)
+        guard let firstLoud = Self.startOfRun(in: isSpeech, reversed: false),
+            let lastLoud = Self.startOfRun(in: isSpeech, reversed: true)
         else { return self }
 
         let from = firstLoud * Self.hop
@@ -139,13 +163,11 @@ nonisolated extension KokoroAudio {
 
     /// The first frame of the earliest (or latest) unbroken run of frames
     /// above the gate, or nil if no run is long enough.
-    private static func startOfRun(
-        in energies: [Float], over gate: Float, reversed: Bool
-    ) -> Int? {
-        let order = reversed ? Array(energies.indices.reversed()) : Array(energies.indices)
+    private static func startOfRun(in speech: [Bool], reversed: Bool) -> Int? {
+        let order = reversed ? Array(speech.indices.reversed()) : Array(speech.indices)
         var run = 0
         for index in order {
-            run = energies[index] > gate ? run + 1 : 0
+            run = speech[index] ? run + 1 : 0
             if run >= minimumRun {
                 return reversed ? index + minimumRun - 1 : index - minimumRun + 1
             }
@@ -156,7 +178,9 @@ nonisolated extension KokoroAudio {
     /// One RBJ band-pass biquad, in place. Two of these are steep enough to
     /// reject a 9.6kHz buzz; cascaded one-pole filters are not — they leak
     /// enough of it to pass the gate.
-    private static func bandPass(_ signal: inout [Float], sampleRate: Double) {
+    private static func bandPass(
+        _ signal: inout [Float], sampleRate: Double, centre: Double, quality: Double
+    ) {
         let omega = 2 * Double.pi * centre / sampleRate
         let alpha = sin(omega) / (2 * quality)
         let norm = 1 + alpha
@@ -178,6 +202,14 @@ nonisolated extension KokoroAudio {
     /// Centre of the speech band the gate listens to.
     private static let centre = 1100.0
     private static let quality = 0.8
+    /// Between the buzz's two lines at 4.8kHz and 9.6kHz, and where sibilants
+    /// put their energy.
+    private static let sibilantCentre = 6800.0
+    private static let sibilantQuality = 3.0
+    /// Share of a frame's energy in the sibilant band before it counts as one.
+    /// Measured: an /s/ is around half, the buzz is none. Anything from 0.1 to
+    /// 0.3 behaves identically on every segment tested.
+    private static let sibilantShare: Float = 0.2
     private static let stages = 2
     /// Frames of speech-band energy needed before it counts as speech —
     /// about 30ms. Two is enough to reject an onset transient; three leaves
