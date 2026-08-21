@@ -95,124 +95,65 @@ which is ordinary phoneme transition:
 
 If the model or the port is ever updated, re-run the sweep before raising it.
 
-## Sibilants are speech too
+## What the app adds to the model, and what it does not
 
-A voiced-only test drops the first sound of words beginning /s/, /f/ or /ʃ/,
-which is audible as a swallowed syllable — reported at 1.5x, where there is
-less of the word left to recognise. Measured on the /s/ opening "cinematic":
+The upstream demo renders one utterance and plays it, and sounds fine. This app
+splits an article into segments, so it needs two things the demo does not — and
+it should need nothing else.
 
-| | 300Hz–4kHz | 5.5–8.5kHz |
-| --- | ---: | ---: |
-| /s/ | 0.4% | **50%** |
-| the vowel after it | 75% | 0.1% |
-| the buzz | 0.0% | **0.0%** |
+**1. A segment limit of 90 characters.** Everything that ever sounded wrong
+came from giving the model too much text at once: a held tone, and a buzz that
+*replaces* words rather than covering them. See below for the measurements. At
+90 characters neither appears, on any segment of the article tested.
 
-So a frame counts as speech if it is voiced **or** sibilant, and 5.5–8.5kHz is
-the band to ask: it sits between the buzz's two lines at 4.8kHz and 9.6kHz,
-which is why the buzz still reads as silence there.
+**2. Trimming the silence between segments.** Every render arrives with about
+0.29s of digital silence before the first word and 0.68s after the last. In the
+demo that is unnoticeable. Concatenated segment to segment it is nearly a
+second of dead air at every join. `KokoroAudio.trimmedSilence()` cuts it, on an
+absolute level threshold of about -54 dBFS, keeping 20ms either side.
 
-The sibilant test is a **share of the frame's own energy**, not a level. That
-band is nearly empty through most of a segment, so a median-relative gate there
-sits on the noise floor and lets the buzz back in — measured, at every filter
-width from Q=2.5 to Q=6. As a share it is unambiguous: an /s/ is about half its
-frame, the buzz is none of it, and anything from 0.1 to 0.3 behaves identically.
+**And nothing else.** An earlier version of this file classified every frame as
+speech or not-speech — band-pass filters, energy gates, run-length rules, a
+separate sibilant band — to strip artefacts out of the audio. It was a mistake,
+and every version of it clipped real sounds: a word-initial /s/ has almost no
+energy where vowels do, so "cinematic" lost its first syllable, and the fade
+applied at the cut point ate the start of "Everyone". Filtering could not have
+worked in any case, because the buzz *consumes* the word rather than sitting on
+top of it — silencing it perfectly still leaves the word missing.
 
-## The buzz eats words, so it has to be prevented, not filtered
+The lesson is worth keeping: when the model produces something wrong, fix what
+is handed to the model. Do not build a classifier to clean up after it. The
+only safe thing to cut is silence, because silence is unambiguous.
 
-The decisive fact, found late: **the buzz replaces speech rather than covering
-it**. On a live article at a 110-character limit, the model rendered 310ms of
-buzz where the word "From" should have been, and 890ms elsewhere. Silencing it
-does not recover the word — it just turns a squeak into a skipped word, which
-is exactly what happened when the silencing gate first worked.
+For diagnosis, `HEARFUL_KOKORO_RAW=1` renders untrimmed, and
+`HEARFUL_KOKORO_SPEED` sets the rate — without those there is no way to see
+what the model actually produced.
 
-So the fix is the segment limit, not the filter. At **90 characters** the buzz
-does not appear at all on any segment of that article; at 110 it appeared on
-two of the first six, both of them among the longest segments. The earlier
-sweep put the cliff near 120 because it used synthetic prose — real article
-text, with Greek, curly quotes and long clauses, falls over sooner.
+## Why 90 characters
 
-The audio filtering below stays as a safety net, with one threshold changed:
-nothing shorter than 150ms is silenced. A plosive closure is audible, lasts
-60–110ms and carries little speech-band energy, so a shorter threshold eats
-consonants — measured in every segment of the article, including a
-34-character one. The buzz ran 310ms and 890ms. Nothing real sits in between.
+Give the model more text than that in one call and it stops speaking and emits
+a **sustained tone** instead, or drops a word and emits a **buzz** in its
+place. Measured on device, longest run of tone against input length, on two
+unrelated paragraphs:
 
-## Two artefacts, and why loudness cannot find either
+| characters per call | longest tone |
+| ---: | ---: |
+| 110 | 0.2s |
+| 130 | 0.8s |
+| 150 | 2.6s |
+| 180 | 3.1s |
+| 240 | 6.9s |
 
-Real article text — Greek, curly quotes, en-dashes — produces a second
-artefact that synthetic prose never did, and it is the one that made the app
-unlistenable. Both are now trimmed by `KokoroAudio.trimmedToSpeech()`.
+Synthetic prose survives 110; real article text does not. At 110 the model
+dropped whole words on a live article — 310ms of buzz where "From" should have
+been, 890ms elsewhere — which is what the artefact does: it consumes speech
+rather than adding noise. At 90 it does not happen at all.
 
-| | when | length | character |
-| --- | --- | ---: | --- |
-| **ring** | after the last word | up to 0.75s | loud decaying low sinusoid |
-| **buzz** | before the first word | up to 0.9s | quiet, periodic, energy only at DC, 4.8kHz and 9.6kHz |
-
-The buzz is the high-pitched note a listener hears between sentences: quiet —
-a fifth of the speech level — but that 9.6kHz component is piercing. It does
-not appear on every segment; on the article tested it was on two of the first
-six, one of them right after the opening sentence, which is exactly where it
-was reported.
-
-**Loudness cannot separate either from speech**: the ring is *louder* than the
-speech around it, the buzz much quieter. **High-frequency energy cannot
-either** — that was the first attempt, and over half the buzz's energy is above
-4kHz, so it sailed through.
-
-What does separate them is the **speech band**. Speech always has energy
-between 300Hz and 4kHz, where the formants are. Both artefacts have *none*:
-measured at 0.0% of their energy. So the trim band-passes at 1.1kHz (two RBJ
-biquads — one-pole cascades leak too much 9.6kHz to work), gates at 15% of the
-median frame energy, and takes the first and last **run of three consecutive
-frames** over that gate.
-
-That last part matters more than it looks. The buzz begins with a step, and a
-step is broadband: a single frame of it is indistinguishable from a consonant.
-Requiring speech to persist for ~30ms rejects the onset while leaving every
-real segment identical — measured, two frames is already enough, and two,
-three and four all give the same answer on every segment tested.
-
-Measured on the article, before and after:
-
-| segment | before | after | removed |
-| --- | ---: | ---: | ---: |
-| 1 (buzz) | 6.50s | 6.21s | 0.29s |
-| 4 (buzz) | 7.09s | 6.22s | 0.87s |
-| 0, 2, 3, 5 (clean) | — | unchanged | 0.00s |
-
-`HEARFUL_KOKORO_RAW=1` renders untrimmed, which is how the raw artefacts above
-were measured; without it there is no way to see what the model actually
-produced.
-
-## The ring at the end of every segment
-
-Shortening the segments removed the long held notes, but left a shorter one
-every few words — and that one is not a length effect. **Every render comes
-back with a decaying pure tone after the last word**, roughly a quarter of a
-second of it, plus about 0.25s of silence before the first word and up to 0.6s
-of silence after. Played one segment after another, that is a note and a pause
-at every join.
-
-Measured on four segments of one paragraph:
-
-| segment | rendered | silence before | ring + silence after |
-| --- | ---: | ---: | ---: |
-| 0 | 5.03s | 0.25s | 0.72s |
-| 1 | 3.02s | 0.23s | 0.70s |
-| 2 | 6.72s | 0.27s | 0.76s |
-| 3 | 2.05s | 0.26s | 0.57s |
-
-`KokoroAudio.trimmedToSpeech()` cuts both ends, and `MLXKokoroEngine` applies
-it to everything it renders. The test cannot be loudness — **the ring is louder
-than the speech around it** — so it is high-frequency energy instead: speech
-always carries energy above 1kHz, and a low sinusoid carries almost none. A
-two-pole high-pass at 1kHz, a gate at 15% of the median frame energy, a 40ms
-guard either side so no quiet consonant is clipped, and a 10ms fade so the
-joins do not click. One pole is not enough: it leaves a 200Hz ring only ~14dB
-down, still above the gate.
-
-On the same paragraph that produces 16.82s of audio raw, this returns 13.40s —
-all of it speech, with no silent bands and no rings between segments.
+The artefacts are worth recognising if they ever return. The tone is a loud
+decaying low sinusoid. The buzz is quiet, periodic, and puts its energy only at
+DC, 4.8kHz and 9.6kHz, with *nothing* between 300Hz and 4kHz where speech
+formants live — that 9.6kHz component is what a listener hears as a
+high-pitched squeak.
 
 ## What it takes to get there
 

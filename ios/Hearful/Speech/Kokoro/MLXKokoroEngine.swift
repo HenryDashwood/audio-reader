@@ -51,15 +51,15 @@
                 text: text,
                 speed: speed
             )
-            // Trimmed here rather than at the player, because it is the model
-            // that leaves the ring and the silence, and everything downstream
-            // is better off never seeing them.
+            // Trimmed here rather than at the player: the silence belongs to
+            // the model, and everything downstream is better off never seeing
+            // it.
             let raw = KokoroAudio(
                 samples: samples, sampleRate: Double(KokoroTTS.Constants.samplingRate))
             // Debug escape hatch: render untrimmed, to see what the model
             // actually produced.
             if ProcessInfo.processInfo.environment["HEARFUL_KOKORO_RAW"] != nil { return raw }
-            return raw.trimmedToSpeech()
+            return raw.trimmedSilence()
         }
 
         /// Voice keys carry the `.npy` suffix they had inside the archive;

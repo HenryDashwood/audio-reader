@@ -322,18 +322,12 @@ struct KokoroVoiceTests {
 @Suite("Trimming a rendered segment")
 struct KokoroAudioTrimTests {
     private static let rate = 24_000.0
-    private var rate: Double { Self.rate }
 
-    /// Silence, then something speech-like, then the decaying low tone the
-    /// model leaves behind.
+    /// A render as the model delivers it: silence, speech, silence.
     private static func rendered(
-        lead: Double, speech: Double, ring: Double
+        lead: Double, speech: Double, trail: Double
     ) -> KokoroAudio {
         var samples: [Float] = Array(repeating: 0, count: Int(lead * rate))
-        // Speech stands in as noise low-passed to roughly 3kHz. Plain white
-        // noise is a poor proxy: it spreads its energy to 12kHz, where speech
-        // concentrates it below 4kHz, and that understates the speech-band
-        // level the trim actually measures.
         var state: UInt64 = 42
         var smoothed: Float = 0
         for _ in 0..<Int(speech * rate) {
@@ -342,83 +336,52 @@ struct KokoroAudioTrimTests {
             smoothed += 0.5 * (white - smoothed)
             samples.append(smoothed * 0.6)
         }
-        // The ring: a loud low sinusoid, decaying, with no energy in the
-        // speech band. Faded in over 20ms because the real one decays out of
-        // the speech continuously — a step here would be a broadband click,
-        // which any speech detector should and does keep.
-        let ringCount = Int(ring * rate)
-        let fadeIn = Int(0.02 * rate)
-        for index in 0..<ringCount {
-            let t = Double(index) / rate
-            // Exponential, like the resonance it stands for. A linear ramp
-            // stays loud far longer than the real thing and is not a fair test.
-            var envelope = exp(-t / 0.12)
-            if index < fadeIn { envelope *= Double(index) / Double(fadeIn) }
-            samples.append(Float(sin(2 * .pi * 200 * t) * envelope * 0.3))
-        }
+        samples.append(contentsOf: Array(repeating: 0, count: Int(trail * rate)))
         return KokoroAudio(samples: samples, sampleRate: rate)
     }
 
-    @Test func theLeadInAndTheRingAreBothRemoved() {
-        let audio = Self.rendered(lead: 0.25, speech: 1.0, ring: 0.6)
-        let trimmed = audio.trimmedToSpeech()
+    @Test func theSilenceEitherSideIsRemoved() {
+        // What the model actually leaves: ~0.29s before, ~0.68s after. Joined
+        // segment to segment that is a second of dead air at every paragraph.
+        let audio = Self.rendered(lead: 0.29, speech: 1.0, trail: 0.68)
+        let trimmed = audio.trimmedSilence()
 
-        #expect(audio.duration > 1.8)
-        // The speech survives whole, and most of the 0.85s of junk around it
-        // is gone. Not asserted to the millisecond: where exactly the ring
-        // falls below the gate depends on how loud it starts.
-        #expect(trimmed.duration >= 0.95)
-        #expect(trimmed.duration < audio.duration - 0.5)
+        #expect(abs(trimmed.duration - 1.04) < 0.03)  // the speech, plus 20ms margin either side
     }
 
-    @Test func aLoudRingIsNotMistakenForSpeech() {
-        // The ring is louder than the speech, so anything gating on loudness
-        // alone would keep it. This is why the test is high-frequency energy.
-        var audio = Self.rendered(lead: 0.1, speech: 0.8, ring: 0.5)
-        audio = KokoroAudio(samples: audio.samples.map { $0 * 1 }, sampleRate: Self.rate)
-        let trimmed = audio.trimmedToSpeech()
+    @Test func nothingAudibleIsEverRemoved() {
+        // The failure this replaced: a speech classifier clipped word-initial
+        // sibilants and faded the first syllable. A silence trim cannot,
+        // because it only ever cuts what is already below hearing.
+        let audio = Self.rendered(lead: 0.29, speech: 1.0, trail: 0.68)
+        let trimmed = audio.trimmedSilence()
 
-        #expect(trimmed.duration < audio.duration - 0.3)
+        let loudBefore = audio.samples.filter { abs($0) > 0.002 }
+        let loudAfter = trimmed.samples.filter { abs($0) > 0.002 }
+        #expect(loudAfter == loudBefore)
     }
 
-    @Test func theBuzzBeforeTheFirstWordIsRemoved() {
-        // The artefact that made articles unlistenable: quiet, periodic, with
-        // energy only at DC, 4.8kHz and 9.6kHz — and none in the speech band.
-        // Over half its energy is above 4kHz, so a high-frequency test keeps
-        // it. It has to be found by what it lacks, not what it has.
-        var samples: [Float] = []
-        let buzz = Int(0.5 * rate)
-        for index in 0..<buzz {
-            let t = Double(index) / rate
-            let value = 0.5 + sin(2 * .pi * 4800 * t) + sin(2 * .pi * 9600 * t)
-            samples.append(Float(value) * 0.03)
-        }
-        var state: UInt64 = 7
-        var smoothed: Float = 0
-        for _ in 0..<Int(1.0 * rate) {
-            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-            let white = Float(Int32(truncatingIfNeeded: state >> 33)) / Float(Int32.max)
-            smoothed += 0.5 * (white - smoothed)
-            samples.append(smoothed * 0.6)
-        }
-        let audio = KokoroAudio(samples: samples, sampleRate: Self.rate)
-        let trimmed = audio.trimmedToSpeech()
+    @Test func theEdgesAreNotFadedSoOnsetsSurvive() {
+        // A fade at the cut is what made "Everyone" sound rushed.
+        let trimmed = Self.rendered(lead: 0.29, speech: 1.0, trail: 0.68).trimmedSilence()
+        let margin = Int(0.02 * Self.rate)
 
-        #expect(audio.duration > 1.4)
-        #expect(abs(trimmed.duration - 1.0) < 0.15)
+        // The first audible sample is untouched, not ramped.
+        let firstAudible = trimmed.samples[margin...].first { abs($0) > 0.002 }
+        #expect(firstAudible != nil)
     }
 
     @Test func silenceIsLeftAloneRatherThanEmptied() {
         let silent = KokoroAudio(
             samples: Array(repeating: 0, count: 12_000), sampleRate: Self.rate)
 
-        #expect(silent.trimmedToSpeech().samples.count == silent.samples.count)
+        #expect(silent.trimmedSilence().samples.count == silent.samples.count)
     }
 
-    @Test func endsAreFadedSoJoiningSegmentsDoesNotClick() {
-        let trimmed = Self.rendered(lead: 0.25, speech: 1.0, ring: 0.6).trimmedToSpeech()
+    @Test func audioWithNoSilenceIsUntouched() {
+        let audio = Self.rendered(lead: 0, speech: 1.0, trail: 0)
+        let trimmed = audio.trimmedSilence()
 
-        #expect(abs(trimmed.samples.first ?? 1) < 0.01)
-        #expect(abs(trimmed.samples.last ?? 1) < 0.01)
+        #expect(trimmed.samples.count == audio.samples.count)
     }
 }
