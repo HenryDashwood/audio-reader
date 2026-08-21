@@ -1,13 +1,13 @@
-#if canImport(KokoroSwift)
+#if canImport(KokoroSwift) && !targetEnvironment(simulator)
 
     import Foundation
     import os
 
-    /// Times and captures a render on the real device, because nothing else
-    /// can: MLX does not link for the simulator, and loading the weights under
-    /// XCTest gets the process killed. So it runs inside the app on a launch
-    /// environment variable, in the manner of the fake-transcript hook used for
-    /// voice flows:
+    /// Times and captures a render on the real device, because MLX inference
+    /// requires a Metal GPU that the simulator does not provide, and loading
+    /// the weights under XCTest gets the process killed. So it runs inside the
+    /// app on a launch environment variable, in the manner of the
+    /// fake-transcript hook used for voice flows:
     ///
     ///     xcrun devicectl device process launch --device <id> --console \
     ///       --environment-variables '{"HEARFUL_KOKORO_BENCH":"1"}' \

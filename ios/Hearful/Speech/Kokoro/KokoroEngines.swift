@@ -3,9 +3,9 @@ import Foundation
 /// Builds the Kokoro engine, if this build has one.
 ///
 /// The MLX engine only exists when the `kokoro-ios` package has been added to
-/// the project — the whole file is behind `#if canImport(KokoroSwift)`. That
-/// keeps a checkout without the package compiling and running exactly as it
-/// does today, on Apple's voices, rather than failing to build.
+/// the project and the app is running on a real device. The simulator can link
+/// modern MLX releases, but it has no Metal GPU capable of running inference.
+/// In either unavailable case the app falls back to Apple's voices.
 nonisolated enum KokoroEngines {
     /// The one engine in the process.
     ///
@@ -17,7 +17,7 @@ nonisolated enum KokoroEngines {
     static let shared: KokoroRendering? = make()
 
     private static func make() -> KokoroRendering? {
-        #if canImport(KokoroSwift)
+        #if canImport(KokoroSwift) && !targetEnvironment(simulator)
             guard let model = KokoroModelStore.modelURL,
                 let voices = KokoroModelStore.voicesURL
             else { return nil }
@@ -29,7 +29,7 @@ nonisolated enum KokoroEngines {
 
     /// Whether choosing a Kokoro voice could do anything on this build.
     static var isAvailable: Bool {
-        #if canImport(KokoroSwift)
+        #if canImport(KokoroSwift) && !targetEnvironment(simulator)
             return KokoroModelStore.isInstalled
         #else
             return false

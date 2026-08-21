@@ -70,6 +70,7 @@ jobs:
           xcodebuild test \
             -project ios/Hearful.xcodeproj \
             -scheme Hearful \
+            -skipPackagePluginValidation \
             -destination "platform=iOS Simulator,OS=latest,name=$device"
 
       - name: Work out the version numbers
@@ -159,6 +160,7 @@ jobs:
           xcodebuild archive \
             -project ios/Hearful.xcodeproj \
             -scheme Hearful \
+            -skipPackagePluginValidation \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Hearful.xcarchive" \

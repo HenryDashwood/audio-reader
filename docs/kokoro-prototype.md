@@ -24,6 +24,11 @@ actually produces:
 | warm, speed 2.0 | 8.53s | 1.03s | 8.3x |
 | warm, speed 3.0 | 7.47s | 0.84s | 8.9x |
 
+These are isolated, one-call engine timings. They do not measure the current
+reader pipeline, which renders at 1x in calls of at most 90 characters and
+then accelerates the finished audio. In particular, they cannot establish
+that the serial renderer always keeps the playback queue full at 2x.
+
 Three things worth taking from that:
 
 - **There is comfortable headroom on modern hardware.** At 3x playback the
@@ -98,19 +103,36 @@ If the model or the port is ever updated, re-run the sweep before raising it.
 ## What the app adds to the model, and what it does not
 
 The upstream demo renders one utterance and plays it, and sounds fine. This app
-splits an article into segments, so it needs two things the demo does not — and
-it should need nothing else.
+splits and continuously reads full articles, so it needs four things the demo
+does not — and it should need nothing else.
 
-**1. A segment limit of 90 characters.** Everything that ever sounded wrong
-came from giving the model too much text at once: a held tone, and a buzz that
-*replaces* words rather than covering them. See below for the measurements. At
-90 characters neither appears, on any segment of the article tested.
+**1. A segment limit of 90 characters, split at natural clauses.** Everything
+that ever sounded wrong came from giving the model too much text at once: a
+held tone, and a buzz that *replaces* words rather than covering them. See below
+for the measurements. At 90 characters neither appears, on any segment of the
+article tested. Long sentences prefer commas, semicolons, colons and dashes
+within that limit before falling back to an arbitrary word boundary, so Misaki
+and Kokoro retain more useful context for stress and prosody.
 
 **2. Trimming the silence between segments.** Every render arrives with about
 0.29s of digital silence before the first word and 0.68s after the last. In the
 demo that is unnoticeable. Concatenated segment to segment it is nearly a
 second of dead air at every join. `KokoroAudio.trimmedSilence()` cuts it, on an
 absolute level threshold of about -54 dBFS, keeping 20ms either side.
+
+**3. A time-based playback reserve at raised speeds.** The voice is rendered
+at 1x and the finished samples are accelerated, so at 2x the renderer has half
+as long to produce each following segment. Playback now starts with about
+three wall-clock seconds ready at 2x (up to four at 3x). If the queue catches
+the renderer later, it rebuilds the same reserve rather than alternating one
+late segment with one silence. Normal speed still starts on the first segment.
+
+**4. A forced reduced pronunciation for lowercase article “a”.** Misaki only
+uses /ɐ/ when its part-of-speech tagger recognises a determiner; its fallback
+is the stressed letter name /ˈA/ ("AY"). That tag is unreliable on device, so
+lowercase `a` followed by a noun phrase is passed through Misaki's inline
+phoneme syntax as `[a](/ɐ/)`. Capital `A`, embedded letters and abbreviations
+such as `a.m.` are left alone.
 
 **And nothing else.** An earlier version of this file classified every frame as
 speech or not-speech — band-pass filters, energy gates, run-length rules, a
@@ -160,22 +182,25 @@ high-pitched squeak.
 Four things stand between a fresh checkout and that table, and none of them are
 obvious.
 
-### 1. MLX does not build for the iOS simulator
+### 1. MLX inference does not run in the iOS simulator
 
-Linking fails on `_MTLIOErrorDomain`, which the simulator SDK does not provide.
-Everything Kokoro has to be built and run on a physical device — which also
-means **adding this package to the project breaks `make ios-build` and
-`make ios-test`**, since both target the simulator. That is the strongest
-argument for keeping the engine behind `#if canImport(KokoroSwift)` and out of
-the default build, exactly as it is now.
+MLX Swift 0.30.2 failed to link on `_MTLIOErrorDomain`, which the simulator SDK
+does not provide. Version 0.30.6 fixed that by weak-linking the unavailable
+Metal error domains, and Hearful now uses 0.31.6. The package therefore builds
+and the ordinary test suite runs in the simulator, but real inference still
+requires a Metal GPU family the simulator does not expose. The MLX engine and
+benchmark are guarded with
+`#if canImport(KokoroSwift) && !targetEnvironment(simulator)`; simulator builds
+use the system voice or a fake renderer while real Kokoro rendering remains
+device-only.
 
 ### 2. MLX must be told the GPU limits, or iOS kills the app
 
 This cost the most time by far, so it is worth stating plainly. Without
 
 ```swift
-GPU.set(cacheLimit: 50 * 1024 * 1024)
-GPU.set(memoryLimit: 900 * 1024 * 1024)
+Memory.cacheLimit = 50 * 1024 * 1024
+Memory.memoryLimit = 900 * 1024 * 1024
 ```
 
 the app is killed with **signal 9** the moment it loads the weights. There is
@@ -224,6 +249,10 @@ it breaks the simulator build for everyone.
   it.
 - Xcode 27 ships without the Metal toolchain MLX needs:
   `xcodebuild -downloadComponent MetalToolchain` (839MB).
+- MLX Swift 0.31.6 includes an inert-on-Apple `CudaBuild` package plugin.
+  Non-interactive builds pass `-skipPackagePluginValidation` because they
+  cannot display Xcode's one-time trust prompt; dependency revisions remain
+  pinned in `Package.resolved`.
 
 ### The model files
 
@@ -301,12 +330,13 @@ Three things are worth knowing about the design:
 - **Progress is estimated from the pace of what has already rendered**, not
   from words per minute — this voice, at this speed, on this text. Once the
   chunk is fully rendered the estimate becomes exact.
-- **The speaking rate goes through Kokoro's own `speed`**, which scales
-  predicted phoneme durations rather than time-stretching the waveform. 2x
-  sounds like someone reading quickly. `KokoroSynthesizer.speed(forUtteranceRate:)`
-  inverts `ArticlePlayer.utteranceRate(for:)` so the reader's existing knob
-  still drives it; note that the reader's rate curve saturates, so the 3x
-  setting arrives as about 2.8x.
+- **The speaking rate is applied to the rendered audio.** Kokoro always renders
+  at 1x because its own speed control slurs and drops syllables. An
+  `AVAudioUnitTimePitch` accelerates the finished samples without raising the
+  pitch. `KokoroSynthesizer.speed(forUtteranceRate:)` inverts
+  `ArticlePlayer.utteranceRate(for:)` so the reader's existing knob still
+  drives it; the reader's rate curve saturates, so the 3x setting arrives as
+  about 2.8x. Raised speeds build a time-based reserve before output starts.
 
 ## What is not done yet
 

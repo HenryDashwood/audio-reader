@@ -1,4 +1,4 @@
-#if canImport(KokoroSwift)
+#if canImport(KokoroSwift) && !targetEnvironment(simulator)
 
     import Foundation
     import KokoroSwift
@@ -48,7 +48,7 @@
             let (samples, _) = try tts.generateAudio(
                 voice: style,
                 language: voice.isBritish ? .enGB : .enUS,
-                text: text,
+                text: KokoroTextNormalization.forSynthesis(text),
                 speed: speed
             )
             // Trimmed here rather than at the player: the silence belongs to
@@ -84,8 +84,8 @@
         /// between working and being killed; the values follow upstream's
         /// own sample app.
         private static let configureGPU: Void = {
-            GPU.set(cacheLimit: 50 * 1024 * 1024)
-            GPU.set(memoryLimit: 900 * 1024 * 1024)
+            Memory.cacheLimit = 50 * 1024 * 1024
+            Memory.memoryLimit = 900 * 1024 * 1024
         }()
 
         private func loadEngine() -> KokoroTTS {

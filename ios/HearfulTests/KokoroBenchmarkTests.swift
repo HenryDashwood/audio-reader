@@ -1,13 +1,14 @@
-#if canImport(KokoroSwift)
+#if canImport(KokoroSwift) && !targetEnvironment(simulator)
 
     import Foundation
     import Testing
 
     @testable import Hearful
 
-    /// Device-only: MLX does not link for the simulator, and this needs the
-    /// model files in the app bundle. Measures what the reader actually asks
-    /// for — one chunk-sized paragraph, at the speeds she can choose.
+    /// Device-only: MLX inference requires a Metal GPU that the simulator does
+    /// not provide, and this needs the model files in the app bundle. Measures
+    /// what the reader actually asks for — one chunk-sized paragraph, at the
+    /// speeds she can choose.
     @Suite("Kokoro benchmark", .serialized)
     struct KokoroBenchmarkTests {
         /// A real paragraph at ArticleScript's chunk limit.

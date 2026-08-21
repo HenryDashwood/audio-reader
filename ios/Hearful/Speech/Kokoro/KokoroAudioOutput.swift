@@ -14,6 +14,10 @@ protocol KokoroAudioOutputting: AnyObject {
     /// after `finishEnqueueing()`, so it means the utterance is over rather
     /// than that the renderer fell behind.
     var onDrained: (@MainActor () -> Void)? { get set }
+    /// Playback caught up with the renderer before the utterance was fully
+    /// enqueued. The synthesiser uses this to rebuild a reserve instead of
+    /// feeding the player one late buffer at a time.
+    var onUnderrun: (@MainActor () -> Void)? { get set }
 
     /// How fast to play, with the pitch left alone. Speech is always rendered
     /// at 1x and sped up here.
@@ -44,6 +48,7 @@ protocol KokoroAudioOutputting: AnyObject {
 @MainActor
 final class KokoroAudioEngineOutput: KokoroAudioOutputting {
     var onDrained: (@MainActor () -> Void)?
+    var onUnderrun: (@MainActor () -> Void)?
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -55,6 +60,9 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
     private var scheduled = 0
     private var played = 0
     private var isComplete = false
+    /// Completion callbacks still arrive for buffers dropped by `stop()`.
+    /// A generation keeps those callbacks out of a new utterance's counters.
+    private var generation = 0
     /// The playhead stops moving while paused, so it is remembered rather
     /// than read.
     private var pausedElapsed: TimeInterval?
@@ -88,8 +96,9 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
             return
         }
         scheduled += 1
+        let scheduledGeneration = generation
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            Task { @MainActor in self?.bufferPlayed() }
+            Task { @MainActor in self?.bufferPlayed(generation: scheduledGeneration) }
         }
         if !player.isPlaying && pausedElapsed == nil {
             player.play()
@@ -121,9 +130,11 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
     /// between every chunk of an article — which is audible: a gap, and a
     /// chirp as the reconnected node picks up the new format.
     func stop() {
-        // The callbacks for the dropped buffers still arrive; clearing the
-        // counters first means they cannot add up to a drain.
+        // The callbacks for dropped buffers still arrive. Advancing the
+        // generation makes them harmless to whatever is scheduled next.
         onDrained = nil
+        onUnderrun = nil
+        generation += 1
         scheduled = 0
         played = 0
         isComplete = false
@@ -185,8 +196,15 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
         engine.mainMixerNode.removeTap(onBus: 0)
     }
 
-    private func bufferPlayed() {
+    private func bufferPlayed(generation completedGeneration: Int) {
+        guard completedGeneration == generation else { return }
         played += 1
+        if !isComplete, played >= scheduled {
+            // Stop the node's clock while no speech is available. Enqueueing
+            // the rebuilt reserve starts it again unless the listener paused.
+            player.pause()
+            onUnderrun?()
+        }
         drainIfFinished()
     }
 

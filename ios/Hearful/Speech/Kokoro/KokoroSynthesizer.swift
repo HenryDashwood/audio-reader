@@ -48,6 +48,13 @@ final class KokoroSynthesizer: SpeechSynthesizing {
     private var renderedCharacters = 0
     private var totalCharacters = 0
     private var isRenderComplete = false
+    /// At raised speeds the renderer has less wall-clock time to make the next
+    /// segment. Hold a few seconds here before starting (and after an
+    /// underrun) rather than repeatedly playing one buffer and falling silent.
+    private var buffered: [KokoroAudio] = []
+    private var bufferedDuration: TimeInterval = 0
+    private var playbackRate: Float = 1
+    private var isOutputStarted = true
 
     /// The most text Kokoro can be given in one call before it starts
     /// producing rubbish.
@@ -75,9 +82,19 @@ final class KokoroSynthesizer: SpeechSynthesizing {
     /// So: keep every call at or under this, and check it again if the model
     /// or the port is ever updated.
     nonisolated static let segmentCharacterLimit = 90
+    nonisolated private static let clausePunctuation = Set<Character>(",;:—–")
+    nonisolated private static let closingPunctuation = Set<Character>("\"'”’)]}")
     /// Fallback pace, used only until the first segment has been rendered.
     nonisolated private static let charactersPerSecond = 16.4
     private static let progressInterval: TimeInterval = 0.1
+
+    /// Wall-clock audio to have ready before fast playback begins. The reserve
+    /// grows with the consumption rate: about three seconds at 2x and four at
+    /// 3x. Normal speed keeps its existing first-word latency.
+    nonisolated static func startupBufferDuration(forPlaybackRate rate: Float) -> TimeInterval {
+        guard rate > 1 else { return 0 }
+        return min(Double(rate) + 1, 4)
+    }
 
     init(
         engine: KokoroRendering,
@@ -101,7 +118,9 @@ final class KokoroSynthesizer: SpeechSynthesizing {
         // 1.5x it swallowed the first syllable of ordinary words — and the
         // model has no idea it is doing it.
         let speed: Float = 1
-        output.setRate(Self.speed(forUtteranceRate: utterance.rate))
+        playbackRate = Self.speed(forUtteranceRate: utterance.rate)
+        output.setRate(playbackRate)
+        isOutputStarted = Self.startupBufferDuration(forPlaybackRate: playbackRate) == 0
         let segments = Self.segments(of: text)
 
         current = id
@@ -109,6 +128,7 @@ final class KokoroSynthesizer: SpeechSynthesizing {
         isSpeaking = true
         isPaused = false
         output.onDrained = { [weak self] in self?.drained(id) }
+        output.onUnderrun = { [weak self] in self?.outputUnderran(for: id) }
         startProgressTimer()
 
         // Whatever was rendered ahead is a prefix of the segments, so it can
@@ -204,6 +224,10 @@ final class KokoroSynthesizer: SpeechSynthesizing {
         renderedCharacters = 0
         totalCharacters = 0
         isRenderComplete = false
+        buffered = []
+        bufferedDuration = 0
+        playbackRate = 1
+        isOutputStarted = true
         isSpeaking = false
         isPaused = false
     }
@@ -226,12 +250,22 @@ final class KokoroSynthesizer: SpeechSynthesizing {
         guard current == id else { return }
         renderedDuration += audio.duration
         renderedCharacters += characters
-        output.enqueue(audio)
+        if isOutputStarted {
+            output.enqueue(audio)
+        } else {
+            buffered.append(audio)
+            bufferedDuration += audio.duration
+            startBufferedOutputIfReady()
+        }
     }
 
     private func renderingFinished(for id: UtteranceID) {
         guard current == id else { return }
         isRenderComplete = true
+        // A short utterance may never reach the target. Once no more audio is
+        // coming, play whatever it has rather than waiting for an impossible
+        // reserve.
+        startBufferedOutputIfReady(force: true)
         // Nothing is competing for the engine now, so the next chunk can be
         // made while this one plays.
         startPrefetch()
@@ -242,6 +276,25 @@ final class KokoroSynthesizer: SpeechSynthesizing {
             return
         }
         output.finishEnqueueing()
+    }
+
+    private func outputUnderran(for id: UtteranceID) {
+        guard current == id, !isRenderComplete else { return }
+        isOutputStarted = false
+    }
+
+    private func startBufferedOutputIfReady(force: Bool = false) {
+        guard !isOutputStarted, !buffered.isEmpty else { return }
+        let rate = max(Double(playbackRate), 0.5)
+        let readyDuration = bufferedDuration / rate
+        let target = Self.startupBufferDuration(forPlaybackRate: playbackRate)
+        guard force || readyDuration >= target else { return }
+
+        isOutputStarted = true
+        let ready = buffered
+        buffered = []
+        bufferedDuration = 0
+        for audio in ready { output.enqueue(audio) }
     }
 
     private func drained(_ id: UtteranceID) {
@@ -317,30 +370,86 @@ final class KokoroSynthesizer: SpeechSynthesizing {
     }
 
     /// A chunk as the pieces it will be rendered in: sentences packed up to
-    /// the limit, with anything still oversized broken at a word boundary.
+    /// the limit, with anything still oversized broken at a natural clause
+    /// boundary where possible and a word boundary otherwise.
     nonisolated static func segments(of text: String) -> [String] {
         ArticleScript.pieces(of: text, limit: segmentCharacterLimit)
             .flatMap(splitIfOversized)
     }
 
     /// Sentence packing gets most of the way there, but a single sentence
-    /// longer than the limit comes back whole, and has to be broken at a word
-    /// boundary rather than handed over intact.
+    /// longer than the limit comes back whole. Prefer punctuation near the end
+    /// of each fitting window: Kokoro and Misaki otherwise see an arbitrary
+    /// mid-clause fragment and can put the wrong stress on its edge words.
     nonisolated private static func splitIfOversized(_ piece: String) -> [String] {
         guard piece.count > segmentCharacterLimit else { return [piece] }
+
+        let words = piece.split(separator: " ")
         var pieces: [String] = []
-        var current = ""
-        for word in piece.split(separator: " ") {
-            if current.isEmpty {
-                current = String(word)
-            } else if current.count + word.count + 1 <= segmentCharacterLimit {
-                current += " " + word
-            } else {
-                pieces.append(current)
-                current = String(word)
+        var start = 0
+
+        while start < words.count {
+            var end = start
+            var length = 0
+            while end < words.count {
+                let added = words[end].count + (end == start ? 0 : 1)
+                guard length + added <= segmentCharacterLimit else { break }
+                length += added
+                end += 1
             }
+
+            // Extremely long unbroken text (usually a URL) still has to obey
+            // the model's correctness limit even though it offers no words or
+            // clauses at which to split.
+            if end == start {
+                pieces.append(contentsOf: splitUnbroken(String(words[start])))
+                start += 1
+                continue
+            }
+
+            if end == words.count {
+                pieces.append(words[start..<end].joined(separator: " "))
+                break
+            }
+
+            let minimumNaturalLength = max(segmentCharacterLimit / 3, 1)
+            var candidate: Int?
+            var candidateLength = 0
+            for index in start..<end {
+                candidateLength += words[index].count + (index == start ? 0 : 1)
+                if candidateLength >= minimumNaturalLength,
+                    isClauseBoundary(after: words[index])
+                {
+                    candidate = index + 1
+                }
+            }
+
+            let split = candidate ?? end
+            pieces.append(words[start..<split].joined(separator: " "))
+            start = split
         }
-        if !current.isEmpty { pieces.append(current) }
+
+        return pieces
+    }
+
+    nonisolated private static func isClauseBoundary(after word: Substring) -> Bool {
+        for character in word.reversed() {
+            if closingPunctuation.contains(character) { continue }
+            return clausePunctuation.contains(character)
+        }
+        return false
+    }
+
+    nonisolated private static func splitUnbroken(_ value: String) -> [String] {
+        var remaining = value
+        var pieces: [String] = []
+        while remaining.count > segmentCharacterLimit {
+            let end = remaining.index(
+                remaining.startIndex, offsetBy: segmentCharacterLimit)
+            pieces.append(String(remaining[..<end]))
+            remaining = String(remaining[end...])
+        }
+        if !remaining.isEmpty { pieces.append(remaining) }
         return pieces
     }
 }

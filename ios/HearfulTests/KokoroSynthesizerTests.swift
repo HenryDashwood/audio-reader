@@ -31,10 +31,35 @@ private actor FakeKokoroEngine: KokoroRendering {
     }
 }
 
+/// A renderer whose caller decides when each segment becomes available. That
+/// makes the buffering boundary deterministic instead of relying on sleeps.
+private actor GatedKokoroEngine: KokoroRendering {
+    private var gates: [CheckedContinuation<Void, Never>] = []
+    private(set) var requestedSegments = 0
+
+    func availableVoices() async -> [KokoroVoice] { KokoroVoice.catalogue }
+
+    func render(text: String, voice: KokoroVoice, speed: Float) async throws -> KokoroAudio {
+        requestedSegments += 1
+        await withCheckedContinuation { continuation in
+            gates.append(continuation)
+        }
+        let sampleRate = 100.0
+        let frames = Int(Double(text.count) * FakeKokoroEngine.secondsPerCharacter * sampleRate)
+        return KokoroAudio(samples: [Float](repeating: 0, count: frames), sampleRate: sampleRate)
+    }
+
+    func releaseNext() {
+        guard !gates.isEmpty else { return }
+        gates.removeFirst().resume()
+    }
+}
+
 /// An output that keeps what it was given and never makes a sound.
 @MainActor
 private final class FakeKokoroOutput: KokoroAudioOutputting {
     var onDrained: (@MainActor () -> Void)?
+    var onUnderrun: (@MainActor () -> Void)?
     var elapsed: TimeInterval = 0
 
     private(set) var enqueued: [KokoroAudio] = []
@@ -60,6 +85,7 @@ private final class FakeKokoroOutput: KokoroAudioOutputting {
     func stop() {
         stops += 1
         onDrained = nil
+        onUnderrun = nil
         enqueued = []
         isFinished = false
     }
@@ -75,6 +101,10 @@ private final class FakeKokoroOutput: KokoroAudioOutputting {
         let finished = onDrained
         onDrained = nil
         finished?()
+    }
+
+    func underrun() {
+        onUnderrun?()
     }
 }
 
@@ -101,6 +131,14 @@ struct KokoroSynthesizerTests {
             try? await Task.sleep(for: .milliseconds(5))
         }
         return await engine.renderedSegments.count >= count
+    }
+
+    private func waitUntilRequested(_ engine: GatedKokoroEngine, atLeast count: Int) async -> Bool {
+        for _ in 0..<200 {
+            if await engine.requestedSegments >= count { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return await engine.requestedSegments >= count
     }
 
     private func waitUntil(_ condition: @MainActor () -> Bool) async -> Bool {
@@ -140,6 +178,70 @@ struct KokoroSynthesizerTests {
         #expect(abs(output.rate - 2) < 0.01)
     }
 
+    @Test func fastPlaybackBuildsMoreReserveThanNormalPlayback() {
+        #expect(KokoroSynthesizer.startupBufferDuration(forPlaybackRate: 1) == 0)
+        #expect(KokoroSynthesizer.startupBufferDuration(forPlaybackRate: 1.5) == 2.5)
+        #expect(KokoroSynthesizer.startupBufferDuration(forPlaybackRate: 2) == 3)
+        #expect(KokoroSynthesizer.startupBufferDuration(forPlaybackRate: 3) == 4)
+    }
+
+    @Test func fastPlaybackBuildsAReserveAtStartupAndAfterAnUnderrun() async throws {
+        let engine = GatedKokoroEngine()
+        let output = FakeKokoroOutput()
+        let synthesizer = KokoroSynthesizer(engine: engine, voice: Self.voice, output: output)
+        let sentence =
+            "This deliberately measured sentence fills one render buffer without being too long. "
+        let text = String(repeating: sentence, count: 6)
+        let segments = KokoroSynthesizer.segments(of: text)
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.rate = ArticlePlayer.utteranceRate(for: 2)
+
+        let target = KokoroSynthesizer.startupBufferDuration(forPlaybackRate: 2)
+        var sourceDuration = 0.0
+        let lastBufferedIndex = try #require(segments.indices.first { index in
+            sourceDuration += Double(segments[index].count) * FakeKokoroEngine.secondsPerCharacter
+            return sourceDuration / 2 >= target
+        })
+        let segmentsNeeded = lastBufferedIndex + 1
+        #expect(segmentsNeeded > 1)
+        #expect(segments.count >= segmentsNeeded * 2)
+
+        synthesizer.speak(utterance)
+        for index in 0..<segmentsNeeded {
+            #expect(await waitUntilRequested(engine, atLeast: index + 1))
+            await engine.releaseNext()
+            if index + 1 < segmentsNeeded {
+                #expect(await waitUntilRequested(engine, atLeast: index + 2))
+                #expect(output.enqueued.isEmpty)
+            }
+        }
+        #expect(await waitUntil { output.enqueued.count == segmentsNeeded })
+
+        // Once playback catches the renderer, one newly rendered segment is
+        // held rather than played as an isolated burst. The same target is
+        // rebuilt before output resumes.
+        #expect(await waitUntilRequested(engine, atLeast: segmentsNeeded + 1))
+        output.underrun()
+        let enqueuedBeforeUnderrun = output.enqueued.count
+        for offset in 0..<segmentsNeeded {
+            let index = segmentsNeeded + offset
+            await engine.releaseNext()
+            if offset + 1 < segmentsNeeded {
+                #expect(await waitUntilRequested(engine, atLeast: index + 2))
+                #expect(output.enqueued.count == enqueuedBeforeUnderrun)
+            }
+        }
+        #expect(await waitUntil {
+            output.enqueued.count == enqueuedBeforeUnderrun + segmentsNeeded
+        })
+
+        for index in (segmentsNeeded * 2)..<segments.count {
+            #expect(await waitUntilRequested(engine, atLeast: index + 1))
+            await engine.releaseNext()
+        }
+        #expect(await waitUntil { output.isFinished })
+    }
+
     @Test func theFastestSettingSaturatesRatherThanInverting() {
         // ArticlePlayer caps the utterance rate below what 3× would need, so
         // the fastest setting comes back a little slower. Worth knowing about
@@ -171,6 +273,30 @@ struct KokoroSynthesizerTests {
         #expect(segments.count > 1)
         #expect(segments.allSatisfy { $0.count <= KokoroSynthesizer.segmentCharacterLimit })
         #expect(segments.allSatisfy { !$0.contains("wordword") })
+    }
+
+    @Test func oneLongSentencePrefersAClauseBoundary() {
+        let text =
+            "Although the opening clause has enough words to make a useful and natural boundary, "
+            + "the sentence continues beyond the model's safe rendering limit without ending yet."
+        let segments = KokoroSynthesizer.segments(of: text)
+
+        #expect(segments.count == 2)
+        #expect(segments[0].hasSuffix(","))
+        #expect(segments.joined(separator: " ") == text)
+        #expect(segments.allSatisfy { $0.count <= KokoroSynthesizer.segmentCharacterLimit })
+    }
+
+    @Test func unbrokenTextStillObeysTheModelsLimit() {
+        let text = String(repeating: "x", count: KokoroSynthesizer.segmentCharacterLimit * 2 + 1)
+        let segments = KokoroSynthesizer.segments(of: text)
+
+        #expect(segments.map(\.count) == [
+            KokoroSynthesizer.segmentCharacterLimit,
+            KokoroSynthesizer.segmentCharacterLimit,
+            1,
+        ])
+        #expect(segments.joined() == text)
     }
 
     // MARK: - Speaking
@@ -336,6 +462,38 @@ struct KokoroVoiceTests {
         #expect(KokoroVoice.catalogue.contains { !$0.isBritish })
         #expect(KokoroVoice(name: "bf_emma", displayName: "Emma").isBritish)
         #expect(!KokoroVoice(name: "af_heart", displayName: "Heart").isBritish)
+    }
+}
+
+@Suite("Kokoro text normalisation")
+struct KokoroTextNormalizationTests {
+    @Test func lowercaseIndefiniteArticlesAreExplicitlyReduced() {
+        let text =
+            "Everyone knows what a Cyclops looks like. From a child’s first encounter "
+            + "with Greek mythology, it becomes a memorable image."
+
+        #expect(
+            KokoroTextNormalization.forSynthesis(text)
+                == "Everyone knows what [a](/ɐ/) Cyclops looks like. "
+                + "From [a](/ɐ/) child’s first encounter with Greek mythology, "
+                + "it becomes [a](/ɐ/) memorable image."
+        )
+    }
+
+    @Test func lettersAbbreviationsAndCharactersInsideWordsAreUntouched() {
+        let text = "Plan A uses data at 9 a.m.; compare option a. Then a child follows."
+
+        #expect(
+            KokoroTextNormalization.forSynthesis(text)
+                == "Plan A uses data at 9 a.m.; compare option a. Then [a](/ɐ/) child follows."
+        )
+    }
+
+    @Test func openingPunctuationCanBeginTheFollowingNounPhrase() {
+        #expect(
+            KokoroTextNormalization.forSynthesis("It resembles a “Cyclops” in profile.")
+                == "It resembles [a](/ɐ/) “Cyclops” in profile."
+        )
     }
 }
 

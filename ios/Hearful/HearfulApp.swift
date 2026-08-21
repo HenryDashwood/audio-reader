@@ -26,7 +26,7 @@ struct HearfulApp: App {
             }
             .task {
                 auth.bootstrap()
-                #if canImport(KokoroSwift)
+                #if canImport(KokoroSwift) && !targetEnvironment(simulator)
                     KokoroBenchmark.runIfRequested()
                 #endif
             }

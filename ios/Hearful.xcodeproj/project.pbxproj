@@ -153,7 +153,7 @@
 			mainGroup = AA00000000000000000000C1;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				AA0000000000000000000AA1 /* XCLocalSwiftPackageReference "kokoro-packages/kokoro-ios" */,
+				AA0000000000000000000AA1 /* XCLocalSwiftPackageReference "../../kokoro-packages/kokoro-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA00000000000000000000C2 /* Products */;
@@ -443,9 +443,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		AA0000000000000000000AA1 /* XCLocalSwiftPackageReference "kokoro-packages/kokoro-ios" */ = {
+		AA0000000000000000000AA1 /* XCLocalSwiftPackageReference "../../kokoro-packages/kokoro-ios" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../kokoro-packages/kokoro-ios;
+			relativePath = "../../kokoro-packages/kokoro-ios";
 		};
 /* End XCLocalSwiftPackageReference section */
 

@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ml-explore/mlx-swift",
       "state" : {
-        "revision" : "f58bd2c2b3b84316da69182f436db4219aff30b9",
-        "version" : "0.30.2"
+        "revision" : "0bb916c67f4b9e5c682cbe02a42c701c93ab5021",
+        "version" : "0.31.6"
       }
     },
     {
@@ -15,8 +15,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mlalma/MLXUtilsLibrary.git",
       "state" : {
-        "revision" : "41f6cfd5d68b65aa3c65a34efe3b71c371ed915b",
-        "version" : "0.0.6"
+        "revision" : "66f7cd58026f335c46699f0f8030cb3bda495c54",
+        "version" : "0.0.7"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+        "version" : "1.8.2"
       }
     },
     {

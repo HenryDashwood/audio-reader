@@ -180,6 +180,7 @@ if [[ "$action" == "device" ]]; then
   run_xcodebuild build \
     -project "$project" \
     -scheme "$scheme" \
+    -skipPackagePluginValidation \
     -configuration Release \
     -destination "platform=iOS,id=$device_id" \
     -derivedDataPath "$device_derived_data" \
@@ -239,6 +240,10 @@ echo "Using $simulator_name on iOS $runtime_version"
 common_args=(
   -project "$project"
   -scheme "$scheme"
+  # mlx-swift's CudaBuild plugin is inert on Apple platforms. Command-line
+  # builds cannot display Xcode's one-time trust prompt, so allow the pinned
+  # package plugin explicitly.
+  -skipPackagePluginValidation
   -configuration Debug
   -destination "platform=iOS Simulator,id=$simulator_id"
   -derivedDataPath "$derived_data"
