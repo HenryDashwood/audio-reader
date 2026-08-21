@@ -48,6 +48,9 @@ private final class FakeKokoroOutput: KokoroAudioOutputting {
     func resume() { isPaused = false }
 
     private(set) var shutDowns = 0
+    private(set) var rate: Float = 1
+
+    func setRate(_ rate: Float) { self.rate = rate }
 
     func shutDown() {
         shutDowns += 1
@@ -118,6 +121,23 @@ struct KokoroSynthesizerTests {
             let recovered = KokoroSynthesizer.speed(forUtteranceRate: rate)
             #expect(abs(recovered - multiplier) < 0.01)
         }
+    }
+
+    @Test func speedIsAppliedToThePlaybackNotTheModel() async {
+        // Kokoro's own speed control slurs; stretching finished audio does
+        // not. So the render is always 1x and the rate goes to the output.
+        let engine = FakeKokoroEngine()
+        let output = FakeKokoroOutput()
+        let synthesizer = KokoroSynthesizer(engine: engine, voice: Self.voice, output: output)
+        let utterance = AVSpeechUtterance(string: "Something read quickly.")
+        utterance.rate = ArticlePlayer.utteranceRate(for: 2)
+
+        synthesizer.speak(utterance)
+        #expect(await waitUntil { output.isFinished })
+
+        let speeds = await engine.speeds
+        #expect(speeds.allSatisfy { $0 == 1 })
+        #expect(abs(output.rate - 2) < 0.01)
     }
 
     @Test func theFastestSettingSaturatesRatherThanInverting() {

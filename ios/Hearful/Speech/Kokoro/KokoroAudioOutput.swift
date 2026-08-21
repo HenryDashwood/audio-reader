@@ -15,6 +15,10 @@ protocol KokoroAudioOutputting: AnyObject {
     /// than that the renderer fell behind.
     var onDrained: (@MainActor () -> Void)? { get set }
 
+    /// How fast to play, with the pitch left alone. Speech is always rendered
+    /// at 1x and sped up here.
+    func setRate(_ rate: Float)
+
     /// Adds a stretch of speech to the end of the queue. Playback starts on
     /// the first one rather than waiting for the last, which is what keeps
     /// time-to-first-word near a second on a long paragraph.
@@ -43,6 +47,10 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    /// Speeds playback up without raising the pitch. The model has its own
+    /// speed control and it is worse: asking it to talk quickly makes it slur
+    /// and swallow syllables, where stretching finished audio does not.
+    private let timePitch = AVAudioUnitTimePitch()
     private var format: AVAudioFormat?
     private var scheduled = 0
     private var played = 0
@@ -53,6 +61,11 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
 
     init() {
         engine.attach(player)
+        engine.attach(timePitch)
+    }
+
+    func setRate(_ rate: Float) {
+        timePitch.rate = min(max(rate, 0.5), 3)
     }
 
     var elapsed: TimeInterval {
@@ -191,7 +204,8 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
     private func start(with bufferFormat: AVAudioFormat) throws {
         if format != bufferFormat {
             try AudioSession.configureForPlayback()
-            engine.connect(player, to: engine.mainMixerNode, format: bufferFormat)
+            engine.connect(player, to: timePitch, format: bufferFormat)
+            engine.connect(timePitch, to: engine.mainMixerNode, format: bufferFormat)
             format = bufferFormat
         }
         if !engine.isRunning {

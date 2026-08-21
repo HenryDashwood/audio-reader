@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AA0000000000000000000AC1 /* KokoroSwift in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000AB1 /* KokoroSwift */; };
+		AA0000000000000000000AC2 /* MLXUtilsLibrary in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000AB2 /* MLXUtilsLibrary */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		AA00000000000000000000F3 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -39,6 +44,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA0000000000000000000AC1 /* KokoroSwift in Frameworks */,
+				AA0000000000000000000AC2 /* MLXUtilsLibrary in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -89,6 +96,10 @@
 				AA00000000000000000000A1 /* Hearful */,
 			);
 			name = Hearful;
+			packageProductDependencies = (
+				AA0000000000000000000AB1 /* KokoroSwift */,
+				AA0000000000000000000AB2 /* MLXUtilsLibrary */,
+			);
 			productName = Hearful;
 			productReference = AA00000000000000000000D2 /* Hearful.app */;
 			productType = "com.apple.product-type.application";
@@ -141,6 +152,9 @@
 			);
 			mainGroup = AA00000000000000000000C1;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AA0000000000000000000AA1 /* XCLocalSwiftPackageReference "kokoro-packages/kokoro-ios" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA00000000000000000000C2 /* Products */;
 			projectDirPath = "";
@@ -427,6 +441,24 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		AA0000000000000000000AA1 /* XCLocalSwiftPackageReference "kokoro-packages/kokoro-ios" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../kokoro-packages/kokoro-ios;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AA0000000000000000000AB1 /* KokoroSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KokoroSwift;
+		};
+		AA0000000000000000000AB2 /* MLXUtilsLibrary */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MLXUtilsLibrary;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = AA00000000000000000000C0 /* Project object */;
 }

@@ -96,7 +96,12 @@ final class KokoroSynthesizer: SpeechSynthesizing {
 
         let id = UtteranceID(utterance)
         let text = utterance.speechString
-        let speed = Self.speed(forUtteranceRate: utterance.rate)
+        // Always rendered at 1x; her chosen speed is applied to the finished
+        // audio. Kokoro's own speed control slurs and drops syllables — at
+        // 1.5x it swallowed the first syllable of ordinary words — and the
+        // model has no idea it is doing it.
+        let speed: Float = 1
+        output.setRate(Self.speed(forUtteranceRate: utterance.rate))
         let segments = Self.segments(of: text)
 
         current = id
@@ -160,7 +165,9 @@ final class KokoroSynthesizer: SpeechSynthesizing {
     /// hand has finished rendering.
     func prepare(_ utterance: AVSpeechUtterance) {
         let text = utterance.speechString
-        let speed = Self.speed(forUtteranceRate: utterance.rate)
+        // Rendered at 1x like everything else, so a change of speed does not
+        // throw away what has already been made.
+        let speed: Float = 1
         guard !text.isEmpty else { return }
         if let prefetched, prefetched.text == text, prefetched.speed == speed { return }
         pendingPrefetch = (text, speed)
