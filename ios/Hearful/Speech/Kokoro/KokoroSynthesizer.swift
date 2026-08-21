@@ -33,19 +33,50 @@ final class KokoroSynthesizer: SpeechSynthesizing {
     /// What has been rendered of the utterance so far, in seconds and in
     /// characters, so the part that does not exist yet can be estimated from
     /// the part that does.
+    /// A chunk rendered ahead of being asked for, so the reader does not stop
+    /// between paragraphs while the next one is made.
+    private struct Prefetched {
+        let text: String
+        let speed: Float
+        var segments: [(text: String, audio: KokoroAudio)] = []
+    }
+    private var prefetched: Prefetched?
+    private var prefetchTask: Task<Void, Never>?
+    private var pendingPrefetch: (text: String, speed: Float)?
+
     private var renderedDuration: TimeInterval = 0
     private var renderedCharacters = 0
     private var totalCharacters = 0
     private var isRenderComplete = false
 
-    /// Short enough that the first one is quick, long enough that Kokoro still
-    /// hears a sentence's worth of context for its prosody.
-    static let segmentCharacterLimit = 180
-    /// A single sentence longer than this is broken at a word boundary rather
-    /// than risking Kokoro's 510-token ceiling.
-    static let hardSegmentCharacterLimit = 300
+    /// The most text Kokoro can be given in one call before it starts
+    /// producing rubbish.
+    ///
+    /// Not a latency tuning knob — a correctness limit, measured on device.
+    /// Above roughly 120 characters this model emits a sustained tone in place
+    /// of speech, and the longer the input the more of it there is: a
+    /// 261-character paragraph came back as 14.7 seconds of audio containing
+    /// **8.9 seconds of a single held note**. It is not the accent, the
+    /// punctuation or any particular word — two unrelated paragraphs degrade
+    /// identically, and the same input is clean when shortened. It is well
+    /// below the 510-token ceiling the library documents.
+    ///
+    /// Measured longest run of tone, by input length:
+    /// 110ch: 0.2s · 120ch: 0.8s · 130ch: 0.8s · 140ch: 1.9s · 150ch: 2.6s ·
+    /// 180ch: 3.1s · 240ch: 6.9s
+    ///
+    /// Synthetic prose survives 110; real article text does not. At 110 the
+    /// model dropped whole words on a live article — replacing "From" with a
+    /// 310ms buzz, and another word with 890ms of it — which is what the
+    /// artefact does: it consumes speech rather than adding noise, so no
+    /// filtering can bring the word back. At 90 the buzz does not appear at
+    /// all, on any segment of that article. Hence 90, not 110.
+    ///
+    /// So: keep every call at or under this, and check it again if the model
+    /// or the port is ever updated.
+    nonisolated static let segmentCharacterLimit = 90
     /// Fallback pace, used only until the first segment has been rendered.
-    private static let charactersPerSecond = 16.4
+    nonisolated private static let charactersPerSecond = 16.4
     private static let progressInterval: TimeInterval = 0.1
 
     init(
@@ -61,11 +92,16 @@ final class KokoroSynthesizer: SpeechSynthesizing {
     // MARK: - SpeechSynthesizing
 
     func speak(_ utterance: AVSpeechUtterance) {
-        stopSpeaking(at: .immediate)
+        reset()
 
         let id = UtteranceID(utterance)
         let text = utterance.speechString
-        let speed = Self.speed(forUtteranceRate: utterance.rate)
+        // Always rendered at 1x; her chosen speed is applied to the finished
+        // audio. Kokoro's own speed control slurs and drops syllables — at
+        // 1.5x it swallowed the first syllable of ordinary words — and the
+        // model has no idea it is doing it.
+        let speed: Float = 1
+        output.setRate(Self.speed(forUtteranceRate: utterance.rate))
         let segments = Self.segments(of: text)
 
         current = id
@@ -75,8 +111,20 @@ final class KokoroSynthesizer: SpeechSynthesizing {
         output.onDrained = { [weak self] in self?.drained(id) }
         startProgressTimer()
 
+        // Whatever was rendered ahead is a prefix of the segments, so it can
+        // be used as far as it goes and the rest rendered from there.
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        var ready: [(text: String, audio: KokoroAudio)] = []
+        if let prefetched, prefetched.text == text, prefetched.speed == speed {
+            ready = prefetched.segments
+        }
+        prefetched = nil
+        for item in ready { accept(item.audio, characters: item.text.count, for: id) }
+        let remaining = Array(segments.dropFirst(ready.count))
+
         renderTask = Task { [engine, voice] in
-            for segment in segments {
+            for segment in remaining {
                 if Task.isCancelled { return }
                 do {
                     let audio = try await engine.render(
@@ -97,7 +145,56 @@ final class KokoroSynthesizer: SpeechSynthesizing {
 
     /// The boundary is ignored: there is nothing to finish at a word, because
     /// what is playing is a rendered buffer rather than a voice mid-sentence.
+    ///
+    /// A stop from outside means reading has ended, so the audio engine goes
+    /// with it. Moving between chunks goes through `reset()` instead and
+    /// leaves the engine up — restarting it there is audible.
     func stopSpeaking(at boundary: AVSpeechBoundary) {
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        prefetched = nil
+        pendingPrefetch = nil
+        reset()
+        output.shutDown()
+    }
+
+    /// What is coming next, rendered while the current chunk is still playing.
+    ///
+    /// Nothing starts here: a prefetch that competed with the audio being
+    /// played would be exactly the wrong trade. It begins once the chunk in
+    /// hand has finished rendering.
+    func prepare(_ utterance: AVSpeechUtterance) {
+        let text = utterance.speechString
+        // Rendered at 1x like everything else, so a change of speed does not
+        // throw away what has already been made.
+        let speed: Float = 1
+        guard !text.isEmpty else { return }
+        if let prefetched, prefetched.text == text, prefetched.speed == speed { return }
+        pendingPrefetch = (text, speed)
+        if isRenderComplete || current == nil { startPrefetch() }
+    }
+
+    private func startPrefetch() {
+        guard let (text, speed) = pendingPrefetch else { return }
+        pendingPrefetch = nil
+        prefetchTask?.cancel()
+        prefetched = Prefetched(text: text, speed: speed)
+        let segments = Self.segments(of: text)
+        prefetchTask = Task { [engine, voice] in
+            for segment in segments {
+                if Task.isCancelled { return }
+                guard let audio = try? await engine.render(
+                    text: segment, voice: voice, speed: speed)
+                else { return }
+                if Task.isCancelled { return }
+                // Anything else started or stopped in the meantime wins.
+                guard self.prefetched?.text == text, self.prefetched?.speed == speed else { return }
+                self.prefetched?.segments.append((segment, audio))
+            }
+        }
+    }
+
+    private func reset() {
         renderTask?.cancel()
         renderTask = nil
         stopProgressTimer()
@@ -135,6 +232,9 @@ final class KokoroSynthesizer: SpeechSynthesizing {
     private func renderingFinished(for id: UtteranceID) {
         guard current == id else { return }
         isRenderComplete = true
+        // Nothing is competing for the engine now, so the next chunk can be
+        // made while this one plays.
+        startPrefetch()
         if renderedDuration == 0 {
             // Nothing was ever made — a missing voice, or a first segment that
             // threw. Report the chunk as done so the article keeps moving.
@@ -203,7 +303,7 @@ final class KokoroSynthesizer: SpeechSynthesizing {
     /// speaks in Apple's nonlinear 0–1 scale and Kokoro wants "twice as fast".
     /// Going through the utterance rather than around it keeps this class a
     /// drop-in for the system synthesiser.
-    static func speed(forUtteranceRate rate: Float) -> Float {
+    nonisolated static func speed(forUtteranceRate rate: Float) -> Float {
         let normal = AVSpeechUtteranceDefaultSpeechRate
         let multiplier: Float
         if rate == normal {
@@ -218,19 +318,22 @@ final class KokoroSynthesizer: SpeechSynthesizing {
 
     /// A chunk as the pieces it will be rendered in: sentences packed up to
     /// the limit, with anything still oversized broken at a word boundary.
-    static func segments(of text: String) -> [String] {
+    nonisolated static func segments(of text: String) -> [String] {
         ArticleScript.pieces(of: text, limit: segmentCharacterLimit)
             .flatMap(splitIfOversized)
     }
 
-    private static func splitIfOversized(_ piece: String) -> [String] {
-        guard piece.count > hardSegmentCharacterLimit else { return [piece] }
+    /// Sentence packing gets most of the way there, but a single sentence
+    /// longer than the limit comes back whole, and has to be broken at a word
+    /// boundary rather than handed over intact.
+    nonisolated private static func splitIfOversized(_ piece: String) -> [String] {
+        guard piece.count > segmentCharacterLimit else { return [piece] }
         var pieces: [String] = []
         var current = ""
         for word in piece.split(separator: " ") {
             if current.isEmpty {
                 current = String(word)
-            } else if current.count + word.count + 1 <= hardSegmentCharacterLimit {
+            } else if current.count + word.count + 1 <= segmentCharacterLimit {
                 current += " " + word
             } else {
                 pieces.append(current)

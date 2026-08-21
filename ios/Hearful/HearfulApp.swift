@@ -24,7 +24,12 @@ struct HearfulApp: App {
                         .environmentObject(auth)
                 }
             }
-            .task { auth.bootstrap() }
+            .task {
+                auth.bootstrap()
+                #if canImport(KokoroSwift)
+                    KokoroBenchmark.runIfRequested()
+                #endif
+            }
         }
     }
 }

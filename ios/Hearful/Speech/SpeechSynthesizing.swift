@@ -12,6 +12,10 @@ protocol SpeechSynthesizing: AnyObject {
     var isPaused: Bool { get }
 
     func speak(_ utterance: AVSpeechUtterance)
+    /// What is likely to be spoken next, so a synthesiser that has to make
+    /// the sound before it can play it has somewhere to start. Advisory: the
+    /// reader may seek elsewhere, and speaking something else is always fine.
+    func prepare(_ utterance: AVSpeechUtterance)
     func stopSpeaking(at boundary: AVSpeechBoundary)
     func pauseSpeaking(at boundary: AVSpeechBoundary)
     func continueSpeaking()
@@ -34,6 +38,12 @@ enum SpeechSynthesizers {
         }
         return SystemSpeechSynthesizer()
     }
+}
+
+extension SpeechSynthesizing {
+    /// Nothing to prepare for a synthesiser that speaks as it goes, which is
+    /// every synthesiser but the one that renders audio first.
+    func prepare(_ utterance: AVSpeechUtterance) {}
 }
 
 /// Which utterance a callback is about. The utterance itself is not Sendable,

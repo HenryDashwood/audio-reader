@@ -51,8 +51,15 @@
                 text: text,
                 speed: speed
             )
-            return KokoroAudio(
+            // Trimmed here rather than at the player: the silence belongs to
+            // the model, and everything downstream is better off never seeing
+            // it.
+            let raw = KokoroAudio(
                 samples: samples, sampleRate: Double(KokoroTTS.Constants.samplingRate))
+            // Debug escape hatch: render untrimmed, to see what the model
+            // actually produced.
+            if ProcessInfo.processInfo.environment["HEARFUL_KOKORO_RAW"] != nil { return raw }
+            return raw.trimmedSilence()
         }
 
         /// Voice keys carry the `.npy` suffix they had inside the archive;
@@ -70,8 +77,20 @@
             return read
         }
 
+        /// MLX's defaults are sized for a Mac. Left alone on a phone it asks
+        /// the GPU for more than iOS will allow and the process is killed
+        /// outright — signal 9, no crash report, while `os_proc_available_memory`
+        /// still reports gigabytes free. These two lines are the difference
+        /// between working and being killed; the values follow upstream's
+        /// own sample app.
+        private static let configureGPU: Void = {
+            GPU.set(cacheLimit: 50 * 1024 * 1024)
+            GPU.set(memoryLimit: 900 * 1024 * 1024)
+        }()
+
         private func loadEngine() -> KokoroTTS {
             if let engine { return engine }
+            _ = Self.configureGPU
             let built = KokoroTTS(modelPath: modelURL)
             engine = built
             return built

@@ -15,6 +15,10 @@ protocol KokoroAudioOutputting: AnyObject {
     /// than that the renderer fell behind.
     var onDrained: (@MainActor () -> Void)? { get set }
 
+    /// How fast to play, with the pitch left alone. Speech is always rendered
+    /// at 1x and sped up here.
+    func setRate(_ rate: Float)
+
     /// Adds a stretch of speech to the end of the queue. Playback starts on
     /// the first one rather than waiting for the last, which is what keeps
     /// time-to-first-word near a second on a long paragraph.
@@ -24,8 +28,13 @@ protocol KokoroAudioOutputting: AnyObject {
     func pause()
     func resume()
     /// Drops everything, played or not. Delivers no callback: a deliberate
-    /// stop must not look like an utterance finishing.
+    /// stop must not look like an utterance finishing. Leaves the engine up:
+    /// the reader stops between every chunk, and tearing down there is
+    /// audible.
     func stop()
+    /// Stops and releases the audio engine, for when reading has ended
+    /// rather than moved on.
+    func shutDown()
 }
 
 /// The real one: an AVAudioEngine with a single player node, fed buffers as
@@ -38,6 +47,10 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
 
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    /// Speeds playback up without raising the pitch. The model has its own
+    /// speed control and it is worse: asking it to talk quickly makes it slur
+    /// and swallow syllables, where stretching finished audio does not.
+    private let timePitch = AVAudioUnitTimePitch()
     private var format: AVAudioFormat?
     private var scheduled = 0
     private var played = 0
@@ -48,6 +61,11 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
 
     init() {
         engine.attach(player)
+        engine.attach(timePitch)
+    }
+
+    func setRate(_ rate: Float) {
+        timePitch.rate = min(max(rate, 0.5), 3)
     }
 
     var elapsed: TimeInterval {
@@ -95,6 +113,13 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
         player.play()
     }
 
+    /// Stops what is playing and leaves the engine running.
+    ///
+    /// Deliberately does not tear the engine down. The reader stops the
+    /// synthesiser at the start of every chunk, so stopping the engine here
+    /// meant re-activating the audio session and reconnecting the player
+    /// between every chunk of an article — which is audible: a gap, and a
+    /// chirp as the reconnected node picks up the new format.
     func stop() {
         // The callbacks for the dropped buffers still arrive; clearing the
         // counters first means they cannot add up to a drain.
@@ -104,8 +129,60 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
         isComplete = false
         pausedElapsed = nil
         player.stop()
+    }
+
+    /// Gives the audio session back. For when nothing is being read any more,
+    /// rather than between two chunks of the same article.
+    func shutDown() {
+        stop()
         if engine.isRunning { engine.stop() }
         format = nil
+    }
+
+    /// Debug: records what actually reaches the speaker, past the scheduling,
+    /// the mixer and any rate conversion — the part a rendered WAV cannot tell
+    /// you anything about.
+    ///
+    /// Collects samples rather than using AVAudioFile: the mixer's format is
+    /// non-interleaved, which AVAudioFile will not write, and finding that out
+    /// costs a SIGTRAP rather than an error.
+    nonisolated final class Capture: @unchecked Sendable {
+        private let lock = NSLock()
+        private var samples: [Float] = []
+        var sampleRate: Double = 0
+
+        func append(_ buffer: AVAudioPCMBuffer) {
+            guard let channel = buffer.floatChannelData else { return }
+            let count = Int(buffer.frameLength)
+            lock.lock()
+            samples.append(contentsOf: UnsafeBufferPointer(start: channel[0], count: count))
+            lock.unlock()
+        }
+
+        func take() -> KokoroAudio {
+            lock.lock(); defer { lock.unlock() }
+            return KokoroAudio(samples: samples, sampleRate: sampleRate)
+        }
+    }
+
+    func startCapture() -> Capture? {
+        let format = engine.mainMixerNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { return nil }
+        let capture = Capture()
+        capture.sampleRate = format.sampleRate
+        engine.mainMixerNode.removeTap(onBus: 0)
+        // @Sendable: the tap is called on an audio thread, and a closure made
+        // inside this @MainActor class would otherwise inherit main-actor
+        // isolation and trap on the first buffer.
+        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 4096, format: format) {
+            @Sendable buffer, _ in
+            capture.append(buffer)
+        }
+        return capture
+    }
+
+    func stopCapture() {
+        engine.mainMixerNode.removeTap(onBus: 0)
     }
 
     private func bufferPlayed() {
@@ -122,11 +199,13 @@ final class KokoroAudioEngineOutput: KokoroAudioOutputting {
 
     /// The engine is connected at the first buffer's format because the
     /// sample rate belongs to the model, not to the hardware, and is not
-    /// known until something has been rendered.
+    /// known until something has been rendered. Connected once and then left
+    /// alone: reconnecting a running engine is what the chirp was.
     private func start(with bufferFormat: AVAudioFormat) throws {
-        if format == nil {
+        if format != bufferFormat {
             try AudioSession.configureForPlayback()
-            engine.connect(player, to: engine.mainMixerNode, format: bufferFormat)
+            engine.connect(player, to: timePitch, format: bufferFormat)
+            engine.connect(timePitch, to: engine.mainMixerNode, format: bufferFormat)
             format = bufferFormat
         }
         if !engine.isRunning {
