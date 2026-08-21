@@ -95,6 +95,36 @@ which is ordinary phoneme transition:
 
 If the model or the port is ever updated, re-run the sweep before raising it.
 
+## The ring at the end of every segment
+
+Shortening the segments removed the long held notes, but left a shorter one
+every few words — and that one is not a length effect. **Every render comes
+back with a decaying pure tone after the last word**, roughly a quarter of a
+second of it, plus about 0.25s of silence before the first word and up to 0.6s
+of silence after. Played one segment after another, that is a note and a pause
+at every join.
+
+Measured on four segments of one paragraph:
+
+| segment | rendered | silence before | ring + silence after |
+| --- | ---: | ---: | ---: |
+| 0 | 5.03s | 0.25s | 0.72s |
+| 1 | 3.02s | 0.23s | 0.70s |
+| 2 | 6.72s | 0.27s | 0.76s |
+| 3 | 2.05s | 0.26s | 0.57s |
+
+`KokoroAudio.trimmedToSpeech()` cuts both ends, and `MLXKokoroEngine` applies
+it to everything it renders. The test cannot be loudness — **the ring is louder
+than the speech around it** — so it is high-frequency energy instead: speech
+always carries energy above 1kHz, and a low sinusoid carries almost none. A
+two-pole high-pass at 1kHz, a gate at 15% of the median frame energy, a 40ms
+guard either side so no quiet consonant is clipped, and a 10ms fade so the
+joins do not click. One pole is not enough: it leaves a 200Hz ring only ~14dB
+down, still above the gate.
+
+On the same paragraph that produces 16.82s of audio raw, this returns 13.40s —
+all of it speech, with no silent bands and no rings between segments.
+
 ## What it takes to get there
 
 Four things stand between a fresh checkout and that table, and none of them are

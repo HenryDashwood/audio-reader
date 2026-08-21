@@ -51,8 +51,12 @@
                 text: text,
                 speed: speed
             )
+            // Trimmed here rather than at the player, because it is the model
+            // that leaves the ring and the silence, and everything downstream
+            // is better off never seeing them.
             return KokoroAudio(
-                samples: samples, sampleRate: Double(KokoroTTS.Constants.samplingRate))
+                samples: samples, sampleRate: Double(KokoroTTS.Constants.samplingRate)
+            ).trimmedToSpeech()
         }
 
         /// Voice keys carry the `.npy` suffix they had inside the archive;

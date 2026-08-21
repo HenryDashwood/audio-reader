@@ -59,12 +59,19 @@
                     var joined: [Float] = []
                     var rate = 24000.0
                     let start = Date()
-                    for segment in segments {
+                    for (index, segment) in segments.enumerated() {
                         guard let audio = try? await engine.render(
                             text: segment, voice: voice, speed: 1)
                         else { continue }
                         joined.append(contentsOf: audio.samples)
                         rate = audio.sampleRate
+                        try? wav(audio).write(
+                            to: documents.appendingPathComponent("seg-\(name)-\(index).wav"))
+                        print(String(
+                            format: "BENCH   seg %d  %3d chars  %5.2fs  ends %@  |%@|",
+                            index, segment.count, audio.duration,
+                            (segment.hasSuffix(".") ? "stop " : "mid  ") as NSString,
+                            String(segment.suffix(28)) as NSString))
                     }
                     let whole = KokoroAudio(samples: joined, sampleRate: rate)
                     try? wav(whole).write(

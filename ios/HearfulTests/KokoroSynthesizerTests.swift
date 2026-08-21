@@ -318,3 +318,63 @@ struct KokoroVoiceTests {
         #expect(!KokoroVoice(name: "af_heart", displayName: "Heart").isBritish)
     }
 }
+
+@Suite("Trimming a rendered segment")
+struct KokoroAudioTrimTests {
+    private static let rate = 24_000.0
+
+    /// Silence, then something speech-like, then the decaying low tone the
+    /// model leaves behind.
+    private static func rendered(
+        lead: Double, speech: Double, ring: Double
+    ) -> KokoroAudio {
+        var samples: [Float] = Array(repeating: 0, count: Int(lead * rate))
+        // Speech stands in as a broadband signal: it has high-frequency energy.
+        var state: UInt64 = 42
+        for _ in 0..<Int(speech * rate) {
+            state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+            samples.append(Float(Int32(truncatingIfNeeded: state >> 33)) / Float(Int32.max) * 0.3)
+        }
+        // The ring is a loud low sinusoid, decaying — no high-frequency energy.
+        let ringCount = Int(ring * rate)
+        for index in 0..<ringCount {
+            let t = Double(index) / rate
+            let decay = 1 - Double(index) / Double(max(ringCount, 1))
+            samples.append(Float(sin(2 * .pi * 200 * t) * decay * 0.4))
+        }
+        return KokoroAudio(samples: samples, sampleRate: rate)
+    }
+
+    @Test func theLeadInAndTheRingAreBothRemoved() {
+        let audio = Self.rendered(lead: 0.25, speech: 1.0, ring: 0.6)
+        let trimmed = audio.trimmedToSpeech()
+
+        #expect(audio.duration > 1.8)
+        // What is left is the speech, give or take the guard either side.
+        #expect(abs(trimmed.duration - 1.0) < 0.15)
+    }
+
+    @Test func aLoudRingIsNotMistakenForSpeech() {
+        // The ring is louder than the speech, so anything gating on loudness
+        // alone would keep it. This is why the test is high-frequency energy.
+        var audio = Self.rendered(lead: 0.1, speech: 0.8, ring: 0.5)
+        audio = KokoroAudio(samples: audio.samples.map { $0 * 1 }, sampleRate: Self.rate)
+        let trimmed = audio.trimmedToSpeech()
+
+        #expect(trimmed.duration < audio.duration - 0.4)
+    }
+
+    @Test func silenceIsLeftAloneRatherThanEmptied() {
+        let silent = KokoroAudio(
+            samples: Array(repeating: 0, count: 12_000), sampleRate: Self.rate)
+
+        #expect(silent.trimmedToSpeech().samples.count == silent.samples.count)
+    }
+
+    @Test func endsAreFadedSoJoiningSegmentsDoesNotClick() {
+        let trimmed = Self.rendered(lead: 0.25, speech: 1.0, ring: 0.6).trimmedToSpeech()
+
+        #expect(abs(trimmed.samples.first ?? 1) < 0.01)
+        #expect(abs(trimmed.samples.last ?? 1) < 0.01)
+    }
+}
