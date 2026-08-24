@@ -249,9 +249,10 @@ the packages.
   `xcodebuild -downloadComponent MetalToolchain` (839MB).
 - MLX Swift 0.31.6 includes an inert-on-Apple `CudaBuild` package plugin.
   Non-interactive builds pass `-skipPackagePluginValidation` because they
-  cannot display Xcode's one-time trust prompt. The bootstrap pins the two
-  upstream package commits, and the patches lock MLX and MLXUtilsLibrary to
-  the tested versions.
+  cannot display Xcode's one-time trust prompt. Xcode Cloud applies the
+  equivalent CI-only preference from `ios/ci_scripts/ci_post_clone.sh`. The
+  bootstrap pins the two upstream package commits, and the patches lock MLX
+  and MLXUtilsLibrary to the tested versions.
 
 ### The model files
 
