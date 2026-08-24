@@ -91,12 +91,15 @@ struct PlayerDismissalTests {
         let (coordinator, synthesizer, api) = makeCoordinator()
         // Held for the length of the test: it works purely by observing.
         let reporter = PositionReporter(api: api, player: coordinator)
+        // Make an older incomplete update finish slowly. Without the reporter's
+        // ordering guarantee it would arrive after the completion update and
+        // put the episode back into an unfinished state.
+        api.incompletePositionReportDelay = .milliseconds(50)
         try coordinator.play(article())
         await waitUntilLoaded(coordinator)
 
         synthesizer.finishSpeaking()
-        await Task.yield()
-        try? await Task.sleep(for: .milliseconds(20))
+        await reporter.waitForPendingReports()
 
         #expect(reporter.trackedEpisode == nil)
         #expect(api.reportedPositions.last?.episodeID == 1)

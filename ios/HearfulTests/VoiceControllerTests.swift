@@ -210,7 +210,11 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     func me() async throws -> UserInfo { UserInfo(id: "u1", displayName: nil) }
 
     var reportedPositions: [(episodeID: Int, seconds: Double, completed: Bool)] = []
+    var incompletePositionReportDelay: Duration = .zero
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {
+        if !completed, incompletePositionReportDelay > .zero {
+            try? await Task.sleep(for: incompletePositionReportDelay)
+        }
         reportedPositions.append((episodeID, seconds, completed))
     }
 

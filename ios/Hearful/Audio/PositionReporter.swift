@@ -8,7 +8,8 @@ import UIKit
 /// article being read aloud reports its (estimated-seconds) position exactly
 /// like a streamed episode. Reports are fire-and-forget: losing one costs at
 /// most thirty seconds of position, which matters less than never blocking
-/// playback on the network.
+/// playback on the network. They are still sent in creation order: a final
+/// `completed` report must not be overtaken by an older pause or heartbeat.
 @MainActor
 final class PositionReporter {
     static let heartbeatInterval: TimeInterval = 30
@@ -33,6 +34,7 @@ final class PositionReporter {
     /// prepare() must not overwrite a saved position with zero.
     private var hasPlayed = false
     private var lastReportAt: Date = .distantPast
+    private var reportQueueTail: Task<Void, Never>?
 
     init(
         api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
@@ -123,12 +125,23 @@ final class PositionReporter {
         report(episode: episode, seconds: lastTime)
     }
 
+    /// Gives tests a deterministic boundary without making playback await the
+    /// network in production.
+    func waitForPendingReports() async {
+        await reportQueueTail?.value
+    }
+
     private func report(episode: Episode, seconds: TimeInterval) {
         guard !filedByHand.contains(episode.id) else { return }
         lastReportAt = Date()
         let duration = player.duration
         let completed = duration > 0 && seconds / duration > 0.95
         let api = self.api
-        Task { try? await api.reportPosition(episodeID: episode.id, seconds: seconds, completed: completed) }
+        let precedingReport = reportQueueTail
+        reportQueueTail = Task {
+            await precedingReport?.value
+            try? await api.reportPosition(
+                episodeID: episode.id, seconds: seconds, completed: completed)
+        }
     }
 }
