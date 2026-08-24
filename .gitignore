@@ -26,3 +26,5 @@ xcuserdata/
 # docs/kokoro-prototype.md rather than committed.
 *.safetensors
 voices.npz
+*.aar
+/ios/Packages/

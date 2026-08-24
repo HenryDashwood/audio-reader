@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var naturalVoiceName: String = SpeechVoice.naturalVoice?.name ?? ""
     @State private var naturalVoices: [KokoroVoice] = []
     @State private var naturalPreview: KokoroSynthesizer?
+    @StateObject private var naturalVoiceAssets = NaturalVoiceAssets()
     @State private var confirmingDelete = false
     @State private var confirmingDisableAI = false
     @State private var showingAIChoice = false
@@ -38,27 +39,71 @@ struct SettingsView: View {
                     )
                 }
 
-                // Only on a build that has the Kokoro package and the model
-                // files. On any other, this section does not exist and the app
-                // behaves exactly as it did before.
-                if KokoroEngines.isAvailable {
+                // The system voice remains the default. A physical-device
+                // build can offer Kokoro as an explicit, removable download;
+                // the simulator has no compatible Metal GPU and omits it.
+                if KokoroEngines.isSupported {
                     Section {
-                        Picker("Natural voice", selection: $naturalVoiceName) {
-                            Text("Off — use the system voice").tag("")
-                            ForEach(naturalVoices) { voice in
-                                Text(voice.displayName).tag(voice.name)
+                        switch naturalVoiceAssets.state {
+                        case .checking:
+                            HStack {
+                                Text("Natural voices")
+                                Spacer()
+                                ProgressView()
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("Checking natural voices")
+
+                        case .notInstalled:
+                            Button {
+                                Task { await downloadNaturalVoices() }
+                            } label: {
+                                Label("Download Natural Voices", systemImage: "arrow.down.circle")
+                            }
+                            .accessibilityHint(
+                                "Downloads about 350 megabytes. The system voice remains available."
+                            )
+
+                        case .downloading(let fraction):
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Downloading natural voices…")
+                                ProgressView(value: fraction)
+                                    .accessibilityLabel("Natural voices download")
+                                    .accessibilityValue(fraction.formatted(.percent.precision(.fractionLength(0))))
+                            }
+
+                        case .installed:
+                            Picker("Natural voice", selection: $naturalVoiceName) {
+                                Text("Off — use the system voice").tag("")
+                                ForEach(naturalVoices) { voice in
+                                    Text(voice.displayName).tag(voice.name)
+                                }
+                            }
+                            .pickerStyle(.navigationLink)
+
+                            Button("Remove Download", role: .destructive) {
+                                Task { await removeNaturalVoices() }
+                            }
+                            .accessibilityHint(
+                                "Frees the downloaded model and returns article reading to the system voice"
+                            )
+
+                        case .failed(let message):
+                            Text(message)
+                                .font(.callout)
+                                .foregroundStyle(.red)
+                            Button("Try Download Again") {
+                                Task { await downloadNaturalVoices() }
                             }
                         }
-                        .pickerStyle(.navigationLink)
                     } header: {
                         Text("Natural voice (experimental)")
                     } footer: {
                         Text(
-                            "Reads articles with a voice generated on this iPhone. It "
-                                + "sounds closer to a person and needs no connection, but it "
-                                + "takes a moment to start and uses more battery. Spoken "
-                                + "replies keep the system voice. A change applies to the "
-                                + "next article you open."
+                            "Optional download, about 350 MB. Once downloaded it reads "
+                                + "articles entirely on this iPhone and needs no connection, "
+                                + "but uses more battery. Spoken replies keep the system voice. "
+                                + "A change applies next time you start or resume an article."
                         )
                     }
                 }
@@ -201,11 +246,15 @@ struct SettingsView: View {
             // shortlist of names, and only the file on the device says which
             // of them are really there.
             .task {
-                naturalVoices = await KokoroEngines.shared?.availableVoices() ?? []
+                await naturalVoiceAssets.refresh()
+                if naturalVoiceAssets.state == .installed {
+                    await loadNaturalVoices()
+                }
             }
             .onChange(of: naturalVoiceName) { _, name in
                 let voice = KokoroVoice.named(name)
                 SpeechVoice.selectNatural(voice)
+                ArticlePlayer.shared.voicePreferenceDidChange()
                 naturalPreview?.stopSpeaking(at: .immediate)
                 naturalPreview = nil
                 // Hearing it is the only way to choose it — the same rule as
@@ -217,6 +266,31 @@ struct SettingsView: View {
                 preview.speak(AVSpeechUtterance(string: "This voice will read your articles."))
             }
         }
+    }
+
+    private func loadNaturalVoices() async {
+        naturalVoices = await KokoroEngines.shared?.availableVoices() ?? []
+    }
+
+    private func downloadNaturalVoices() async {
+        await naturalVoiceAssets.download()
+        guard naturalVoiceAssets.state == .installed else { return }
+        await loadNaturalVoices()
+        AccessibilityNotification.Announcement(
+            "Natural voices downloaded. Choose a voice to hear a preview."
+        ).post()
+    }
+
+    private func removeNaturalVoices() async {
+        naturalPreview?.stopSpeaking(at: .immediate)
+        naturalPreview = nil
+        await naturalVoiceAssets.remove()
+        guard naturalVoiceAssets.state == .notInstalled else { return }
+        naturalVoiceName = ""
+        naturalVoices = []
+        AccessibilityNotification.Announcement(
+            "Natural voices removed. Hearful will use the system voice."
+        ).post()
     }
 
     private func deleteAccount() async {

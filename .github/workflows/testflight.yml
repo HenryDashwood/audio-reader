@@ -56,6 +56,9 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare the Kokoro packages
+        run: ./scripts/bootstrap-kokoro-packages.sh
+
       - name: Run the iOS tests
         run: |
           set -euo pipefail
@@ -125,31 +128,42 @@ jobs:
         id: profile
         env:
           PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+          BACKGROUND_ASSETS_PROFILE_B64: ${{ secrets.APPLE_BACKGROUND_ASSETS_PROVISIONING_PROFILE }}
         run: |
           set -euo pipefail
-          profile="$RUNNER_TEMP/profile.mobileprovision"
-          echo "$PROFILE_B64" | base64 --decode > "$profile"
+          install_profile() {
+            encoded="$1"
+            stem="$2"
+            output_name="$3"
+            profile="$RUNNER_TEMP/$stem.mobileprovision"
+            decoded="$RUNNER_TEMP/$stem.plist"
 
-          security cms -D -i "$profile" > "$RUNNER_TEMP/profile.plist"
-          uuid=$(plutil -extract UUID raw -o - "$RUNNER_TEMP/profile.plist")
-          name=$(plutil -extract Name raw -o - "$RUNNER_TEMP/profile.plist")
+            echo "$encoded" | base64 --decode > "$profile"
+            security cms -D -i "$profile" > "$decoded"
+            uuid=$(plutil -extract UUID raw -o - "$decoded")
+            name=$(plutil -extract Name raw -o - "$decoded")
 
-          # Xcode 26 reads profiles from UserData; older Xcode used MobileDevice.
-          # Install to both so the runner image version does not matter.
-          for dir in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
-                     "$HOME/Library/MobileDevice/Provisioning Profiles"; do
-            mkdir -p "$dir"
-            cp "$profile" "$dir/$uuid.mobileprovision"
-          done
+            # Xcode 26 reads profiles from UserData; older Xcode used MobileDevice.
+            # Install to both so the runner image version does not matter.
+            for dir in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" \
+                       "$HOME/Library/MobileDevice/Provisioning Profiles"; do
+              mkdir -p "$dir"
+              cp "$profile" "$dir/$uuid.mobileprovision"
+            done
 
-          echo "uuid=$uuid" >> "$GITHUB_OUTPUT"
-          echo "Installed '$name' ($uuid)"
+            echo "$output_name=$uuid" >> "$GITHUB_OUTPUT"
+            echo "Installed '$name' ($uuid)"
+          }
+
+          install_profile "$PROFILE_B64" app app_uuid
+          install_profile "$BACKGROUND_ASSETS_PROFILE_B64" background-assets background_assets_uuid
 
       - name: Archive
         env:
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
           MARKETING_ARG: ${{ steps.version.outputs.marketing_arg }}
-          PROFILE_UUID: ${{ steps.profile.outputs.uuid }}
+          APP_PROFILE_UUID: ${{ steps.profile.outputs.app_uuid }}
+          BACKGROUND_ASSETS_PROFILE_UUID: ${{ steps.profile.outputs.background_assets_uuid }}
         run: |
           set -euo pipefail
           # Signed manually against the profile installed above. No
@@ -166,7 +180,8 @@ jobs:
             -archivePath "$RUNNER_TEMP/Hearful.xcarchive" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
-            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
+            HEARFUL_APP_PROFILE_UUID="$APP_PROFILE_UUID" \
+            HEARFUL_BACKGROUND_ASSETS_PROFILE_UUID="$BACKGROUND_ASSETS_PROFILE_UUID" \
             DEVELOPMENT_TEAM=67F2439F4X \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             $MARKETING_ARG
@@ -175,7 +190,8 @@ jobs:
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          PROFILE_UUID: ${{ steps.profile.outputs.uuid }}
+          APP_PROFILE_UUID: ${{ steps.profile.outputs.app_uuid }}
+          BACKGROUND_ASSETS_PROFILE_UUID: ${{ steps.profile.outputs.background_assets_uuid }}
         run: |
           set -euo pipefail
           # Apple's /usr/bin/rsync (openrsync) reads -E as --extended-attributes,
@@ -190,7 +206,9 @@ jobs:
           options="$RUNNER_TEMP/ExportOptions.plist"
           cp ios/ExportOptions.plist "$options"
           plutil -replace 'provisioningProfiles.com\.henrydashwood\.hearful' \
-            -string "$PROFILE_UUID" "$options"
+            -string "$APP_PROFILE_UUID" "$options"
+          plutil -replace 'provisioningProfiles.com\.henrydashwood\.hearful\.BackgroundAssets' \
+            -string "$BACKGROUND_ASSETS_PROFILE_UUID" "$options"
 
           # The key still authenticates the upload; it is only provisioning that
           # must not go through it.

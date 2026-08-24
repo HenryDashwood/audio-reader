@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Builds the Kokoro engine, if this build has one.
 ///
@@ -14,7 +15,21 @@ nonisolated enum KokoroEngines {
     /// have the reader killed for memory on a 4GB phone. Nil when the package
     /// is absent or the model files are not on the device, which are the two
     /// ordinary reasons to stay on the system voice.
-    static let shared: KokoroRendering? = make()
+    private static let cachedEngine = Mutex<KokoroRendering?>(nil)
+
+    static var shared: KokoroRendering? {
+        cachedEngine.withLock { engine in
+            if engine == nil { engine = make() }
+            return engine
+        }
+    }
+
+    /// Releases the process-wide reference after the optional pack is removed.
+    /// A synthesizer already reading an article keeps its own reference until
+    /// that playback ends.
+    static func reset() {
+        cachedEngine.withLock { $0 = nil }
+    }
 
     private static func make() -> KokoroRendering? {
         #if canImport(KokoroSwift) && !targetEnvironment(simulator)
@@ -27,12 +42,16 @@ nonisolated enum KokoroEngines {
         #endif
     }
 
-    /// Whether choosing a Kokoro voice could do anything on this build.
-    static var isAvailable: Bool {
+    /// Whether this build can offer the optional natural-voice download.
+    static var isSupported: Bool {
         #if canImport(KokoroSwift) && !targetEnvironment(simulator)
-            return KokoroModelStore.isInstalled
+            return true
         #else
             return false
         #endif
+    }
+
+    static var isInstalled: Bool {
+        isSupported && KokoroModelStore.isInstalled
     }
 }

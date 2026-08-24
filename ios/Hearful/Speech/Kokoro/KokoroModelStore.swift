@@ -1,21 +1,21 @@
+import BackgroundAssets
 import Foundation
+import System
 
 /// Where the Kokoro weights and voices live.
 ///
-/// Two files, neither of them in the repository: `kokoro-v1_0.safetensors`
-/// (~330MB) and `voices.npz`. For the prototype they are dragged into the
-/// Xcode project and ride along in the app bundle; Application Support is
-/// checked first so a downloaded copy can shadow the bundled one later
-/// without any of the calling code changing. `docs/kokoro-prototype.md` has
-/// the fetching and converting steps.
+/// Two files, neither of them in the app bundle: `kokoro-v1_0.safetensors`
+/// (~330MB) and `voices.npz`. Production installs read them from an on-demand
+/// Background Assets pack. Application Support remains a developer escape
+/// hatch for pushing a locally built model onto a test phone.
 nonisolated enum KokoroModelStore {
+    static let assetPackID = "hearful-kokoro-english-v1"
     static let modelFileName = "kokoro-v1_0"
     static let modelFileExtension = "safetensors"
     static let voicesFileName = "voices"
     static let voicesFileExtension = "npz"
 
-    /// Where a downloaded copy would go. Not created here — nothing writes to
-    /// it yet.
+    /// Where a developer-pushed copy can go during local testing.
     static var downloadDirectory: URL? {
         try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask,
@@ -32,8 +32,7 @@ nonisolated enum KokoroModelStore {
         locate(voicesFileName, voicesFileExtension)
     }
 
-    /// Whether the voice can be offered at all. False on a build where nobody
-    /// has added the files, which is the normal state of a fresh checkout.
+    /// Whether the optional natural-voice download is ready to use.
     static var isInstalled: Bool {
         modelURL != nil && voicesURL != nil
     }
@@ -46,6 +45,10 @@ nonisolated enum KokoroModelStore {
         {
             return downloaded
         }
-        return Bundle.main.url(forResource: name, withExtension: fileExtension)
+        let path = FilePath("Kokoro/\(name).\(fileExtension)")
+        guard let asset = try? AssetPackManager.shared.url(for: path),
+            FileManager.default.fileExists(atPath: asset.path)
+        else { return nil }
+        return asset
     }
 }

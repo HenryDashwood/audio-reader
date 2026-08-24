@@ -1,0 +1,17 @@
+{
+  "assetPackID": "hearful-kokoro-english-v1",
+  "downloadPolicy": {
+    "onDemand": {}
+  },
+  "fileSelectors": [
+    {
+      "file": "Kokoro/kokoro-v1_0.safetensors"
+    },
+    {
+      "file": "Kokoro/voices.npz"
+    }
+  ],
+  "platforms": [
+    "iOS"
+  ]
+}

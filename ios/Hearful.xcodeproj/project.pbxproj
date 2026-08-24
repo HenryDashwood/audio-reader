@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		AA0000000000000000000AC1 /* KokoroSwift in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000AB1 /* KokoroSwift */; };
 		AA0000000000000000000AC2 /* MLXUtilsLibrary in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000AB2 /* MLXUtilsLibrary */; };
+		BB0000000000000000000001 /* HearfulBackgroundAssets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000003 /* HearfulBackgroundAssets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -19,11 +20,33 @@
 			remoteGlobalIDString = AA00000000000000000000D1;
 			remoteInfo = Hearful;
 		};
+		BB0000000000000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA00000000000000000000C0 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BB0000000000000000000006;
+			remoteInfo = HearfulBackgroundAssets;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		BB000000000000000000000D /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Extensions;
+			dstSubfolderSpec = 1;
+			files = (
+				BB0000000000000000000001 /* HearfulBackgroundAssets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		AA00000000000000000000D2 /* Hearful.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hearful.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00000000000000000000D4 /* HearfulTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HearfulTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB0000000000000000000003 /* HearfulBackgroundAssets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HearfulBackgroundAssets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -35,6 +58,11 @@
 		AA00000000000000000000A2 /* HearfulTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = HearfulTests;
+			sourceTree = "<group>";
+		};
+		BB0000000000000000000004 /* HearfulBackgroundAssets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HearfulBackgroundAssets;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -56,6 +84,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BB0000000000000000000005 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -64,6 +99,7 @@
 			children = (
 				AA00000000000000000000A1 /* Hearful */,
 				AA00000000000000000000A2 /* HearfulTests */,
+				BB0000000000000000000004 /* HearfulBackgroundAssets */,
 				AA00000000000000000000C2 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -73,6 +109,7 @@
 			children = (
 				AA00000000000000000000D2 /* Hearful.app */,
 				AA00000000000000000000D4 /* HearfulTests.xctest */,
+				BB0000000000000000000003 /* HearfulBackgroundAssets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -87,10 +124,12 @@
 				AA00000000000000000000B2 /* Sources */,
 				AA00000000000000000000B1 /* Frameworks */,
 				AA00000000000000000000B3 /* Resources */,
+				BB000000000000000000000D /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				BB0000000000000000000009 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				AA00000000000000000000A1 /* Hearful */,
@@ -124,6 +163,28 @@
 			productReference = AA00000000000000000000D4 /* HearfulTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		BB0000000000000000000006 /* HearfulBackgroundAssets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BB000000000000000000000C /* Build configuration list for PBXNativeTarget "HearfulBackgroundAssets" */;
+			buildPhases = (
+				BB0000000000000000000008 /* Sources */,
+				BB0000000000000000000005 /* Frameworks */,
+				BB0000000000000000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BB0000000000000000000004 /* HearfulBackgroundAssets */,
+			);
+			name = HearfulBackgroundAssets;
+			packageProductDependencies = (
+			);
+			productName = HearfulBackgroundAssets;
+			productReference = BB0000000000000000000003 /* HearfulBackgroundAssets.appex */;
+			productType = "com.apple.product-type.extensionkit-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -140,6 +201,9 @@
 					AA00000000000000000000D3 = {
 						CreatedOnToolsVersion = 26.6;
 						TestTargetID = AA00000000000000000000D1;
+					};
+					BB0000000000000000000006 = {
+						CreatedOnToolsVersion = 27.0;
 					};
 				};
 			};
@@ -162,12 +226,20 @@
 			targets = (
 				AA00000000000000000000D1 /* Hearful */,
 				AA00000000000000000000D3 /* HearfulTests */,
+				BB0000000000000000000006 /* HearfulBackgroundAssets */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		AA00000000000000000000B3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BB0000000000000000000007 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -191,6 +263,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BB0000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -198,6 +277,11 @@
 			isa = PBXTargetDependency;
 			target = AA00000000000000000000D1 /* Hearful */;
 			targetProxy = AA00000000000000000000F3 /* PBXContainerItemProxy */;
+		};
+		BB0000000000000000000009 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BB0000000000000000000006 /* HearfulBackgroundAssets */;
+			targetProxy = BB0000000000000000000002 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -367,6 +451,7 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(HEARFUL_APP_PROFILE_UUID)";
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
@@ -410,6 +495,51 @@
 			};
 			name = Release;
 		};
+		BB000000000000000000000A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = HearfulBackgroundAssets/HearfulBackgroundAssets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 67F2439F4X;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "HearfulBackgroundAssets-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful.BackgroundAssets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BB000000000000000000000B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = HearfulBackgroundAssets/HearfulBackgroundAssets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 67F2439F4X;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "HearfulBackgroundAssets-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful.BackgroundAssets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(HEARFUL_BACKGROUND_ASSETS_PROFILE_UUID)";
+				SKIP_INSTALL = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -436,6 +566,15 @@
 			buildConfigurations = (
 				AA00000000000000000000E7 /* Debug */,
 				AA00000000000000000000E8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BB000000000000000000000C /* Build configuration list for PBXNativeTarget "HearfulBackgroundAssets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB000000000000000000000A /* Debug */,
+				BB000000000000000000000B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

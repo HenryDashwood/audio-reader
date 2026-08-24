@@ -32,7 +32,8 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     @Published var isScrubbing = false
     @Published private(set) var playbackRate: Float = 1.0
 
-    private let synthesizer: SpeechSynthesizing
+    private var synthesizer: SpeechSynthesizing
+    private var voicePreferenceChanged = false
     private let api: HearfulAPIProtocol
     private var script: ArticleScript?
     private var chunkIndex = 0
@@ -86,12 +87,29 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     func play(_ episode: Episode) {
         try? AudioSession.configureForPlayback()
+        applyChangedVoiceIfNeeded()
         if episode.id == currentEpisode?.id, script != nil {
             wantsPlayback = true
             speakCurrentChunk()
             return
         }
         load(episode, andPlay: true)
+    }
+
+    /// Settings calls this after changing the optional natural voice. Existing
+    /// speech is left alone; the replacement is installed the next time the
+    /// user starts or resumes an article.
+    func voicePreferenceDidChange() {
+        voicePreferenceChanged = true
+    }
+
+    private func applyChangedVoiceIfNeeded() {
+        guard voicePreferenceChanged else { return }
+        synthesizer.stopSpeaking(at: .immediate)
+        synthesizer.delegate = nil
+        synthesizer = SpeechSynthesizers.make()
+        synthesizer.delegate = self
+        voicePreferenceChanged = false
     }
 
     func pause() {

@@ -1,0 +1,84 @@
+diff --git a/Package.swift b/Package.swift
+index 2f77b83..bc3f89a 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -11,15 +11,14 @@ let package = Package(
+   products: [
+     .library(
+       name: "KokoroSwift",
+-      type: .dynamic,
+       targets: ["KokoroSwift"]
+     ),
+   ],
+   dependencies: [
+-    .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.29.1"),
++    .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.31.6"),
+     // .package(url: "https://github.com/mlalma/eSpeakNGSwift", from: "1.0.1"),
+-    .package(url: "https://github.com/mlalma/MisakiSwift", from: "1.0.4"),
+-    .package(url: "https://github.com/mlalma/MLXUtilsLibrary.git", from: "0.0.6")
++    .package(path: "../MisakiSwift"),
++    .package(url: "https://github.com/mlalma/MLXUtilsLibrary.git", from: "0.0.7")
+   ],
+   targets: [
+     .target(
+@@ -29,12 +28,13 @@ let package = Package(
+         .product(name: "MLXNN", package: "mlx-swift"),
+         .product(name: "MLXRandom", package: "mlx-swift"),
+         .product(name: "MLXFFT", package: "mlx-swift"),
++        .product(name: "MLXFast", package: "mlx-swift"),
+         // .product(name: "eSpeakNGLib", package: "eSpeakNGSwift"),
+         .product(name: "MisakiSwift", package: "MisakiSwift"),
+         .product(name: "MLXUtilsLibrary", package: "MLXUtilsLibrary")
+       ],
+       resources: [
+-       .copy("../../Resources/")
++       .copy("../../Resources/config.json")
+       ]
+     ),
+     .testTarget(
+diff --git a/Sources/KokoroSwift/TTSEngine/KokoroConfig.swift b/Sources/KokoroSwift/TTSEngine/KokoroConfig.swift
+index 3c13dcc..3ef9b24 100644
+--- a/Sources/KokoroSwift/TTSEngine/KokoroConfig.swift
++++ b/Sources/KokoroSwift/TTSEngine/KokoroConfig.swift
+@@ -154,7 +154,7 @@ struct KokoroConfig: Decodable {
+   ///         and should fail fast if the file is missing or malformed
+   nonisolated static func loadConfig() -> KokoroConfig {
+     // Locate config.json in the module bundle
+-    let fileURL = Bundle.module.url(forResource: "config", withExtension: "json", subdirectory: "Resources")!
++    let fileURL = Bundle.module.url(forResource: "config", withExtension: "json")!
+     
+     // Read file contents
+     let configJSON = try! String(contentsOf: fileURL, encoding: .utf8)
+diff --git a/Sources/KokoroSwift/TTSEngine/KokoroTTS.swift b/Sources/KokoroSwift/TTSEngine/KokoroTTS.swift
+index 8cbea91..8ab880c 100644
+--- a/Sources/KokoroSwift/TTSEngine/KokoroTTS.swift
++++ b/Sources/KokoroSwift/TTSEngine/KokoroTTS.swift
+@@ -169,10 +169,6 @@ public final class KokoroTTS {
+     // Update language if it has changed
+     try updateLanguageIfNeeded(language)
+ 
+-    // Start performance timing
+-    BenchmarkTimer.reset()
+-    BenchmarkTimer.startTimer(Constants.bm_TTS)
+-
+     // Step 1: Convert text to phonemes
+     let (phonemizedText, tokenArray) = try phonemizeText(text)
+     
+@@ -221,9 +217,6 @@ public final class KokoroTTS {
+       TimestampPredictor.preditTimestamps(tokens: tokenArray, predictionDuration: predictedDurations)
+     }
+     
+-    // Stop performance timing
+-    BenchmarkTimer.stopTimer(Constants.bm_TTS)
+-
+     return (audio[0].asArray(Float.self), tokenArray)
+   }
+   
+@@ -386,7 +379,6 @@ public final class KokoroTTS {
+     public static let samplingRate = 24000
+     
+     // Benchmark timer identifiers
+-    public static let bm_TTS = "TTSAudio"
+     static let bm_Phonemize = "Phonemize"
+     static let bm_bert = "BERT"
+     static let bm_duration = "Duration"

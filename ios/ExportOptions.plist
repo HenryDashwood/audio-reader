@@ -22,11 +22,13 @@
 	<key>signingCertificate</key>
 	<string>Apple Distribution</string>
 
-	<!-- The workflow overwrites this value with the UUID of the profile it just
-	     installed, so the profile can be renamed without touching this file. -->
+	<!-- The workflow overwrites these values with the UUIDs of the profiles it
+	     just installed, so profiles can be renamed without touching this file. -->
 	<key>provisioningProfiles</key>
 	<dict>
 		<key>com.henrydashwood.hearful</key>
+		<string>REPLACED_BY_WORKFLOW</string>
+		<key>com.henrydashwood.hearful.BackgroundAssets</key>
 		<string>REPLACED_BY_WORKFLOW</string>
 	</dict>
 

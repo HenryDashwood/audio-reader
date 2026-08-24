@@ -226,14 +226,12 @@ Confirmed directly: copy the built bundle, move `Resources/*` to the root, and
 the identical `codesign` call succeeds. It is **not** a one-line fix, because
 both packages read their resources with
 `Bundle.module.url(forResource:withExtension:subdirectory: "Resources")` — one
-call site in `KokoroSwift`, four in `MisakiSwift`. Fixing it means flattening
-the layout *and* dropping the `subdirectory:` argument everywhere, which means
-forking both packages or getting the change upstream.
-
-The measurements above were taken with locally patched checkouts in
-`~/kokoro-packages`, with the project pointed at them by relative path. That
-edit is deliberately **not** committed: it hard-codes a path on one machine and
-it breaks the simulator build for everyone.
+call site in `KokoroSwift`, four in `MisakiSwift`. Hearful keeps these changes as
+small patches under `ios/PackagePatches`. `scripts/bootstrap-kokoro-packages.sh`
+checks out the pinned upstream releases beside the repository and applies the
+patches. Xcode Cloud runs it from `ci_scripts/ci_post_clone.sh`, and GitHub
+Actions runs it before testing, so clean CI checkouts resolve without vendoring
+the packages.
 
 ### 4. Smaller things that still stop the build
 
@@ -251,8 +249,9 @@ it breaks the simulator build for everyone.
   `xcodebuild -downloadComponent MetalToolchain` (839MB).
 - MLX Swift 0.31.6 includes an inert-on-Apple `CudaBuild` package plugin.
   Non-interactive builds pass `-skipPackagePluginValidation` because they
-  cannot display Xcode's one-time trust prompt; dependency revisions remain
-  pinned in `Package.resolved`.
+  cannot display Xcode's one-time trust prompt. The bootstrap pins the two
+  upstream package commits, and the patches lock MLX and MLXUtilsLibrary to
+  the tested versions.
 
 ### The model files
 
@@ -269,11 +268,10 @@ it breaks the simulator build for everyone.
 
 ## Setting it up
 
-1. **Add the package.** In Xcode, *File → Add Package Dependencies…* and enter
-   `https://github.com/mlalma/kokoro-ios` (MIT). It pulls MLX Swift, MisakiSwift
-   and MLXUtilsLibrary with it. Add the `KokoroSwift` product to the `Hearful`
-   target. Until the codesigning problem above is solved, point it at forks with
-   the resource layout fixed rather than at upstream.
+1. **Prepare the packages.** Run `make ios-packages`. This checks out the pinned
+   upstream `kokoro-ios` 1.0.9 and `MisakiSwift` 1.0.6 releases in the repository's
+   parent directory, then applies Hearful's resource-layout and MLX 0.31.6
+   compatibility patches. Package source is not copied into Hearful itself.
 
 2. **Get the weights.** `kokoro-v1_0.safetensors` (~330MB) from
    [hexgrad/Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M).
@@ -292,12 +290,10 @@ it breaks the simulator build for everyone.
    )
    ```
 
-4. **Put both files where the app looks.** Drag them into the Xcode project
-   (target membership: `Hearful`) so they ride in the bundle.
-   `KokoroModelStore` checks `Application Support/Kokoro` first, so a
-   downloaded copy can shadow the bundled one later without any code changing
-   — which is how this would ship, via On-Demand Resources rather than a
-   400MB app.
+4. **Build the optional asset pack.** Put both files under
+   `background-assets/kokoro/Kokoro`, then follow the README in that directory
+   to create the `.aar` and upload it to App Store Connect. They do not have
+   Hearful target membership and never enter the app bundle.
 
 5. **Run it.** Settings gains a *Natural voice* section. Pick a voice, hear the
    preview, open an article.
@@ -347,9 +343,9 @@ Three things are worth knowing about the design:
   Apple voice. `KokoroSynthesizer` already releases the chunk when a render
   fails, so the article keeps moving; deciding *before* playing is the missing
   piece.
-- **The voice is read once at launch.** `ArticlePlayer.shared` builds its
-  synthesiser in `init`, so changing the voice in Settings takes effect on the
-  next article rather than the current one.
+- **A voice change is deliberately non-disruptive.** It does not interrupt an
+  article already speaking. The reader replaces its synthesiser next time the
+  user starts or resumes playback.
 - **Text normalisation is untouched**, and it is where the real work is.
   `AVSpeechSynthesizer` reads "£4.99", "Dr.", "2019–24" and "https://…"
   sensibly; Kokoro takes phonemes and will mispronounce whatever Misaki's
