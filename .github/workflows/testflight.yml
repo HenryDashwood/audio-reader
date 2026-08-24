@@ -84,12 +84,21 @@ jobs:
           # commit count is unique and always increasing, which the manual
           # CURRENT_PROJECT_VERSION bump in the project file is not.
           echo "build=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
-          # A v-tag sets the user-visible version; a manual run keeps whatever
-          # MARKETING_VERSION the project already carries, so the override is
-          # passed as a whole argument that is simply empty in that case.
+          # A v-tag sets the user-visible version. A manual run inherits the
+          # highest release tag reachable from this commit, so a post-release
+          # build cannot accidentally go backwards to the project's stale
+          # MARKETING_VERSION and lose to an older build in TestFlight.
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            echo "marketing_arg=MARKETING_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            marketing_version="${GITHUB_REF_NAME#v}"
           else
+            release_tag=$(git tag --merged HEAD --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')
+            marketing_version="${release_tag#v}"
+          fi
+
+          if [ -n "$marketing_version" ]; then
+            echo "marketing_arg=MARKETING_VERSION=$marketing_version" >> "$GITHUB_OUTPUT"
+          else
+            # Before the first release tag, fall back to the Xcode project.
             echo "marketing_arg=" >> "$GITHUB_OUTPUT"
           fi
 
