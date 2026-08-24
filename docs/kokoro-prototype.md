@@ -229,7 +229,7 @@ both packages read their resources with
 call site in `KokoroSwift`, four in `MisakiSwift`. Hearful keeps these changes as
 small patches under `ios/PackagePatches`. `scripts/bootstrap-kokoro-packages.sh`
 checks out the pinned upstream releases beside the repository and applies the
-patches. Xcode Cloud runs it from `ci_scripts/ci_post_clone.sh`, and GitHub
+patches. Xcode Cloud runs it from `ios/ci_scripts/ci_post_clone.sh`, and GitHub
 Actions runs it before testing, so clean CI checkouts resolve without vendoring
 the packages.
 
