@@ -152,10 +152,12 @@ final class KokoroSynthesizer: SpeechSynthesizing {
                     if Task.isCancelled { return }
                     self.accept(audio, characters: segment.count, for: id)
                 } catch {
-                    // One bad segment must not strand the article: stop
-                    // rendering and let what has been spoken finish, which
-                    // advances the reader to the next chunk.
-                    break
+                    if Task.isCancelled { return }
+                    // Advancing would silently discard the unrendered text.
+                    // Report failure instead so the reader can restart this
+                    // same chunk with its dependable system voice.
+                    self.renderingFailed(for: id)
+                    return
                 }
             }
             if Task.isCancelled { return }
@@ -276,6 +278,28 @@ final class KokoroSynthesizer: SpeechSynthesizing {
             return
         }
         output.finishEnqueueing()
+    }
+
+    private func renderingFailed(for id: UtteranceID) {
+        guard current == id else { return }
+        renderTask = nil
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        prefetched = nil
+        pendingPrefetch = nil
+        stopProgressTimer()
+        output.shutDown()
+        current = nil
+        renderedDuration = 0
+        renderedCharacters = 0
+        totalCharacters = 0
+        isRenderComplete = false
+        buffered = []
+        bufferedDuration = 0
+        isOutputStarted = true
+        isSpeaking = false
+        isPaused = false
+        delegate?.speechFailed(id)
     }
 
     private func outputUnderran(for id: UtteranceID) {

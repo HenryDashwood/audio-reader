@@ -1,4 +1,6 @@
-.PHONY: backend-dev ios-packages ios-doctor ios-build ios-test ios-test-latest ios-phone
+.PHONY: backend-dev ios-packages ios-doctor ios-build ios-test ios-test-latest ios-phone \
+	ios-assets-license ios-assets-setup ios-assets-package ios-assets-serve \
+	ios-assets-doctor
 
 backend-dev:
 	docker compose up -d db
@@ -22,3 +24,18 @@ ios-test-latest: ios-packages
 
 ios-phone: ios-packages
 	@./scripts/ios-dev.sh device
+
+ios-assets-license:
+	@./scripts/ios-assets-local.sh license
+
+ios-assets-setup:
+	@./scripts/ios-assets-local.sh setup
+
+ios-assets-package:
+	@./scripts/ios-assets-local.sh package
+
+ios-assets-serve:
+	@./scripts/ios-assets-local.sh serve
+
+ios-assets-doctor:
+	@./scripts/ios-assets-local.sh doctor

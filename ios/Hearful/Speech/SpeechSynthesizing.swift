@@ -36,7 +36,14 @@ enum SpeechSynthesizers {
         if let voice = SpeechVoice.naturalVoice, let engine = KokoroEngines.shared {
             return KokoroSynthesizer(engine: engine, voice: voice)
         }
-        return SystemSpeechSynthesizer()
+        return makeSystemVoice()
+    }
+
+    /// A known-good fallback when an optional renderer cannot make sound.
+    /// Tests still get silence, so exercising that recovery path cannot make
+    /// the test runner speak.
+    static func makeSystemVoice() -> SpeechSynthesizing {
+        TestEnvironment.isRunningTests ? SilentSynthesizer() : SystemSpeechSynthesizer()
     }
 }
 
@@ -57,9 +64,16 @@ typealias UtteranceID = ObjectIdentifier
 @MainActor
 protocol SpeechSynthesizingDelegate: AnyObject {
     func speechFinished(_ utterance: UtteranceID)
+    /// The synthesiser could not produce this utterance. Unlike a deliberate
+    /// cancellation, the reader must recover rather than silently advance.
+    func speechFailed(_ utterance: UtteranceID)
     /// `fraction` is how far through the utterance's text the voice has
     /// reached, 0 to 1.
     func speechProgressed(toFraction fraction: Double, of utterance: UtteranceID)
+}
+
+extension SpeechSynthesizingDelegate {
+    func speechFailed(_ utterance: UtteranceID) {}
 }
 
 /// The real thing: AVSpeechSynthesizer, with its delegate callbacks brought

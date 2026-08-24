@@ -24,6 +24,40 @@ Upload the resulting ignored `.aar` to the asset pack whose identifier is
 Background Assets mock server to test downloads before an asset pack is
 available through TestFlight.
 
+## Test a locally installed build
+
+Apple only serves its hosted copy to TestFlight and App Store installations.
+An app installed by `make ios-phone` therefore uses Apple's local mock server.
+Hearful runs the stable ARM Linux developer tools in Docker because the
+`ba-package 2.0-beta` in the current Xcode beta rejects JSON manifests.
+
+The one-time setup is:
+
+```bash
+make ios-assets-license
+make ios-assets-setup
+```
+
+The setup command prints the generated root certificate and the exact HTTPS
+URL for this Mac. Send the `.cer` file to the iPhone, install its downloaded
+profile, then enable it in **Settings > General > About > Certificate Trust
+Settings**. With Developer Mode enabled, open **Settings > Developer >
+Background Assets Testing > Development Overrides** and set **URL Override**
+to the printed URL.
+
+For each local development session, keep this running in one terminal:
+
+```bash
+make ios-assets-serve
+```
+
+Then use `make ios-phone` in another terminal and download the natural voice in
+Hearful. The serving command rebuilds the ignored archive only when the
+manifest, model, or voices file changed. Set `HEARFUL_BA_FORCE_PACKAGE=1` to
+force a rebuild. It reads Apple's `aarch64.zip` from `~/Downloads` by default;
+set `HEARFUL_BA_TOOLS_ZIP` if the download is elsewhere. Generated tools,
+certificates, private keys, and archives stay under ignored `build/` output.
+
 The app and `com.henrydashwood.hearful.BackgroundAssets` extension both use
 the `group.com.henrydashwood.hearful` app group. For GitHub's TestFlight job,
 create a separate App Store distribution profile for the extension and store

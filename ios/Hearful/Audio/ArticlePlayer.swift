@@ -33,7 +33,13 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     @Published private(set) var playbackRate: Float = 1.0
 
     private var synthesizer: SpeechSynthesizing
+    private let preferredSynthesizerFactory: @MainActor () -> SpeechSynthesizing
+    private let fallbackSynthesizerFactory: @MainActor () -> SpeechSynthesizing
     private var voicePreferenceChanged = false
+    /// A natural renderer that failed is not retried on every paragraph. A
+    /// different article gets one fresh attempt; changing the voice retries
+    /// immediately on the current article.
+    private var systemFallbackEpisodeID: Int?
     private let api: HearfulAPIProtocol
     private var script: ArticleScript?
     private var chunkIndex = 0
@@ -52,10 +58,18 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     init(
         api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
-        synthesizer: SpeechSynthesizing = SpeechSynthesizers.make()
+        synthesizer: SpeechSynthesizing = SpeechSynthesizers.make(),
+        preferredSynthesizerFactory: @escaping @MainActor () -> SpeechSynthesizing = {
+            SpeechSynthesizers.make()
+        },
+        fallbackSynthesizerFactory: @escaping @MainActor () -> SpeechSynthesizing = {
+            SpeechSynthesizers.makeSystemVoice()
+        }
     ) {
         self.api = api
         self.synthesizer = synthesizer
+        self.preferredSynthesizerFactory = preferredSynthesizerFactory
+        self.fallbackSynthesizerFactory = fallbackSynthesizerFactory
         synthesizer.delegate = self
         // Same stored preference as AudioPlayer: her speed is her speed,
         // whether the thing playing is streamed or spoken.
@@ -87,6 +101,10 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     func play(_ episode: Episode) {
         try? AudioSession.configureForPlayback()
+        if let failedEpisode = systemFallbackEpisodeID, failedEpisode != episode.id {
+            replaceSynthesizer(with: preferredSynthesizerFactory())
+            systemFallbackEpisodeID = nil
+        }
         applyChangedVoiceIfNeeded()
         if episode.id == currentEpisode?.id, script != nil {
             wantsPlayback = true
@@ -105,11 +123,16 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     private func applyChangedVoiceIfNeeded() {
         guard voicePreferenceChanged else { return }
-        synthesizer.stopSpeaking(at: .immediate)
-        synthesizer.delegate = nil
-        synthesizer = SpeechSynthesizers.make()
-        synthesizer.delegate = self
+        replaceSynthesizer(with: preferredSynthesizerFactory())
         voicePreferenceChanged = false
+        systemFallbackEpisodeID = nil
+    }
+
+    private func replaceSynthesizer(with replacement: SpeechSynthesizing) {
+        synthesizer.delegate = nil
+        synthesizer.stopSpeaking(at: .immediate)
+        synthesizer = replacement
+        synthesizer.delegate = self
     }
 
     func pause() {
@@ -125,6 +148,11 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     func resume() {
         guard let episode = currentEpisode else { return }
         try? AudioSession.configureForPlayback()
+        // A natural synthesiser captures its voice when it is created. If the
+        // preference changed while paused, continuing the old object would
+        // keep the old voice despite what Settings now says. Replacing it
+        // restarts only the current chunk, at a clean word boundary.
+        applyChangedVoiceIfNeeded()
         wantsPlayback = true
         if synthesizer.isPaused {
             synthesizer.continueSpeaking()
@@ -322,6 +350,16 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     func speechFinished(_ utterance: UtteranceID) {
         chunkFinished(utterance)
+    }
+
+    func speechFailed(_ utterance: UtteranceID) {
+        guard utterance == currentUtterance, wantsPlayback else { return }
+        // Keep the optional preference for a future article, but finish this
+        // one with the dependable system voice. Restarting the current chunk
+        // means no text is silently lost even if some of it had rendered.
+        systemFallbackEpisodeID = currentEpisode?.id
+        replaceSynthesizer(with: fallbackSynthesizerFactory())
+        speakCurrentChunk()
     }
 
     func speechProgressed(toFraction fraction: Double, of utterance: UtteranceID) {

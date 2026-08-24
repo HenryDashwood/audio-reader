@@ -8,7 +8,8 @@ struct SettingsView: View {
     @State private var naturalVoiceName: String = SpeechVoice.naturalVoice?.name ?? ""
     @State private var naturalVoices: [KokoroVoice] = []
     @State private var naturalPreview: KokoroSynthesizer?
-    @StateObject private var naturalVoiceAssets = NaturalVoiceAssets()
+    @ObservedObject private var naturalVoiceAssets = NaturalVoiceAssets.shared
+    @State private var confirmingNaturalVoiceRemoval = false
     @State private var confirmingDelete = false
     @State private var confirmingDisableAI = false
     @State private var showingAIChoice = false
@@ -64,11 +65,52 @@ struct SettingsView: View {
                                 "Downloads about 350 megabytes. The system voice remains available."
                             )
 
+                        case .waiting:
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack(spacing: 10) {
+                                    ProgressView()
+                                    Text("Preparing natural voices…")
+                                }
+                                .accessibilityElement(children: .combine)
+                                .accessibilityLabel("Preparing natural voices download")
+
+                                Button("Cancel Download") {
+                                    Task { await cancelNaturalVoiceDownload() }
+                                }
+                            }
+
                         case .downloading(let fraction):
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 12) {
                                 Text("Downloading natural voices…")
                                 ProgressView(value: fraction)
                                     .accessibilityLabel("Natural voices download")
+                                    .accessibilityValue(fraction.formatted(.percent.precision(.fractionLength(0))))
+
+                                Button("Cancel Download") {
+                                    Task { await cancelNaturalVoiceDownload() }
+                                }
+                            }
+
+                        case .paused(let fraction):
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Download paused")
+                                ProgressView(value: fraction)
+                                    .accessibilityLabel("Natural voices download paused")
+                                    .accessibilityValue(fraction.formatted(.percent.precision(.fractionLength(0))))
+                                Text("It will resume automatically when downloading can continue.")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+
+                                Button("Cancel Download") {
+                                    Task { await cancelNaturalVoiceDownload() }
+                                }
+                            }
+
+                        case .cancelling(let fraction):
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Cancelling download…")
+                                ProgressView(value: fraction)
+                                    .accessibilityLabel("Cancelling natural voices download")
                                     .accessibilityValue(fraction.formatted(.percent.precision(.fractionLength(0))))
                             }
 
@@ -82,7 +124,7 @@ struct SettingsView: View {
                             .pickerStyle(.navigationLink)
 
                             Button("Remove Download", role: .destructive) {
-                                Task { await removeNaturalVoices() }
+                                confirmingNaturalVoiceRemoval = true
                             }
                             .accessibilityHint(
                                 "Frees the downloaded model and returns article reading to the system voice"
@@ -191,6 +233,21 @@ struct SettingsView: View {
             // consequence out as part of the choice, so the destructive button
             // is never the first thing VoiceOver lands on unexplained.
             .confirmationDialog(
+                "Remove natural voices?",
+                isPresented: $confirmingNaturalVoiceRemoval,
+                titleVisibility: .visible
+            ) {
+                Button("Remove Natural Voices", role: .destructive) {
+                    Task { await removeNaturalVoices() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "This frees about 350 MB. Articles will use your system voice. "
+                        + "Downloading natural voices again will require an internet connection."
+                )
+            }
+            .confirmationDialog(
                 "Delete your account?",
                 isPresented: $confirmingDelete,
                 titleVisibility: .visible
@@ -251,6 +308,12 @@ struct SettingsView: View {
                     await loadNaturalVoices()
                 }
             }
+            // If Settings was recreated while a process-wide download was in
+            // flight, populate this view's picker when that download finishes.
+            .onChange(of: naturalVoiceAssets.state) { _, state in
+                guard state == .installed else { return }
+                Task { await loadNaturalVoices() }
+            }
             .onChange(of: naturalVoiceName) { _, name in
                 let voice = KokoroVoice.named(name)
                 SpeechVoice.selectNatural(voice)
@@ -274,11 +337,22 @@ struct SettingsView: View {
 
     private func downloadNaturalVoices() async {
         await naturalVoiceAssets.download()
-        guard naturalVoiceAssets.state == .installed else { return }
-        await loadNaturalVoices()
-        AccessibilityNotification.Announcement(
-            "Natural voices downloaded. Choose a voice to hear a preview."
-        ).post()
+        switch naturalVoiceAssets.state {
+        case .installed:
+            await loadNaturalVoices()
+            AccessibilityNotification.Announcement(
+                "Natural voices downloaded. Choose a voice to hear a preview."
+            ).post()
+        case .failed(let message):
+            AccessibilityNotification.Announcement(message).post()
+        default:
+            break
+        }
+    }
+
+    private func cancelNaturalVoiceDownload() async {
+        await naturalVoiceAssets.cancelDownload()
+        AccessibilityNotification.Announcement("Cancelling natural voice download.").post()
     }
 
     private func removeNaturalVoices() async {

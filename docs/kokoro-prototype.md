@@ -291,9 +291,11 @@ the packages.
    ```
 
 4. **Build the optional asset pack.** Put both files under
-   `background-assets/kokoro/Kokoro`, then follow the README in that directory
-   to create the `.aar` and upload it to App Store Connect. They do not have
-   Hearful target membership and never enter the app bundle.
+   `background-assets/kokoro/Kokoro`, then follow the README in that directory.
+   `make ios-assets-serve` provides the HTTPS mock server required by locally
+   installed builds; TestFlight and App Store builds use the independently
+   uploaded Apple-hosted copy. The files do not have Hearful target membership
+   and never enter the app bundle.
 
 5. **Run it.** Settings gains a *Natural voice* section. Pick a voice, hear the
    preview, open an article.

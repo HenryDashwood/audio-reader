@@ -111,9 +111,11 @@ private final class FakeKokoroOutput: KokoroAudioOutputting {
 @MainActor
 private final class SpyDelegate: SpeechSynthesizingDelegate {
     private(set) var finished: [UtteranceID] = []
+    private(set) var failed: [UtteranceID] = []
     private(set) var fractions: [Double] = []
 
     func speechFinished(_ utterance: UtteranceID) { finished.append(utterance) }
+    func speechFailed(_ utterance: UtteranceID) { failed.append(utterance) }
 
     func speechProgressed(toFraction fraction: Double, of utterance: UtteranceID) {
         fractions.append(fraction)
@@ -369,9 +371,9 @@ struct KokoroSynthesizerTests {
         #expect(!synthesizer.isSpeaking)
     }
 
-    @Test func aFailedRenderStillReleasesTheChunk() async {
-        // A voice that will not render must not strand the article on one
-        // paragraph in silence.
+    @Test func aFailedRenderDoesNotPretendTheChunkWasSpoken() async {
+        // The reader needs a failure callback so it can retry this exact text
+        // with the system voice rather than silently advancing past it.
         let output = FakeKokoroOutput()
         let synthesizer = KokoroSynthesizer(
             engine: FakeKokoroEngine(failing: true), voice: Self.voice, output: output)
@@ -381,8 +383,10 @@ struct KokoroSynthesizerTests {
 
         synthesizer.speak(utterance)
 
-        #expect(await waitUntil { !delegate.finished.isEmpty })
-        #expect(delegate.finished == [UtteranceID(utterance)])
+        #expect(await waitUntil { !delegate.failed.isEmpty })
+        #expect(delegate.failed == [UtteranceID(utterance)])
+        #expect(delegate.finished.isEmpty)
+        #expect(output.shutDowns == 1)
     }
 
     @Test func whatWasPreparedIsNotRenderedAgain() async {
