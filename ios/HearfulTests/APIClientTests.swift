@@ -524,6 +524,16 @@ struct AuthAndPositionTests {
         #expect(body?["completed"] as? Bool == false)
     }
 
+    @Test func clearLatestSendsADelete() async throws {
+        let transport = FakeTransport(status: 204, json: "")
+
+        try await makeClient(transport).clearLatest()
+
+        let request = try #require(transport.lastRequest)
+        #expect(request.httpMethod == "DELETE")
+        #expect(request.url?.path == "/episodes")
+    }
+
     @Test func episodeDecodesSavedPosition() async throws {
         let json = """
             {"id":104,"title":"t","description":null,"audio_url":"https://x/y.mp3",

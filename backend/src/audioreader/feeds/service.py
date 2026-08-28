@@ -1,6 +1,6 @@
 from urllib.parse import urljoin, urlsplit
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.feeds.artwork import site_artwork_is_due, website_artwork_url
@@ -113,9 +113,47 @@ async def subscribe(session: AsyncSession, url: str, user: User) -> Feed:
     feed = await ensure_feed(session, url)
     if await is_subscribed(session, feed.id, user):
         raise AlreadySubscribedError(url)
-    session.add(Subscription(user_id=user.id, feed=feed))
+    # Following a show starts an inbox for what arrives next. Its existing
+    # catalogue remains browsable and searchable, but subscribing must not
+    # turn years of history into dozens of allegedly new items.
+    latest_episode_id = await session.scalar(
+        select(func.max(Episode.id)).where(Episode.feed_id == feed.id)
+    )
+    session.add(
+        Subscription(
+            user_id=user.id,
+            feed=feed,
+            latest_after_episode_id=latest_episode_id,
+        )
+    )
     await session.commit()
     return feed
+
+
+async def clear_latest(session: AsyncSession, user: User) -> None:
+    """Advance every subscribed show's inbox cursor to its current end.
+
+    Nothing is marked heard or deleted: the show's page and full-library
+    search still contain every episode, and subsequent ingests have higher
+    ids so they appear in Latest normally.
+    """
+    subscriptions = list(
+        await session.scalars(select(Subscription).where(Subscription.user_id == user.id))
+    )
+    if not subscriptions:
+        return
+    latest_rows = await session.execute(
+        select(Episode.feed_id, func.max(Episode.id))
+        .where(Episode.feed_id.in_([subscription.feed_id for subscription in subscriptions]))
+        .group_by(Episode.feed_id)
+    )
+    latest_by_feed = {
+        feed_id: latest_episode_id
+        for feed_id, latest_episode_id in latest_rows.tuples()
+    }
+    for subscription in subscriptions:
+        subscription.latest_after_episode_id = latest_by_feed.get(subscription.feed_id)
+    await session.commit()
 
 
 async def unsubscribe(session: AsyncSession, feed_id: int, user: User) -> Feed | None:

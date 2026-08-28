@@ -172,6 +172,12 @@ class Subscription(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     feed_id: Mapped[int] = mapped_column(ForeignKey("feeds.id", ondelete="CASCADE"))
+    # The Latest screen is an inbox, not the show's archive. Episodes at or
+    # below this cursor were already present when the listener subscribed —
+    # or when she last cleared Latest — and stay available on the show's page
+    # without being poured into that inbox. Null is the legacy state so an
+    # upgrade does not silently clear anybody's existing list.
+    latest_after_episode_id: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     feed: Mapped[Feed] = relationship()

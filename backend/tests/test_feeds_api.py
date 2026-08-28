@@ -1,8 +1,11 @@
+from datetime import UTC, datetime, timedelta
+
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import func, select
 
 from audioreader.db import get_session
 from audioreader.main import create_app
-from audioreader.models import Feed, User
+from audioreader.models import Episode, Feed, PlaybackPosition, User
 
 FEED_URL = "https://example.com/feed.xml"
 
@@ -10,6 +13,29 @@ FEED_URL = "https://example.com/feed.xml"
 async def subscribe(client, respx_mock, xml: bytes, url: str = FEED_URL):
     respx_mock.get(url).respond(content=xml, content_type="application/rss+xml")
     return await client.post("/feeds", json={"url": url})
+
+
+async def add_new_episode(
+    session,
+    feed_id: int,
+    *,
+    number: int,
+    title: str | None = None,
+    article: bool = False,
+) -> Episode:
+    """An item ingested after subscription, which therefore belongs in Latest."""
+    episode = Episode(
+        feed_id=feed_id,
+        guid=f"new-{number}",
+        title=title or f"New episode {number}",
+        audio_url=None if article else f"https://cdn.example.com/new-{number}.mp3",
+        content_html="<p>A new article.</p>" if article else None,
+        published_at=datetime(2026, 8, 1, tzinfo=UTC) + timedelta(days=number),
+        image_url=f"https://example.com/new-{number}.jpg",
+    )
+    session.add(episode)
+    await session.commit()
+    return episode
 
 
 class TestSubscribe:
@@ -210,12 +236,15 @@ class TestListEpisodes:
         assert episodes[0]["image_url"] == "https://example.com/historyhour/ep103.jpg"
         assert episodes[1]["image_url"] == "https://example.com/historyhour/cover.jpg"
 
-    async def test_episode_artwork_in_recent_and_single(self, client, respx_mock, podcast_xml):
-        await subscribe(client, respx_mock, podcast_xml)
+    async def test_episode_artwork_in_recent_and_single(
+        self, client, session, respx_mock, podcast_xml
+    ):
+        feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
+        arrived = await add_new_episode(session, feed_id, number=103)
         recent = (await client.get("/episodes")).json()
-        assert recent[0]["image_url"] == "https://example.com/historyhour/ep103.jpg"
-        single = (await client.get(f"/episodes/{recent[0]['id']}")).json()
-        assert single["image_url"] == "https://example.com/historyhour/ep103.jpg"
+        assert recent[0]["image_url"] == "https://example.com/new-103.jpg"
+        single = (await client.get(f"/episodes/{arrived.id}")).json()
+        assert single["image_url"] == "https://example.com/new-103.jpg"
 
     async def test_unknown_feed_is_404(self, client):
         response = await client.get("/feeds/999/episodes")
@@ -238,28 +267,62 @@ class TestSingleEpisode:
 
 
 class TestRecentEpisodes:
-    async def test_lists_newest_across_all_feeds(self, client, respx_mock, podcast_xml):
-        await subscribe(client, respx_mock, podcast_xml)
+    async def test_a_new_subscription_starts_caught_up(self, client, respx_mock, podcast_xml):
+        feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
+
+        assert (await client.get("/episodes")).json() == []
+        # Its archive has not gone anywhere; only Latest starts at the end.
+        assert len((await client.get(f"/feeds/{feed_id}/episodes")).json()) == 3
+
+    async def test_lists_new_arrivals_newest_first(self, client, session, respx_mock, podcast_xml):
+        feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
+        await add_new_episode(session, feed_id, number=1)
+        await add_new_episode(session, feed_id, number=2)
         response = await client.get("/episodes")
 
         assert response.status_code == 200
         titles = [e["title"] for e in response.json()]
-        assert titles[0] == "The Fall of Constantinople"
+        assert titles == ["New episode 2", "New episode 1"]
 
-    async def test_articles_are_playable_now(self, client, respx_mock, article_xml):
+    async def test_new_articles_are_playable_too(self, client, session, respx_mock, article_xml):
         # Articles are read aloud by the app, so they belong in Latest and in
         # Siri's suggestions alongside audio episodes.
-        await subscribe(client, respx_mock, article_xml)
+        feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
+        await add_new_episode(
+            session,
+            feed_id,
+            number=3,
+            title="The future of clean water",
+            article=True,
+        )
         episodes = (await client.get("/episodes")).json()
-        assert [e["title"] for e in episodes] == [
-            "Why sewers made cities possible",
-            "The great stagnation in shipping",
-        ]
+        assert [e["title"] for e in episodes] == ["The future of clean water"]
         assert all(e["audio_url"] is None and e["has_text"] for e in episodes)
 
-    async def test_respects_limit(self, client, respx_mock, podcast_xml):
-        await subscribe(client, respx_mock, podcast_xml)
+    async def test_respects_limit(self, client, session, respx_mock, podcast_xml):
+        feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
+        for number in range(3):
+            await add_new_episode(session, feed_id, number=number)
         assert len((await client.get("/episodes?limit=2")).json()) == 2
+
+    async def test_clearing_advances_past_the_whole_inbox(
+        self, client, session, respx_mock, podcast_xml
+    ):
+        feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
+        for number in range(55):
+            await add_new_episode(session, feed_id, number=number)
+        assert len((await client.get("/episodes?limit=50")).json()) == 50
+
+        response = await client.delete("/episodes")
+
+        assert response.status_code == 204
+        assert (await client.get("/episodes")).json() == []
+        # Clear is not a claim that she listened to 55 episodes.
+        assert await session.scalar(select(func.count()).select_from(PlaybackPosition)) == 0
+        assert len((await client.get(f"/feeds/{feed_id}/episodes?limit=100")).json()) == 58
+
+        arrived = await add_new_episode(session, feed_id, number=100)
+        assert [item["id"] for item in (await client.get("/episodes")).json()] == [arrived.id]
 
     async def test_rejects_unbounded_limits(self, client):
         assert (await client.get("/episodes?limit=0")).status_code == 422

@@ -19,6 +19,8 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func episode(id: Int) async throws -> Episode
     func articleText(episodeID: Int) async throws -> EpisodeText
     func recentEpisodes(limit: Int) async throws -> [Episode]
+    /// Empties Latest without deleting episodes or marking them as played.
+    func clearLatest() async throws
     func shows() async throws -> [Show]
     /// One show's episodes, newest first — or the ones matching `query`.
     ///
@@ -55,6 +57,11 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
 }
 
 extension HearfulAPIProtocol {
+    // Keeps test doubles that do not exercise Latest source-compatible.
+    func clearLatest() async throws {
+        throw APIError(underlying: "Clearing Latest is not implemented by this API client")
+    }
+
     // Keeps small test doubles source-compatible; any test that exercises the
     // choice supplies a real implementation rather than accidentally passing.
     func setAIDataSharing(granted: Bool) async throws -> UserInfo {
@@ -184,6 +191,12 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
             url: baseURL.appendingPathComponent("episodes"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "limit", value: "\(limit)")]
         return try await send(URLRequest(url: components.url!))
+    }
+
+    func clearLatest() async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("episodes"))
+        request.httpMethod = "DELETE"
+        try await perform(request)
     }
 
     func shows() async throws -> [Show] {

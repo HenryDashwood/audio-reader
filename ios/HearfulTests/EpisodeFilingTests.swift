@@ -8,6 +8,7 @@ private final class FilingAPI: HearfulAPIProtocol, @unchecked Sendable {
     var episodes: [Episode] = []
     var failure: Error?
     var filings: [(episodeID: Int, played: Bool?, dismissed: Bool?)] = []
+    var clearCount = 0
 
     func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {
         if let failure { throw failure }
@@ -15,6 +16,10 @@ private final class FilingAPI: HearfulAPIProtocol, @unchecked Sendable {
     }
 
     func recentEpisodes(limit: Int) async throws -> [Episode] { episodes }
+    func clearLatest() async throws {
+        if let failure { throw failure }
+        clearCount += 1
+    }
     func episodes(showID: Int, query: String? = nil) async throws -> [Episode] { episodes }
 
     func command(
@@ -164,6 +169,27 @@ struct LatestFilingTests {
         await model.filed(.init(episodeID: 7107, filing: .played))
 
         #expect(titles(model) == [7108])
+    }
+
+    @Test func clearingEmptiesTheWholeList() async {
+        let (model, api) = await makeModel([episode(id: 7109), episode(id: 7110)])
+
+        let error = await model.clear()
+
+        #expect(error == nil)
+        #expect(api.clearCount == 1)
+        #expect(titles(model).isEmpty)
+        #expect(!model.canClear)
+    }
+
+    @Test func aFailedClearKeepsEveryRow() async {
+        let (model, api) = await makeModel([episode(id: 7111), episode(id: 7112)])
+        api.failure = APIError(underlying: "offline")
+
+        let error = await model.clear()
+
+        #expect(error != nil)
+        #expect(titles(model) == [7111, 7112])
     }
 }
 

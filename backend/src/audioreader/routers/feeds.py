@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -402,11 +402,11 @@ async def recent_episodes(
     Siri needs a concrete list of episodes up front: its App Shortcut phrases
     match spoken words against suggested entities, not against free text.
 
-    Episodes she has heard or put aside are left out here rather than by the
-    app, so the same fifty items are worth fifty rows however much of the feed
-    she has worked through. They are still reachable on the show's own page,
-    and the voice pipeline still offers them, so nothing is lost — only the
-    "what's new" list stops repeating itself.
+    A subscription's cursor keeps its existing archive out, and clearing
+    Latest advances that cursor to the current end. Episodes she has heard or
+    put aside are left out here too. Everything remains reachable on the
+    show's own page, and the voice pipeline still offers it, so nothing is
+    lost — only the "what's new" list stops repeating itself.
     """
     episodes = (
         await session.scalars(
@@ -416,6 +416,10 @@ async def recent_episodes(
             .where(
                 Subscription.user_id == user.id,
                 PLAYABLE_EPISODE,
+                or_(
+                    Subscription.latest_after_episode_id.is_(None),
+                    Episode.id > Subscription.latest_after_episode_id,
+                ),
                 Episode.id.not_in(positions.filed_away(user)),
             )
             .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
@@ -423,6 +427,12 @@ async def recent_episodes(
         )
     ).all()
     return await episodes_read(session, user, episodes)
+
+
+@episodes_router.delete("", status_code=204)
+async def clear_recent_episodes(session: Session, user: CurrentUser) -> None:
+    """Empty Latest without deleting episodes or claiming they were heard."""
+    await service.clear_latest(session, user)
 
 
 @episodes_router.get("/{episode_id}")

@@ -202,6 +202,9 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 - [ ] Finished episodes read "Played"; part-heard ones read "N min left"
 - [ ] Swipe a **Latest** row from the right → **Mark played** and **Not interested**; either one removes the row
 - [ ] Pull to refresh afterwards → the removed episode does not come back
+- [ ] Tap **Clear Latest**, confirm → every current row goes and stays gone after relaunch; none is marked played
+- [ ] A new episode published after clearing → it appears normally
+- [ ] Subscribe to a show with a large archive → its backlog stays on the show's page and does not flood **Latest**
 - [ ] The same episode on its **show's page** is still there, reading "Played" or "Not in Latest"
 - [ ] Swipe that row → **Put back**, and it returns to **Latest** on the next refresh
 - [ ] Play an episode to the end → it leaves **Latest** on the next refresh, without being marked by hand

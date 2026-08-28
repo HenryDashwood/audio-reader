@@ -29,6 +29,9 @@ read and hear, and tidies up playback. Worth trying:
   listen for clipped endings, buzzing or unnatural pauses.
 - Move between the full player, mini player and the rest of the app while
   something is playing. Playback and the visible controls should stay in sync.
+- In Latest, use **Clear Latest** and reopen the app. The list should stay
+  clear until something new arrives. Following a new show should leave its
+  existing archive on the show's page instead of filling Latest with it.
 
 Please say which publication or article you tried and what happened,
 especially if discovery chose the wrong feed or spoken text sounded odd.

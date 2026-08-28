@@ -8,6 +8,8 @@ struct LatestView: View {
     @Binding var showingVoice: Bool
     /// The episode whose page is open, if any.
     @State private var openEpisode: Episode?
+    @State private var confirmingClear = false
+    @State private var clearError: String?
 
     var body: some View {
         NavigationStack {
@@ -21,8 +23,8 @@ struct LatestView: View {
                         description: Text(message))
                 case .loaded(let episodes) where episodes.isEmpty:
                     ContentUnavailableView(
-                        "Nothing yet", systemImage: "clock",
-                        description: Text("Subscribe to a show to see new episodes here."))
+                        "You're caught up", systemImage: "checkmark.circle",
+                        description: Text("New episodes from your shows will appear here."))
                 case .loaded(let episodes):
                     episodeList(episodes, offline: false)
                 case .stale(let episodes):
@@ -36,12 +38,49 @@ struct LatestView: View {
             .toolbarTitleDisplayMode(.inlineLarge)
             .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
             .toolbar {
+                if model.canClear {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            confirmingClear = true
+                        } label: {
+                            Label("Clear Latest", systemImage: "checkmark.circle")
+                        }
+                        .accessibilityHint(
+                            "Removes all current items without marking them as played")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { openVoiceSheet($showingVoice) } label: {
                         Image(systemName: "mic.fill")
                     }
                     .accessibilityLabel("Ask for something to listen to")
                 }
+            }
+            .confirmationDialog(
+                "Clear Latest?",
+                isPresented: $confirmingClear,
+                titleVisibility: .visible
+            ) {
+                Button("Clear Latest", role: .destructive) {
+                    Task { clearError = await model.clear() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "This removes all current items from Latest without marking them as played. "
+                        + "New episodes will still appear."
+                )
+            }
+            .alert(
+                "Could not clear Latest",
+                isPresented: Binding(
+                    get: { clearError != nil },
+                    set: { if !$0 { clearError = nil } }
+                )
+            ) {
+                Button("OK") { clearError = nil }
+            } message: {
+                Text(clearError ?? "Something went wrong.")
             }
         }
         .task { await model.load() }
@@ -122,6 +161,29 @@ final class LatestModel: ObservableObject {
         self.cache = cache
     }
 
+    var canClear: Bool {
+        switch state {
+        case .loaded(let episodes), .stale(let episodes): !episodes.isEmpty
+        case .loading, .failed: false
+        }
+    }
+
+    /// Clears the server-side inbox boundary, then mirrors that durable empty
+    /// state locally. A failed request leaves both the visible rows and cache
+    /// untouched and returns a message for the view to present.
+    func clear() async -> String? {
+        do {
+            try await api.clearLatest()
+        } catch {
+            return (error as? APIError)?.spokenResponse ?? "Something went wrong."
+        }
+        let empty: [Episode] = []
+        cache.save(empty, for: .recentEpisodes)
+        state = .loaded(empty)
+        AccessibilityNotification.Announcement("Latest cleared").post()
+        return nil
+    }
+
     /// Marks an episode played, puts it aside, or puts it back.
     ///
     /// The row goes only once the server has taken it, so a failed request
@@ -171,7 +233,7 @@ final class LatestModel: ObservableObject {
         } catch {
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             if (error as? APIError)?.isAuthFailure != true,
-                let cached = cache.load([Episode].self, for: .recentEpisodes), !cached.isEmpty
+                let cached = cache.load([Episode].self, for: .recentEpisodes)
             {
                 state = .stale(cached)
             } else {
