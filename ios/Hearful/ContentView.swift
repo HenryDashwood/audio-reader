@@ -13,12 +13,10 @@ struct ContentView: View {
     @EnvironmentObject private var auth: AuthController
     @State private var showingVoice = false
     @State private var showingNowPlaying = false
-    @State private var playbackSpeaker = Speaker()
     @State private var serverGeneration = 0
 
     @ObservedObject private var metrics = TabBarMetrics.shared
     @ObservedObject private var reader = ArticleControlsModel.shared
-    @ObservedObject private var playback = PlaybackCoordinator.shared
 
     /// How far to raise the mini player so it sits on the tab bar rather than
     /// wherever this overlay happens to end. Where that edge lands is
@@ -97,25 +95,43 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .hearfulServerChanged)) { _ in
             serverGeneration += 1
         }
-        .onChange(of: playback.playbackFailure) { _, failure in
-            guard let failure else { return }
-            // VoiceOver reads the alert itself. Without VoiceOver there may be
-            // nobody looking at the screen—the spoken interface still needs
-            // to explain why a promised episode became silence.
-            guard !UIAccessibility.isVoiceOverRunning else { return }
-            Task { await playbackSpeaker.speak(failure.message) }
-        }
-        .alert(
-            "Playback stopped",
-            isPresented: Binding(
-                get: { playback.playbackFailure != nil },
-                set: { if !$0 { playback.dismissPlaybackFailure() } })
-        ) {
-            Button("Try Again") { playback.retryFailedPlayback() }
-            Button("Cancel", role: .cancel) { playback.dismissPlaybackFailure() }
-        } message: {
-            Text(playback.playbackFailure?.message ?? "The episode could not be played.")
-        }
+        // Playback's clock advances twice a second. Keeping its observer in a
+        // tiny sibling means those ticks update the player without rebuilding
+        // the tab and navigation hierarchy around a scrolling article.
+        .background(PlaybackFailurePresenter())
+    }
+}
+
+/// Owns the one root-level playback concern: a terminal failure that must be
+/// spoken and presented over whichever screen is open. Kept outside
+/// ContentView's observation graph so ordinary position ticks remain local to
+/// the mini/full players that actually draw them.
+private struct PlaybackFailurePresenter: View {
+    @ObservedObject private var playback = PlaybackCoordinator.shared
+    @State private var speaker = Speaker()
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onChange(of: playback.playbackFailure) { _, failure in
+                guard let failure else { return }
+                // VoiceOver reads the alert itself. Without VoiceOver there may be
+                // nobody looking at the screen—the spoken interface still needs
+                // to explain why a promised episode became silence.
+                guard !UIAccessibility.isVoiceOverRunning else { return }
+                Task { await speaker.speak(failure.message) }
+            }
+            .alert(
+                "Playback stopped",
+                isPresented: Binding(
+                    get: { playback.playbackFailure != nil },
+                    set: { if !$0 { playback.dismissPlaybackFailure() } })
+            ) {
+                Button("Try Again") { playback.retryFailedPlayback() }
+                Button("Cancel", role: .cancel) { playback.dismissPlaybackFailure() }
+            } message: {
+                Text(playback.playbackFailure?.message ?? "The episode could not be played.")
+            }
     }
 }
 

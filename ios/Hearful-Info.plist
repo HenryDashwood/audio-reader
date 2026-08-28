@@ -9,6 +9,11 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<!-- iPhone ProMotion displays otherwise cap this app at the 60 Hz system
+	     default. UIKit and WebKit can pace scrolling at the display's current
+	     refresh rate once the full range is available. -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<!-- The backend is deployed over HTTPS, so this app needs neither an App
 	     Transport Security exemption nor local-network access. Both were here
 	     while the backend ran on a Mac on the same Wi-Fi; asking for

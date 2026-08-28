@@ -17,8 +17,18 @@ struct ArticleChromeScrollTrackerTests {
         var tracker = ArticleChromeScrollTracker()
         tracker.began(translationY: 0, hidden: true)
 
-        #expect(tracker.changed(translationY: 10, contentOffsetY: 100) == false)
-        #expect(tracker.changed(translationY: 20, contentOffsetY: 90) == nil)
+        #expect(tracker.changed(translationY: 24, contentOffsetY: 100) == false)
+        #expect(tracker.changed(translationY: 34, contentOffsetY: 90) == nil)
+    }
+
+    @Test func thumbWobbleDoesNotBringControlsBackDuringAReadingGesture() {
+        var tracker = ArticleChromeScrollTracker()
+        tracker.began(translationY: 0, hidden: false)
+
+        #expect(tracker.changed(translationY: -12, contentOffsetY: 100) == true)
+        #expect(tracker.changed(translationY: -30, contentOffsetY: 118) == nil)
+        #expect(tracker.changed(translationY: -18, contentOffsetY: 106) == nil)
+        #expect(tracker.changed(translationY: -35, contentOffsetY: 123) == nil)
     }
 
     @Test func reboundAfterGestureEndsDoesNotReplayAnimation() {

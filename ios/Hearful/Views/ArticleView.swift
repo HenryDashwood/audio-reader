@@ -26,9 +26,6 @@ struct ArticleView: View {
     /// it is not told, and it does not find this one: it belongs to a web
     /// view, three layers inside a representable, rather than to the screen.
     @State private var articleWebView: WKWebView?
-    @ObservedObject private var chrome = ArticleControlsModel.shared
-    @ObservedObject private var metrics = TabBarMetrics.shared
-    @ObservedObject private var player = PlaybackCoordinator.shared
     /// The feed page opened from the linked publication name in the byline.
     @State private var openFeed: PodcastResult?
     /// Not read directly — it is here so a change of text size redraws the
@@ -69,15 +66,7 @@ struct ArticleView: View {
         // something else entirely.
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    if isPlayingThis { player.toggle() } else { player.playReportingFailure(episode) }
-                } label: {
-                    Image(systemName: isPlayingThis ? "pause.fill" : "play.fill")
-                }
-                .accessibilityLabel(isPlayingThis ? "Pause" : "Listen")
-                .accessibilityHint(
-                    isPlayingThis
-                        ? "Stops reading this aloud" : "Reads this aloud")
+                ArticlePlaybackButton(episode: episode)
             }
             if let link = episode.link {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -101,14 +90,10 @@ struct ArticleView: View {
             }
             ToolbarItem(placement: .topBarTrailing) { MicToolbarButton() }
         }
-        // The tab bar leaves and returns on the same word as the capsule above
-        // it. It used to shrink to a pill on UIKit's own reckoning of the
-        // scroll while the capsule went on ours, and two clocks meant two
-        // answers: the capsule back and the bar still a pill, sitting over the
-        // words underneath.
-        .toolbarVisibility(chrome.hidden ? .hidden : .visible, for: .tabBar)
         // Both bars get out of the way when she scrolls, and the capsule with
-        // them; and both are told what to watch, which is the web view.
+        // them. Their views stay in the layout and fade rather than being
+        // removed: changing the web view's automatic insets in the middle of
+        // a drag is visible as a jump in the article.
         .background(ArticleChrome(tracking: articleWebView?.scrollView))
         .navigationDestination(item: $openFeed) { PodcastPreviewView(podcast: $0) }
         .task { await model.load(episodeID: episode.id) }
@@ -189,10 +174,6 @@ struct ArticleView: View {
         }
     }
 
-    private var isPlayingThis: Bool {
-        player.currentEpisode?.id == episode.id && player.isPlaying
-    }
-
     private func document(for article: ArticleTextModel.Article) -> String {
         ArticleDocument.page(
             body: ArticleDocument.header(
@@ -216,6 +197,28 @@ struct ArticleView: View {
     }
 }
 
+/// Keeps the playback clock's frequent updates inside the one control that
+/// needs them. The article and its web view do not redraw every time a podcast
+/// advances, which matters most while the reader is under a moving finger.
+private struct ArticlePlaybackButton: View {
+    let episode: Episode
+    @ObservedObject private var player = PlaybackCoordinator.shared
+
+    private var isPlayingThis: Bool {
+        player.currentEpisode?.id == episode.id && player.isPlaying
+    }
+
+    var body: some View {
+        Button {
+            if isPlayingThis { player.toggle() } else { player.playReportingFailure(episode) }
+        } label: {
+            Image(systemName: isPlayingThis ? "pause.fill" : "play.fill")
+        }
+        .accessibilityLabel(isPlayingThis ? "Pause" : "Listen")
+        .accessibilityHint(isPlayingThis ? "Stops reading this aloud" : "Reads this aloud")
+    }
+}
+
 /// Where the reader's own controls should sit, and whether they should be
 /// there at all.
 ///
@@ -236,14 +239,18 @@ final class ArticleControlsModel: ObservableObject {
 /// ends of a page: a scroll view's rubber-band rebound changes its offset even
 /// though the user has not reversed direction.
 nonisolated struct ArticleChromeScrollTracker {
-    private static let movementThreshold: CGFloat = 6
+    private static let hideThreshold: CGFloat = 8
+    /// Bringing controls back takes a more deliberate reversal than hiding
+    /// them. A thumb wobbling during a long upward drag should not flash the
+    /// furniture over the page again.
+    private static let showThreshold: CGFloat = 24
     private static let topThreshold: CGFloat = 32
 
-    private var lastTranslationY: CGFloat?
+    private var directionAnchorY: CGFloat?
     private var hidden = false
 
     mutating func began(translationY: CGFloat, hidden: Bool) {
-        lastTranslationY = translationY
+        directionAnchorY = translationY
         self.hidden = hidden
     }
 
@@ -251,24 +258,51 @@ nonisolated struct ArticleChromeScrollTracker {
     /// one state to the other. Repeated callbacks in the same direction are
     /// deliberately silent, so SwiftUI does not restart the transition.
     mutating func changed(translationY: CGFloat, contentOffsetY: CGFloat) -> Bool? {
-        guard let previous = lastTranslationY else {
-            lastTranslationY = translationY
+        guard let anchor = directionAnchorY else {
+            directionAnchorY = translationY
             return nil
         }
-        let travelled = translationY - previous
-        guard abs(travelled) > Self.movementThreshold else { return nil }
-        lastTranslationY = translationY
 
-        // Finger travelling up means reading farther down the page. Near the
-        // top, keep the controls available regardless of gesture direction.
-        let shouldHide = travelled < 0 && contentOffsetY > Self.topThreshold
-        guard shouldHide != hidden else { return nil }
-        hidden = shouldHide
-        return shouldHide
+        // Near the top, keep the controls available regardless of gesture
+        // direction. Resetting the anchor here means the next downward read
+        // is measured from where the article actually left its top.
+        if contentOffsetY <= Self.topThreshold {
+            directionAnchorY = translationY
+            guard hidden else { return nil }
+            hidden = false
+            return false
+        }
+
+        let travelled = translationY - anchor
+        if hidden {
+            // Continuing to read down moves the anchor with the finger. Only a
+            // genuine upward-scroll reversal can accumulate enough distance
+            // to restore the controls.
+            if travelled < 0 {
+                directionAnchorY = translationY
+                return nil
+            }
+            guard travelled >= Self.showThreshold else { return nil }
+            hidden = false
+            directionAnchorY = translationY
+            return false
+        }
+
+        // The mirror while controls are visible: a downward finger movement
+        // becomes the new high-water mark, so the upward reading distance is
+        // measured from there rather than from the gesture's beginning.
+        if travelled > 0 {
+            directionAnchorY = translationY
+            return nil
+        }
+        guard travelled <= -Self.hideThreshold else { return nil }
+        hidden = true
+        directionAnchorY = translationY
+        return true
     }
 
     mutating func ended() {
-        lastTranslationY = nil
+        directionAnchorY = nil
     }
 }
 
@@ -361,6 +395,7 @@ private struct ArticleChrome: UIViewControllerRepresentable {
 
 private final class Chrome: UIViewController {
     private weak var tabs: UITabBarController?
+    private weak var navigation: UINavigationController?
     private weak var tracked: UIScrollView?
     private var named = false
     private weak var panGesture: UIPanGestureRecognizer?
@@ -386,30 +421,32 @@ private final class Chrome: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        guard let bar = tabBarController else { return }
-        tabs = bar
+        tabs = tabBarController ?? Self.findTabBarController(near: view)
+        navigation = navigationController ?? Self.findNavigationController(containing: view)
         // Nothing of UIKit's own: neither the tab bar shrinking to a pill on
         // its reckoning of the scroll, nor `hidesBarsOnSwipe` on the
         // navigation bar. Both are good behaviour on their own and wrong
         // together, because each keeps its own time — so all three pieces of
         // furniture move on the one signal from `watch` below instead.
-        bar.tabBarMinimizeBehavior = .never
+        tabs?.tabBarMinimizeBehavior = .never
         named = false
         track(nil)
         ArticleControlsModel.shared.hidden = false
+        setBarsHidden(false, animated: false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         // All of it undone: every other screen in the app wants its navigation
         // bar where it left it, and none of them want these two buttons.
-        navigationController?.setNavigationBarHidden(false, animated: animated)
+        setBarsHidden(false, animated: false)
         parent?.setContentScrollView(nil, for: .all)
         stopWatching()
         tracked = nil
         named = false
         tabs?.tabBarMinimizeBehavior = .never
         tabs = nil
+        navigation = nil
         ArticleControlsModel.shared.hidden = false
     }
 
@@ -437,7 +474,10 @@ private final class Chrome: UIViewController {
 
     @objc private func scrollGestureChanged(_ gesture: UIPanGestureRecognizer) {
         guard let scrollView = tracked else { return }
-        let translationY = gesture.translation(in: scrollView).y
+        // The scroll view's bounds move under the finger, so measuring in its
+        // coordinate space makes a steady drag look stationary or reversed.
+        // The window does not move and gives the gesture a stable direction.
+        let translationY = gesture.translation(in: scrollView.window).y
         switch gesture.state {
         case .began:
             scrollTracker.began(
@@ -449,7 +489,7 @@ private final class Chrome: UIViewController {
                 translationY: translationY,
                 contentOffsetY: scrollView.contentOffset.y
             ) else { return }
-            navigationController?.setNavigationBarHidden(hidden, animated: true)
+            setBarsHidden(hidden, animated: true)
             withAnimation(.easeOut(duration: 0.25)) {
                 ArticleControlsModel.shared.hidden = hidden
             }
@@ -458,6 +498,74 @@ private final class Chrome: UIViewController {
             // ends. Neither is a new request to replay the chrome animation.
             scrollTracker.ended()
         }
+    }
+
+    /// Fade the system bars without removing them from the hierarchy. Their
+    /// safe-area contribution and the web view's adjusted content inset stay
+    /// constant, so the words remain under the finger throughout the drag.
+    private func setBarsHidden(_ hidden: Bool, animated: Bool) {
+        let bars: [UIView] = [navigation?.navigationBar, tabs?.tabBar].compactMap { $0 }
+        for bar in bars {
+            bar.isUserInteractionEnabled = !hidden
+            bar.accessibilityElementsHidden = hidden
+        }
+        let changes = {
+            for bar in bars { bar.alpha = hidden ? 0 : 1 }
+        }
+        guard animated else {
+            changes()
+            return
+        }
+        UIView.animate(
+            withDuration: 0.25,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: changes)
+    }
+
+    /// Background representables are not always parented directly inside the
+    /// tab/navigation controller, so the convenience properties can be nil.
+    /// Resolve the visible containers through the window as a fallback.
+    private static func findTabBarController(near view: UIView) -> UITabBarController? {
+        guard let root = view.window?.rootViewController else { return nil }
+        return findTabBarController(in: root)
+    }
+
+    private static func findTabBarController(
+        in controller: UIViewController
+    ) -> UITabBarController? {
+        if let tabs = controller as? UITabBarController { return tabs }
+        for child in controller.children {
+            if let found = findTabBarController(in: child) { return found }
+        }
+        if let presented = controller.presentedViewController {
+            return findTabBarController(in: presented)
+        }
+        return nil
+    }
+
+    private static func findNavigationController(
+        containing view: UIView
+    ) -> UINavigationController? {
+        guard let root = view.window?.rootViewController else { return nil }
+        return findNavigationController(in: root, containing: view)
+    }
+
+    private static func findNavigationController(
+        in controller: UIViewController, containing view: UIView
+    ) -> UINavigationController? {
+        if let navigation = controller as? UINavigationController,
+            view.isDescendant(of: navigation.view)
+        {
+            return navigation
+        }
+        for child in controller.children {
+            if let found = findNavigationController(in: child, containing: view) { return found }
+        }
+        if let presented = controller.presentedViewController {
+            return findNavigationController(in: presented, containing: view)
+        }
+        return nil
     }
 }
 
