@@ -38,13 +38,16 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
     let id: Int
     let title: String
     let description: String?
-    /// Who wrote it, where the feed says. The byline on the reader's page;
-    /// nil for most podcasts, which name a show rather than a person, and for
-    /// anything stored before the field existed.
+    /// Who wrote it, where the feed says. Kept as item authorship rather than
+    /// used for the reader's source line, which names the containing feed;
+    /// nil for most podcasts and anything stored before the field existed.
     var author: String?
-    /// Present on cross-library search results so identical episode titles
-    /// can be distinguished without opening each one.
+    /// The podcast or publication this item belongs to.
     var feedTitle: String? = nil
+    /// Its canonical RSS, Atom or JSON feed. Optional for cached episodes and
+    /// older backends; paired with feedTitle to link the byline to the feed's
+    /// in-app page.
+    var feedURL: URL? = nil
     let audioURL: URL?
     let durationSeconds: Int?
     let publishedAt: Date?
@@ -67,6 +70,7 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
     enum CodingKeys: String, CodingKey {
         case id, title, description, author, link, completed, dismissed
         case feedTitle = "feed_title"
+        case feedURL = "feed_url"
         case audioURL = "audio_url"
         case durationSeconds = "duration_seconds"
         case publishedAt = "published_at"

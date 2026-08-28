@@ -29,6 +29,8 @@ struct ArticleView: View {
     @ObservedObject private var chrome = ArticleControlsModel.shared
     @ObservedObject private var metrics = TabBarMetrics.shared
     @ObservedObject private var player = PlaybackCoordinator.shared
+    /// The feed page opened from the linked publication name in the byline.
+    @State private var openFeed: PodcastResult?
     /// Not read directly — it is here so a change of text size redraws the
     /// page, since the web view is sized in points we hand it rather than by
     /// anything that scales on its own.
@@ -108,6 +110,7 @@ struct ArticleView: View {
         // Both bars get out of the way when she scrolls, and the capsule with
         // them; and both are told what to watch, which is the web view.
         .background(ArticleChrome(tracking: articleWebView?.scrollView))
+        .navigationDestination(item: $openFeed) { PodcastPreviewView(podcast: $0) }
         .task { await model.load(episodeID: episode.id) }
     }
 
@@ -146,11 +149,13 @@ struct ArticleView: View {
                 ArticleWebView(
                     document: ArticleDocument.page(
                         body: ArticleDocument.header(
-                            title: episode.title, author: episode.author,
+                            title: episode.title, feedTitle: episode.feedTitle,
+                            feedURL: episode.feedURL,
                             publishedAt: episode.publishedAt)
                             + ArticleDocument.paragraphs(blurb),
                         pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize),
                     baseURL: episode.link,
+                    openFeed: openContainingFeed,
                     ready: { articleWebView = $0 })
             } else {
                 // The same sentence the player would have read out, shown
@@ -178,6 +183,7 @@ struct ArticleView: View {
                     // site they came from, so without the article's own
                     // address every image is a broken one.
                     baseURL: episode.link,
+                    openFeed: openContainingFeed,
                     ready: { articleWebView = $0 })
             }
         }
@@ -190,9 +196,23 @@ struct ArticleView: View {
     private func document(for article: ArticleTextModel.Article) -> String {
         ArticleDocument.page(
             body: ArticleDocument.header(
-                title: episode.title, author: episode.author,
+                title: episode.title, feedTitle: episode.feedTitle,
+                feedURL: episode.feedURL,
                 publishedAt: episode.publishedAt) + article.body,
             pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize)
+    }
+
+    private func openContainingFeed() {
+        guard let title = episode.feedTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !title.isEmpty,
+            let feedURL = episode.feedURL
+        else { return }
+        openFeed = PodcastResult(
+            title: title,
+            feedURL: feedURL,
+            publisher: nil,
+            episodeCount: nil,
+            artworkURL: episode.imageURL)
     }
 }
 
@@ -451,6 +471,9 @@ private final class Chrome: UIViewController {
 private struct ArticleWebView: UIViewRepresentable {
     let document: String
     let baseURL: URL?
+    /// Opens the containing podcast or blog inside Hearful. All other links
+    /// still leave for Safari.
+    let openFeed: @MainActor () -> Void
     /// Handed out so the bars can be told what to track, and so the toolbar
     /// has something to ask for a find bar.
     let ready: (WKWebView) -> Void
@@ -492,11 +515,16 @@ private struct ArticleWebView: UIViewRepresentable {
         view.loadHTMLString(document, baseURL: baseURL)
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(openFeed: openFeed) }
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loaded: String?
+        let openFeed: @MainActor () -> Void
+
+        init(openFeed: @escaping @MainActor () -> Void) {
+            self.openFeed = openFeed
+        }
 
         /// Links leave for Safari rather than navigating in place. A web view
         /// with no address bar, no back button and no way out is a trap, and
@@ -513,15 +541,19 @@ private struct ArticleWebView: UIViewRepresentable {
                 return
             }
             decisionHandler(.cancel)
-            UIApplication.shared.open(url)
+            if url.scheme == "hearful", url.host() == "feed" {
+                openFeed()
+            } else {
+                UIApplication.shared.open(url)
+            }
         }
     }
 }
 
 /// The page the article is rendered into.
 enum ArticleDocument {
-    /// Everything above the first paragraph: the article's title, then who
-    /// wrote it and when.
+    /// Everything above the first paragraph: the article's title, then the
+    /// podcast or publication it belongs to and when it was published.
     ///
     /// Title and byline live in the document rather than in the bar above it,
     /// so they scroll away like the top of any article instead of sitting
@@ -531,14 +563,19 @@ enum ArticleDocument {
     /// The byline used to end with how long the article would take to hear.
     /// That is a fact about the app rather than about the piece, and the
     /// scrubber says it the moment she starts listening anyway.
-    static func header(title: String, author: String?, publishedAt: Date?) -> String {
+    static func header(
+        title: String, feedTitle: String?, feedURL: URL?, publishedAt: Date?
+    ) -> String {
         var header = "<h1>\(ArticleTextModel.escaped(title))</h1>"
         var meta: [String] = []
-        if let author = author?.trimmingCharacters(in: .whitespacesAndNewlines), !author.isEmpty {
-            meta.append(ArticleTextModel.escaped(author))
+        if let feedTitle = feedTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !feedTitle.isEmpty
+        {
+            let name = ArticleTextModel.escaped(feedTitle)
+            meta.append(feedURL == nil ? name : "<a href=\"hearful://feed\">\(name)</a>")
         }
-        // Most feeds name nobody, and a good few name nothing at all; the line
-        // is then the half that exists, or is not there.
+        // Cached items from an older backend may not name their feed; the line
+        // is then the date alone, or is not there.
         if let publishedAt {
             meta.append(
                 ArticleTextModel.escaped(

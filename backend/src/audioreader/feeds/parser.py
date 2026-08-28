@@ -29,7 +29,7 @@ class ParsedItem(BaseModel):
     title: str
     description: str | None = None
     content_html: str | None = None
-    #: Who wrote it — the byline a reader shows above the first paragraph.
+    #: Who wrote it, kept separately from the containing feed's title.
     #: From the item where the feed names one, otherwise from the channel,
     #: which for a one-writer blog is the same person either way.
     author: str | None = None

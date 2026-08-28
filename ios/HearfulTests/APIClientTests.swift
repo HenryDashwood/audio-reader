@@ -338,6 +338,7 @@ struct DirectorySearchTests {
         let json = """
             [{"id":31,"title":"The Fall of Constantinople","description":null,
               "author":null,"feed_title":"The History Hour",
+              "feed_url":"https://feeds.example.com/history-hour",
               "audio_url":"https://cdn.example.com/hh/103.mp3","duration_seconds":3723,
               "published_at":null,"link":null}]
             """
@@ -347,6 +348,7 @@ struct DirectorySearchTests {
             .searchLibraryEpisodes(query: "constantinople")
 
         #expect(episodes.first?.feedTitle == "The History Hour")
+        #expect(episodes.first?.feedURL?.absoluteString == "https://feeds.example.com/history-hour")
         #expect(transport.lastRequest?.url?.path == "/search/episodes")
         #expect(transport.lastRequest?.url?.query?.contains("q=constantinople") == true)
     }

@@ -265,50 +265,57 @@ struct ArticleHeaderTests {
     /// the line and in which order, not about which country reads it.
     private var date: String { published.formatted(.dateTime.day().month(.wide).year()) }
 
-    @Test func theBylineIsWhoWroteItAndWhen() {
+    @Test func theBylineLinksToTheContainingFeedAndShowsWhenItWasPublished() {
         let header = ArticleDocument.header(
-            title: "The Beauty Of Settled Science", author: "Scott Alexander",
+            title: "The Beauty Of Settled Science", feedTitle: "Astral Codex Ten",
+            feedURL: URL(string: "https://www.astralcodexten.com/feed"),
             publishedAt: published)
 
         #expect(header.contains("<h1>The Beauty Of Settled Science</h1>"))
-        #expect(header.contains("<p class=\"meta\">Scott Alexander · \(date)</p>"))
+        #expect(
+            header.contains(
+                "<p class=\"meta\"><a href=\"hearful://feed\">Astral Codex Ten</a> · \(date)</p>"))
     }
 
     @Test func howLongItTakesToHearIsNotInIt() {
         // It was, and it is a fact about the app rather than about the piece.
         // The scrubber says it the moment she starts listening.
         let header = ArticleDocument.header(
-            title: "A post", author: "Ada Whitfield", publishedAt: published)
+            title: "A post", feedTitle: "Ada's Blog", feedURL: nil,
+            publishedAt: published)
 
         #expect(!header.contains("to listen"))
         #expect(!header.contains(" min"))
     }
 
-    @Test func anArticleThatNamesNobodyShowsItsDateAlone() {
-        // Most podcast feeds, and a fair few blogs.
+    @Test func anEpisodeWithoutFeedMetadataShowsItsDateAlone() {
+        // Cached episodes from an older backend may not identify their feed.
         let header = ArticleDocument.header(
-            title: "A post", author: nil, publishedAt: published)
+            title: "A post", feedTitle: nil, feedURL: nil, publishedAt: published)
 
         #expect(header.contains("<p class=\"meta\">\(date)</p>"))
     }
 
-    @Test func aBlankAuthorIsNotADanglingSeparator() {
+    @Test func aBlankFeedTitleIsNotADanglingSeparator() {
         let header = ArticleDocument.header(
-            title: "A post", author: "   ", publishedAt: published)
+            title: "A post", feedTitle: "   ",
+            feedURL: URL(string: "https://example.com/feed"), publishedAt: published)
 
         #expect(!header.contains("·"))
         #expect(header.contains("<p class=\"meta\">\(date)</p>"))
     }
 
     @Test func withNeitherThereIsNoBylineAtAll() {
-        let header = ArticleDocument.header(title: "A post", author: nil, publishedAt: nil)
+        let header = ArticleDocument.header(
+            title: "A post", feedTitle: nil, feedURL: nil, publishedAt: nil)
 
         #expect(header == "<h1>A post</h1>")
     }
 
-    @Test func aBylineIsEscapedOnItsWayIn() {
+    @Test func aFeedNameIsEscapedOnItsWayIn() {
         let header = ArticleDocument.header(
-            title: "A post", author: "Ben & Jerry <b>", publishedAt: nil)
+            title: "A post", feedTitle: "Ben & Jerry <b>", feedURL: nil,
+            publishedAt: nil)
 
         #expect(header.contains("Ben &amp; Jerry &lt;b&gt;"))
     }

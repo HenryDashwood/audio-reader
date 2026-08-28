@@ -89,12 +89,16 @@ class EpisodeRead(BaseModel):
     id: int
     title: str
     description: str | None
-    #: The byline, where the feed gives one. None for most podcasts, which
-    #: name a show rather than a person.
+    #: The item's author, where the feed gives one. Kept distinct from the
+    #: containing podcast or publication named by feed_title.
     author: str | None = None
-    #: The containing publication. Included on cross-library search results;
-    #: optional so every older client and cached payload remains valid.
+    #: The containing podcast or publication. Optional so every older client
+    #: and cached payload remains valid.
     feed_title: str | None = None
+    #: Its canonical feed address. Paired with feed_title so clients can make
+    #: the publication name a link back to the feed rather than showing the
+    #: item author or podcast publisher as inert text.
+    feed_url: str | None = None
     audio_url: str | None
     duration_seconds: int | None
     published_at: datetime | None

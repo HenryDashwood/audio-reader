@@ -124,6 +124,7 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
     for episode in episodes:
         read = EpisodeRead.model_validate(episode)
         read.feed_title = episode.feed.title
+        read.feed_url = episode.feed.url
         # Item-level artwork is the exception; most feeds only set show art.
         read.image_url = secure_url(episode.image_url or episode.feed.image_url or episode.feed.site_image_url)
         # Mirrors the fallback chain in feeds/articles.py: anything that can

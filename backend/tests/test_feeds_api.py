@@ -187,9 +187,17 @@ class TestListEpisodes:
         assert episode["duration_seconds"] == 3723
         assert episode["published_at"].startswith("2026-07-28")
 
+    async def test_episode_identifies_its_containing_feed(self, client, respx_mock, podcast_xml):
+        response = await subscribe(client, respx_mock, podcast_xml)
+        feed = response.json()
+        episode = (await client.get(f"/feeds/{feed['id']}/episodes")).json()[0]
+
+        assert episode["feed_title"] == "The History Hour"
+        assert episode["feed_url"] == feed["url"]
+
     async def test_episode_carries_its_byline(self, client, respx_mock, article_xml):
-        # The reader shows this above the first paragraph, in place of the
-        # title it already has in the navigation bar.
+        # Preserve item authorship as distinct metadata from the containing
+        # publication that the reader links above the first paragraph.
         feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
         episodes = (await client.get(f"/feeds/{feed_id}/episodes")).json()
         assert episodes[0]["author"] == "Ada Whitfield"
