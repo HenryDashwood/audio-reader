@@ -98,6 +98,46 @@ class TestPollFeed:
         assert feed.consecutive_failures == 0
         assert feed.last_error is None
 
+    async def test_not_modified_feed_gains_website_artwork_after_upgrade(self, session, user, respx_mock, article_xml):
+        site_url = "https://notesonprogress.example.com/"
+        respx_mock.get(site_url).respond(content=b"<html><head></head></html>", content_type="text/html")
+        feed = await subscribed_feed(session, user, respx_mock, article_xml)
+        # Existing rows receive NULL in the new migration, so their next poll
+        # performs the first website metadata check even when the feed is 304.
+        feed.image_url = None
+        feed.site_image_url = None
+        feed.site_artwork_checked_at = None
+        await session.commit()
+
+        artwork = f"{site_url}social-card.jpg"
+        respx_mock.get(FEED_URL).respond(status_code=304)
+        respx_mock.get(site_url).respond(
+            content=f'<html><head><meta property="og:image" content="{artwork}"></head></html>',
+            content_type="text/html",
+        )
+
+        assert await poll_feed(session, feed) == 0
+        assert feed.site_image_url == artwork
+        assert feed.site_artwork_checked_at is not None
+
+    async def test_poll_preserves_website_artwork_when_feed_still_has_none(
+        self, session, user, respx_mock, article_xml
+    ):
+        site_url = "https://notesonprogress.example.com/"
+        artwork = f"{site_url}social-card.jpg"
+        site = respx_mock.get(site_url).respond(
+            content=f'<html><head><meta property="og:image" content="{artwork}"></head></html>',
+            content_type="text/html",
+        )
+        feed = await subscribed_feed(session, user, respx_mock, article_xml)
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+
+        await poll_feed(session, feed)
+
+        assert feed.image_url is None
+        assert feed.site_image_url == artwork
+        assert site.call_count == 1
+
 
 class TestPollAllFeeds:
     async def test_polls_every_feed(self, session, user, respx_mock, podcast_xml, article_xml, podcast_updated_xml):

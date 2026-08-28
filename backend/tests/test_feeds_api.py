@@ -27,6 +27,20 @@ class TestSubscribe:
         assert response.json()["title"] == "Notes on Progress"
         assert response.json()["is_article_feed"] is True
 
+    async def test_article_feed_uses_website_open_graph_artwork(self, client, respx_mock, article_xml):
+        artwork = "https://notesonprogress.example.com/images/social-card.jpg"
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+        respx_mock.get("https://notesonprogress.example.com/").respond(
+            content=f'<html><head><meta property="og:image" content="{artwork}"></head></html>',
+            content_type="text/html",
+        )
+
+        response = await client.post("/feeds/preview", json={"url": FEED_URL})
+
+        assert response.status_code == 200
+        assert response.json()["feed"]["image_url"] == artwork
+        assert all(episode["image_url"] == artwork for episode in response.json()["episodes"])
+
     async def test_duplicate_url_conflicts(self, client, respx_mock, podcast_xml):
         await subscribe(client, respx_mock, podcast_xml)
         response = await client.post("/feeds", json={"url": FEED_URL})

@@ -85,7 +85,7 @@ def _to_feed_read(feed: Feed, episode_count: int, audio_count: int) -> FeedRead:
         url=feed.url,
         title=feed.title,
         description=feed.description,
-        image_url=feed.image_url,
+        image_url=feed.image_url or feed.site_image_url,
         episode_count=episode_count,
         # An empty feed is left as a podcast: "0 posts" for a show whose
         # episodes simply have not loaded yet would be a worse guess than the
@@ -125,7 +125,7 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
         read = EpisodeRead.model_validate(episode)
         read.feed_title = episode.feed.title
         # Item-level artwork is the exception; most feeds only set show art.
-        read.image_url = secure_url(episode.image_url or episode.feed.image_url)
+        read.image_url = secure_url(episode.image_url or episode.feed.image_url or episode.feed.site_image_url)
         # Mirrors the fallback chain in feeds/articles.py: anything that can
         # yield text marks the episode readable, so articles are playable.
         read.has_text = bool(episode.article_text or episode.content_html or episode.link or episode.description)

@@ -10,6 +10,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
+from audioreader.feeds.artwork import site_artwork_is_due, supplement_feed_artwork, website_artwork_url
 from audioreader.feeds.fetcher import FeedFetchError, fetch_feed_update
 from audioreader.feeds.parser import FeedParseError, parse_feed
 from audioreader.feeds.service import apply_feed_metadata, new_episodes
@@ -33,12 +34,24 @@ async def poll_feed(session: AsyncSession, feed: Feed) -> int:
         feed.last_polled_at = utcnow()
         feed.consecutive_failures = 0
         feed.last_error = None
+        if (
+            feed.image_url is None
+            and feed.site_image_url is None
+            and site_artwork_is_due(feed.site_artwork_checked_at)
+        ):
+            feed.site_image_url = await website_artwork_url(feed.site_url, feed.url)
+            feed.site_artwork_checked_at = utcnow()
         await session.commit()
         return 0
 
     if fetched.content is None:  # Narrowing for the type checker; handled above.
         raise FeedFetchError("the server returned no content")
     parsed = parse_feed(fetched.content)
+    site_changed = parsed.site_url != feed.site_url
+    if parsed.image_url is None and (
+        site_changed or (feed.site_image_url is None and site_artwork_is_due(feed.site_artwork_checked_at))
+    ):
+        parsed = await supplement_feed_artwork(parsed, fetched.final_url)
     known_guids = set(await session.scalars(select(Episode.guid).where(Episode.feed_id == feed.id)))
     episodes = new_episodes(parsed, known_guids)
     for episode in episodes:

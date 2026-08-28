@@ -48,6 +48,10 @@ class ParsedFeed(BaseModel):
     site_url: str | None = None
     self_url: str | None = None
     format: str = "rss"
+    # Internal discovery state. It lets a cached candidate carry a website
+    # fallback into ingestion without exposing new fields in the API.
+    site_artwork_url: str | None = None
+    site_artwork_checked: bool = False
     items: list[ParsedItem]
 
 

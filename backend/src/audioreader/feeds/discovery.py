@@ -22,6 +22,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, ValidationError
 
+from audioreader.feeds.artwork import supplement_feed_artwork, supplement_feed_artwork_from_html
 from audioreader.feeds.fetcher import FeedFetchError, FeedRateLimitedError, fetch_feed_resource
 from audioreader.feeds.parser import FeedParseError, ParsedFeed, parse_feed
 from audioreader.feeds.search import (
@@ -205,6 +206,9 @@ class FeedCandidate:
     recent_item_titles: tuple[str, ...]
     source: str
     is_primary: bool = False
+    # Internal only: the public discovery schema deliberately stays unchanged.
+    site_artwork_url: str | None = None
+    site_artwork_checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -315,6 +319,15 @@ async def resolve_feed(
         if fetched.content is None:
             raise FeedFetchError("the server returned no content")
         parsed = parse_feed(fetched.content)
+        if not parsed.image_url and chosen.site_artwork_checked:
+            parsed = parsed.model_copy(
+                update={
+                    "site_artwork_url": chosen.site_artwork_url,
+                    "site_artwork_checked": True,
+                }
+            )
+        elif not parsed.image_url:
+            parsed = await supplement_feed_artwork(parsed, fetched.final_url)
         return _canonical_feed_url(fetched.final_url, parsed.self_url), parsed
 
     try:
@@ -349,6 +362,7 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
     try:
         parsed = parse_feed(fetched.content)
         if parsed.items or not _looks_like_html(html):
+            parsed = await supplement_feed_artwork(parsed, fetched.final_url)
             return [_resolved_candidate(parsed, fetched.final_url, "direct", None, 0)]
     except FeedParseError:
         pass
@@ -401,6 +415,7 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
         except FeedParseError as exc:
             logger.info("feed discovery candidate was not a feed at %s: %s", location.url, exc)
             return None
+        parsed = supplement_feed_artwork_from_html(parsed, html, fetched.final_url)
         return _resolved_candidate(
             parsed,
             result.final_url,
@@ -470,6 +485,8 @@ def _resolved_candidate(
         audio_item_count=audio_count,
         recent_item_titles=tuple(item.title for item in parsed.items[:3]),
         source=source,
+        site_artwork_url=parsed.site_artwork_url,
+        site_artwork_checked=parsed.site_artwork_checked,
     )
     source_score = {"direct": 1_000, "http_header": 800, "html": 760, "common_path": 400}[source]
     label = f"{title_hint or ''} {title}".casefold()

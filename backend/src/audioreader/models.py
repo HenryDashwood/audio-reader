@@ -30,6 +30,13 @@ class Feed(Base):
     description: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None]
     site_url: Mapped[str | None]
+    # Kept separate from publisher-declared feed artwork so a later poll can
+    # remove or replace the declared image without losing this fallback.
+    site_image_url: Mapped[str | None]
+    # Website metadata is a fallback only. Remembering the last attempt lets
+    # old feeds gain artwork without re-fetching image-less homepages on every
+    # fifteen-minute feed poll.
+    site_artwork_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Only bumped by a successful poll, so it doubles as "how stale is this".
     last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # A feed that has moved or died otherwise fails silently forever: the poll

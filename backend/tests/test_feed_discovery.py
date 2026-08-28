@@ -90,6 +90,21 @@ class TestSubscribeByHomepage:
         # The catalog stores the real feed URL, not the homepage.
         assert body["url"] == FEED_URL
 
+    async def test_reuses_homepage_artwork_while_resolving_its_feed(self, client, respx_mock, article_xml):
+        artwork = f"{SITE_URL}/social-card.jpg"
+        homepage = HOMEPAGE.replace(
+            b"</head>",
+            f'<meta property="og:image" content="{artwork}"></head>'.encode(),
+        )
+        home = respx_mock.get(f"{SITE_URL}/").respond(content=homepage, content_type="text/html")
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+
+        response = await client.post("/feeds", json={"url": SITE_URL})
+
+        assert response.status_code == 201
+        assert response.json()["image_url"] == artwork
+        assert home.call_count == 1
+
     async def test_common_path_fallback(self, client, respx_mock, article_xml):
         respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE_NO_LINK, content_type="text/html")
         respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")

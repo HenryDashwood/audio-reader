@@ -113,10 +113,19 @@ async def unsubscribe(session: AsyncSession, feed_id: int, user: User) -> Feed |
 
 def apply_feed_metadata(feed: Feed, parsed: ParsedFeed) -> None:
     """Feed-level fields can change between polls (title, artwork, blurb)."""
+    site_changed = parsed.site_url != feed.site_url
     feed.title = parsed.title
     feed.description = parsed.description
     feed.image_url = parsed.image_url
     feed.site_url = parsed.site_url
+    if parsed.site_artwork_checked:
+        feed.site_image_url = parsed.site_artwork_url
+        feed.site_artwork_checked_at = utcnow()
+    elif site_changed:
+        # Artwork belonging to an old homepage must not leak into a feed that
+        # has moved. It will be rediscovered if the declared feed image goes.
+        feed.site_image_url = None
+        feed.site_artwork_checked_at = None
     feed.last_polled_at = utcnow()
 
 
