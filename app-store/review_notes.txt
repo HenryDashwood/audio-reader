@@ -1,0 +1,17 @@
+Hearful is a podcast and article player designed for blind and partially sighted listeners. Almost everything can be done by speaking, so it will not review like an ordinary media app: the library starts empty and fills up by voice.
+
+No demo account is provided because none exists. Sign in with Apple is the only sign-in method, so please sign in with your own Apple ID. An account is created automatically; there is no username or password to supply.
+
+Suggested path, which takes about two minutes:
+
+1. Sign in with Apple on the first screen.
+2. Tap the microphone button at the top right. Read and allow the AI data-sharing screen, then allow the microphone and speech-recognition prompts.
+3. Say “subscribe to In Our Time”. The app searches, subscribes and confirms aloud. The show now appears in the Shows tab.
+4. Tap the microphone again and say “play the latest In Our Time”. The app confirms what it found and starts playing.
+5. Tap the microphone and say “pause”, then “carry on”.
+
+The Shows search also finds subscribed shows, episodes in the listener’s stored library, public podcasts, pasted feed or homepage addresses, and Apple Podcasts sharing links. If a publication is absent from the public directory, the explicit Search the web button offers the consented AI fallback. Episodes can also be played by tapping them.
+
+An account is required because the app’s content is the listener’s own library and their position in each episode, stored server-side so it follows them between devices. Sign in with Apple is the only method offered. Account deletion is available in Settings and also revokes the Sign in with Apple connection.
+
+Speech is converted to text on the device. Only the text is sent to our server, never an audio recording. Before the first AI request, the app explicitly asks permission to send that text and recent episode details to OpenRouter and its model provider. Permission can be withdrawn under Settings → Privacy & Support. The privacy policy describes this in full.

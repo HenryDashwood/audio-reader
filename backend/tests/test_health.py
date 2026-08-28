@@ -32,6 +32,16 @@ async def test_privacy_policy_is_public():
     assert "text/html" in response.headers["content-type"]
 
 
+async def test_support_page_is_public_and_has_contact_details():
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/support")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "mailto:" in response.text
+    assert 'href="/privacy"' in response.text
+
+
 async def test_privacy_policy_names_the_real_data_flows():
     # The disclosures it would be dishonest to omit: the AI provider, the
     # hosting provider, the diagnostics service that holds what she said, Apple,

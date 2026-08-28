@@ -111,6 +111,11 @@ def create_app() -> FastAPI:
         """
         return FileResponse(STATIC_DIR / "privacy.html", media_type="text/html")
 
+    @app.get("/support", include_in_schema=False)
+    async def support() -> FileResponse:
+        """Public help and contact details for the App Store listing."""
+        return FileResponse(STATIC_DIR / "support.html", media_type="text/html")
+
     app.include_router(auth.router)
     app.include_router(feeds.router)
     app.include_router(feeds.episodes_router)

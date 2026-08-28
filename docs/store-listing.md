@@ -1,8 +1,9 @@
-# Store and TestFlight copy
+# Store review and TestFlight notes
 
-Text to paste into App Store Connect. Kept here so it is version-controlled and
-so the same wording is reused between Beta App Review and full App Store review
-rather than being rewritten from memory each time.
+The machine-uploaded public listing and review notes now live under
+[`app-store/`](../app-store/README.md). This document keeps the TestFlight copy,
+the accessibility evidence, and the manual checks used while preparing a
+submission.
 
 Privacy policy URL: <https://audio-reader-production.up.railway.app/privacy>
 
@@ -48,52 +49,9 @@ If you use VoiceOver, please tell us anywhere the app is awkward, silent when it
 
 ## App Review Notes
 
-*App Store Connect → App Review Information → Notes. Written for a sighted
-reviewer who has never seen an app driven this way.*
-
-> Hearful is a podcast and article player designed for blind and partially
-> sighted listeners. Almost everything is done by speaking rather than tapping,
-> so it will not review like an ordinary media app — the library starts empty
-> and fills up by voice.
->
-> **No demo account is provided because none exists.** Sign in with Apple is the
-> only sign-in method, so please sign in with your own Apple ID — an account is
-> created automatically. There is no username or password to supply.
->
-> Suggested path, which takes about two minutes:
->
-> 1. Sign in with Apple on the first screen.
-> 2. Tap the microphone button (top right of the Shows tab). Read and allow the
->    AI data-sharing screen. It names OpenRouter, the data sent, the 30-day
->    diagnostic record, and links to the privacy policy. Then allow the
->    microphone and speech recognition prompts when they appear.
-> 3. Say: "subscribe to In Our Time". The app searches, subscribes, and confirms
->    aloud. The show now appears in the Shows tab.
-> 4. Tap the microphone again and say: "play the latest In Our Time". It
->    confirms what it found and starts playing.
-> 5. Tap the microphone and say "pause", then "carry on".
->
-> The Shows search also finds subscribed shows, episodes anywhere in the
-> listener's stored library, public podcasts, pasted feed/homepage addresses,
-> and Apple Podcasts sharing links. If a publication is absent from the public
-> directory, the explicit **Search the web** button offers the consented AI
-> fallback. Episodes can be played by tapping them, if that is easier to verify.
->
-> **On requiring an account:** an account is needed because the app's entire
-> content is the user's own library — the shows they follow and their position
-> in each episode — which is stored server-side so it follows them between
-> devices. There is no shared or anonymous catalogue to browse without one. Sign
-> in with Apple is the only method offered, and account deletion is available in
-> Settings, which also revokes the Sign in with Apple connection.
->
-> **On the microphone:** speech is converted to text on the device. Only the
-> text is sent to our server, never an audio recording. Before the first AI
-> request, the app explicitly asks permission to send that text and recent
-> episode details to OpenRouter and its model provider. The same screen covers
-> an explicit typed AI web search; that sends the publication name, not the
-> listener's library. Permission can be
-> withdrawn under Settings → Privacy & Support. This is described in full in
-> the privacy policy.
+The canonical copy is [`app-store/review_notes.txt`](../app-store/review_notes.txt).
+Keep reviewer instructions there so the local package and App Store Connect do
+not drift apart.
 
 ---
 

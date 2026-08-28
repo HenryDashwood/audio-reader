@@ -187,6 +187,27 @@ does that work and can be run by hand against an already-uploaded build:
 ASC_KEY_ID=... ASC_ISSUER_ID=... ASC_KEY_P8_BASE64=... uv run scripts/testflight_distribute.py --build-number 55
 ```
 
+### App Store listing
+
+The public description, subtitle, keywords, URLs, review notes and screenshot
+folders live under [app-store](app-store/README.md). `make ios-build` validates
+them offline, and a `v*` release tag synchronises them to the matching editable
+iOS version in App Store Connect before it distributes the TestFlight build.
+The sync creates the version if needed, but deliberately does not submit it for
+review or release it.
+
+Capture the current simulator screen into the correct tracked screenshot set
+with:
+
+```bash
+IOS_SIMULATOR_ID=<udid> make app-store-screenshot \
+  DISPLAY=APP_IPHONE_69 NAME=01-latest
+```
+
+Run `make app-store-validate` after any listing change. See the App Store
+listing README for the accepted phone and iPad sizes, the local sync command,
+and the submission choices that still need a human pass in App Store Connect.
+
 Both the certificate and the provisioning profile expire a year after they were
 made — August 2027 for the current pair. Nothing warns you beforehand; the
 release simply starts failing. Renewing means creating both again and updating
@@ -271,6 +292,11 @@ recoverable outage into a restart loop.
 `src/audioreader/static/privacy.html`. It is the URL registered with App Store
 Connect, so it needs to keep working; there is a test asserting it is public and
 still names the third parties involved.
+
+`GET /support` serves the public App Store support page from
+`src/audioreader/static/support.html`. It keeps the contact path and the most
+useful first checks available without an account, and links back to the privacy
+policy.
 
 ### Telemetry
 

@@ -79,7 +79,11 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         playbackRate = clamped
         UserDefaults.standard.set(clamped, forKey: Self.rateKey)
         player.defaultRate = clamped
-        if isPlaying { player.rate = clamped }
+        // `isPlaying` is false while AVPlayer is buffering even though a
+        // play request is still active. Updating only in the .playing state
+        // made a speed tap during that window update the chip but leave the
+        // pending playback at its old rate.
+        if playbackRequested { player.rate = clamped }
         updateNowPlayingPosition()
     }
 

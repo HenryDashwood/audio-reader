@@ -43,6 +43,9 @@ jobs:
           # The build number is the commit count, so the whole history matters.
           fetch-depth: 0
 
+      - name: Validate the App Store listing
+        run: python3 scripts/app_store_sync.py validate
+
       - name: Select Xcode
         run: |
           set -euo pipefail
@@ -264,6 +267,16 @@ jobs:
       # Pinned exactly: this action publishes moving major tags only up to v7,
       # so `@v10` does not resolve even though v10.0.1 is the current release.
       - uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Sync the public App Store listing
+        if: github.ref_type == 'tag'
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+        run: >-
+          uv run scripts/app_store_sync.py sync
+          --version "${GITHUB_REF_NAME#v}"
 
       - name: Set release notes and distribute
         env:

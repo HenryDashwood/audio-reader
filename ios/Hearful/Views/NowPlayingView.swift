@@ -121,27 +121,33 @@ struct NowPlayingView: View {
     }
 
     private var speedControl: some View {
-        Menu {
-            ForEach(AudioPlayer.playbackRates, id: \.self) { rate in
-                Button {
-                    player.setPlaybackRate(rate)
-                } label: {
-                    if rate == player.playbackRate {
-                        Label(speedLabel(rate), systemImage: "checkmark")
-                    } else {
-                        Text(speedLabel(rate))
-                    }
+        Picker(
+            selection: Binding(
+                get: { player.playbackRate },
+                set: { player.setPlaybackRate($0) }
+            ),
+            content: {
+                ForEach(AudioPlayer.playbackRates, id: \.self) { rate in
+                    Text(speedLabel(rate)).tag(rate)
                 }
             }
-        } label: {
+        ) {
             Text(speedLabel(player.playbackRate))
                 .font(.subheadline.weight(.semibold).monospacedDigit())
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
                 .background(.quaternary, in: Capsule())
+                .contentShape(Capsule())
         }
+        // Picker gives the system menu one stable selection binding instead
+        // of rebuilding its Button rows while a tap is being completed.
+        .pickerStyle(.menu)
         .accessibilityLabel("Playback speed")
         .accessibilityValue(spokenSpeed(player.playbackRate))
+        // The new rate is audible only once playback advances far enough to
+        // make the difference obvious. A light selection tick confirms the
+        // option landed immediately, including while the episode is paused.
+        .sensoryFeedback(.selection, trigger: player.playbackRate)
     }
 
     private var sleepControl: some View {
