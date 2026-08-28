@@ -176,40 +176,7 @@ struct EpisodeRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                HStack(spacing: 6) {
-                    if let published = episode.publishedAt {
-                        Text(published, format: .dateTime.day().month(.abbreviated))
-                    }
-                    if let length = formatLength(seconds: episode.durationSeconds) {
-                        Text("·")
-                        Text(length)
-                    } else if episode.isArticle {
-                        Text("·")
-                        Label("Article", systemImage: "doc.plaintext")
-                            .labelStyle(.titleAndIcon)
-                    }
-                    // Positions have been recorded all along; this is the
-                    // first thing that shows them. Without it every episode
-                    // looks alike, and the only way to find out whether she
-                    // has heard one is to play it and listen.
-                    if let progress = episode.listeningProgress.label {
-                        Text("·")
-                        Text(progress)
-                            .foregroundStyle(
-                                episode.listeningProgress == .played
-                                    ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
-                    }
-                    // Said rather than implied. An episode she put aside is
-                    // absent from the Latest list and otherwise identical to
-                    // every other row here, so without this the only evidence
-                    // of her having filed it is somewhere she is not looking.
-                    if episode.dismissed == true {
-                        Text("·")
-                        Text("Not in Latest")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                EpisodeMetadata(episode: episode)
                 if let description = episode.description, !description.isEmpty {
                     Text(description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
@@ -228,6 +195,103 @@ struct EpisodeRow: View {
         case .inProgress: "Double tap to carry on where you left off"
         case .played: "Double tap to play again from the start"
         case .unplayed: "Double tap to play"
+        }
+    }
+}
+
+/// Keeps short metadata labels intact while adapting from compact rows to the
+/// largest Dynamic Type sizes. A compressible HStack lets Text hyphenate words
+/// such as "Article"; these candidates wrap between fields instead.
+private struct EpisodeMetadata: View {
+    let episode: Episode
+
+    private var length: String? { formatLength(seconds: episode.durationSeconds) }
+    private var progress: String? { episode.listeningProgress.label }
+    private var hasPrimary: Bool { episode.publishedAt != nil || length != nil || episode.isArticle }
+    private var hasStatus: Bool { progress != nil || episode.dismissed == true }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                if hasPrimary { primary }
+                if hasPrimary && hasStatus { Text("·") }
+                if hasStatus { status }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+
+            VStack(alignment: .leading, spacing: 2) {
+                if hasPrimary {
+                    primary.fixedSize(horizontal: true, vertical: false)
+                }
+                if hasStatus {
+                    status.fixedSize(horizontal: true, vertical: false)
+                }
+            }
+
+            fields
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    private var primary: some View {
+        HStack(spacing: 6) {
+            if let published = episode.publishedAt {
+                Text(published, format: .dateTime.day().month(.abbreviated))
+            }
+            if let length {
+                if episode.publishedAt != nil { Text("·") }
+                Text(length)
+            } else if episode.isArticle {
+                if episode.publishedAt != nil { Text("·") }
+                Label("Article", systemImage: "doc.plaintext")
+                    .labelStyle(.titleAndIcon)
+            }
+        }
+    }
+
+    private var status: some View {
+        HStack(spacing: 6) {
+            if let progress {
+                // Positions have been recorded all along; this is the first
+                // visible evidence that she has heard or started an item.
+                Text(progress)
+                    .foregroundStyle(
+                        episode.listeningProgress == .played
+                            ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+            }
+            if episode.dismissed == true {
+                if progress != nil { Text("·") }
+                // Said rather than implied: a filed item otherwise looks like
+                // every other row when viewed inside its show.
+                Text("Not in Latest")
+            }
+        }
+    }
+
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if let published = episode.publishedAt {
+                Text(published, format: .dateTime.day().month(.abbreviated))
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            if let length {
+                Text(length).fixedSize(horizontal: true, vertical: false)
+            } else if episode.isArticle {
+                Label("Article", systemImage: "doc.plaintext")
+                    .labelStyle(.titleAndIcon)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            if let progress {
+                Text(progress)
+                    .foregroundStyle(
+                        episode.listeningProgress == .played
+                            ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            if episode.dismissed == true {
+                Text("Not in Latest").fixedSize(horizontal: true, vertical: false)
+            }
         }
     }
 }

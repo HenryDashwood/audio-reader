@@ -115,6 +115,29 @@ class TestSubscribeByHomepage:
         assert response.status_code == 201
         assert response.json()["url"] == FEED_URL
 
+    async def test_common_path_fallback_when_homepage_is_blocked(self, client, respx_mock, article_xml):
+        homepage = respx_mock.get(f"{SITE_URL}/").respond(status_code=403)
+        feed = respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+        respx_mock.route().respond(status_code=404)
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 200
+        assert response.json()["candidates"][0]["feed_url"] == FEED_URL
+        assert homepage.call_count == 1
+        assert feed.call_count == 1
+
+    async def test_blocked_explicit_path_does_not_probe_the_origin(self, client, respx_mock):
+        members_url = f"{SITE_URL}/members"
+        blocked = respx_mock.get(members_url).respond(status_code=403)
+
+        response = await client.post("/feeds/discover", json={"url": members_url})
+
+        assert response.status_code == 502
+        assert response.json()["detail"]["code"] == "site_unreachable"
+        assert blocked.call_count == 1
+        assert len(respx_mock.calls) == 1
+
     async def test_homepage_and_feed_url_are_one_catalog_entry(self, client, respx_mock, article_xml):
         respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
         respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")

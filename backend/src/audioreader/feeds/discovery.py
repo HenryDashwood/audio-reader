@@ -49,6 +49,12 @@ COMMON_FEED_PATHS = (
     "/feed.json",
 )
 
+# Some sites put a browser challenge in front of their homepage while leaving
+# their RSS endpoint public. A blocked origin page should not prevent the
+# deterministic, bounded guesses below; other failures (especially 429s and
+# network errors) still stop discovery so we do not amplify an upstream issue.
+BLOCKED_HOMEPAGE_STATUSES = {401, 403}
+
 #: Hard cap on candidate fetches per resolution, so one bad page cannot turn
 #: into a crawl.
 MAX_CANDIDATES = 12
@@ -355,32 +361,45 @@ async def _shared_link_target(url: str, country: str | None = None) -> str:
 
 
 async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
-    fetched = await fetch_feed_resource(url)
-    if fetched.content is None:
-        raise FeedFetchError("the server returned no content")
-    html = fetched.content.decode("utf-8", errors="ignore")
+    initial_fetch_failure: FeedFetchError | None = None
     try:
-        parsed = parse_feed(fetched.content)
-        if parsed.items or not _looks_like_html(html):
-            parsed = await supplement_feed_artwork(parsed, fetched.final_url)
-            return [_resolved_candidate(parsed, fetched.final_url, "direct", None, 0)]
-    except FeedParseError:
-        pass
+        fetched = await fetch_feed_resource(url)
+    except FeedFetchError as exc:
+        if exc.status_code not in BLOCKED_HOMEPAGE_STATUSES or not _is_origin_homepage(url):
+            raise
+        # There is no HTML metadata to inspect, but root-relative conventional
+        # paths remain safe and useful to try on the already-validated origin.
+        initial_fetch_failure = exc
+        homepage_url = url
+        html = ""
+        advertised = []
+    else:
+        if fetched.content is None:
+            raise FeedFetchError("the server returned no content")
+        homepage_url = fetched.final_url
+        html = fetched.content.decode("utf-8", errors="ignore")
+        try:
+            parsed = parse_feed(fetched.content)
+            if parsed.items or not _looks_like_html(html):
+                parsed = await supplement_feed_artwork(parsed, fetched.final_url)
+                return [_resolved_candidate(parsed, fetched.final_url, "direct", None, 0)]
+        except FeedParseError:
+            pass
 
-    advertised = feed_links_in_headers(fetched.link_headers, fetched.final_url)
-    advertised += advertised_feed_links_in_html(html, fetched.final_url)
+        advertised = feed_links_in_headers(fetched.link_headers, fetched.final_url)
+        advertised += advertised_feed_links_in_html(html, fetched.final_url)
     locations = [_CandidateLocation(link.url, link.source, link.title, order) for order, link in enumerate(advertised)]
     # Explicit metadata is authoritative and may intentionally advertise
     # several feeds. Conventional paths are a fallback only; probing them as
     # well creates noise, extra load and false category/comment candidates.
     if not locations:
         locations = [
-            _CandidateLocation(urljoin(fetched.final_url, path), "common_path", None, order)
+            _CandidateLocation(urljoin(homepage_url, path), "common_path", None, order)
             for order, path in enumerate(COMMON_FEED_PATHS)
         ]
 
     unique: list[_CandidateLocation] = []
-    seen = {_request_key(fetched.final_url)}
+    seen = {_request_key(homepage_url)}
     for location in locations:
         key = _request_key(location.url)
         if key in seen:
@@ -400,7 +419,7 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
         by_origin.setdefault(_origin_key(location.url), []).append(location)
 
     semaphore = asyncio.Semaphore(DISCOVERY_CONCURRENCY)
-    fetch_failures: list[FeedFetchError] = []
+    fetch_failures: list[FeedFetchError] = [initial_fetch_failure] if initial_fetch_failure else []
 
     async def inspect(location: _CandidateLocation) -> _ResolvedCandidate | None:
         try:
@@ -415,7 +434,7 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
         except FeedParseError as exc:
             logger.info("feed discovery candidate was not a feed at %s: %s", location.url, exc)
             return None
-        parsed = supplement_feed_artwork_from_html(parsed, html, fetched.final_url)
+        parsed = supplement_feed_artwork_from_html(parsed, html, homepage_url)
         return _resolved_candidate(
             parsed,
             result.final_url,
@@ -427,7 +446,7 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
     async def inspect_origin(locations: list[_CandidateLocation]) -> list[_ResolvedCandidate | None]:
         async with semaphore:
             inspected = []
-            follows_homepage = _origin_key(locations[0].url) == _origin_key(fetched.final_url)
+            follows_homepage = _origin_key(locations[0].url) == _origin_key(homepage_url)
             for index, location in enumerate(locations):
                 # The homepage itself was just fetched, so leave a small gap
                 # before the first same-origin feed as well as between feeds.
@@ -453,6 +472,15 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
             raise unavailable
         raise FeedDiscoveryError(f"no RSS, Atom or JSON feed was found at {url}")
     return _rank_resolved(candidates, None)
+
+
+def _is_origin_homepage(url: str) -> bool:
+    """Whether ``url`` names an origin root rather than an explicit resource."""
+
+    try:
+        return urlsplit(url).path in {"", "/"}
+    except ValueError:
+        return False
 
 
 def _candidate_probe_priority(location: _CandidateLocation) -> tuple[bool, int]:
