@@ -29,7 +29,7 @@ struct SubscribeIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
+        let api = HearfulAPI()
         let response: CommandResponse
         do {
             // Through the same backend path as the in-app microphone: the

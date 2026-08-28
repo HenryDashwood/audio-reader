@@ -23,7 +23,7 @@ enum PlaybackRestore {
     /// rather than caching it: the payload carries the saved playback
     /// position, which may have moved on another device since last launch.
     static func restore(
-        api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+        api: HearfulAPIProtocol = HearfulAPI(),
         player: PlaybackCoordinator = .shared,
         defaults: UserDefaults = .standard
     ) async {

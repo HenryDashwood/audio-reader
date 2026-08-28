@@ -56,9 +56,6 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare the Kokoro packages
-        run: ./scripts/bootstrap-kokoro-packages.sh
-
       - name: Run the iOS tests
         run: |
           set -euo pipefail
@@ -73,7 +70,6 @@ jobs:
           xcodebuild test \
             -project ios/Hearful.xcodeproj \
             -scheme Hearful \
-            -skipPackagePluginValidation \
             -destination "platform=iOS Simulator,OS=latest,name=$device"
 
       - name: Work out the version numbers
@@ -137,7 +133,6 @@ jobs:
         id: profile
         env:
           PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
-          BACKGROUND_ASSETS_PROFILE_B64: ${{ secrets.APPLE_BACKGROUND_ASSETS_PROVISIONING_PROFILE }}
         run: |
           set -euo pipefail
           install_profile() {
@@ -165,14 +160,12 @@ jobs:
           }
 
           install_profile "$PROFILE_B64" app app_uuid
-          install_profile "$BACKGROUND_ASSETS_PROFILE_B64" background-assets background_assets_uuid
 
       - name: Archive
         env:
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
           MARKETING_ARG: ${{ steps.version.outputs.marketing_arg }}
           APP_PROFILE_UUID: ${{ steps.profile.outputs.app_uuid }}
-          BACKGROUND_ASSETS_PROFILE_UUID: ${{ steps.profile.outputs.background_assets_uuid }}
         run: |
           set -euo pipefail
           # Signed manually against the profile installed above. No
@@ -183,24 +176,36 @@ jobs:
           xcodebuild archive \
             -project ios/Hearful.xcodeproj \
             -scheme Hearful \
-            -skipPackagePluginValidation \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Hearful.xcarchive" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             HEARFUL_APP_PROFILE_UUID="$APP_PROFILE_UUID" \
-            HEARFUL_BACKGROUND_ASSETS_PROFILE_UUID="$BACKGROUND_ASSETS_PROFILE_UUID" \
             DEVELOPMENT_TEAM=67F2439F4X \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             $MARKETING_ARG
+
+      - name: Verify voice models are not bundled
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/Hearful.xcarchive/Products/Applications/Hearful.app"
+          bundled=$(find "$app" -type f \( \
+            -name '*.onnx' -o \
+            -name '*.safetensors' -o \
+            -name 'weight.bin' \
+          \) -print)
+          if [ -n "$bundled" ]; then
+            echo "::error::on-device speech-model files were embedded in Hearful.app"
+            echo "$bundled"
+            exit 1
+          fi
 
       - name: Export and upload to TestFlight
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_PROFILE_UUID: ${{ steps.profile.outputs.app_uuid }}
-          BACKGROUND_ASSETS_PROFILE_UUID: ${{ steps.profile.outputs.background_assets_uuid }}
         run: |
           set -euo pipefail
           # Apple's /usr/bin/rsync (openrsync) reads -E as --extended-attributes,
@@ -216,8 +221,6 @@ jobs:
           cp ios/ExportOptions.plist "$options"
           plutil -replace 'provisioningProfiles.com\.henrydashwood\.hearful' \
             -string "$APP_PROFILE_UUID" "$options"
-          plutil -replace 'provisioningProfiles.com\.henrydashwood\.hearful\.BackgroundAssets' \
-            -string "$BACKGROUND_ASSETS_PROFILE_UUID" "$options"
 
           # The key still authenticates the upload; it is only provisioning that
           # must not go through it.

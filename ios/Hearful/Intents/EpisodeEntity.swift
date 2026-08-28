@@ -47,7 +47,7 @@ struct EpisodeEntity: AppEntity {
 struct EpisodeQuery: EntityStringQuery {
     /// Siri asks for this when restoring an episode it resolved earlier.
     func entities(for identifiers: [Int]) async throws -> [EpisodeEntity] {
-        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
+        let api = HearfulAPI()
         var found: [EpisodeEntity] = []
         for id in identifiers {
             if let episode = try? await api.episode(id: id) {
@@ -61,7 +61,7 @@ struct EpisodeQuery: EntityStringQuery {
     /// through the same backend the in-app microphone uses. Siri calls this
     /// when it asks her what to play, rather than when matching the phrase.
     func entities(matching string: String) async throws -> [EpisodeEntity] {
-        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
+        let api = HearfulAPI()
         let response = try await api.command(
             transcript: "play \(string)",
             // Siri resolves entities before anything is playing, and the
@@ -82,7 +82,7 @@ struct EpisodeQuery: EntityStringQuery {
         // The system calls this in the background, possibly before she has
         // ever signed in; an empty list is right, a thrown error is noise.
         guard HearfulAPI.tokenProvider() != nil else { return [] }
-        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
+        let api = HearfulAPI()
         return try await api.recentEpisodes(limit: 30).map(EpisodeEntity.init)
     }
 }

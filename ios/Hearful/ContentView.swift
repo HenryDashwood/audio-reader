@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var showingVoice = false
     @State private var showingNowPlaying = false
     @State private var playbackSpeaker = Speaker()
+    @State private var serverGeneration = 0
 
     @ObservedObject private var metrics = TabBarMetrics.shared
     @ObservedObject private var reader = ArticleControlsModel.shared
@@ -41,6 +42,7 @@ struct ContentView: View {
                     SettingsView()
                 }
             }
+            .id(serverGeneration)
             // Floating over the tab bar rather than pinned under it, and
             // taken away with everything else while she reads: the article's
             // own controls sit above this, and three pieces of furniture
@@ -91,6 +93,9 @@ struct ContentView: View {
         // should recognise in phrases; tell it to refetch them.
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
             HearfulShortcuts.updateAppShortcutParameters()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulServerChanged)) { _ in
+            serverGeneration += 1
         }
         .onChange(of: playback.playbackFailure) { _, failure in
             guard let failure else { return }
@@ -375,7 +380,7 @@ extension VoiceController {
         // where its models are unavailable (notably the simulator).
         let speech = FallbackSpeechRecognizer(
             preferred: AnalyzerSpeechRecognizer(), backup: SpeechRecognizer())
-        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
+        let api = HearfulAPI()
         return VoiceController(
             api: api,
             speech: canned.map(CannedSpeechRecognizer.init(transcript:)) ?? speech,

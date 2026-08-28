@@ -6,6 +6,7 @@ import Testing
 /// Serves one episode; records nothing else.
 private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
     var stored: Episode?
+    var storedText: String?
     private(set) var requestedIDs: [Int] = []
 
     func episode(id: Int) async throws -> Episode {
@@ -35,7 +36,8 @@ private final class OneEpisodeAPI: HearfulAPIProtocol, @unchecked Sendable {
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {}
     func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {}
     func articleText(episodeID: Int) async throws -> EpisodeText {
-        throw APIError(underlying: "unused")
+        guard let storedText else { throw APIError(underlying: "no article text") }
+        return EpisodeText(episodeID: episodeID, title: stored?.title ?? "Article", text: storedText)
     }
 
     var reportedAttempts: [[String: any Sendable]] = []
@@ -80,6 +82,32 @@ struct PlaybackRestoreTests {
 
         #expect(player.currentEpisode?.id == 104)
         #expect(!player.isPlaying)
+    }
+
+    @Test func restoredArticleLoadsProgressBeforePlay() async {
+        let defaults = makeDefaults()
+        PlaybackRestore.remember(episodeID: 104, defaults: defaults)
+        let api = OneEpisodeAPI()
+        api.stored = Episode(
+            id: 104, title: "An article", description: nil, audioURL: nil,
+            durationSeconds: nil, publishedAt: nil, link: nil, imageURL: nil,
+            positionSeconds: 20, completed: nil, hasText: true)
+        api.storedText = String(
+            repeating: "The Congress of Vienna redrew the map of Europe.\n\n", count: 20)
+        let player = PlaybackCoordinator(
+            audio: AudioPlayer(),
+            article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer()))
+
+        await PlaybackRestore.restore(api: api, player: player, defaults: defaults)
+        for _ in 0..<100 where player.duration == 0 {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(player.currentEpisode?.id == 104)
+        #expect(!player.isPlaying)
+        #expect(player.currentTime > 0)
+        #expect(player.duration > player.currentTime)
+        #expect(player.progress > 0 && player.progress < 1)
     }
 
     @Test func nothingRememberedMeansNothingFetched() async {

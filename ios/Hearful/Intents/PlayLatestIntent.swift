@@ -20,7 +20,7 @@ struct PlayLatestIntent: AppIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         log.info("PlayLatestIntent invoked")
-        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
+        let api = HearfulAPI()
 
         let episodes: [Episode]
         do {

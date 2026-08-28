@@ -115,7 +115,7 @@ final class LatestModel: ObservableObject {
     private let cache: OfflineCache
 
     init(
-        api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+        api: HearfulAPIProtocol = HearfulAPI(),
         cache: OfflineCache = .shared
     ) {
         self.api = api

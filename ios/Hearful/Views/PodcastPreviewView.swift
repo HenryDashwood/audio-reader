@@ -110,7 +110,7 @@ final class PodcastPreviewModel: ObservableObject {
     @Published private(set) var subscribeError: String?
     private let api: HearfulAPIProtocol
 
-    init(api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)) {
+    init(api: HearfulAPIProtocol = HearfulAPI()) {
         self.api = api
     }
 

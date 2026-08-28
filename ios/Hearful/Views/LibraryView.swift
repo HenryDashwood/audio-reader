@@ -481,7 +481,7 @@ final class LibraryModel: ObservableObject {
     }
 
     init(
-        api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+        api: HearfulAPIProtocol = HearfulAPI(),
         cache: OfflineCache = .shared
     ) {
         self.api = api
@@ -531,7 +531,7 @@ final class PodcastSearchModel: ObservableObject {
     /// One pause produces one pair of requests: a cached public-directory
     /// lookup and a search of the user's full stored episode library.
     init(
-        api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+        api: HearfulAPIProtocol = HearfulAPI(),
         debounce: Duration = .milliseconds(350)
     ) {
         self.api = api

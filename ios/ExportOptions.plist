@@ -28,8 +28,6 @@
 	<dict>
 		<key>com.henrydashwood.hearful</key>
 		<string>REPLACED_BY_WORKFLOW</string>
-		<key>com.henrydashwood.hearful.BackgroundAssets</key>
-		<string>REPLACED_BY_WORKFLOW</string>
 	</dict>
 
 	<!-- The workflow sets CURRENT_PROJECT_VERSION from the commit count; Xcode

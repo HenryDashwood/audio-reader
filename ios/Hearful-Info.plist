@@ -2,12 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>BAAppGroupID</key>
-	<string>group.com.henrydashwood.hearful</string>
-	<key>BAHasManagedAssetPacks</key>
-	<true/>
-	<key>BAUsesAppleHosting</key>
-	<true/>
 	<!-- Without this, playback stops the moment the screen locks, which would
 	     make the app useless in a pocket. Declared here rather than via
 	     INFOPLIST_KEY_UIBackgroundModes, which did not survive the build. -->

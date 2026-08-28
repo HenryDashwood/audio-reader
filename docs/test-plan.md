@@ -16,7 +16,7 @@ Work through it before a release that matters. Each item is an action and the re
 ## Before you start
 
 - [ ] Install the build you actually intend to test, and note its version and build number here: `________`
-- [ ] 📱 Download a **Premium** English voice — Settings → Accessibility → Spoken Content → Voices → English. Without one, every article is read in the robotic compact voice and you are not testing what she will hear.
+- [ ] 📱 Download a **Premium or Eloquence** English voice — Settings → Accessibility → Spoken Content → Voices → English. Hearful deliberately hides lower-quality voices.
 - [ ] Know how to reset: **Settings → Delete Account** inside the app gives you a genuinely fresh account. Deleting and reinstalling the app does not, because the account lives on the server.
 - [ ] Have a second device or simulator signed into the same account if you want to check positions follow her.
 

@@ -177,10 +177,13 @@ if [[ "$action" == "device" ]]; then
   fi
 
   mkdir -p "$device_derived_data"
-  run_xcodebuild build \
+  # The speech-model removal changed the package graph. Clean this
+  # dedicated device DerivedData directory before building so modules from the
+  # old package graph cannot be rediscovered as current dependencies. This
+  # affects generated build products only, never the installed app or its data.
+  run_xcodebuild clean build \
     -project "$project" \
     -scheme "$scheme" \
-    -skipPackagePluginValidation \
     -configuration Release \
     -destination "platform=iOS,id=$device_id" \
     -derivedDataPath "$device_derived_data" \
@@ -240,10 +243,6 @@ echo "Using $simulator_name on iOS $runtime_version"
 common_args=(
   -project "$project"
   -scheme "$scheme"
-  # mlx-swift's CudaBuild plugin is inert on Apple platforms. Command-line
-  # builds cannot display Xcode's one-time trust prompt, so allow the pinned
-  # package plugin explicitly.
-  -skipPackagePluginValidation
   -configuration Debug
   -destination "platform=iOS Simulator,id=$simulator_id"
   -derivedDataPath "$derived_data"

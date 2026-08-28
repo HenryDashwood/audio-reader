@@ -58,14 +58,7 @@ nonisolated struct ArticleScript: Equatable {
     /// packed greedily up to the limit so pauses stay natural.
     static func pieces(of paragraph: String, limit: Int = chunkCharacterLimit) -> [String] {
         guard paragraph.count > limit else { return [paragraph] }
-        let tokenizer = NLTokenizer(unit: .sentence)
-        tokenizer.string = paragraph
-        var sentences: [String] = []
-        tokenizer.enumerateTokens(in: paragraph.startIndex..<paragraph.endIndex) { range, _ in
-            let sentence = paragraph[range].trimmingCharacters(in: .whitespacesAndNewlines)
-            if !sentence.isEmpty { sentences.append(sentence) }
-            return true
-        }
+        let sentences = sentences(of: paragraph)
         guard !sentences.isEmpty else { return [paragraph] }
 
         var pieces: [String] = []
@@ -82,5 +75,20 @@ nonisolated struct ArticleScript: Equatable {
         }
         if !current.isEmpty { pieces.append(current) }
         return pieces
+    }
+
+    /// Sentence boundaries are the natural unit for an offline voice: the
+    /// model sees enough context to plan emphasis and pauses, while the first
+    /// sentence can still start before the rest of a paragraph is rendered.
+    static func sentences(of text: String) -> [String] {
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = text
+        var sentences: [String] = []
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            let sentence = text[range].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sentence.isEmpty { sentences.append(sentence) }
+            return true
+        }
+        return sentences.isEmpty && !text.isEmpty ? [text] : sentences
     }
 }

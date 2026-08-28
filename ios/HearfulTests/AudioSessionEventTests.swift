@@ -3,6 +3,12 @@ import Testing
 
 @testable import Hearful
 
+private func makeAudioSessionTestCache() -> OfflineCache {
+    OfflineCache(
+        directory: URL.temporaryDirectory.appending(
+            path: "audio-session-tests-\(UUID().uuidString)"))
+}
+
 @Suite("Reading audio session notifications")
 struct AudioSessionEventReaderTests {
     @Test func interruptionBeganIsRead() {
@@ -120,7 +126,10 @@ struct PlaybackInterruptionTests {
         api.articleText = Self.articleText
         let player = PlaybackCoordinator(
             audio: AudioPlayer(),
-            article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer()))
+            article: ArticlePlayer(
+                api: api,
+                cache: makeAudioSessionTestCache(),
+                synthesizer: SilentSynthesizer()))
         return (player, api)
     }
 
@@ -213,7 +222,10 @@ struct ArticleCompletionTests {
         let api = FakeAPI()
         api.articleText = "One short paragraph, read out as a single chunk."
         let synthesizer = SilentSynthesizer()
-        let player = ArticlePlayer(api: api, synthesizer: synthesizer)
+        let player = ArticlePlayer(
+            api: api,
+            cache: makeAudioSessionTestCache(),
+            synthesizer: synthesizer)
         let recorder = Recorder()
         player.feedback = FakeFeedback(recorder)
         player.play(
@@ -262,7 +274,10 @@ struct ArticleSeekTests {
     private func loadedPlayer() async -> ArticlePlayer {
         let api = FakeAPI()
         api.articleText = Self.text
-        let player = ArticlePlayer(api: api, synthesizer: SilentSynthesizer())
+        let player = ArticlePlayer(
+            api: api,
+            cache: makeAudioSessionTestCache(),
+            synthesizer: SilentSynthesizer())
         player.play(
             Episode(
                 id: 1, title: "An article", description: nil, audioURL: nil,

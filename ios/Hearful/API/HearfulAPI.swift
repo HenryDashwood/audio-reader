@@ -84,6 +84,10 @@ extension Notification.Name {
     /// have to hear about it are a list on screen and the position reporter,
     /// which is owned by the auth controller and reachable from neither.
     nonisolated static let hearfulEpisodeFiled = Notification.Name("hearfulEpisodeFiled")
+    /// Posted after Settings changes the API endpoint. Live clients switch on
+    /// their next request; visible list screens rebuild so that request happens
+    /// immediately instead of leaving an old offline result on screen.
+    nonisolated static let hearfulServerChanged = Notification.Name("hearfulServerChanged")
 }
 
 /// The one thing HearfulAPI needs from the network. Injecting this rather than
@@ -96,7 +100,12 @@ nonisolated protocol DataTransport: Sendable {
 extension URLSession: DataTransport {}
 
 nonisolated struct HearfulAPI: HearfulAPIProtocol {
-    let baseURL: URL
+    private let fixedBaseURL: URL?
+    /// A live client resolves this before each request, so changing away from
+    /// a development server does not require every screen and singleton to be
+    /// reconstructed first. Tests and special-purpose clients pass a fixed
+    /// URL through the existing initializer.
+    var baseURL: URL { fixedBaseURL ?? AppConfiguration.apiBaseURL }
     let transport: DataTransport
 
     /// Where the bearer token comes from. Static because the client is built
@@ -106,8 +115,13 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         KeychainTokenStore.token
     }
 
+    init(transport: DataTransport = URLSession.shared) {
+        fixedBaseURL = nil
+        self.transport = transport
+    }
+
     init(baseURL: URL, transport: DataTransport = URLSession.shared) {
-        self.baseURL = baseURL
+        fixedBaseURL = baseURL
         self.transport = transport
     }
 

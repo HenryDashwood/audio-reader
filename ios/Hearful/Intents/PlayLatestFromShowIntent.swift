@@ -21,7 +21,7 @@ struct PlayLatestFromShowIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
+        let api = HearfulAPI()
         let episodes: [Episode]
         do {
             episodes = try await api.episodes(showID: show.id)

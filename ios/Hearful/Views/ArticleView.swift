@@ -211,6 +211,47 @@ final class ArticleControlsModel: ObservableObject {
     @Published var hidden = false
 }
 
+/// Turns one finger gesture into at most one visibility change in each
+/// direction. Tracking the gesture rather than `contentOffset` matters at the
+/// ends of a page: a scroll view's rubber-band rebound changes its offset even
+/// though the user has not reversed direction.
+nonisolated struct ArticleChromeScrollTracker {
+    private static let movementThreshold: CGFloat = 6
+    private static let topThreshold: CGFloat = 32
+
+    private var lastTranslationY: CGFloat?
+    private var hidden = false
+
+    mutating func began(translationY: CGFloat, hidden: Bool) {
+        lastTranslationY = translationY
+        self.hidden = hidden
+    }
+
+    /// Returns a new hidden state only when the gesture actually crosses from
+    /// one state to the other. Repeated callbacks in the same direction are
+    /// deliberately silent, so SwiftUI does not restart the transition.
+    mutating func changed(translationY: CGFloat, contentOffsetY: CGFloat) -> Bool? {
+        guard let previous = lastTranslationY else {
+            lastTranslationY = translationY
+            return nil
+        }
+        let travelled = translationY - previous
+        guard abs(travelled) > Self.movementThreshold else { return nil }
+        lastTranslationY = translationY
+
+        // Finger travelling up means reading farther down the page. Near the
+        // top, keep the controls available regardless of gesture direction.
+        let shouldHide = travelled < 0 && contentOffsetY > Self.topThreshold
+        guard shouldHide != hidden else { return nil }
+        hidden = shouldHide
+        return shouldHide
+    }
+
+    mutating func ended() {
+        lastTranslationY = nil
+    }
+}
+
 /// The shape of the tab bar, for the things that float above it.
 ///
 /// Both the reader's controls and the mini player are capsules sitting over
@@ -302,8 +343,8 @@ private final class Chrome: UIViewController {
     private weak var tabs: UITabBarController?
     private weak var tracked: UIScrollView?
     private var named = false
-    private var scrolling: NSKeyValueObservation?
-    private var lastOffset: CGFloat = 0
+    private weak var panGesture: UIPanGestureRecognizer?
+    private var scrollTracker = ArticleChromeScrollTracker()
 
     /// Name the article's scroll view to the bars at both ends of it, and
     /// watch it ourselves for the one thing UIKit will not do for us: taking
@@ -313,6 +354,7 @@ private final class Chrome: UIViewController {
     /// since either can be second, and said once rather than on every redraw.
     func track(_ scrollView: UIScrollView?) {
         if let scrollView, scrollView !== tracked {
+            stopWatching()
             tracked = scrollView
             named = false
             watch(scrollView)
@@ -343,7 +385,7 @@ private final class Chrome: UIViewController {
         // bar where it left it, and none of them want these two buttons.
         navigationController?.setNavigationBarHidden(false, animated: animated)
         parent?.setContentScrollView(nil, for: .all)
-        scrolling = nil
+        stopWatching()
         tracked = nil
         named = false
         tabs?.tabBarMinimizeBehavior = .never
@@ -362,23 +404,39 @@ private final class Chrome: UIViewController {
     /// than a screen with less room on it.
     private func watch(_ scrollView: UIScrollView) {
         guard !UIAccessibility.isVoiceOverRunning else { return }
-        lastOffset = scrollView.contentOffset.y
-        scrolling = scrollView.observe(\.contentOffset, options: [.new]) { [weak self] view, _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                let offset = view.contentOffset.y
-                let travelled = offset - self.lastOffset
-                // Enough movement to be a scroll rather than a wobble, and far
-                // enough down that the top of the article is not flickering.
-                guard abs(travelled) > 6 else { return }
-                self.lastOffset = offset
-                let away = travelled > 0 && offset > 32
-                guard ArticleControlsModel.shared.hidden != away else { return }
-                self.navigationController?.setNavigationBarHidden(away, animated: true)
-                withAnimation(.easeOut(duration: 0.25)) {
-                    ArticleControlsModel.shared.hidden = away
-                }
+        let gesture = scrollView.panGestureRecognizer
+        gesture.addTarget(self, action: #selector(scrollGestureChanged(_:)))
+        panGesture = gesture
+    }
+
+    private func stopWatching() {
+        panGesture?.removeTarget(self, action: #selector(scrollGestureChanged(_:)))
+        panGesture = nil
+        scrollTracker.ended()
+    }
+
+    @objc private func scrollGestureChanged(_ gesture: UIPanGestureRecognizer) {
+        guard let scrollView = tracked else { return }
+        let translationY = gesture.translation(in: scrollView).y
+        switch gesture.state {
+        case .began:
+            scrollTracker.began(
+                translationY: translationY,
+                hidden: ArticleControlsModel.shared.hidden
+            )
+        case .changed:
+            guard let hidden = scrollTracker.changed(
+                translationY: translationY,
+                contentOffsetY: scrollView.contentOffset.y
+            ) else { return }
+            navigationController?.setNavigationBarHidden(hidden, animated: true)
+            withAnimation(.easeOut(duration: 0.25)) {
+                ArticleControlsModel.shared.hidden = hidden
             }
+        default:
+            // Deceleration and the rubber-band rebound happen after the pan
+            // ends. Neither is a new request to replay the chrome animation.
+            scrollTracker.ended()
         }
     }
 }
@@ -613,7 +671,7 @@ final class ArticleTextModel: ObservableObject {
     private let cache: OfflineCache
 
     init(
-        api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+        api: HearfulAPIProtocol = HearfulAPI(),
         cache: OfflineCache = .shared
     ) {
         self.api = api

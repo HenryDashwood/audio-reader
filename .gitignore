@@ -22,9 +22,7 @@ xcuserdata/
 # that exists on nobody else's machine.
 .claude/worktrees/
 
-# Kokoro model weights and voice packs. Hundreds of megabytes, fetched per
-# docs/kokoro-prototype.md rather than committed.
+# Large local speech-model artifacts are never committed.
 *.safetensors
 voices.npz
-*.aar
 /ios/Packages/

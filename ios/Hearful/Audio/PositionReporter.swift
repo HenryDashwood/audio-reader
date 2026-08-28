@@ -37,7 +37,7 @@ final class PositionReporter {
     private var reportQueueTail: Task<Void, Never>?
 
     init(
-        api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+        api: HearfulAPIProtocol = HearfulAPI(),
         player: PlaybackCoordinator = .shared
     ) {
         self.api = api

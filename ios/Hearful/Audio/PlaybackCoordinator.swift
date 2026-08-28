@@ -340,13 +340,26 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     /// must reach the player that is actually making sound.
     private func wireRemoteCommands() {
         let centre = MPRemoteCommandCenter.shared()
+        // `isEnabled` declares that the app supports a command, not that the
+        // command is the next valid state transition. Keep both directions
+        // supported while this app owns Now Playing so iOS can carry the
+        // resumable session into the background; the handlers below reject a
+        // duplicate event that does not fit the current state.
+        centre.playCommand.isEnabled = true
+        centre.pauseCommand.isEnabled = true
+        centre.togglePlayPauseCommand.isEnabled = true
         centre.playCommand.addTarget { [weak self] _ in
-            self?.resume()
-            return .success
+            self?.handleRemotePlay() ?? .noActionableNowPlayingItem
         }
         centre.pauseCommand.addTarget { [weak self] _ in
-            self?.pause()
-            return .success
+            self?.handleRemotePause() ?? .noActionableNowPlayingItem
+        }
+        // Some accessories and system surfaces send a state-independent
+        // toggle rather than separate play/pause events. Leaving the command
+        // enabled without a handler makes those taps look accepted while the
+        // article does nothing.
+        centre.togglePlayPauseCommand.addTarget { [weak self] _ in
+            self?.handleRemoteToggle() ?? .noActionableNowPlayingItem
         }
         centre.skipForwardCommand.preferredIntervals = [30]
         centre.skipForwardCommand.addTarget { [weak self] _ in
@@ -365,6 +378,29 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
             self?.seek(to: event.positionTime)
             return .success
         }
+    }
+
+    /// Internal so tests can deliver the same events as the system controls
+    /// without relying on a lock screen. A stale duplicate is a failure, not a
+    /// successful second state transition.
+    func handleRemotePlay() -> MPRemoteCommandHandlerStatus {
+        guard currentEpisode != nil else { return .noActionableNowPlayingItem }
+        guard !isPlaying else { return .commandFailed }
+        resume()
+        return .success
+    }
+
+    func handleRemotePause() -> MPRemoteCommandHandlerStatus {
+        guard currentEpisode != nil else { return .noActionableNowPlayingItem }
+        guard isPlaying else { return .commandFailed }
+        pause()
+        return .success
+    }
+
+    func handleRemoteToggle() -> MPRemoteCommandHandlerStatus {
+        guard currentEpisode != nil else { return .noActionableNowPlayingItem }
+        toggle()
+        return .success
     }
 }
 

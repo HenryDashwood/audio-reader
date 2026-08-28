@@ -53,14 +53,6 @@ final class SilentSynthesizer: SpeechSynthesizing {
         delegate?.speechFinished(UtteranceID(utterance))
     }
 
-    /// Makes the current utterance fail, for recovery-path tests.
-    func failSpeaking() {
-        guard let utterance = spoken.last, isSpeaking else { return }
-        isSpeaking = false
-        isPaused = false
-        delegate?.speechFailed(UtteranceID(utterance))
-    }
-
     /// The voice reaching a point part-way through the current utterance,
     /// which is what moves the position along within a chunk.
     func speakOn(toFraction fraction: Double) {

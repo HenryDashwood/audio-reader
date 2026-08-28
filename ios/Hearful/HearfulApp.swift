@@ -6,8 +6,7 @@ struct HearfulApp: App {
     /// Subscribed for the life of the app. iOS delivers crash and hang reports
     /// in a daily batch at a moment of its choosing, so there is no later point
     /// at which registering would still catch them.
-    private let diagnostics = DiagnosticsReporter(
-        api: HearfulAPI(baseURL: AppConfiguration.apiBaseURL))
+    private let diagnostics = DiagnosticsReporter(api: HearfulAPI())
 
     var body: some Scene {
         WindowGroup {
@@ -26,9 +25,7 @@ struct HearfulApp: App {
             }
             .task {
                 auth.bootstrap()
-                #if canImport(KokoroSwift) && !targetEnvironment(simulator)
-                    KokoroBenchmark.runIfRequested()
-                #endif
+                await ObsoleteVoiceCleanup.remove()
             }
         }
     }

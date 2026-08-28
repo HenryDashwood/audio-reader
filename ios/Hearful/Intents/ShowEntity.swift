@@ -33,7 +33,7 @@ struct ShowQuery: EntityStringQuery {
     /// Siri asks for these when restoring a show it resolved earlier.
     func entities(for identifiers: [Int]) async throws -> [ShowEntity] {
         guard HearfulAPI.tokenProvider() != nil else { return [] }
-        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
+        let api = HearfulAPI()
         let shows = (try? await api.shows()) ?? []
         return shows.filter { identifiers.contains($0.id) }.map(ShowEntity.init)
     }
@@ -41,7 +41,7 @@ struct ShowQuery: EntityStringQuery {
     /// Spoken text from Siri's follow-up question, matched loosely against
     /// her subscriptions: "average joe" should find "An Average Joe".
     func entities(matching string: String) async throws -> [ShowEntity] {
-        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
+        let api = HearfulAPI()
         let shows = try await api.shows()
         let spoken = Self.normalise(string)
         guard !spoken.isEmpty else { return [] }
@@ -57,7 +57,7 @@ struct ShowQuery: EntityStringQuery {
     /// empty list is right then, a thrown error is noise.
     func suggestedEntities() async throws -> [ShowEntity] {
         guard HearfulAPI.tokenProvider() != nil else { return [] }
-        let api = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)
+        let api = HearfulAPI()
         return try await api.shows().map(ShowEntity.init)
     }
 

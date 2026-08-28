@@ -12,10 +12,6 @@ protocol SpeechSynthesizing: AnyObject {
     var isPaused: Bool { get }
 
     func speak(_ utterance: AVSpeechUtterance)
-    /// What is likely to be spoken next, so a synthesiser that has to make
-    /// the sound before it can play it has somewhere to start. Advisory: the
-    /// reader may seek elsewhere, and speaking something else is always fine.
-    func prepare(_ utterance: AVSpeechUtterance)
     func stopSpeaking(at boundary: AVSpeechBoundary)
     func pauseSpeaking(at boundary: AVSpeechBoundary)
     func continueSpeaking()
@@ -30,27 +26,8 @@ enum SpeechSynthesizers {
     /// SilentSynthesizer and passes it in.
     static func make() -> SpeechSynthesizing {
         if TestEnvironment.isRunningTests { return SilentSynthesizer() }
-        // Both conditions have to hold: she has chosen a natural voice, and
-        // this build can actually render one. Either missing means the system
-        // voice, which is the behaviour every build has had until now.
-        if let voice = SpeechVoice.naturalVoice, let engine = KokoroEngines.shared {
-            return KokoroSynthesizer(engine: engine, voice: voice)
-        }
-        return makeSystemVoice()
+        return SystemSpeechSynthesizer()
     }
-
-    /// A known-good fallback when an optional renderer cannot make sound.
-    /// Tests still get silence, so exercising that recovery path cannot make
-    /// the test runner speak.
-    static func makeSystemVoice() -> SpeechSynthesizing {
-        TestEnvironment.isRunningTests ? SilentSynthesizer() : SystemSpeechSynthesizer()
-    }
-}
-
-extension SpeechSynthesizing {
-    /// Nothing to prepare for a synthesiser that speaks as it goes, which is
-    /// every synthesiser but the one that renders audio first.
-    func prepare(_ utterance: AVSpeechUtterance) {}
 }
 
 /// Which utterance a callback is about. The utterance itself is not Sendable,
@@ -64,16 +41,9 @@ typealias UtteranceID = ObjectIdentifier
 @MainActor
 protocol SpeechSynthesizingDelegate: AnyObject {
     func speechFinished(_ utterance: UtteranceID)
-    /// The synthesiser could not produce this utterance. Unlike a deliberate
-    /// cancellation, the reader must recover rather than silently advance.
-    func speechFailed(_ utterance: UtteranceID)
     /// `fraction` is how far through the utterance's text the voice has
     /// reached, 0 to 1.
     func speechProgressed(toFraction fraction: Double, of utterance: UtteranceID)
-}
-
-extension SpeechSynthesizingDelegate {
-    func speechFailed(_ utterance: UtteranceID) {}
 }
 
 /// The real thing: AVSpeechSynthesizer, with its delegate callbacks brought

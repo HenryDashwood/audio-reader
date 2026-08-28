@@ -31,7 +31,7 @@ final class AuthController: ObservableObject {
     private var authRequiredObserver: NSObjectProtocol?
     private var positionReporter: PositionReporter?
 
-    init(api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL)) {
+    init(api: HearfulAPIProtocol = HearfulAPI()) {
         self.api = api
         authRequiredObserver = NotificationCenter.default.addObserver(
             forName: .hearfulAuthRequired, object: nil, queue: .main

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// nonisolated: read by App Intents off the main actor; UserDefaults and
 /// ProcessInfo are both thread-safe.
@@ -14,6 +15,11 @@ nonisolated enum AppConfiguration {
         static let defaultBaseURL = productionBaseURL
     #endif
     private static let storageKey = "HearfulAPIBaseURL"
+    /// Settings can override a launch environment for the rest of this
+    /// process. This matters on a phone launched from Xcode: localhost is the
+    /// phone itself, and deleting UserDefaults alone cannot change an already
+    /// inherited environment variable.
+    private static let useProductionForThisProcess = Mutex(false)
 
     /// The simulator shares the Mac's network, so localhost reaches the dev
     /// backend. A real device cannot: it needs the Mac's LAN address, or a
@@ -24,7 +30,10 @@ nonisolated enum AppConfiguration {
     /// but tapping the app icon does not — and an app that only works when
     /// launched from a laptop is no use to anyone.
     static var apiBaseURL: URL {
-        resolveBaseURL(
+        if useProductionForThisProcess.withLock({ $0 }) {
+            return productionBaseURL
+        }
+        return resolveBaseURL(
             environment: ProcessInfo.processInfo.environment, defaults: .standard)
     }
 
@@ -33,7 +42,6 @@ nonisolated enum AppConfiguration {
     }
 
     static let supportURL = URL(string: "mailto:hcndashwood@gmail.com")!
-
     static func resolveBaseURL(environment: [String: String], defaults: UserDefaults) -> URL {
         if let override = environment["HEARFUL_API_URL"],
             let url = URL(string: override), url.host != nil
@@ -74,5 +82,6 @@ nonisolated enum AppConfiguration {
     /// Forget it and go back to the deployed backend.
     static func clearRememberedOverride(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: storageKey)
+        useProductionForThisProcess.withLock { $0 = true }
     }
 }

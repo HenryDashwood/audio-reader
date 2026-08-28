@@ -262,7 +262,7 @@ final class EpisodeListModel: ObservableObject {
     /// reason as the directory search: each one is a database scan across a
     /// whole archive, and a fast typist would start a dozen of them.
     init(
-        api: HearfulAPIProtocol = HearfulAPI(baseURL: AppConfiguration.apiBaseURL),
+        api: HearfulAPIProtocol = HearfulAPI(),
         cache: OfflineCache = .shared,
         debounce: Duration = .milliseconds(300)
     ) {
