@@ -5,52 +5,24 @@ import Testing
 
 @Suite("Speech voice selection")
 struct SpeechVoiceTests {
-    @Test func acceptsApplePremiumEnglishVoices() {
-        #expect(
-            SpeechVoice.isEligible(
-                identifier: "com.apple.voice.premium.en-GB.Jamie",
-                language: "en-GB",
-                quality: .premium
-            ))
+    @Test func namesAppleQualityTiers() {
+        #expect(SpeechVoice.qualityName(.premium) == "Premium")
+        #expect(SpeechVoice.qualityName(.enhanced) == "Enhanced")
+        #expect(SpeechVoice.qualityName(.default) == "Default")
     }
 
-    @Test func acceptsAppleEloquenceEnglishVoices() {
-        #expect(
-            SpeechVoice.isEligible(
-                identifier: "com.apple.eloquence.en-US.Eddy",
-                language: "en-US",
-                quality: .default
-            ))
+    @Test func pickerContainsEveryInstalledVoice() {
+        let installed = Set(AVSpeechSynthesisVoice.speechVoices().map(\.identifier))
+        let displayed = Set(SpeechVoice.installedVoices().map(\.identifier))
+
+        #expect(displayed == installed)
     }
 
-    @Test func rejectsEnhancedStandardThirdPartyAndNonEnglishVoices() {
-        #expect(
-            !SpeechVoice.isEligible(
-                identifier: "com.apple.voice.enhanced.en-GB.Daniel",
-                language: "en-GB",
-                quality: .enhanced
-            ))
-        #expect(
-            !SpeechVoice.isEligible(
-                identifier: "com.apple.ttsbundle.siri_female_en-GB_compact",
-                language: "en-GB",
-                quality: .default
-            ))
-        #expect(
-            !SpeechVoice.isEligible(
-                identifier: "com.example.voice.en-GB.Custom",
-                language: "en-GB",
-                quality: .premium
-            ))
-        #expect(
-            !SpeechVoice.isEligible(
-                identifier: "com.apple.voice.premium.fr-FR.Thomas",
-                language: "fr-FR",
-                quality: .premium
-            ))
-    }
+    @Test func pickerOrdersHigherQualityVoicesFirst() {
+        let qualities = SpeechVoice.installedVoices().map(\.quality.rawValue)
 
-    @Test func pickerContainsOnlyEligibleVoices() {
-        #expect(SpeechVoice.englishVoices().allSatisfy(SpeechVoice.isEligible))
+        #expect(zip(qualities, qualities.dropFirst()).allSatisfy { pair in
+            pair.0 >= pair.1
+        })
     }
 }

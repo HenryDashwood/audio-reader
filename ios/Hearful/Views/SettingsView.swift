@@ -12,14 +12,14 @@ struct SettingsView: View {
     @State private var deleteError: String?
     @State private var privacyError: String?
     @State private var serverOverride = AppConfiguration.rememberedOverride()
-    private let voices = SpeechVoice.englishVoices()
+    private let voices = SpeechVoice.installedVoices()
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
                     if voices.isEmpty {
-                        Text("No Premium or Eloquence English voice is installed")
+                        Text("No speech voice is available")
                             .foregroundStyle(.secondary)
                     } else {
                         Picker("Voice", selection: $systemVoiceID) {
@@ -33,8 +33,8 @@ struct SettingsView: View {
                     Text("Voice")
                 } footer: {
                     Text(
-                        "Hearful uses Apple voices installed on this iPhone. Only Premium and "
-                            + "Eloquence English voices are shown. Download more free in "
+                        "Hearful shows every voice available on this iPhone. Download "
+                            + "higher-quality Apple voices in "
                             + "Settings → Accessibility → Spoken Content → Voices, "
                             + "then reopen Hearful Settings."
                     )
@@ -211,11 +211,7 @@ struct SettingsView: View {
     }
 
     private func label(for voice: AVSpeechSynthesisVoice) -> String {
-        var parts = [voice.name]
-        if let region = voice.language.split(separator: "-").last {
-            parts.append(region == "GB" ? "UK" : String(region))
-        }
-        parts.append(SpeechVoice.isEloquence(voice) ? "Eloquence" : "Premium")
+        let parts = [voice.name, voice.language, SpeechVoice.qualityName(voice.quality)]
         return parts.joined(separator: " · ")
     }
 }
