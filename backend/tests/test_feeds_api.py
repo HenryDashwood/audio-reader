@@ -2,7 +2,7 @@ from httpx import ASGITransport, AsyncClient
 
 from audioreader.db import get_session
 from audioreader.main import create_app
-from audioreader.models import User
+from audioreader.models import Feed, User
 
 FEED_URL = "https://example.com/feed.xml"
 
@@ -90,6 +90,30 @@ class TestPreview:
         await client.post("/feeds/preview", json={"url": FEED_URL})
         await client.post("/feeds/preview", json={"url": FEED_URL})
         assert route.call_count == 1
+
+    async def test_reopening_an_old_preview_backfills_website_artwork(self, client, session, respx_mock, article_xml):
+        site_url = "https://notesonprogress.example.com/"
+        artwork = f"{site_url}social-card.jpg"
+        feed_route = respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+        respx_mock.get(site_url).respond(content=b"<html><head></head></html>", content_type="text/html")
+        first = await client.post("/feeds/preview", json={"url": FEED_URL})
+        feed = await session.get(Feed, first.json()["feed"]["id"])
+        # This is the state produced by deploying the migration over a catalog
+        # row that existed before website artwork fallback was introduced.
+        feed.site_image_url = None
+        feed.site_artwork_checked_at = None
+        await session.commit()
+        respx_mock.get(site_url).respond(
+            content=f'<html><head><meta property="og:image" content="{artwork}"></head></html>',
+            content_type="text/html",
+        )
+
+        reopened = await client.post("/feeds/preview", json={"url": FEED_URL})
+
+        assert reopened.status_code == 200
+        assert reopened.json()["feed"]["image_url"] == artwork
+        assert all(episode["image_url"] == artwork for episode in reopened.json()["episodes"])
+        assert feed_route.call_count == 1
 
     async def test_subscribing_after_preview_is_instant(self, client, respx_mock, podcast_xml):
         # The preview already ingested the feed; subscribing must not refetch.

@@ -3,6 +3,7 @@ from urllib.parse import urljoin, urlsplit
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audioreader.feeds.artwork import site_artwork_is_due, website_artwork_url
 from audioreader.feeds.discovery import resolve_feed
 from audioreader.feeds.parser import ParsedFeed
 from audioreader.models import Episode, Feed, FeedAlias, Subscription, User, utcnow
@@ -22,6 +23,8 @@ async def ensure_feed(session: AsyncSession, url: str) -> Feed:
     resolved URL so both routes lead to one catalog entry."""
     feed = await _feed_for_url(session, url)
     if feed is not None:
+        if await _backfill_site_artwork(feed):
+            await session.commit()
         return feed
     resolved_url, parsed = await resolve_feed(url)
     aliases = {url}
@@ -29,7 +32,10 @@ async def ensure_feed(session: AsyncSession, url: str) -> Feed:
         aliases.add(urljoin(resolved_url, parsed.self_url))
     feed = await _feed_for_url(session, resolved_url)
     if feed is not None:
-        if await _remember_aliases(session, feed, aliases):
+        changed = await _remember_aliases(session, feed, aliases)
+        if await _backfill_site_artwork(feed):
+            changed = True
+        if changed:
             await session.commit()
         return feed
     feed = Feed(url=resolved_url, title=parsed.title)
@@ -40,6 +46,22 @@ async def ensure_feed(session: AsyncSession, url: str) -> Feed:
     await _remember_aliases(session, feed, aliases)
     await session.commit()
     return feed
+
+
+async def _backfill_site_artwork(feed: Feed) -> bool:
+    """Upgrade an older catalog row without re-fetching its full feed.
+
+    Preview-only feeds are intentionally absent from the background poller,
+    but reopening one is still an opportunity to fill artwork introduced by a
+    newer backend release. The timestamp makes this a one-off bounded fetch,
+    with an occasional retry for sites that were temporarily unavailable.
+    """
+
+    if feed.image_url or feed.site_image_url or not site_artwork_is_due(feed.site_artwork_checked_at):
+        return False
+    feed.site_image_url = await website_artwork_url(feed.site_url, feed.url)
+    feed.site_artwork_checked_at = utcnow()
+    return True
 
 
 async def _feed_for_url(session: AsyncSession, url: str) -> Feed | None:
