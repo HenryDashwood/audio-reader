@@ -201,7 +201,7 @@ with:
 
 ```bash
 IOS_SIMULATOR_ID=<udid> make app-store-screenshot \
-  DISPLAY=APP_IPHONE_69 NAME=01-latest
+  DISPLAY=APP_IPHONE_67 NAME=01-latest
 ```
 
 Run `make app-store-validate` after any listing change. See the App Store

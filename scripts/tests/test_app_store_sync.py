@@ -58,7 +58,7 @@ class FakeScreenshotClient:
                 "data": [
                     {
                         "id": "set-id",
-                        "attributes": {"screenshotDisplayType": "APP_IPHONE_69"},
+                        "attributes": {"screenshotDisplayType": "APP_IPHONE_67"},
                     }
                 ]
             }
@@ -89,7 +89,7 @@ def test_matching_screenshot_set_is_not_replaced(tmp_path: Path):
     screenshot.write_bytes(b"approved image")
     checksum = hashlib.md5(screenshot.read_bytes()).hexdigest()
     client = FakeScreenshotClient(screenshot.name, checksum)
-    locale = store.LocaleListing("en-GB", {}, {"APP_IPHONE_69": (screenshot,)})
+    locale = store.LocaleListing("en-GB", {}, {"APP_IPHONE_67": (screenshot,)})
 
     store.sync_screenshots(client, {"id": "localization-id"}, locale, dry_run=False)
 
@@ -101,7 +101,7 @@ def test_dry_run_never_replaces_changed_screenshot_set(tmp_path: Path):
     screenshot = tmp_path / "01-latest.png"
     screenshot.write_bytes(b"new image")
     client = FakeScreenshotClient(screenshot.name, "old-checksum")
-    locale = store.LocaleListing("en-GB", {}, {"APP_IPHONE_69": (screenshot,)})
+    locale = store.LocaleListing("en-GB", {}, {"APP_IPHONE_67": (screenshot,)})
 
     store.sync_screenshots(client, {"id": "localization-id"}, locale, dry_run=True)
 

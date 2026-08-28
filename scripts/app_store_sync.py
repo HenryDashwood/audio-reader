@@ -65,7 +65,9 @@ VERSION_FIELDS = {
 # allow-list here catches an accidentally captured smaller simulator before it
 # can replace a valid storefront set.
 SCREENSHOT_SIZES: dict[str, set[tuple[int, int]]] = {
-    "APP_IPHONE_69": {
+    # Apple's API still names the largest iPhone screenshot well "67",
+    # although App Store Connect presents these current sizes as 6.9-inch.
+    "APP_IPHONE_67": {
         (1260, 2736),
         (1290, 2796),
         (1320, 2868),

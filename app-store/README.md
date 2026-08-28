@@ -17,8 +17,9 @@ CI validate it, and sync it from a release tag.
 The current screenshot folders cover both device families the Xcode target
 supports:
 
-- `APP_IPHONE_69`: a 6.9-inch iPhone screenshot. The preferred simulator is an
-  iPhone 17 Pro Max, whose portrait output is 1320 × 2868.
+- `APP_IPHONE_67`: a 6.9-inch iPhone screenshot. Apple still uses the older
+  `67` name for this API upload well. The preferred simulator is an iPhone 17
+  Pro Max, whose portrait output is 1320 × 2868.
 - `APP_IPAD_PRO_3GEN_129`: a 13-inch/12.9-inch iPad screenshot. The accepted
   portrait sizes include 2064 × 2752 and 2048 × 2732.
 
@@ -47,7 +48,7 @@ make app-store-backend  # leave running in a separate terminal
 
 IOS_SIMULATOR_ID=<udid> \
   make app-store-screenshot \
-  DISPLAY=APP_IPHONE_69 NAME=01-latest
+  DISPLAY=APP_IPHONE_67 NAME=01-latest
 ```
 
 The fixture command uses an isolated SQLite database under the ignored

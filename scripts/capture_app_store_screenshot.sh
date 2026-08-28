@@ -6,9 +6,9 @@ name="${NAME:-}"
 simulator_id="${IOS_SIMULATOR_ID:-}"
 
 case "$display" in
-  APP_IPHONE_69|APP_IPAD_PRO_3GEN_129) ;;
+  APP_IPHONE_67|APP_IPAD_PRO_3GEN_129) ;;
   *)
-    echo "DISPLAY must be APP_IPHONE_69 or APP_IPAD_PRO_3GEN_129" >&2
+    echo "DISPLAY must be APP_IPHONE_67 or APP_IPAD_PRO_3GEN_129" >&2
     exit 2
     ;;
 esac
