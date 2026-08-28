@@ -195,6 +195,35 @@ class TestSubscribeByHomepage:
 
 
 class TestRankedDiscovery:
+    async def test_comments_feed_alone_does_not_suppress_the_common_main_feed(
+        self, client, respx_mock, article_xml, monkeypatch
+    ):
+        monkeypatch.setattr(discovery, "SAME_ORIGIN_PROBE_DELAY_SECONDS", 0)
+        comments_url = f"{SITE_URL}/quanta/feed/"
+        homepage = b"""
+        <html><head>
+        <link rel="alternate" type="application/rss+xml"
+              title="Notes on Progress Comments Feed" href="/quanta/feed/">
+        </head><body></body></html>
+        """
+        # Some comments feeds conceal their purpose in the channel title, so
+        # discovery must retain the more specific advertised title for ranking.
+        comments = article_xml.replace(b"Notes on Progress", b"Illuminating science")
+        respx_mock.get(f"{SITE_URL}/").respond(content=homepage, content_type="text/html")
+        main = respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+        discussion = respx_mock.get(comments_url).respond(content=comments, content_type="application/rss+xml")
+        respx_mock.route().respond(status_code=404)
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 200
+        candidates = response.json()["candidates"]
+        assert [candidate["feed_url"] for candidate in candidates] == [FEED_URL, comments_url]
+        assert candidates[0]["is_primary"] is True
+        assert candidates[1]["is_primary"] is False
+        assert main.call_count == 1
+        assert discussion.call_count == 1
+
     async def test_same_origin_candidates_are_polite_and_main_feed_is_tried_first(
         self, client, respx_mock, article_xml, monkeypatch
     ):

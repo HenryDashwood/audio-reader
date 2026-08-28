@@ -35,9 +35,9 @@ nonisolated enum EpisodeFiling: String, Sendable, Hashable {
     }
 
     /// The swipe action's label, and what VoiceOver reads in the rotor.
-    var actionTitle: String {
+    func actionTitle(for episode: Episode) -> String {
         switch self {
-        case .played: "Mark played"
+        case .played: episode.isArticle ? "Mark read" : "Mark played"
         case .dismissed: "Not interested"
         case .restored: "Put back"
         }
@@ -62,11 +62,14 @@ nonisolated enum EpisodeFiling: String, Sendable, Hashable {
     /// Said out loud once it has happened. Not decoration: the entire visible
     /// result is a row leaving a list, which is exactly the kind of change
     /// that reaches her only if something says so.
-    func confirmation(title: String) -> String {
+    func confirmation(for episode: Episode) -> String {
         switch self {
-        case .played: "Marked as played: \(title)"
-        case .dismissed: "Taken off your list: \(title)"
-        case .restored: "Back in your list: \(title)"
+        case .played:
+            episode.isArticle
+                ? "Marked as read: \(episode.title)"
+                : "Marked as played: \(episode.title)"
+        case .dismissed: "Taken off your list: \(episode.title)"
+        case .restored: "Back in your list: \(episode.title)"
         }
     }
 
@@ -108,7 +111,7 @@ func fileEpisode(_ filing: EpisodeFiling, _ episode: Episode, api: HearfulAPIPro
             (error as? APIError)?.spokenResponse ?? "Something went wrong.").post()
         return false
     }
-    AccessibilityNotification.Announcement(filing.confirmation(title: episode.title)).post()
+    AccessibilityNotification.Announcement(filing.confirmation(for: episode)).post()
     filing.broadcast(episodeID: episode.id)
     return true
 }
@@ -130,7 +133,7 @@ extension View {
                 Button {
                     perform(filing)
                 } label: {
-                    Label(filing.actionTitle, systemImage: filing.systemImage)
+                    Label(filing.actionTitle(for: episode), systemImage: filing.systemImage)
                 }
                 .tint(filing.tint)
             }

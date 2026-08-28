@@ -61,6 +61,13 @@ private func episode(id: Int, played: Bool? = nil, dismissed: Bool? = nil) -> Ep
         publishedAt: nil, link: nil, positionSeconds: nil, completed: played, dismissed: dismissed)
 }
 
+private func article(id: Int) -> Episode {
+    Episode(
+        id: id, title: "Article \(id)", description: nil, audioURL: nil, durationSeconds: nil,
+        publishedAt: nil, link: nil, positionSeconds: nil, completed: nil, dismissed: nil,
+        hasText: true)
+}
+
 private func makeCache() -> OfflineCache {
     OfflineCache(directory: URL.temporaryDirectory.appending(path: "filing-\(UUID().uuidString)"))
 }
@@ -114,6 +121,16 @@ struct EpisodeFilingTests {
         #expect(EpisodeFiling.available(for: episode(id: 7005, played: true)) == [.restored])
         #expect(EpisodeFiling.available(for: episode(id: 7006, dismissed: true)) == [.restored])
         #expect(EpisodeFiling.available(for: episode(id: 7007)) == [.played, .dismissed])
+    }
+
+    @Test func completedActionUsesReadingLanguageForArticles() {
+        let post = article(id: 7008)
+        let audio = episode(id: 7009)
+
+        #expect(EpisodeFiling.played.actionTitle(for: post) == "Mark read")
+        #expect(EpisodeFiling.played.confirmation(for: post) == "Marked as read: Article 7008")
+        #expect(EpisodeFiling.played.actionTitle(for: audio) == "Mark played")
+        #expect(EpisodeFiling.played.confirmation(for: audio) == "Marked as played: Episode 7009")
     }
 }
 

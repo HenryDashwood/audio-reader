@@ -389,13 +389,19 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
         advertised = feed_links_in_headers(fetched.link_headers, fetched.final_url)
         advertised += advertised_feed_links_in_html(html, fetched.final_url)
     locations = [_CandidateLocation(link.url, link.source, link.title, order) for order, link in enumerate(advertised)]
-    # Explicit metadata is authoritative and may intentionally advertise
-    # several feeds. Conventional paths are a fallback only; probing them as
-    # well creates noise, extra load and false category/comment candidates.
+    common_locations = [
+        _CandidateLocation(urljoin(homepage_url, path), "common_path", None, order)
+        for order, path in enumerate(COMMON_FEED_PATHS)
+    ]
+    # Explicit primary metadata is authoritative and may intentionally
+    # advertise several feeds. A page that advertises only comments or replies
+    # has not identified its publication feed, though: probe conventional main
+    # paths first rather than silently treating discussion as the publication.
     if not locations:
-        locations = [
-            _CandidateLocation(urljoin(homepage_url, path), "common_path", None, order)
-            for order, path in enumerate(COMMON_FEED_PATHS)
+        locations = common_locations
+    elif all(_is_secondary_feed_location(location) for location in locations):
+        locations = common_locations + [
+            replace(location, order=len(common_locations) + index) for index, location in enumerate(locations)
         ]
 
     unique: list[_CandidateLocation] = []
@@ -484,9 +490,12 @@ def _is_origin_homepage(url: str) -> bool:
 
 
 def _candidate_probe_priority(location: _CandidateLocation) -> tuple[bool, int]:
+    return _is_secondary_feed_location(location), location.order
+
+
+def _is_secondary_feed_location(location: _CandidateLocation) -> bool:
     label = f"{location.title or ''} {urlsplit(location.url).path}".casefold()
-    is_secondary = any(word in label for word in ("comment", "repl", "response"))
-    return is_secondary, location.order
+    return any(word in label for word in ("comment", "repl", "response"))
 
 
 def _origin_key(url: str) -> str:
@@ -520,7 +529,9 @@ def _resolved_candidate(
     label = f"{title_hint or ''} {title}".casefold()
     penalty = 0
     if any(word in label for word in ("comment", "repl", "response")):
-        penalty += 300
+        # Strong enough that a conventional main feed beats an explicitly
+        # advertised discussion feed when the publisher omitted main metadata.
+        penalty += 500
     if any(word in label for word in ("category", "tag feed", "author feed")):
         penalty += 100
     bonus = 30 if any(word in label for word in ("main", "all posts", "articles")) else 0
