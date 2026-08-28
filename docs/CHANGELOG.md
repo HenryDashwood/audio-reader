@@ -10,6 +10,29 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.3.0
+
+This build is much better at finding publications, makes articles nicer to
+read and hear, and tidies up playback. Worth trying:
+
+- Search for a podcast, blog or newsletter by name, then try again by pasting
+  its homepage, feed address or an Apple Podcasts sharing link. It should find
+  the canonical publication without creating duplicates.
+- Open a show after subscribing. Check that its artwork, description and
+  website link make sense, including for a publication whose feed has sparse
+  metadata.
+- Open a written article containing headings, pictures and links. The page
+  should keep that structure, links should open reliably, and the reading
+  controls should remain easy to reach as you scroll.
+- In Settings, choose an installed Premium or Eloquence English voice, then
+  listen to a longer article. Try changing speed, pausing and resuming, and
+  listen for clipped endings, buzzing or unnatural pauses.
+- Move between the full player, mini player and the rest of the app while
+  something is playing. Playback and the visible controls should stay in sync.
+
+Please say which publication or article you tried and what happened,
+especially if discovery chose the wrong feed or spoken text sounded odd.
+
 ## 1.2.0
 
 This build can be asked a question back, reads written articles on screen as

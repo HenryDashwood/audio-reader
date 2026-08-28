@@ -400,13 +400,20 @@ def ensure_version(client: Client, app: str, listing: Listing, version: str, dry
     config = listing.config
     versions = client.get(
         f"/apps/{app}/appStoreVersions",
-        params={"filter[platform]": config["platform"], "filter[versionString]": version, "limit": 10},
+        params={"filter[platform]": config["platform"], "limit": 200},
     )["data"]
-    desired = {"copyright": config["copyright"], "releaseType": config["releaseType"]}
-    if versions:
-        remote = versions[0]
+    remote = next((item for item in versions if item["attributes"].get("versionString") == version), None)
+    desired = {
+        "versionString": version,
+        "copyright": config["copyright"],
+        "releaseType": config["releaseType"],
+    }
+    if remote is not None:
+        state = remote["attributes"].get("appStoreState")
+        if state not in EDITABLE_STATES:
+            raise Failure(f"App Store version {version} is {state} and cannot be synchronised")
         if changed(remote, desired):
-            print(f"version {version}: update copyright/release type")
+            print(f"version {version}: update version settings")
             if not dry_run:
                 client.patch(
                     f"/appStoreVersions/{remote['id']}",
@@ -415,6 +422,35 @@ def ensure_version(client: Client, app: str, listing: Listing, version: str, dry
         else:
             print(f"version {version}: unchanged")
         return remote
+
+    editable = [item for item in versions if item["attributes"].get("appStoreState") in EDITABLE_STATES]
+    if editable:
+        labels = ", ".join(
+            f"{item['attributes'].get('versionString')} ({item['attributes'].get('appStoreState')})"
+            for item in editable
+        )
+        if len(editable) != 1 or editable[0]["attributes"].get("appStoreState") != "PREPARE_FOR_SUBMISSION":
+            raise Failure(f"cannot create version {version}; editable App Store version(s) already exist: {labels}")
+
+        remote = editable[0]
+        build_response = client.get(f"/appStoreVersions/{remote['id']}/build", allow_not_found=True)
+        if build_response.get("data") is not None:
+            raise Failure(
+                f"cannot retarget App Store version {remote['attributes'].get('versionString')} to {version}; "
+                "it already has a selected build"
+            )
+
+        previous = remote["attributes"].get("versionString")
+        print(f"version {previous}: retarget editable draft to {version}")
+        if not dry_run:
+            client.patch(
+                f"/appStoreVersions/{remote['id']}",
+                {"data": {"type": "appStoreVersions", "id": remote["id"], "attributes": desired}},
+            )
+        return {
+            **remote,
+            "attributes": {**remote.get("attributes", {}), **desired},
+        }
 
     print(f"version {version}: create")
     if dry_run:

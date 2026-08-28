@@ -106,3 +106,62 @@ def test_dry_run_never_replaces_changed_screenshot_set(tmp_path: Path):
 
     assert client.deleted == []
     assert client.patched == []
+
+
+class FakeVersionClient:
+    def __init__(self, *, build: dict | None = None):
+        self.versions = [
+            {
+                "id": "draft-id",
+                "attributes": {
+                    "versionString": "1.0",
+                    "appStoreState": "PREPARE_FOR_SUBMISSION",
+                    "copyright": "2025 Example",
+                    "releaseType": "MANUAL",
+                },
+            }
+        ]
+        self.build = build
+        self.patches: list[tuple[str, dict]] = []
+
+    def get(self, path: str, **_kwargs) -> dict:
+        if path.endswith("/appStoreVersions"):
+            return {"data": self.versions}
+        if path.endswith("/build"):
+            return {"data": self.build}
+        raise AssertionError(path)
+
+    def patch(self, path: str, body: dict) -> dict:
+        self.patches.append((path, body))
+        return {"data": self.versions[0]}
+
+
+def test_empty_editable_version_is_retargeted_for_release():
+    client = FakeVersionClient()
+
+    result = store.ensure_version(client, "app-id", listing(), "1.3.0", dry_run=False)
+
+    assert result is not None
+    assert result["id"] == "draft-id"
+    assert result["attributes"]["versionString"] == "1.3.0"
+    assert client.patches[0][0] == "/appStoreVersions/draft-id"
+    assert client.patches[0][1]["data"]["attributes"]["versionString"] == "1.3.0"
+
+
+def test_dry_run_plans_retarget_without_writing():
+    client = FakeVersionClient()
+
+    result = store.ensure_version(client, "app-id", listing(), "1.3.0", dry_run=True)
+
+    assert result is not None
+    assert result["attributes"]["versionString"] == "1.3.0"
+    assert client.patches == []
+
+
+def test_version_with_selected_build_is_not_retargeted():
+    client = FakeVersionClient(build={"id": "build-id", "type": "builds"})
+
+    with pytest.raises(store.Failure, match="already has a selected build"):
+        store.ensure_version(client, "app-id", listing(), "1.3.0", dry_run=False)
+
+    assert client.patches == []
