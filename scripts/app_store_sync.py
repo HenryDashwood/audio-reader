@@ -93,6 +93,23 @@ class Failure(Exception):
     """A validation or API failure that should be printed without a traceback."""
 
 
+class AppStoreConnectFailure(Failure):
+    """An App Store Connect response whose structured errors callers may inspect."""
+
+    def __init__(self, method: str, path: str, status: int, response_text: str):
+        super().__init__(f"{method} {path} -> {status}: {response_text}")
+        self.status = status
+        try:
+            payload = json.loads(response_text)
+        except json.JSONDecodeError:
+            payload = {}
+        self.errors = payload.get("errors", []) if isinstance(payload, dict) else []
+
+    def rejects_attribute(self, attribute: str) -> bool:
+        detail = f"Attribute '{attribute}' cannot be edited"
+        return any(error.get("code") == "STATE_ERROR" and detail in error.get("detail", "") for error in self.errors)
+
+
 @dataclass(frozen=True)
 class ImageDetails:
     width: int
@@ -316,7 +333,7 @@ class Client:
         if allow_not_found and response.status_code == 404:
             return {}
         if not response.ok:
-            raise Failure(f"{method} {path} -> {response.status_code}: {response.text}")
+            raise AppStoreConnectFailure(method, path, response.status_code, response.text)
         return response.json() if response.content else {}
 
     def get(self, path: str, **kwargs: Any) -> dict:
@@ -587,35 +604,54 @@ def sync_version_localizations(
             action = "create" if remote is None else "update"
             print(f"version metadata {locale.locale}: {action}")
             if not dry_run:
-                if remote is None:
-                    remote = client.post(
-                        "/appStoreVersionLocalizations",
-                        {
-                            "data": {
-                                "type": "appStoreVersionLocalizations",
-                                "attributes": {"locale": locale.locale, **desired},
-                                "relationships": {
-                                    "appStoreVersion": {"data": {"type": "appStoreVersions", "id": version_id}}
-                                },
-                            }
-                        },
-                    )["data"]
-                else:
-                    client.patch(
-                        f"/appStoreVersionLocalizations/{remote['id']}",
-                        {
-                            "data": {
-                                "type": "appStoreVersionLocalizations",
-                                "id": remote["id"],
-                                "attributes": desired,
-                            }
-                        },
-                    )
+                try:
+                    remote = write_version_localization(client, version_id, locale.locale, desired, remote)
+                except AppStoreConnectFailure as error:
+                    # Apple does not allow What's New on an app's first public
+                    # version. Keep the same changelog entry for TestFlight,
+                    # and still synchronise every storefront field Apple does
+                    # accept for the initial listing.
+                    if not error.rejects_attribute("whatsNew"):
+                        raise
+                    print(f"version metadata {locale.locale}: What's New is unavailable; update remaining fields")
+                    remaining = {key: value for key, value in desired.items() if key != "whatsNew"}
+                    remote = write_version_localization(client, version_id, locale.locale, remaining, remote)
         if locale.screenshots:
             if dry_run and remote is None:
                 print(f"screenshots {locale.locale}: would upload after creating localization")
             elif remote is not None:
                 sync_screenshots(client, remote, locale, dry_run)
+
+
+def write_version_localization(
+    client: Client,
+    version_id: str,
+    locale: str,
+    desired: dict[str, str],
+    remote: dict | None,
+) -> dict:
+    if remote is None:
+        return client.post(
+            "/appStoreVersionLocalizations",
+            {
+                "data": {
+                    "type": "appStoreVersionLocalizations",
+                    "attributes": {"locale": locale, **desired},
+                    "relationships": {"appStoreVersion": {"data": {"type": "appStoreVersions", "id": version_id}}},
+                }
+            },
+        )["data"]
+    client.patch(
+        f"/appStoreVersionLocalizations/{remote['id']}",
+        {
+            "data": {
+                "type": "appStoreVersionLocalizations",
+                "id": remote["id"],
+                "attributes": desired,
+            }
+        },
+    )
+    return remote
 
 
 def sync_review_notes(client: Client, version: dict, listing: Listing, dry_run: bool) -> None:

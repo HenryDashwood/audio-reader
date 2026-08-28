@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -165,3 +166,51 @@ def test_version_with_selected_build_is_not_retargeted():
         store.ensure_version(client, "app-id", listing(), "1.3.0", dry_run=False)
 
     assert client.patches == []
+
+
+class FakeFirstVersionLocalizationClient:
+    def __init__(self):
+        self.patches: list[dict] = []
+
+    def get(self, path: str, **_kwargs) -> dict:
+        if path.endswith("/appStoreVersionLocalizations"):
+            return {
+                "data": [
+                    {
+                        "id": "localization-id",
+                        "attributes": {"locale": "en-GB"},
+                    }
+                ]
+            }
+        raise AssertionError(path)
+
+    def patch(self, _path: str, body: dict) -> dict:
+        attributes = body["data"]["attributes"]
+        self.patches.append(attributes)
+        if "whatsNew" in attributes:
+            response = {
+                "errors": [
+                    {
+                        "code": "STATE_ERROR",
+                        "detail": "Attribute 'whatsNew' cannot be edited at this time",
+                    }
+                ]
+            }
+            raise store.AppStoreConnectFailure("PATCH", "/localization", 409, json.dumps(response))
+        return {}
+
+
+def test_first_public_version_syncs_without_unavailable_whats_new():
+    client = FakeFirstVersionLocalizationClient()
+
+    store.sync_version_localizations(
+        client,
+        {"id": "version-id"},
+        listing(),
+        "Release notes",
+        dry_run=False,
+    )
+
+    assert client.patches[0]["whatsNew"] == "Release notes"
+    assert "whatsNew" not in client.patches[1]
+    assert client.patches[1]["description"] == "Description"

@@ -9,7 +9,8 @@ name: TestFlight
 # Distribution is a separate job from the build, so a build that uploaded fine
 # but failed to distribute can be picked up again without rebuilding:
 #
-#     gh workflow run testflight.yml --ref main -f distribute_build=56
+#     gh workflow run testflight.yml --ref main \
+#       -f distribute_build=56 -f sync_version=1.3.0
 #
 on:
   push:
@@ -21,6 +22,12 @@ on:
         description: >-
           Distribute an already-uploaded build number to the external testers
           instead of building a new one. Leave empty to build.
+        required: false
+        default: ""
+      sync_version:
+        description: >-
+          App Store version to synchronise when distributing an existing build.
+          Leave empty for an ordinary manual TestFlight build.
         required: false
         default: ""
 
@@ -269,14 +276,19 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
 
       - name: Sync the public App Store listing
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || inputs.sync_version != ''
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           ASC_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
-        run: >-
-          uv run scripts/app_store_sync.py sync
-          --version "${GITHUB_REF_NAME#v}"
+          SYNC_VERSION: ${{ inputs.sync_version }}
+        run: |
+          set -euo pipefail
+          version="$SYNC_VERSION"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          uv run scripts/app_store_sync.py sync --version "$version"
 
       - name: Set release notes and distribute
         env:
