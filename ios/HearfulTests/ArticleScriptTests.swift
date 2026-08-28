@@ -59,6 +59,34 @@ struct ArticleScriptTests {
         let text = "Alpha beta gamma.\n\nDelta epsilon zeta eta theta."
         #expect(ArticleScript(text: text).chunks == ArticleScript(text: text).chunks)
     }
+
+    @Test func chunksRememberTheirExactUTF16RangesInTheArticle() {
+        let text = "Café 😀 starts here.\n\nThe second paragraph follows."
+        let script = ArticleScript(text: text)
+        let source = text as NSString
+
+        #expect(script.chunks.count == 2)
+        for chunk in script.chunks {
+            #expect(source.substring(with: chunk.textRange) == chunk.text)
+        }
+        // The emoji occupies two UTF-16 code units. A character-count range
+        // would put every later spoken marker one position behind.
+        #expect(script.chunks[1].textRange.location == ("Café 😀 starts here.\n\n" as NSString).length)
+    }
+
+    @Test func sentenceSizedChunksKeepContiguousSourceRanges() {
+        let sentence = "A sentence long enough to be repeated several times. "
+        let text = String(repeating: sentence, count: 12)
+        let script = ArticleScript(text: text)
+        let source = text as NSString
+
+        #expect(script.chunks.count > 1)
+        #expect(script.chunks.allSatisfy { source.substring(with: $0.textRange) == $0.text })
+        #expect(
+            zip(script.chunks, script.chunks.dropFirst()).allSatisfy {
+                NSMaxRange($0.textRange) <= $1.textRange.location
+            })
+    }
 }
 
 @Suite("Speaking rate curve")

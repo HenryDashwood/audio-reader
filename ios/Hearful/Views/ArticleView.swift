@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import WebKit
 
@@ -140,6 +141,8 @@ struct ArticleView: View {
                             + ArticleDocument.paragraphs(blurb),
                         pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize),
                     baseURL: episode.link,
+                    episodeID: episode.id,
+                    speechText: nil,
                     openFeed: openContainingFeed,
                     ready: { articleWebView = $0 })
             } else {
@@ -168,6 +171,8 @@ struct ArticleView: View {
                     // site they came from, so without the article's own
                     // address every image is a broken one.
                     baseURL: episode.link,
+                    episodeID: episode.id,
+                    speechText: article.text,
                     openFeed: openContainingFeed,
                     ready: { articleWebView = $0 })
             }
@@ -179,7 +184,8 @@ struct ArticleView: View {
             body: ArticleDocument.header(
                 title: episode.title, feedTitle: episode.feedTitle,
                 feedURL: episode.feedURL,
-                publishedAt: episode.publishedAt) + article.body,
+                publishedAt: episode.publishedAt)
+                + ArticleDocument.articleBody(article.body),
             pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize)
     }
 
@@ -579,6 +585,10 @@ private final class Chrome: UIViewController {
 private struct ArticleWebView: UIViewRepresentable {
     let document: String
     let baseURL: URL?
+    let episodeID: Int
+    /// The exact plain text handed to AVSpeechSynthesizer. Nil for a fallback
+    /// blurb that is visible but is not this article player's script.
+    let speechText: String?
     /// Opens the containing podcast or blog inside Hearful. All other links
     /// still leave for Safari.
     let openFeed: @MainActor () -> Void
@@ -610,17 +620,27 @@ private struct ArticleWebView: UIViewRepresentable {
         // middle of a read.
         // WebKit's own find bar, which needs no script from us.
         view.isFindInteractionEnabled = true
+        context.coordinator.attach(to: view, episodeID: episodeID, speechText: speechText)
         DispatchQueue.main.async { ready(view) }
         return view
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {
+        let documentChanged = context.coordinator.loaded != document
+        context.coordinator.update(
+            episodeID: episodeID,
+            speechText: speechText,
+            pageWillReload: documentChanged)
         // Reloading throws away the scroll position, so only when the page
         // has actually changed — which it does on a text-size change, and
         // otherwise on every redraw the player causes by ticking.
-        guard context.coordinator.loaded != document else { return }
+        guard documentChanged else { return }
         context.coordinator.loaded = document
         view.loadHTMLString(document, baseURL: baseURL)
+    }
+
+    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.detach(from: view)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(openFeed: openFeed) }
@@ -629,9 +649,228 @@ private struct ArticleWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loaded: String?
         let openFeed: @MainActor () -> Void
+        private weak var webView: WKWebView?
+        private var spokenLocation: ArticleSpokenLocation?
+        private var markerSubscription: AnyCancellable?
+        private var episodeID = 0
+        private var speechText: String?
+        private var pageIsReady = false
+        private var navigationGeneration = 0
+        private var followState = ArticleReadingFollowState()
+        private let marker = ArticleReadingMarkerView()
+        private let followButton = ArticleReadingFollowButton()
 
         init(openFeed: @escaping @MainActor () -> Void) {
             self.openFeed = openFeed
+        }
+
+        func attach(to view: WKWebView, episodeID: Int, speechText: String?) {
+            webView = view
+            self.episodeID = episodeID
+            self.speechText = speechText
+            marker.alpha = 0
+            view.scrollView.addSubview(marker)
+            followButton.translatesAutoresizingMaskIntoConstraints = false
+            followButton.isHidden = true
+            view.addSubview(followButton)
+            NSLayoutConstraint.activate([
+                followButton.trailingAnchor.constraint(
+                    equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                    constant: -12),
+                followButton.bottomAnchor.constraint(
+                    equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+                    constant: -12),
+            ])
+            followButton.addTarget(
+                self, action: #selector(resumeFollowing), for: .touchUpInside)
+            view.scrollView.panGestureRecognizer.addTarget(
+                self, action: #selector(scrollGestureChanged(_:)))
+            markerSubscription = ArticlePlayer.shared.$spokenLocation
+                .removeDuplicates()
+                .sink { [weak self] location in self?.receive(location) }
+        }
+
+        func update(episodeID: Int, speechText: String?, pageWillReload: Bool) {
+            let episodeChanged = self.episodeID != episodeID
+            let contentChanged = episodeChanged || self.speechText != speechText
+            self.episodeID = episodeID
+            self.speechText = speechText
+            if episodeChanged {
+                followState.reset()
+                followButton.isHidden = true
+            }
+            if pageWillReload {
+                navigationGeneration += 1
+                pageIsReady = false
+                marker.alpha = 0
+                followButton.isHidden = true
+                return
+            }
+            guard contentChanged else { return }
+            marker.alpha = 0
+            if pageIsReady { configureMarker() }
+        }
+
+        func detach(from view: WKWebView) {
+            view.scrollView.panGestureRecognizer.removeTarget(
+                self, action: #selector(scrollGestureChanged(_:)))
+            markerSubscription = nil
+            marker.removeFromSuperview()
+            followButton.removeTarget(
+                self, action: #selector(resumeFollowing), for: .touchUpInside)
+            followButton.removeFromSuperview()
+            webView = nil
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            pageIsReady = true
+            configureMarker()
+        }
+
+        private func configureMarker() {
+            guard pageIsReady, let webView, let speechText else { return }
+            let generation = navigationGeneration
+            Task { @MainActor [weak self, weak webView] in
+                guard let self, let webView else { return }
+                do {
+                    // The page remains unable to run scripts. This app-owned
+                    // bridge is explicitly installed in an isolated world.
+                    try await ArticleReadingMarkerScript.install(in: webView)
+                    guard self.pageIsReady, self.navigationGeneration == generation else { return }
+                    _ = try await webView.callAsyncJavaScript(
+                        "return globalThis.hearfulArticleMarker.configure(text);",
+                        arguments: ["text": speechText],
+                        in: nil,
+                        contentWorld: ArticleReadingMarkerScript.world)
+                    guard self.pageIsReady, self.navigationGeneration == generation else { return }
+                    show(self.spokenLocation)
+                } catch {
+                    // A visual aid must never make the readable article fail.
+                    if self.navigationGeneration == generation { marker.alpha = 0 }
+                }
+            }
+        }
+
+        private func receive(_ location: ArticleSpokenLocation?) {
+            spokenLocation = location
+            show(location)
+        }
+
+        private func show(
+            _ location: ArticleSpokenLocation?,
+            forceFollow: Bool = false
+        ) {
+            guard pageIsReady, location?.episodeID == episodeID,
+                let location, let webView, speechText != nil
+            else {
+                marker.alpha = 0
+                followButton.isHidden = true
+                return
+            }
+            let range = location.rangeInArticle
+            let generation = navigationGeneration
+            Task { @MainActor [weak self, weak webView] in
+                guard let self, let webView else { return }
+                do {
+                    let result = try await webView.callAsyncJavaScript(
+                        "return globalThis.hearfulArticleMarker.rectForRange(location, length);",
+                        arguments: ["location": range.location, "length": range.length],
+                        in: nil,
+                        contentWorld: ArticleReadingMarkerScript.world)
+                    guard location == self.spokenLocation,
+                        self.pageIsReady, self.navigationGeneration == generation
+                    else { return }
+                    guard let values = result as? [String: Any],
+                        let top = (values["top"] as? NSNumber)?.doubleValue,
+                        let height = (values["height"] as? NSNumber)?.doubleValue
+                    else {
+                        self.marker.alpha = 0
+                        return
+                    }
+                    self.placeMarker(
+                        top: CGFloat(top),
+                        height: CGFloat(height),
+                        forceFollow: forceFollow,
+                        in: webView)
+                } catch {
+                    if self.navigationGeneration == generation { marker.alpha = 0 }
+                }
+            }
+        }
+
+        private func placeMarker(
+            top: CGFloat,
+            height: CGFloat,
+            forceFollow: Bool,
+            in webView: WKWebView
+        ) {
+            let scrollView = webView.scrollView
+            scrollView.bringSubviewToFront(marker)
+            webView.bringSubviewToFront(followButton)
+            marker.backgroundColor = webView.tintColor
+            let visibleTop = ArticleReadingMarkerLayout.visibleTop(
+                domTop: top,
+                adjustedContentInset: scrollView.adjustedContentInset)
+            let frame = ArticleReadingMarkerLayout.frame(
+                domTop: top,
+                height: height,
+                contentOffset: scrollView.contentOffset,
+                adjustedContentInset: scrollView.adjustedContentInset)
+            let changes = {
+                self.marker.frame = frame
+                self.marker.layer.cornerRadius = 2
+                self.marker.alpha = 1
+            }
+            if UIAccessibility.isReduceMotionEnabled {
+                changes()
+            } else {
+                UIView.animate(
+                    withDuration: 0.2,
+                    delay: 0,
+                    options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+                    animations: changes)
+            }
+
+            followButton.isHidden = followState.isFollowing
+
+            guard (forceFollow || followState.isFollowing),
+                (forceFollow || !UIAccessibility.isVoiceOverRunning),
+                (forceFollow || (!scrollView.isDragging && !scrollView.isDecelerating))
+            else { return }
+            let upperBand = max(webView.safeAreaInsets.top + 64, webView.bounds.height * 0.2)
+            let lowerBand = webView.bounds.height * 0.72
+            guard forceFollow || visibleTop < upperBand || visibleTop + height > lowerBand
+            else { return }
+            let minimumY = -scrollView.adjustedContentInset.top
+            let maximumY = max(
+                minimumY,
+                scrollView.contentSize.height - scrollView.bounds.height
+                    + scrollView.adjustedContentInset.bottom)
+            let wordY = scrollView.contentOffset.y + visibleTop
+            let targetY = min(max(wordY - webView.bounds.height * 0.34, minimumY), maximumY)
+            scrollView.setContentOffset(
+                CGPoint(x: scrollView.contentOffset.x, y: targetY),
+                animated: !UIAccessibility.isReduceMotionEnabled)
+        }
+
+        @objc private func scrollGestureChanged(_ gesture: UIPanGestureRecognizer) {
+            guard gesture.state == .changed,
+                abs(gesture.translation(in: gesture.view).y) >= 8,
+                !UIAccessibility.isVoiceOverRunning,
+                spokenLocation?.episodeID == episodeID,
+                marker.alpha > 0
+            else { return }
+            // A deliberate scroll stays detached. Nothing silently starts
+            // pulling the page again after an arbitrary timeout.
+            followState.userDidScroll(whileReading: true)
+            followButton.isHidden = false
+            webView?.bringSubviewToFront(followButton)
+        }
+
+        @objc private func resumeFollowing() {
+            followState.resume()
+            followButton.isHidden = true
+            show(spokenLocation, forceFollow: true)
         }
 
         /// Links leave for Safari rather than navigating in place. A web view
@@ -704,6 +943,13 @@ enum ArticleDocument {
             .filter { !$0.isEmpty }
             .map { "<p>\(ArticleTextModel.escaped($0))</p>" }
             .joined()
+    }
+
+    /// Separates prose that is actually spoken from the title and byline above
+    /// it. The marker bridge never has to guess whether those extra visible
+    /// words belong to the speech timeline.
+    static func articleBody(_ body: String) -> String {
+        "<main id=\"hearful-article-body\">\(body)</main>"
     }
 
     /// Wraps an article's body in a stylesheet built for reading.
@@ -785,8 +1031,12 @@ final class ArticleTextModel: ObservableObject {
         /// second code path for the degraded case is a second thing to get
         /// wrong, in the case nobody looks at.
         let body: String
+        /// The exact companion used for speech and for locating the native
+        /// reading marker among the HTML's visible words.
+        let text: String
 
         init(text: String, html: String?) {
+            self.text = text
             body = html?.isEmpty == false ? html! : Self.wrapped(text)
         }
 

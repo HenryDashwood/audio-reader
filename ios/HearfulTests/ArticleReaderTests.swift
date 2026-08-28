@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import WebKit
 
 @testable import Hearful
 
@@ -13,6 +14,34 @@ private let article = """
 
     The second paragraph, which is also short.
     """
+
+@MainActor
+private final class ArticleWebViewLoadWaiter: NSObject, WKNavigationDelegate {
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func load(_ document: String, in webView: WKWebView) async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            webView.navigationDelegate = self
+            webView.loadHTMLString(document, baseURL: nil)
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finish()
+    }
+
+    func webView(
+        _ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error
+    ) {
+        finish()
+    }
+
+    private func finish() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
 
 @Suite("Article reader")
 @MainActor
@@ -255,6 +284,121 @@ struct ArticleDocumentTests {
         #expect(page.contains("<p>Hello</p>"))
         // Both appearances, since the page paints no background of its own.
         #expect(page.contains("prefers-color-scheme: dark"))
+    }
+
+    @Test func theMarkerBridgeIsIsolatedAndTargetsOnlyTheArticleBody() {
+        let body = ArticleDocument.articleBody("<p>Spoken words.</p>")
+
+        #expect(ArticleReadingMarkerScript.source.contains("hearful-article-body"))
+        #expect(ArticleReadingMarkerScript.source.contains("rectForRange"))
+        #expect(body == "<main id=\"hearful-article-body\"><p>Spoken words.</p></main>")
+    }
+
+    @Test func theNativeMarkerIncludesTheWebViewsAdjustedTopInset() {
+        // The web view extends behind the floating navigation bar. WebKit's
+        // DOM rectangle does not include that bar's adjusted scroll inset,
+        // while a UIView added to the scroll view must include it explicitly.
+        let contentOffset = CGPoint(x: 0, y: -104)
+        let inset = UIEdgeInsets(top: 104, left: 8, bottom: 82, right: 0)
+        let frame = ArticleReadingMarkerLayout.frame(
+            domTop: 180,
+            height: 20,
+            contentOffset: contentOffset,
+            adjustedContentInset: inset)
+
+        #expect(ArticleReadingMarkerLayout.visibleTop(
+            domTop: 180,
+            adjustedContentInset: inset) == 284)
+        #expect(frame.minY - contentOffset.y == 284)
+        #expect(frame.minX - contentOffset.x == 14)
+    }
+
+    @Test func scrollingStaysDetachedUntilTheReaderExplicitlyFollowsAgain() {
+        var state = ArticleReadingFollowState()
+
+        state.userDidScroll(whileReading: true)
+        #expect(!state.isFollowing)
+
+        // Spoken-word updates and elapsed time do not mutate this state.
+        #expect(!state.isFollowing)
+
+        state.resume()
+        #expect(state.isFollowing)
+    }
+
+    @Test func scrollingWithoutAnActiveReadingDoesNotOfferFollowing() {
+        var state = ArticleReadingFollowState()
+
+        state.userDidScroll(whileReading: false)
+
+        #expect(state.isFollowing)
+    }
+
+    @Test func theFollowControlExplainsItsActionWithoutItsIcon() {
+        let button = ArticleReadingFollowButton()
+
+        #expect(button.configuration?.title == "Follow")
+        #expect(button.accessibilityLabel == "Follow the reading position")
+        #expect(button.accessibilityHint?.contains("current word") == true)
+    }
+
+    @Test func theIsolatedBridgeFindsAWordWhilePageJavaScriptIsDisabled() async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 700),
+            configuration: configuration)
+        let speech = "First moving marker."
+        let document = ArticleDocument.page(
+            // Raw URLs are dropped from speech and formulae are rendered into
+            // a different textual shape. Neither may shift all later words.
+            body: ArticleDocument.articleBody(
+                "<p>First https://example.com/path <math><mi>x</mi></math> "
+                    + "<em>moving</em> marker.</p>"),
+            pointSize: 17)
+
+        let waiter = ArticleWebViewLoadWaiter()
+        await waiter.load(document, in: webView)
+        try await ArticleReadingMarkerScript.install(in: webView)
+        let mapped = try await webView.callAsyncJavaScript(
+            "return globalThis.hearfulArticleMarker.configure(text);",
+            arguments: ["text": speech],
+            in: nil,
+            contentWorld: ArticleReadingMarkerScript.world)
+        let word = (speech as NSString).range(of: "moving")
+        let result = try await webView.callAsyncJavaScript(
+            "return globalThis.hearfulArticleMarker.rectForRange(location, length);",
+            arguments: ["location": word.location, "length": word.length],
+            in: nil,
+            contentWorld: ArticleReadingMarkerScript.world)
+        let rect = result as? [String: Any]
+
+        #expect((mapped as? NSNumber)?.intValue == 3)
+        #expect((rect?["top"] as? NSNumber)?.doubleValue != nil)
+        #expect((rect?["height"] as? NSNumber)?.doubleValue ?? 0 > 0)
+
+        // Languages without spaces still need the marker to move word by
+        // word, rather than treating a whole paragraph as one enormous token.
+        let japanese = "今日は世界です"
+        _ = try await webView.callAsyncJavaScript(
+            "document.getElementById('hearful-article-body').innerHTML = '<p>今日は世界です</p>';",
+            arguments: [:],
+            in: nil,
+            contentWorld: ArticleReadingMarkerScript.world)
+        _ = try await webView.callAsyncJavaScript(
+            "return globalThis.hearfulArticleMarker.configure(text);",
+            arguments: ["text": japanese],
+            in: nil,
+            contentWorld: ArticleReadingMarkerScript.world)
+        let japaneseWord = (japanese as NSString).range(of: "世界")
+        let japaneseResult = try await webView.callAsyncJavaScript(
+            "return globalThis.hearfulArticleMarker.rectForRange(location, length);",
+            arguments: ["location": japaneseWord.location, "length": japaneseWord.length],
+            in: nil,
+            contentWorld: ArticleReadingMarkerScript.world)
+        let japaneseRect = japaneseResult as? [String: Any]
+
+        #expect((japaneseRect?["top"] as? NSNumber) != nil)
     }
 }
 

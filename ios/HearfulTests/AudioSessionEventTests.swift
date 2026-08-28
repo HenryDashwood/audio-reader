@@ -263,6 +263,27 @@ struct ArticleCompletionTests {
         #expect(player.currentTime > 0)
         #expect(player.currentTime < player.duration)
     }
+
+    @Test func theVisiblePositionKeepsTheVoicesExactWordRange() async {
+        let (player, synthesizer, _) = await reading()
+        let word = (synthesizer.lastSpoken! as NSString).range(of: "paragraph")
+
+        synthesizer.speak(range: word)
+
+        #expect(
+            player.spokenLocation
+                == ArticleSpokenLocation(episodeID: 1, rangeInArticle: word))
+    }
+
+    @Test func theVisiblePositionLeavesWhenArticleSpeechDeactivates() async {
+        let (player, synthesizer, _) = await reading()
+        synthesizer.speak(range: NSRange(location: 0, length: 3))
+        #expect(player.spokenLocation != nil)
+
+        player.deactivate()
+
+        #expect(player.spokenLocation == nil)
+    }
 }
 
 @Suite("Article seeking")

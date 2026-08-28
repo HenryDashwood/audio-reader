@@ -54,9 +54,22 @@ final class SilentSynthesizer: SpeechSynthesizing {
     }
 
     /// The voice reaching a point part-way through the current utterance,
-    /// which is what moves the position along within a chunk.
+    /// which is what moves the position along within a chunk. This convenience
+    /// keeps the older timeline tests expressive; range-sensitive tests use
+    /// `speak(range:)` below.
     func speakOn(toFraction fraction: Double) {
         guard let utterance = spoken.last, isSpeaking else { return }
-        delegate?.speechProgressed(toFraction: fraction, of: UtteranceID(utterance))
+        let length = (utterance.speechString as NSString).length
+        let location = min(max(Int(Double(length) * fraction), 0), length)
+        delegate?.speechProgressed(
+            to: NSRange(location: location, length: location < length ? 1 : 0),
+            of: UtteranceID(utterance))
+    }
+
+    /// Delivers the same UTF-16 range as AVSpeechSynthesizer's per-word
+    /// delegate callback.
+    func speak(range: NSRange) {
+        guard let utterance = spoken.last, isSpeaking else { return }
+        delegate?.speechProgressed(to: range, of: UtteranceID(utterance))
     }
 }

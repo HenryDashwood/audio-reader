@@ -11,6 +11,9 @@ import NaturalLanguage
 nonisolated struct ArticleScript: Equatable {
     struct Chunk: Equatable {
         let text: String
+        /// Where this utterance came from in the complete article text. Like
+        /// AVSpeechSynthesizer's ranges, this uses UTF-16 offsets.
+        let textRange: NSRange
         /// Estimated seconds from the start of the article to this chunk.
         let start: TimeInterval
         let duration: TimeInterval
@@ -29,18 +32,42 @@ nonisolated struct ArticleScript: Equatable {
     static let chunkCharacterLimit = 320
 
     init(text: String) {
+        let source = text as NSString
         var built: [Chunk] = []
         var clock: TimeInterval = 0
+        var paragraphSearchStart = 0
         for paragraph in text.components(separatedBy: "\n\n") {
             let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
+            let remaining = NSRange(
+                location: paragraphSearchStart,
+                length: max(source.length - paragraphSearchStart, 0))
+            let paragraphRange = source.range(of: trimmed, options: [], range: remaining)
+            guard paragraphRange.location != NSNotFound else { continue }
+            let paragraphText = trimmed as NSString
+            var pieceSearchStart = 0
             for piece in Self.pieces(of: trimmed) {
+                let pieceRemaining = NSRange(
+                    location: pieceSearchStart,
+                    length: max(paragraphText.length - pieceSearchStart, 0))
+                let localRange = paragraphText.range(
+                    of: piece, options: [], range: pieceRemaining)
+                guard localRange.location != NSNotFound else { continue }
                 let words = piece.split(whereSeparator: \.isWhitespace).count
                 // Never zero: a zero-length chunk could never be seeked past.
                 let seconds = max(Double(words) / Self.wordsPerMinute * 60, 0.5)
-                built.append(Chunk(text: piece, start: clock, duration: seconds))
+                built.append(
+                    Chunk(
+                        text: piece,
+                        textRange: NSRange(
+                            location: paragraphRange.location + localRange.location,
+                            length: localRange.length),
+                        start: clock,
+                        duration: seconds))
                 clock += seconds
+                pieceSearchStart = NSMaxRange(localRange)
             }
+            paragraphSearchStart = NSMaxRange(paragraphRange)
         }
         chunks = built
     }

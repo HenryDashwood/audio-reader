@@ -41,9 +41,10 @@ typealias UtteranceID = ObjectIdentifier
 @MainActor
 protocol SpeechSynthesizingDelegate: AnyObject {
     func speechFinished(_ utterance: UtteranceID)
-    /// `fraction` is how far through the utterance's text the voice has
-    /// reached, 0 to 1.
-    func speechProgressed(toFraction fraction: Double, of utterance: UtteranceID)
+    /// The exact UTF-16 range Apple says it is about to speak. Keeping the
+    /// range, rather than reducing it to a percentage here, lets the article
+    /// on screen follow the actual word as well as the playback clock.
+    func speechProgressed(to range: NSRange, of utterance: UtteranceID)
 }
 
 /// The real thing: AVSpeechSynthesizer, with its delegate callbacks brought
@@ -94,9 +95,8 @@ final class SystemSpeechSynthesizer: NSObject, SpeechSynthesizing, AVSpeechSynth
         utterance: AVSpeechUtterance
     ) {
         let speaking = UtteranceID(utterance)
-        let fraction = Double(characterRange.location) / Double(max(utterance.speechString.count, 1))
         Task { @MainActor in
-            self.delegate?.speechProgressed(toFraction: fraction, of: speaking)
+            self.delegate?.speechProgressed(to: characterRange, of: speaking)
         }
     }
 }

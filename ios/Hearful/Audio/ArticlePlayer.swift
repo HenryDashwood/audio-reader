@@ -3,6 +3,14 @@ import Combine
 import MediaPlayer
 import UIKit
 
+/// The word the system voice is about to speak, in the complete plain-text
+/// article. AVSpeechSynthesizer and NSString both count UTF-16 code units, so
+/// the range can travel from the voice to WebKit without lossy conversion.
+nonisolated struct ArticleSpokenLocation: Equatable, Sendable {
+    let episodeID: Int
+    let rangeInArticle: NSRange
+}
+
 /// Reads articles aloud with the on-device voice, presenting itself to the
 /// rest of the app exactly like audio playback: an (estimated) timeline in
 /// seconds, so the scrubber, skip buttons, saved positions and lock screen
@@ -31,6 +39,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     @Published private(set) var duration: TimeInterval = 0
     @Published var isScrubbing = false
     @Published private(set) var playbackRate: Float = 1.0
+    /// Exact text position for the on-screen reading marker. Nil before an
+    /// article has started, and whenever article speech is no longer active.
+    @Published private(set) var spokenLocation: ArticleSpokenLocation?
 
     private var synthesizer: SpeechSynthesizing
     private let api: HearfulAPIProtocol
@@ -147,6 +158,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         } else {
             currentTime = script.chunks[index].start
             cancelSpeech()
+            publishChunkStart(index, in: script)
             updateNowPlayingPosition()
         }
     }
@@ -293,8 +305,11 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     private func speakCurrentChunk() {
         guard let script, chunkIndex < script.chunks.count else { return }
-        cancelSpeech()
+        // Keep the marker present while one utterance replaces another; the
+        // exact first word follows with the synthesiser's next callback.
+        cancelSpeech(clearingLocation: false)
         currentTime = script.chunks[chunkIndex].start
+        publishChunkStart(chunkIndex, in: script)
         let utterance = AVSpeechUtterance(string: script.chunks[chunkIndex].text)
         utterance.voice = SpeechVoice.current
         utterance.rate = Self.utteranceRate(for: playbackRate)
@@ -308,8 +323,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// Stops the synthesiser without letting stale delegate callbacks act:
     /// only didFinish for the current utterance advances playback, and a
     /// deliberate stop arrives as didCancel, which is ignored.
-    private func cancelSpeech() {
+    private func cancelSpeech(clearingLocation: Bool = true) {
         currentUtterance = nil
+        if clearingLocation { spokenLocation = nil }
         if synthesizer.isSpeaking || synthesizer.isPaused {
             synthesizer.stopSpeaking(at: .immediate)
         }
@@ -321,8 +337,8 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         chunkFinished(utterance)
     }
 
-    func speechProgressed(toFraction fraction: Double, of utterance: UtteranceID) {
-        progressed(fraction: fraction, of: utterance)
+    func speechProgressed(to range: NSRange, of utterance: UtteranceID) {
+        progressed(to: range, of: utterance)
     }
 
     private func chunkFinished(_ finished: ObjectIdentifier) {
@@ -347,13 +363,33 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         }
     }
 
-    private func progressed(fraction: Double, of speaking: ObjectIdentifier) {
+    private func progressed(to range: NSRange, of speaking: ObjectIdentifier) {
         guard speaking == currentUtterance, isPlaying, !isScrubbing,
-            let script, chunkIndex < script.chunks.count
+            let episode = currentEpisode, let script, chunkIndex < script.chunks.count
         else { return }
         let chunk = script.chunks[chunkIndex]
+        let utteranceLength = (chunk.text as NSString).length
+        let location = min(max(range.location, 0), utteranceLength)
+        let available = max(utteranceLength - location, 0)
+        let length = min(max(range.length, 0), available)
+        spokenLocation = ArticleSpokenLocation(
+            episodeID: episode.id,
+            rangeInArticle: NSRange(
+                location: chunk.textRange.location + location,
+                length: length))
+        let fraction = Double(location) / Double(max(utteranceLength, 1))
         currentTime = chunk.start + chunk.duration * min(fraction, 1)
         updateNowPlayingPosition()
+    }
+
+    /// A seek and a chunk transition have a meaningful position before the
+    /// voice begins its next word. Publishing the zero-width start keeps the
+    /// marker from lingering on the old line during that short gap.
+    private func publishChunkStart(_ index: Int, in script: ArticleScript) {
+        guard let episode = currentEpisode, script.chunks.indices.contains(index) else { return }
+        spokenLocation = ArticleSpokenLocation(
+            episodeID: episode.id,
+            rangeInArticle: NSRange(location: script.chunks[index].textRange.location, length: 0))
     }
 
     // MARK: - Lock screen
