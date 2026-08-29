@@ -8,10 +8,10 @@ struct LibraryView: View {
     @StateObject private var searchModel = PodcastSearchModel()
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
+    @Binding var openEpisode: Episode?
     @State private var searchText = ""
     @State private var searchScope: LibrarySearchScope = .all
     @State private var showingAIConsent = false
-    @State private var openEpisode: Episode?
     @FocusState private var searchFocused: Bool
 
     var body: some View {

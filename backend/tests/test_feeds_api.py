@@ -236,9 +236,7 @@ class TestListEpisodes:
         assert episodes[0]["image_url"] == "https://example.com/historyhour/ep103.jpg"
         assert episodes[1]["image_url"] == "https://example.com/historyhour/cover.jpg"
 
-    async def test_episode_artwork_in_recent_and_single(
-        self, client, session, respx_mock, podcast_xml
-    ):
+    async def test_episode_artwork_in_recent_and_single(self, client, session, respx_mock, podcast_xml):
         feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
         arrived = await add_new_episode(session, feed_id, number=103)
         recent = (await client.get("/episodes")).json()
@@ -305,9 +303,7 @@ class TestRecentEpisodes:
             await add_new_episode(session, feed_id, number=number)
         assert len((await client.get("/episodes?limit=2")).json()) == 2
 
-    async def test_clearing_advances_past_the_whole_inbox(
-        self, client, session, respx_mock, podcast_xml
-    ):
+    async def test_clearing_advances_past_the_whole_inbox(self, client, session, respx_mock, podcast_xml):
         feed_id = (await subscribe(client, respx_mock, podcast_xml)).json()["id"]
         for number in range(55):
             await add_new_episode(session, feed_id, number=number)

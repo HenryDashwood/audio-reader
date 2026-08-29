@@ -3,6 +3,7 @@ import SwiftUI
 /// Full-screen player: artwork, scrubber, and the transport controls people
 /// expect from any podcast app.
 struct NowPlayingView: View {
+    let openArticle: (Episode) -> Void
     @ObservedObject private var player = PlaybackCoordinator.shared
     @ObservedObject private var sleepTimer = SleepTimer.shared
     @Environment(\.dismiss) private var dismiss
@@ -43,11 +44,32 @@ struct NowPlayingView: View {
                 .shadow(radius: 12, y: 6)
                 .padding(.top, 12)
 
-            Text(player.currentEpisode?.title ?? "Nothing playing")
-                .font(.title3.weight(.semibold))
-                .multilineTextAlignment(.center)
-                .lineLimit(3)
-                .padding(.horizontal, 28)
+            if let episode = player.currentEpisode {
+                Button {
+                    openArticle(episode)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(episode.title)
+                            .font(.title3.weight(.semibold))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                        Image(systemName: "chevron.right")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, 28)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open article: \(episode.title)")
+                .accessibilityHint(
+                    "Closes the player and opens the article without stopping playback")
+            } else {
+                Text("Nothing playing")
+                    .font(.title3.weight(.semibold))
+            }
 
             scrubber
             transport

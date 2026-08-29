@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "xcode-tools": {
+      "command": "xcrun",
+      "args": ["mcpbridge"]
+    },
+    "XcodeBuildMCP": {
+      "command": "/usr/bin/env",
+      "args": ["xcodebuildmcp", "mcp"],
+      "env": {
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "XCODEBUILDMCP_SENTRY_DISABLED": "true"
+      }
+    }
+  }
+}

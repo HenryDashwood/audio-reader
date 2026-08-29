@@ -679,9 +679,7 @@ async def _find_show(
     """
     for domain in spoken_domains(f"{transcript} {query}"):
         try:
-            feed_url, parsed = await resolve_feed(
-                f"https://{domain}", preference=f"{transcript} {query}"
-            )
+            feed_url, parsed = await resolve_feed(f"https://{domain}", preference=f"{transcript} {query}")
         except (FeedFetchError, FeedParseError):
             continue
         return DiscoveredFeed(feed_url=feed_url, title=parsed.title)

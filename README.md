@@ -27,6 +27,7 @@ Requires Xcode with the iOS simulator runtime
 ```bash
 make ios-doctor       # verify Xcode and choose a compatible simulator
 make ios-build        # compile on the oldest installed iOS 26+ runtime
+make ios-index        # refresh Cursor's local SourceKit-LSP build settings
 make ios-test         # run the full Swift test suite there
 make ios-test-latest  # also check the newest installed runtime
 make ios-phone        # Release build, install over Wi-Fi, and launch on the paired iPhone
@@ -39,6 +40,24 @@ simulator. Direct `xcodebuild` commands remain useful for one-off destinations.
 Day to day, open `ios/Hearful.xcodeproj` and press ⌘R. The app and test targets
 use file-system synchronized groups, so files added under `ios/Hearful/` are
 picked up automatically without editing the project file.
+
+The project-level Cursor MCP configuration connects Apple's Xcode tools and
+XcodeBuildMCP. Apple's bridge also requires Xcode to be running with the
+Hearful project open and **Xcode > Settings > Intelligence > Model Context
+Protocol > Xcode Tools** enabled for external agents.
+
+For complete Swift completion and navigation in Cursor, install
+`xcode-build-server` once with Homebrew, then refresh its machine-local compile
+settings after project or build-setting changes:
+
+```bash
+brew install xcode-build-server
+make ios-index
+```
+
+The generated `buildServer.json`, `.compile`, and raw indexing build log are
+ignored. Reload Cursor after the first generation so SourceKit-LSP picks up the
+build server.
 
 Debug builds talk to `http://localhost:8000` by default, which the simulator
 can reach but a physical device cannot. Start the local database and backend
@@ -223,6 +242,14 @@ SIMCTL_CHILD_HEARFUL_FAKE_TRANSCRIPT="play the one about the aliens lady" xcrun 
 ## Backend development
 
 Requires [uv](https://docs.astral.sh/uv/) and Docker.
+
+Run the same locked lint, format, type, and test gates used by CI:
+
+```bash
+make backend-check
+```
+
+For the development server and individual checks:
 
 ```bash
 docker compose up -d          # Postgres 17 on localhost:5432

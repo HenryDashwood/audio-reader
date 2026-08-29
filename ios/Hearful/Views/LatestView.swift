@@ -7,7 +7,7 @@ struct LatestView: View {
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
     /// The episode whose page is open, if any.
-    @State private var openEpisode: Episode?
+    @Binding var openEpisode: Episode?
     @State private var confirmingClear = false
     @State private var clearError: String?
 

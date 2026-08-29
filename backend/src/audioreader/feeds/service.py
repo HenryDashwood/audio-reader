@@ -116,9 +116,7 @@ async def subscribe(session: AsyncSession, url: str, user: User) -> Feed:
     # Following a show starts an inbox for what arrives next. Its existing
     # catalogue remains browsable and searchable, but subscribing must not
     # turn years of history into dozens of allegedly new items.
-    latest_episode_id = await session.scalar(
-        select(func.max(Episode.id)).where(Episode.feed_id == feed.id)
-    )
+    latest_episode_id = await session.scalar(select(func.max(Episode.id)).where(Episode.feed_id == feed.id))
     session.add(
         Subscription(
             user_id=user.id,
@@ -137,9 +135,7 @@ async def clear_latest(session: AsyncSession, user: User) -> None:
     search still contain every episode, and subsequent ingests have higher
     ids so they appear in Latest normally.
     """
-    subscriptions = list(
-        await session.scalars(select(Subscription).where(Subscription.user_id == user.id))
-    )
+    subscriptions = list(await session.scalars(select(Subscription).where(Subscription.user_id == user.id)))
     if not subscriptions:
         return
     latest_rows = await session.execute(
@@ -147,10 +143,7 @@ async def clear_latest(session: AsyncSession, user: User) -> None:
         .where(Episode.feed_id.in_([subscription.feed_id for subscription in subscriptions]))
         .group_by(Episode.feed_id)
     )
-    latest_by_feed = {
-        feed_id: latest_episode_id
-        for feed_id, latest_episode_id in latest_rows.tuples()
-    }
+    latest_by_feed = {feed_id: latest_episode_id for feed_id, latest_episode_id in latest_rows.tuples()}
     for subscription in subscriptions:
         subscription.latest_after_episode_id = latest_by_feed.get(subscription.feed_id)
     await session.commit()

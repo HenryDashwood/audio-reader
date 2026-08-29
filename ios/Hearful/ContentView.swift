@@ -10,9 +10,19 @@ func openVoiceSheet(_ showingVoice: Binding<Bool>) {
 }
 
 struct ContentView: View {
+    private enum AppTab: Hashable {
+        case shows
+        case latest
+        case settings
+    }
+
     @EnvironmentObject private var auth: AuthController
     @State private var showingVoice = false
     @State private var showingNowPlaying = false
+    @State private var selectedTab: AppTab = .shows
+    @State private var lastContentTab: AppTab = .shows
+    @State private var showsOpenEpisode: Episode?
+    @State private var latestOpenEpisode: Episode?
     @State private var serverGeneration = 0
 
     @ObservedObject private var metrics = TabBarMetrics.shared
@@ -29,14 +39,18 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            TabView {
-                Tab("Shows", systemImage: "square.stack") {
-                    LibraryView(showingVoice: $showingVoice)
+            TabView(selection: $selectedTab) {
+                Tab("Shows", systemImage: "square.stack", value: .shows) {
+                    LibraryView(
+                        showingVoice: $showingVoice,
+                        openEpisode: $showsOpenEpisode)
                 }
-                Tab("Latest", systemImage: "clock") {
-                    LatestView(showingVoice: $showingVoice)
+                Tab("Latest", systemImage: "clock", value: .latest) {
+                    LatestView(
+                        showingVoice: $showingVoice,
+                        openEpisode: $latestOpenEpisode)
                 }
-                Tab("Settings", systemImage: "gearshape") {
+                Tab("Settings", systemImage: "gearshape", value: .settings) {
                     SettingsView()
                 }
             }
@@ -62,7 +76,7 @@ struct ContentView: View {
             .background(TabBarProbe())
         }
         .sheet(isPresented: $showingNowPlaying) {
-            NowPlayingView()
+            NowPlayingView(openArticle: openArticleFromPlayer)
         }
         .sheet(isPresented: $showingVoice) {
             VoiceSheet(accountID: auth.user?.id)
@@ -95,10 +109,32 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .hearfulServerChanged)) { _ in
             serverGeneration += 1
         }
+        .onChange(of: selectedTab) { _, tab in
+            if tab != .settings { lastContentTab = tab }
+        }
         // Playback's clock advances twice a second. Keeping its observer in a
         // tiny sibling means those ticks update the player without rebuilding
         // the tab and navigation hierarchy around a scrolling article.
         .background(PlaybackFailurePresenter())
+    }
+
+    /// Takes the player away and opens the episode without interrupting it.
+    /// Settings has no article navigation of its own, so in that one case the
+    /// user returns to whichever content tab they most recently used.
+    private func openArticleFromPlayer(_ episode: Episode) {
+        showingNowPlaying = false
+
+        let destinationTab = selectedTab == .settings ? lastContentTab : selectedTab
+        selectedTab = destinationTab
+        switch destinationTab {
+        case .shows:
+            showsOpenEpisode = episode
+        case .latest:
+            latestOpenEpisode = episode
+        case .settings:
+            // lastContentTab is only ever Shows or Latest.
+            break
+        }
     }
 }
 

@@ -13,7 +13,7 @@ bundle_id="com.henrydashwood.hearful"
 device_api_url="${IOS_DEVICE_API_URL:-https://audio-reader-production.up.railway.app}"
 
 usage() {
-  echo "Usage: $0 {doctor|build|test|test-latest|device}"
+  echo "Usage: $0 {doctor|build|index|test|test-latest|device}"
   echo
   echo "Overrides: IOS_SIMULATOR_ID, IOS_SIMULATOR_NAME, IOS_MINIMUM_OS, IOS_DERIVED_DATA_PATH"
   echo "           IOS_DEVICE_ID, IOS_DEVICE_API_URL, IOS_DEVICE_DERIVED_DATA_PATH, IOS_DEVICE_DRY_RUN"
@@ -33,7 +33,7 @@ if [[ "$action" == "test-latest" ]]; then
   action="test"
 fi
 
-if [[ "$action" != "doctor" && "$action" != "build" && "$action" != "test" && "$action" != "device" ]]; then
+if [[ "$action" != "doctor" && "$action" != "build" && "$action" != "index" && "$action" != "test" && "$action" != "device" ]]; then
   usage >&2
   exit 2
 fi
@@ -41,6 +41,9 @@ fi
 require xcodebuild
 require xcrun
 require jq
+if [[ "$action" == "index" ]]; then
+  require xcode-build-server
+fi
 
 simulator_id="${IOS_SIMULATOR_ID:-}"
 runtime_version=""
@@ -250,6 +253,17 @@ common_args=(
 
 if [[ "$action" == "build" ]]; then
   run_xcodebuild build "${common_args[@]}"
+elif [[ "$action" == "index" ]]; then
+  index_log="$repo_root/build/xcodebuild-index.log"
+  echo "Refreshing SourceKit-LSP build settings"
+  # The build server needs a complete, unformatted xcodebuild log. A clean
+  # build-for-testing covers both app and test sources and replaces stale
+  # compile flags when files or settings are removed.
+  NSUnbufferedIO=YES xcodebuild clean build-for-testing "${common_args[@]}" 2>&1 \
+    | tee "$index_log" \
+    | (cd "$repo_root" && xcode-build-server parse -v -v)
+  echo "Build-server config: $repo_root/buildServer.json"
+  echo "Build log: $index_log"
 else
   run_xcodebuild test "${common_args[@]}"
 fi

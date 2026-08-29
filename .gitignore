@@ -10,6 +10,8 @@ uv.lock.orig
 # Xcode
 DerivedData/
 build/
+buildServer.json
+.compile
 *.xcuserstate
 xcuserdata/
 *.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist

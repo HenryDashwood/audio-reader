@@ -1,15 +1,26 @@
-.PHONY: backend-dev ios-doctor ios-build ios-test ios-test-latest ios-phone app-store-validate app-store-fixtures app-store-backend app-store-screenshot app-store-sync
+.PHONY: backend-dev backend-check ios-doctor ios-build ios-index ios-test ios-test-latest ios-phone app-store-validate app-store-fixtures app-store-backend app-store-screenshot app-store-sync
 
 backend-dev:
 	docker compose up -d db
 	cd backend && uv run alembic upgrade head
 	cd backend && AUDIOREADER_DEVELOPMENT_AUTH_TOKEN=hearful-local-development AUDIOREADER_POLL_INTERVAL_SECONDS=0 uv run uvicorn audioreader.main:app --reload
 
+backend-check:
+	cd backend && uv sync --frozen
+	cd backend && uv run ruff check
+	cd backend && uv run ruff format --check
+	cd backend && uv run ty check
+	cd backend && uv run pytest
+	cd backend && uv run pytest ../scripts/tests
+
 ios-doctor:
 	@./scripts/ios-dev.sh doctor
 
 ios-build: app-store-validate
 	@./scripts/ios-dev.sh build
+
+ios-index:
+	@./scripts/ios-dev.sh index
 
 ios-test:
 	@./scripts/ios-dev.sh test
