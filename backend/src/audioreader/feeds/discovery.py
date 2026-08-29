@@ -12,6 +12,7 @@ what she actually said before anything is trusted.
 """
 
 import asyncio
+import ipaddress
 import logging
 import re
 from collections import OrderedDict
@@ -23,7 +24,12 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from pydantic import BaseModel, Field, ValidationError
 
 from audioreader.feeds.artwork import supplement_feed_artwork, supplement_feed_artwork_from_html
-from audioreader.feeds.fetcher import FeedFetchError, FeedRateLimitedError, fetch_feed_resource
+from audioreader.feeds.fetcher import (
+    FeedFetchError,
+    FeedRateLimitedError,
+    FeedResolutionError,
+    fetch_feed_resource,
+)
 from audioreader.feeds.parser import FeedParseError, ParsedFeed, parse_feed
 from audioreader.feeds.search import (
     PodcastSearchError,
@@ -364,6 +370,17 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
     initial_fetch_failure: FeedFetchError | None = None
     try:
         fetched = await fetch_feed_resource(url)
+    except FeedResolutionError as exc:
+        # A bare domain with no DNS record often exists only at www: Substack
+        # custom domains, among others, are set up that way. Retry there, but
+        # let a www failure surface the error for the address she typed.
+        if (www_url := _www_fallback_url(url)) is None:
+            raise
+        logger.info("host of %s does not resolve; retrying discovery at %s", url, www_url)
+        try:
+            return await _discover_uncached(www_url)
+        except FeedFetchError:
+            raise exc from None
     except FeedFetchError as exc:
         if exc.status_code not in BLOCKED_HOMEPAGE_STATUSES or not _is_origin_homepage(url):
             raise
@@ -478,6 +495,31 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
             raise unavailable
         raise FeedDiscoveryError(f"no RSS, Atom or JSON feed was found at {url}")
     return _rank_resolved(candidates, None)
+
+
+def _www_fallback_url(url: str) -> str | None:
+    """The same URL on the www host, or None when the retry makes no sense.
+
+    Only a plain dotted hostname qualifies: an IP literal, a host already
+    under www, or a URL carrying userinfo (rejected by the fetcher anyway)
+    has no meaningful www sibling.
+    """
+
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return None
+    host = parsed.hostname
+    if not host or "." not in host or host.startswith("www.") or "@" in parsed.netloc:
+        return None
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return None
+    netloc = f"www.{host}:{parsed.port}" if parsed.port is not None else f"www.{host}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, ""))
 
 
 def _is_origin_homepage(url: str) -> bool:

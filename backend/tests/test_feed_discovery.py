@@ -1,12 +1,13 @@
 """Pasting a homepage must work as well as pasting the feed itself."""
 
 import asyncio
+import socket
 
 import httpx
 import pytest
 from sqlalchemy import func, select
 
-from audioreader.feeds import discovery
+from audioreader.feeds import discovery, fetcher
 from audioreader.feeds.discovery import FeedDiscoveryTimeout, feed_links_in_headers, feed_links_in_html
 from audioreader.models import Feed, FeedAlias
 
@@ -371,6 +372,64 @@ class TestRankedDiscovery:
 
         with pytest.raises(FeedDiscoveryTimeout):
             await discovery.discover_feeds("https://slow.example")
+
+
+BARE_SITE = "https://wrongside.example.com"
+WWW_SITE = "https://www.wrongside.example.com"
+
+
+def _dns_exists_only_under_www(monkeypatch):
+    """Model a site set up the way Substack custom domains are: www only."""
+
+    async def resolve(host: str, _port: int) -> set[str]:
+        if host.startswith("www."):
+            return {"93.184.216.34"}
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+    monkeypatch.setattr(fetcher, "resolve_host_addresses", resolve)
+
+
+class TestWwwFallback:
+    async def test_bare_domain_without_dns_subscribes_via_www(self, client, respx_mock, article_xml, monkeypatch):
+        _dns_exists_only_under_www(monkeypatch)
+        respx_mock.get(f"{WWW_SITE}/").respond(content=HOMEPAGE, content_type="text/html")
+        respx_mock.get(f"{WWW_SITE}/feed").respond(content=article_xml, content_type="application/rss+xml")
+
+        response = await client.post("/feeds", json={"url": BARE_SITE})
+
+        assert response.status_code == 201
+        assert response.json()["url"] == f"{WWW_SITE}/feed"
+
+    async def test_feedless_www_site_reports_no_feed_rather_than_unreachable(self, client, respx_mock, monkeypatch):
+        _dns_exists_only_under_www(monkeypatch)
+        respx_mock.get(f"{WWW_SITE}/").respond(content=HOMEPAGE_NO_LINK, content_type="text/html")
+        respx_mock.route().respond(status_code=404)
+
+        response = await client.post("/feeds/discover", json={"url": BARE_SITE})
+
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "no_feed_found"
+
+    async def test_error_names_the_typed_address_when_www_is_dead_too(self, client, monkeypatch):
+        async def resolve(_host: str, _port: int) -> set[str]:
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+        monkeypatch.setattr(fetcher, "resolve_host_addresses", resolve)
+
+        response = await client.post("/feeds/discover", json={"url": BARE_SITE})
+
+        assert response.status_code == 502
+        assert response.json()["detail"]["code"] == "site_unreachable"
+
+    def test_www_fallback_url_shapes(self):
+        assert discovery._www_fallback_url("https://edwest.example/feed?x=1") == (
+            "https://www.edwest.example/feed?x=1"
+        )
+        assert discovery._www_fallback_url("https://edwest.example:8443/") == "https://www.edwest.example:8443/"
+        assert discovery._www_fallback_url("https://www.edwest.example") is None
+        assert discovery._www_fallback_url("https://192.0.2.10/feed") is None
+        assert discovery._www_fallback_url("https://localhost") is None
+        assert discovery._www_fallback_url("https://user@edwest.example") is None
 
 
 class TestCanonicalFeedIdentity:
