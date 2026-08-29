@@ -30,8 +30,15 @@ MAX_ETAG_CHARS = 1_024
 MAX_LAST_MODIFIED_CHARS = 256
 MAX_UPSTREAM_RETRIES = 1
 DEFAULT_RETRY_DELAY_SECONDS = 0.5
-MAX_RETRY_DELAY_SECONDS = 2.0
+# Ride out a short throttle rather than surfacing it: WordPress.com and other
+# shared hosts hand datacenter IPs brief 429s. Discovery's 25-second deadline
+# leaves room for one such wait; anything longer is reported to the user.
+MAX_RETRY_DELAY_SECONDS = 8.0
 RETRYABLE_STATUSES = {429, 502, 503, 504}
+
+# Rate limiters treat identifiable feed readers far better than anonymous
+# scripts, so name the product and give site operators somewhere to reach us.
+FEED_USER_AGENT = "Magpie/1.0 (+https://audio-reader-production.up.railway.app/support; feed reader)"
 FEED_ACCEPT = (
     "application/rss+xml, application/atom+xml, application/feed+json, "
     "application/json;q=0.9, application/xml;q=0.8, text/xml;q=0.8, text/html;q=0.7, */*;q=0.1"
@@ -135,7 +142,7 @@ async def fetch_public_bytes(
     url: str,
     *,
     max_bytes: int,
-    user_agent: str = "audioreader/0.1",
+    user_agent: str = FEED_USER_AGENT,
 ) -> tuple[bytes, str]:
     """Fetch one bounded public resource, revalidating every redirect hop."""
     result = await _fetch_public_resource(url, max_bytes=max_bytes, user_agent=user_agent)
@@ -148,7 +155,7 @@ async def _fetch_public_resource(
     url: str,
     *,
     max_bytes: int,
-    user_agent: str = "audioreader/0.1",
+    user_agent: str = FEED_USER_AGENT,
     request_headers: Mapping[str, str] | None = None,
     accept_not_modified: bool = False,
 ) -> FeedFetchResult:
