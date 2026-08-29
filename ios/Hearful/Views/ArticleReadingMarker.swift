@@ -24,18 +24,46 @@ final class ArticleReadingMarkerView: UIView {
 final class ArticleReadingFollowButton: UIButton {
     override init(frame: CGRect) {
         super.init(frame: frame)
-        var appearance = UIButton.Configuration.tinted()
-        appearance.title = "Follow"
+        var appearance = UIButton.Configuration.filled()
+        appearance.title = "Follow reading"
         appearance.image = UIImage(systemName: "scope")
-        appearance.imagePadding = 6
+        appearance.imagePadding = 8
+        appearance.contentInsets = NSDirectionalEdgeInsets(
+            top: 12, leading: 16, bottom: 12, trailing: 16)
         appearance.cornerStyle = .capsule
         configuration = appearance
+        titleLabel?.adjustsFontForContentSizeCategory = true
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.18
+        layer.shadowRadius = 8
+        layer.shadowOffset = CGSize(width: 0, height: 3)
+        accessibilityIdentifier = "article-follow-reading"
         accessibilityLabel = "Follow the reading position"
         accessibilityHint = "Returns to the current word and keeps it on screen"
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+}
+
+/// Keeps the return-to-reading control clear of the playback capsule while
+/// the article chrome is visible. When the chrome leaves during a downward
+/// read, the button settles back to the ordinary edge inset instead of
+/// leaving a player-sized hole beneath it.
+enum ArticleReadingFollowLayout {
+    static let edgeInset: CGFloat = 12
+    static let miniPlayerClearance: CGFloat = 12
+
+    static func bottomConstraintConstant(
+        chromeHidden: Bool,
+        miniPlayerHeight: CGFloat,
+        gap: CGFloat
+    ) -> CGFloat {
+        let obstruction = chromeHidden
+            ? 0
+            : miniPlayerHeight + gap + miniPlayerClearance
+        return -(edgeInset + obstruction)
+    }
 }
 
 /// Manual scrolling is an explicit choice to stop following. There is no

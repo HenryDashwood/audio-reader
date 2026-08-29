@@ -50,10 +50,10 @@ struct ArticleView: View {
         // and bars that sit there.
         .ignoresSafeArea()
         // Which leaves the clock sitting on the first line of the article
-        // once it has scrolled up. A band of the page's own colour, exactly as
-        // tall as the status bar, keeps both readable without looking like a
-        // second surface laid over the first.
-        .overlay(alignment: .top) { statusBarScrim }
+        // once it has scrolled up. The system chrome elsewhere in the app
+        // lets content soften beneath it rather than clipping it at a hard
+        // edge, so the reader does the same at the top bezel.
+        .overlay(alignment: .top) { statusBarFade }
         // No title in the bar: it is the same sentence as the heading the
         // article opens with, a foot below it, and the article's own is the
         // one that belongs to the page.
@@ -103,14 +103,29 @@ struct ArticleView: View {
     /// The gap between one piece of floating furniture and the next.
     static let gap: CGFloat = 10
 
-    /// A band of the page's own colour behind the clock, exactly as tall as
-    /// the status bar, so the two stay readable once the article has scrolled
-    /// up under it.
-    private var statusBarScrim: some View {
+    /// A material behind the clock, fully present through the status bar and
+    /// feathered into the page below it. That keeps the clock readable while
+    /// prose blurs and fades on its way behind the bezel, like it does beneath
+    /// the navigation chrome on the shows list.
+    private var statusBarFade: some View {
         GeometryReader { proxy in
+            let fadeDepth: CGFloat = 32
+            let height = proxy.safeAreaInsets.top + fadeDepth
+            let solidStop = proxy.safeAreaInsets.top / height
+
             Rectangle()
-                .fill(Color(.systemBackground))
-                .frame(height: proxy.safeAreaInsets.top)
+                .fill(.thinMaterial)
+                .mask {
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black, location: 0),
+                            .init(color: .black, location: solidStop),
+                            .init(color: .clear, location: 1),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom)
+                }
+                .frame(height: height)
                 .ignoresSafeArea(edges: .top)
         }
         .allowsHitTesting(false)
@@ -659,6 +674,8 @@ private struct ArticleWebView: UIViewRepresentable {
         private var followState = ArticleReadingFollowState()
         private let marker = ArticleReadingMarkerView()
         private let followButton = ArticleReadingFollowButton()
+        private var followBottomConstraint: NSLayoutConstraint?
+        private var chromeSubscription: AnyCancellable?
 
         init(openFeed: @escaping @MainActor () -> Void) {
             self.openFeed = openFeed
@@ -673,13 +690,18 @@ private struct ArticleWebView: UIViewRepresentable {
             followButton.translatesAutoresizingMaskIntoConstraints = false
             followButton.isHidden = true
             view.addSubview(followButton)
+            let followBottomConstraint = followButton.bottomAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+                constant: ArticleReadingFollowLayout.bottomConstraintConstant(
+                    chromeHidden: ArticleControlsModel.shared.hidden,
+                    miniPlayerHeight: MiniPlayer.height,
+                    gap: ArticleView.gap))
+            self.followBottomConstraint = followBottomConstraint
             NSLayoutConstraint.activate([
                 followButton.trailingAnchor.constraint(
                     equalTo: view.safeAreaLayoutGuide.trailingAnchor,
                     constant: -12),
-                followButton.bottomAnchor.constraint(
-                    equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-                    constant: -12),
+                followBottomConstraint,
             ])
             followButton.addTarget(
                 self, action: #selector(resumeFollowing), for: .touchUpInside)
@@ -688,6 +710,11 @@ private struct ArticleWebView: UIViewRepresentable {
             markerSubscription = ArticlePlayer.shared.$spokenLocation
                 .removeDuplicates()
                 .sink { [weak self] location in self?.receive(location) }
+            chromeSubscription = ArticleControlsModel.shared.$hidden
+                .removeDuplicates()
+                .sink { [weak self] hidden in
+                    self?.positionFollowButton(chromeHidden: hidden, animated: true)
+                }
         }
 
         func update(episodeID: Int, speechText: String?, pageWillReload: Bool) {
@@ -715,11 +742,34 @@ private struct ArticleWebView: UIViewRepresentable {
             view.scrollView.panGestureRecognizer.removeTarget(
                 self, action: #selector(scrollGestureChanged(_:)))
             markerSubscription = nil
+            chromeSubscription = nil
             marker.removeFromSuperview()
             followButton.removeTarget(
                 self, action: #selector(resumeFollowing), for: .touchUpInside)
             followButton.removeFromSuperview()
+            followBottomConstraint = nil
             webView = nil
+        }
+
+        private func positionFollowButton(chromeHidden: Bool, animated: Bool) {
+            guard let webView, let followBottomConstraint else { return }
+            let constant = ArticleReadingFollowLayout.bottomConstraintConstant(
+                chromeHidden: chromeHidden,
+                miniPlayerHeight: MiniPlayer.height,
+                gap: ArticleView.gap)
+            guard followBottomConstraint.constant != constant else { return }
+            webView.layoutIfNeeded()
+            followBottomConstraint.constant = constant
+            let changes = { webView.layoutIfNeeded() }
+            guard animated, !UIAccessibility.isReduceMotionEnabled else {
+                changes()
+                return
+            }
+            UIView.animate(
+                withDuration: 0.25,
+                delay: 0,
+                options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+                animations: changes)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

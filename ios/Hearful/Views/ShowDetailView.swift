@@ -28,7 +28,17 @@ struct ShowDetailView: View {
                 unsubscribeRow
             }
 
-            Section(model.isSearching ? "Results" : show.itemsSectionTitle) {
+            Section {
+                // Kept inside the section rather than in its header: a plain
+                // list pins section headers beneath the navigation bar, where
+                // this label would take space long after it had done its job.
+                Text(model.isSearching ? "Results" : show.itemsSectionTitle)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.isHeader)
+                    .listRowInsets(
+                        EdgeInsets(top: 12, leading: 20, bottom: 8, trailing: 20))
+                    .listRowSeparator(.hidden)
                 if model.isOffline {
                     Label("Offline — showing saved \(show.itemNoun)s", systemImage: "wifi.slash")
                         .font(.footnote)

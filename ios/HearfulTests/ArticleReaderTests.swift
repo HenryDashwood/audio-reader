@@ -337,9 +337,24 @@ struct ArticleDocumentTests {
     @Test func theFollowControlExplainsItsActionWithoutItsIcon() {
         let button = ArticleReadingFollowButton()
 
-        #expect(button.configuration?.title == "Follow")
+        #expect(button.configuration?.title == "Follow reading")
+        #expect(button.intrinsicContentSize.height >= 44)
         #expect(button.accessibilityLabel == "Follow the reading position")
         #expect(button.accessibilityHint?.contains("current word") == true)
+    }
+
+    @Test func theFollowControlClearsTheMiniPlayerOnlyWhileItIsVisible() {
+        let abovePlayer = ArticleReadingFollowLayout.bottomConstraintConstant(
+            chromeHidden: false,
+            miniPlayerHeight: 52,
+            gap: 10)
+        let withoutPlayer = ArticleReadingFollowLayout.bottomConstraintConstant(
+            chromeHidden: true,
+            miniPlayerHeight: 52,
+            gap: 10)
+
+        #expect(abovePlayer == -86)
+        #expect(withoutPlayer == -12)
     }
 
     @Test func theIsolatedBridgeFindsAWordWhilePageJavaScriptIsDisabled() async throws {
