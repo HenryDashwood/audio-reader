@@ -19,7 +19,7 @@ struct HearfulShortcuts: AppShortcutsProvider {
                 "Open the microphone on \(.applicationName)",
                 "I want to ask \(.applicationName) something",
             ],
-            shortTitle: "Ask Hearful",
+            shortTitle: "Ask Magpie",
             systemImageName: "mic.circle"
         )
         // No parameters at all: the simplest thing Siri can match, and the
@@ -30,7 +30,7 @@ struct HearfulShortcuts: AppShortcutsProvider {
                 // Deliberately avoiding "play": Siri appears to route phrases
                 // beginning with media verbs into its own music/podcast domain
                 // before App Shortcuts are consulted, which is how an earlier
-                // "play ... on Hearful" ended up in Spotify.
+                // "play ... on Magpie" ended up in Spotify.
                 "Catch up on \(.applicationName)",
                 "Start listening on \(.applicationName)",
                 "What's next on \(.applicationName)",

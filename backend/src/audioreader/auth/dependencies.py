@@ -18,7 +18,7 @@ bearer = HTTPBearer(auto_error=False)
 # surface must be speakable, since the primary user cannot read a toast.
 _UNAUTHENTICATED = HTTPException(
     status_code=401,
-    detail={"spoken_response": "Please open Hearful and sign in."},
+    detail={"spoken_response": "Please open Magpie and sign in."},
     headers={"WWW-Authenticate": "Bearer"},
 )
 

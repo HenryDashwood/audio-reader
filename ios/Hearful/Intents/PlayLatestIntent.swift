@@ -5,7 +5,7 @@ import OSLog
 
 private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "intents")
 
-/// "Hey Siri, play the latest on Hearful."
+/// "Hey Siri, play the latest on Magpie."
 ///
 /// A plain AppIntent rather than an AudioPlaybackIntent: the latter is a
 /// system intent that Siri declined to run for this app. This tries to start
@@ -27,7 +27,7 @@ struct PlayLatestIntent: AppIntent {
             episodes = try await api.recentEpisodes(limit: 1)
         } catch let error as APIError where error.isAuthFailure {
             log.notice("intent ran without a valid session")
-            return .result(dialog: IntentDialog("Please open Hearful and sign in first."))
+            return .result(dialog: IntentDialog("Please open Magpie and sign in first."))
         } catch {
             log.error("could not fetch latest: \(error.localizedDescription)")
             return .result(dialog: IntentDialog("I could not reach your podcasts just now."))
@@ -45,7 +45,7 @@ struct PlayLatestIntent: AppIntent {
             // and producing silence.
             log.notice("background playback refused, continuing in foreground")
             try await continueInForeground(
-                IntentDialog("Opening Hearful to play \(episode.title)."))
+                IntentDialog("Opening Magpie to play \(episode.title)."))
             try PlaybackCoordinator.shared.play(episode)
         }
 

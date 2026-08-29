@@ -14,7 +14,7 @@ Privacy policy URL: <https://audio-reader-production.up.railway.app/privacy>
 *TestFlight → Test Information → Beta App Description. This is what testers
 read on the TestFlight invitation.*
 
-> Hearful is a podcast and article player you control by speaking.
+> Magpie is a podcast and article player you control by speaking.
 >
 > Tap the microphone and ask for what you want — "play the latest In Our Time",
 > "subscribe to Astral Codex Ten", "play the one about Agincourt". It also reads

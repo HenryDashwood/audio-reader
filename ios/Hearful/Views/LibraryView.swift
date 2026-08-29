@@ -143,7 +143,7 @@ struct LibraryView: View {
                         OpenFeedRow(host: pastedFeed.host() ?? pastedFeed.absoluteString)
                     }
                 } footer: {
-                    Text("Hearful will check the address and find its RSS or Atom feed before adding it.")
+                    Text("Magpie will check the address and find its RSS or Atom feed before adding it.")
                 }
             }
             .listStyle(.plain)

@@ -51,7 +51,7 @@ class PodcastMatch(BaseModel):
 
 
 class _ApplePodcast(BaseModel):
-    """The small, validated subset of an Apple result that Hearful uses."""
+    """The small, validated subset of an Apple result that Magpie uses."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -102,7 +102,7 @@ async def search_podcasts(
     strict: bool = True,
     country: str | None = None,
 ) -> list[PodcastMatch]:
-    """Search and return Hearful-ranked, deduplicated directory matches.
+    """Search and return Magpie-ranked, deduplicated directory matches.
 
     ``strict=True`` is the voice path: every meaningful word must plausibly
     match the title or publisher, because acting on a wrong result is worse

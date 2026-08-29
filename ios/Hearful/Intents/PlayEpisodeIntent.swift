@@ -1,7 +1,7 @@
 import AppIntents
 import Foundation
 
-/// "Hey Siri, play the one about the aliens lady on Hearful."
+/// "Hey Siri, play the one about the aliens lady on Magpie."
 ///
 /// A plain AppIntent: Siri declined to run this app's AudioPlaybackIntent at
 /// all. It tries to start playback in the background and only comes forward if
@@ -36,7 +36,7 @@ struct PlayEpisodeIntent: AppIntent {
             // continuation closure — and the confirmation below is still
             // reached and still spoken.
             try await continueInForeground(
-                IntentDialog("Opening Hearful to play \(episode.title)."))
+                IntentDialog("Opening Magpie to play \(episode.title)."))
             try PlaybackCoordinator.shared.play(chosen)
         }
         // Short, because Siri reads it out before the episode begins.

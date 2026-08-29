@@ -150,7 +150,7 @@ def _raise_discovery_error(exc: Exception) -> None:
         raise _discovery_error(
             504,
             exc.code,
-            "That site took too long while Hearful looked for its feeds. Please try again.",
+            "That site took too long while Magpie looked for its feeds. Please try again.",
         ) from exc
     if isinstance(exc, FeedRateLimitedError):
         raise _discovery_error(
@@ -162,19 +162,19 @@ def _raise_discovery_error(exc: Exception) -> None:
         raise _discovery_error(
             422,
             exc.code,
-            "Hearful reached that site, but could not find an RSS, Atom or JSON feed.",
+            "Magpie reached that site, but could not find an RSS, Atom or JSON feed.",
         ) from exc
     if isinstance(exc, FeedFetchError):
         raise _discovery_error(
             502,
             "site_unreachable",
-            "Hearful could not reach that site. Check the address and try again.",
+            "Magpie could not reach that site. Check the address and try again.",
         ) from exc
     if isinstance(exc, FeedParseError):
         raise _discovery_error(
             422,
             "invalid_feed",
-            "Hearful reached that address, but it did not contain a readable feed.",
+            "Magpie reached that address, but it did not contain a readable feed.",
         ) from exc
     raise exc
 
@@ -379,7 +379,7 @@ async def search_publication_on_web(
     if not has_current_ai_data_sharing_consent(user):
         raise HTTPException(
             status_code=403,
-            detail={"spoken_response": ("Before searching the web with AI, allow AI data sharing in Hearful.")},
+            detail={"spoken_response": ("Before searching the web with AI, allow AI data sharing in Magpie.")},
         )
     found = await find_feed_by_name(body.query, discovery_llm)
     if found is None:

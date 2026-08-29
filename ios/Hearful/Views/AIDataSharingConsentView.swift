@@ -28,7 +28,7 @@ struct AIDataSharingConsentView: View {
                             .font(.title2.bold())
 
                         Text(
-                            "Hearful uses OpenRouter and an AI model provider to understand "
+                            "Magpie uses OpenRouter and an AI model provider to understand "
                                 + "what you ask it to play and to find publications missing "
                                 + "from the podcast directory."
                         )
@@ -107,7 +107,7 @@ struct AIDataSharingConsentView: View {
                     .frame(maxWidth: .infinity)
                     .disabled(saving)
                     .accessibilityHint(
-                        "Closes without sharing data. You can still use Hearful on screen."
+                        "Closes without sharing data. You can still use Magpie on screen."
                     )
             }
             .frame(maxWidth: 520)

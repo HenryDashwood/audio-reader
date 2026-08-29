@@ -1,6 +1,6 @@
 # App Store listing
 
-This directory is the source of truth for Hearful's public App Store listing.
+This directory is the source of truth for Magpie's public App Store listing.
 Do not make a lasting copy change only in App Store Connect: make it here, let
 CI validate it, and sync it from a release tag.
 

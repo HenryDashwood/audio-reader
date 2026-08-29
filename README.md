@@ -1,6 +1,6 @@
 # audio-reader
 
-A voice-controlled podcast and RSS/Substack reader, designed for visually impaired users.
+**Magpie** — a voice-controlled podcast and RSS/Substack reader, designed for visually impaired users.
 iOS app (SwiftUI) backed by a FastAPI service; the phone stays thin and the
 backend owns feeds, search, and the LLM that turns spoken requests into actions.
 
@@ -8,7 +8,8 @@ backend owns feeds, search, and the LLM that turns spoken requests into actions.
 
 - `backend/` — FastAPI + SQLAlchemy 2.0 + Alembic. Feed ingestion, episode
   storage, podcast search, and the voice-command endpoint.
-- `ios/` — SwiftUI app (`Hearful`), targeting **iOS 26+**.
+- `ios/` — SwiftUI app, targeting **iOS 26+**. Ships as **Magpie**; the Xcode
+  project, target, and bundle identifier keep the original `Hearful` name.
 
 The deployment target is iOS 26 because `AnalyzerSpeechRecognizer` uses
 `SpeechAnalyzer`, which is the only recogniser that transcribes long-form
@@ -67,7 +68,7 @@ with development authentication enabled:
 make backend-dev
 ```
 
-Then run Hearful from Xcode, Cursor, or Codex. A Debug build pointed at a loopback
+Then run the app from Xcode, Cursor, or Codex. A Debug build pointed at a loopback
 server uses the matching local development account automatically, so Sign in
 with Apple is not part of the simulator loop. The token is a non-secret marker:
 the backend accepts it only when `AUDIOREADER_DEVELOPMENT_AUTH_TOKEN` is set in

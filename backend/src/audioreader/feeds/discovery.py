@@ -255,7 +255,7 @@ class FeedDiscoveryError(FeedParseError):
 class FeedDiscoveryTimeout(FeedDiscoveryError):
     def __init__(self) -> None:
         super().__init__(
-            "the site took too long while Hearful looked for its feeds",
+            "the site took too long while Magpie looked for its feeds",
             code="discovery_timed_out",
         )
 

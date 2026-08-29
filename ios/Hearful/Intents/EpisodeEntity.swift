@@ -76,7 +76,7 @@ struct EpisodeQuery: EntityStringQuery {
     }
 
     /// Siri matches the words in a spoken phrase against *these*, not against
-    /// free text — without them, "Play X on Hearful" never matches at all and
+    /// free text — without them, "Play X on Magpie" never matches at all and
     /// the request falls through to whatever media app iOS prefers.
     func suggestedEntities() async throws -> [EpisodeEntity] {
         // The system calls this in the background, possibly before she has

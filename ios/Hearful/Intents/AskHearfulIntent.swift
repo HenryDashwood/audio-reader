@@ -1,7 +1,7 @@
 import AppIntents
 import Foundation
 
-/// "Hey Siri, ask Hearful." — opens the app with the microphone already
+/// "Hey Siri, ask Magpie." — opens the app with the microphone already
 /// listening, so the request itself is completely free-form and goes through
 /// the backend's own understanding rather than Siri's phrase matching.
 ///
@@ -10,9 +10,9 @@ import Foundation
 /// henrydashwood.com") is one sentence away once the sheet is up. It also
 /// makes a good Action button shortcut: one press, then talk.
 struct AskHearfulIntent: AppIntent {
-    static let title: LocalizedStringResource = "Ask Hearful"
+    static let title: LocalizedStringResource = "Ask Magpie"
     static let description = IntentDescription(
-        "Opens Hearful listening, ready for you to say what you'd like to hear.")
+        "Opens Magpie listening, ready for you to say what you'd like to hear.")
     // The whole point is to arrive in the app with the mic live; there is no
     // background version of this intent. `.immediate` rather than `.deferred`
     // because the sheet starts listening as soon as it appears — deferring the

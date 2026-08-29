@@ -1,7 +1,7 @@
 import AppIntents
 import Foundation
 
-/// "Hey Siri, subscribe on Hearful." — Siri asks which show, she answers
+/// "Hey Siri, subscribe on Magpie." — Siri asks which show, she answers
 /// freely, and the backend does the rest.
 ///
 /// The name is a free-text parameter, so it cannot appear inside the App
@@ -40,7 +40,7 @@ struct SubscribeIntent: AppIntent {
             response = try await api.command(
                 transcript: "subscribe to \(name)", nowPlayingEpisodeID: nil, traceparent: nil)
         } catch let error as APIError where error.isAuthFailure {
-            return .result(dialog: IntentDialog("Please open Hearful and sign in first."))
+            return .result(dialog: IntentDialog("Please open Magpie and sign in first."))
         } catch let error as APIError {
             return .result(dialog: IntentDialog("\(error.spokenResponse)"))
         } catch {

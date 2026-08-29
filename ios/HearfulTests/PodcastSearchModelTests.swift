@@ -245,13 +245,13 @@ struct FeedDiscoveryModelTests {
     @Test func failureUsesTheBackendSentence() async {
         let api = SearchAPI()
         api.error = APIError(
-            spokenResponse: "Hearful reached that site, but found no feed.",
+            spokenResponse: "Magpie reached that site, but found no feed.",
             underlying: "no_feed_found")
         let model = FeedDiscoveryModel(api: api)
 
         await model.load(url: URL(string: "https://example.com")!)
 
-        #expect(model.state == .failed("Hearful reached that site, but found no feed."))
+        #expect(model.state == .failed("Magpie reached that site, but found no feed."))
     }
 }
 

@@ -71,7 +71,7 @@ async def command(
     if not has_current_ai_data_sharing_consent(user):
         raise HTTPException(
             status_code=403,
-            detail={"spoken_response": ("Before using voice commands, open Hearful and allow AI data sharing.")},
+            detail={"spoken_response": ("Before using voice commands, open Magpie and allow AI data sharing.")},
         )
     # One wide event per spoken request. Everything the pipeline learns is
     # attached here rather than scattered across log lines, because the

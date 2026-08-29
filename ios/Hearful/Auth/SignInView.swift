@@ -20,7 +20,7 @@ struct SignInView: View {
                 .font(.system(size: 96))
                 .foregroundStyle(.tint)
                 .accessibilityHidden(true)
-            Text("Hearful")
+            Text("Magpie")
                 .font(.largeTitle.bold())
             Text("Sign in so your shows and listening positions follow you.")
                 .font(.title3)

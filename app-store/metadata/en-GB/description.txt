@@ -1,8 +1,8 @@
-Hearful is a podcast and article player made to be used by voice.
+Magpie is a podcast and article player made to be used by voice.
 
-Tap the microphone and ask for what you want: “play the latest In Our Time”, “subscribe to Astral Codex Ten”, or “play the one about Agincourt”. Hearful searches your library, finds the right episode and starts it for you.
+Tap the microphone and ask for what you want: “play the latest In Our Time”, “subscribe to Astral Codex Ten”, or “play the one about Agincourt”. Magpie searches your library, finds the right episode and starts it for you.
 
-Podcasts, blogs and newsletters live together in one simple library. When a publication contains written articles instead of audio, Hearful reads them aloud with your chosen system voice.
+Podcasts, blogs and newsletters live together in one simple library. When a publication contains written articles instead of audio, Magpie reads them aloud with your chosen system voice.
 
 Made for listening without looking
 
@@ -13,8 +13,8 @@ Made for listening without looking
 • Use lock-screen and headphone controls
 • Browse and play everything on screen when you prefer
 
-Accessibility is part of the design, not an extra. Hearful uses clear native controls, supports VoiceOver and Dynamic Type, and gives spoken or non-visual feedback when an action completes.
+Accessibility is part of the design, not an extra. Magpie uses clear native controls, supports VoiceOver and Dynamic Type, and gives spoken or non-visual feedback when an action completes.
 
-Speech is converted to text on your device. Hearful never receives or stores an audio recording of your voice. Before any spoken request or explicit AI web search is sent to an AI provider, the app explains exactly what will be shared and asks for your permission. You can withdraw that permission at any time.
+Speech is converted to text on your device. Magpie never receives or stores an audio recording of your voice. Before any spoken request or explicit AI web search is sent to an AI provider, the app explains exactly what will be shared and asks for your permission. You can withdraw that permission at any time.
 
 Sign in with Apple keeps your library and listening positions in sync. You can delete your account and its data from Settings.

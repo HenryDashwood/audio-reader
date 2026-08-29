@@ -91,7 +91,7 @@ struct ContentView: View {
                 )
         }
         .task {
-            // The Ask Hearful intent may have run before this view existed.
+            // The Ask Magpie intent may have run before this view existed.
             if VoicePrompt.consume() {
                 showingVoice = true
             }
@@ -248,7 +248,7 @@ struct VoiceSheet: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Ask Hearful")
+                .accessibilityLabel("Ask Magpie")
                 .accessibilityValue(caption)
                 .accessibilityHint("Double tap to ask for something to listen to")
 
@@ -277,7 +277,7 @@ struct VoiceSheet: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityHint(
-                        "Opens Hearful's settings, where you can turn on the microphone")
+                        "Opens Magpie's settings, where you can turn on the microphone")
                     .padding(.bottom, 32)
                 }
             }
@@ -418,7 +418,7 @@ struct TranscriptView: View {
     private static func name(of speaker: ConversationTurn.Speaker) -> String {
         switch speaker {
         case .her: "You"
-        case .app: "Hearful"
+        case .app: "Magpie"
         }
     }
 }

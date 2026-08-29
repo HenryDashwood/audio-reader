@@ -5,7 +5,7 @@ import Foundation
 ///
 /// Subscriptions are a short, stable list — exactly what Siri can match
 /// spoken words against inside a phrase like "play the latest ⟨show⟩ on
-/// Hearful". (Free text can never appear in a phrase; whole libraries of
+/// Magpie". (Free text can never appear in a phrase; whole libraries of
 /// episode titles are too big to match. A subscription list is the sweet
 /// spot.)
 struct ShowEntity: AppEntity {

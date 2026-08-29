@@ -604,7 +604,7 @@ private struct ArticleWebView: UIViewRepresentable {
     /// The exact plain text handed to AVSpeechSynthesizer. Nil for a fallback
     /// blurb that is visible but is not this article player's script.
     let speechText: String?
-    /// Opens the containing podcast or blog inside Hearful. All other links
+    /// Opens the containing podcast or blog inside Magpie. All other links
     /// still leave for Safari.
     let openFeed: @MainActor () -> Void
     /// Handed out so the bars can be told what to track, and so the toolbar

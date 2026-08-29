@@ -16,7 +16,7 @@ Work through it before a release that matters. Each item is an action and the re
 ## Before you start
 
 - [ ] Install the build you actually intend to test, and note its version and build number here: `________`
-- [ ] 📱 Download a **Premium or Eloquence** English voice — Settings → Accessibility → Spoken Content → Voices → English. Hearful deliberately hides lower-quality voices.
+- [ ] 📱 Download a **Premium or Eloquence** English voice — Settings → Accessibility → Spoken Content → Voices → English. Magpie deliberately hides lower-quality voices.
 - [ ] Know how to reset: **Settings → Delete Account** inside the app gives you a genuinely fresh account. Deleting and reinstalling the app does not, because the account lives on the server.
 - [ ] Have a second device or simulator signed into the same account if you want to check positions follow her.
 
@@ -34,7 +34,7 @@ Work through it before a release that matters. Each item is an action and the re
 ### Permission refused
 
 - [ ] Deny the microphone (or revoke it in iOS Settings), open the voice sheet → she is **told what is wrong and where to fix it**, not "I could not hear you, tap and try again"
-- [ ] An **Open Settings** button is present and opens Hearful's settings
+- [ ] An **Open Settings** button is present and opens Magpie's settings
 - [ ] Grant permission, return to the app, try again → works, and the button disappears
 
 ---
@@ -75,12 +75,12 @@ The app asks, she answers, and the two are one request. Do these out loud withou
 
 ### The transcript
 
-- [ ] Each thing you say appears on screen under **You**, and each reply under **Hearful**
+- [ ] Each thing you say appears on screen under **You**, and each reply under **Magpie**
 - [ ] A misheard word is visible there — this is the fastest way to tell a mis-hearing from a bad answer
 - [ ] Drag the sheet up to the large size → a longer exchange can be scrolled back through
 - [ ] The newest turn is the one showing; you do not have to scroll to find it
 - [ ] The microphone is still easy to hit without aiming, with the transcript on screen
-- [ ] 👁️ Swipe through the sheet → the microphone first, then the conversation as one group, then Close. Each turn reads as "You said: …" or "Hearful said: …"
+- [ ] 👁️ Swipe through the sheet → the microphone first, then the conversation as one group, then Close. Each turn reads as "You said: …" or "Magpie said: …"
 - [ ] 👁️ Turn text size up to a large accessibility size → the transcript still reads and scrolls
 
 ### Filing episodes
@@ -136,14 +136,14 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 
 📱 all of these — Siri does not work properly in the simulator.
 
-- [ ] Hearful appears in the **Shortcuts** app. If not, reboot the phone before debugging phrases; the index goes stale after repeated installs
-- [ ] "Hey Siri, ask Hearful" → the app opens with the microphone live
-- [ ] "Hey Siri, play the latest on Hearful" → plays **without** bringing the app to the front
-- [ ] "Hey Siri, play the latest \<show\> on Hearful" → correct show
-- [ ] "Hey Siri, subscribe to \<something\> on Hearful" → subscribes, confirms aloud, no app launch
+- [ ] Magpie appears in the **Shortcuts** app. If not, reboot the phone before debugging phrases; the index goes stale after repeated installs
+- [ ] "Hey Siri, ask Magpie" → the app opens with the microphone live
+- [ ] "Hey Siri, play the latest on Magpie" → plays **without** bringing the app to the front
+- [ ] "Hey Siri, play the latest \<show\> on Magpie" → correct show
+- [ ] "Hey Siri, subscribe to \<something\> on Magpie" → subscribes, confirms aloud, no app launch
 - [ ] Subscribe to a new show, then immediately use its name in a Siri phrase → recognised
 - [ ] Run a play intent with the phone locked → either plays, or comes forward and explains why
-- [ ] Run an intent while signed out → says to open Hearful and sign in
+- [ ] Run an intent while signed out → says to open Magpie and sign in
 
 ---
 
@@ -241,7 +241,7 @@ Do this with the **screen curtain** on — three-finger triple-tap. If you can s
 - [ ] Do it with the network off → she is told it failed, rather than the row simply not moving
 - [ ] **Mini player** → "Now playing: \<title\>" and a separate Play/Pause, and the first one opens the player
 - [ ] **Full player** → every control labelled; the scrubber announces its position; **Close player** works
-- [ ] **Voice sheet** → lands on "Ask Hearful" *before* "Close", so the double tap does what the screen says
+- [ ] **Voice sheet** → lands on "Ask Magpie" *before* "Close", so the double tap does what the screen says
 - [ ] Double tap → it starts listening, and the go-ahead tone comes **after** VoiceOver has finished talking
 - [ ] Speak → it hears you, and does not transcribe VoiceOver's own voice
 - [ ] With VoiceOver off, opening the voice sheet starts listening **immediately** — that behaviour must survive
@@ -278,7 +278,7 @@ Do this with the **screen curtain** on — three-finger triple-tap. If you can s
 - [ ] **Delete Account** → confirmation explains the consequence; cancelling really cancels
 - [ ] Confirm deletion → returns to sign-in
 - [ ] Sign in again with the same Apple ID → a **fresh, empty** account, not the old one
-- [ ] Check **Settings → Apple Account → Sign in with Apple** on the device → Hearful should no longer be listed, because deletion revokes it
+- [ ] Check **Settings → Apple Account → Sign in with Apple** on the device → Magpie should no longer be listed, because deletion revokes it
 
 ---
 

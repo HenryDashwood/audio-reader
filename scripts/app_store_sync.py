@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyjwt[crypto]>=2.8", "requests>=2.31"]
 # ///
-"""Validate and synchronise Hearful's version-controlled App Store listing.
+"""Validate and synchronise Magpie's version-controlled App Store listing.
 
 Validation is offline and works with the system Python. The ``sync`` command
 uses the same App Store Connect API-key environment variables as the existing

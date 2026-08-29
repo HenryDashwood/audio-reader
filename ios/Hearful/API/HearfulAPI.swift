@@ -368,7 +368,7 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
             NotificationCenter.default.post(name: .hearfulAuthRequired, object: nil)
             throw APIError(
                 spokenResponse: Self.spokenResponse(from: data)
-                    ?? "Please open Hearful and sign in.",
+                    ?? "Please open Magpie and sign in.",
                 underlying: "HTTP 401",
                 isAuthFailure: true)
         }

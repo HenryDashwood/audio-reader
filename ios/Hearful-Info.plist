@@ -20,6 +20,18 @@
 	     permissions the app does not use is a needless privacy prompt and a
 	     poor look at App Store review. -->
 
+	<!-- The app shipped to testers as Hearful before becoming Magpie. Keeping
+	     the old name as a Siri alternative means "ask Hearful" keeps working
+	     for anyone whose habit predates the rename. -->
+	<key>INAlternativeAppNames</key>
+	<array>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Hearful</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>hear full</string>
+		</dict>
+	</array>
 	<!-- The only cryptography here is HTTPS, which is exempt from export
 	     compliance. Declaring it up front means App Store Connect stops
 	     asking the same question on every single upload. -->

@@ -67,8 +67,8 @@ final class VoiceController: ObservableObject {
     /// other spoken line here, because it is the only one that has to carry
     /// instructions she cannot read off the screen.
     static let permissionMessage = """
-        Hearful needs permission to listen. Open the Settings app, choose \
-        Hearful, and turn on Microphone and Speech Recognition.
+        Magpie needs permission to listen. Open the Settings app, choose \
+        Magpie, and turn on Microphone and Speech Recognition.
         """
 
     @Published private(set) var state: VoiceState = .idle

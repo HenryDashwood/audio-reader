@@ -1,4 +1,4 @@
-Hearful is a podcast and article player designed for blind and partially sighted listeners. Almost everything can be done by speaking, so it will not review like an ordinary media app: the library starts empty and fills up by voice.
+Magpie is a podcast and article player designed for blind and partially sighted listeners. Almost everything can be done by speaking, so it will not review like an ordinary media app: the library starts empty and fills up by voice.
 
 No demo account is provided because none exists. Sign in with Apple is the only sign-in method, so please sign in with your own Apple ID. An account is created automatically; there is no username or password to supply.
 

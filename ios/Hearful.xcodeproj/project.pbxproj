@@ -306,9 +306,9 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Hearful-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Hearful;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Hearful listens so you can ask for a podcast or article out loud.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Hearful turns what you say into a request, so you can ask for an episode without using the screen.";
+				INFOPLIST_KEY_CFBundleDisplayName = Magpie;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Magpie listens so you can ask for a podcast or article out loud.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Magpie turns what you say into a request, so you can ask for an episode without using the screen.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIBackgroundModes = audio;
@@ -341,9 +341,9 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Hearful-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Hearful;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Hearful listens so you can ask for a podcast or article out loud.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Hearful turns what you say into a request, so you can ask for an episode without using the screen.";
+				INFOPLIST_KEY_CFBundleDisplayName = Magpie;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Magpie listens so you can ask for a podcast or article out loud.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Magpie turns what you say into a request, so you can ask for an episode without using the screen.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UIBackgroundModes = audio;

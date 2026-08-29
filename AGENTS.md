@@ -15,6 +15,7 @@
 ## iOS
 
 - The app is `ios/Hearful.xcodeproj`, scheme `Hearful`, written in Swift 6 and SwiftUI with an iOS 26 deployment target.
+- The product's user-facing name is **Magpie** (display name, Siri phrases, store metadata, spoken strings). The Xcode project, scheme, target, module, folder names, bundle identifier, and `UserDefaults`/Keychain keys deliberately remain `Hearful`; do not rename them.
 - Run `make ios-doctor` when diagnosing the local Apple toolchain. Use `make ios-build` for a compile check and `make ios-test` for the full Swift Testing suite. `make ios-test-latest` adds coverage on the newest installed iOS runtime.
 - The commands select the oldest installed compatible runtime by default. Set `IOS_SIMULATOR_ID` to target a particular simulator.
 - Files below `ios/Hearful/` and `ios/HearfulTests/` belong to Xcode file-system synchronized groups. Do not hand-edit `project.pbxproj` merely to add or remove source files.

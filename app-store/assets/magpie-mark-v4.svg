@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tailBlue" x1="0.1" y1="0.9" x2="0.85" y2="0.15">
+      <stop offset="0" stop-color="#087BC9"/>
+      <stop offset="1" stop-color="#00A6C7"/>
+    </linearGradient>
+    <style>
+      .outer-keyline {
+        stroke: #FEF5E6;
+        stroke-width: 12;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .inner-keyline {
+        stroke: #FEF5E6;
+        stroke-width: 12;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+    </style>
+  </defs>
+
+  <!-- Long magpie tail, placed behind the body. -->
+  <path
+    class="outer-keyline"
+    fill="#171717"
+    d="M 384 578
+       C 306 633 201 727 104 801
+       C 86 815 88 830 106 831
+       C 220 825 332 758 428 679
+       L 505 611
+       C 468 590 426 579 384 578 Z"/>
+  <path
+    fill="url(#tailBlue)"
+    d="M 386 594
+       C 305 655 205 739 112 807
+       C 104 813 106 817 117 816
+       C 217 803 319 744 408 671
+       L 478 611
+       C 449 600 417 594 386 594 Z"/>
+
+  <!-- Single leg and foot. -->
+  <path
+    class="outer-keyline"
+    fill="#171717"
+    d="M 579 650
+       C 596 699 620 742 650 780
+       C 631 785 610 792 596 801
+       C 587 807 581 814 580 822
+       L 770 822
+       C 767 812 757 806 744 805
+       C 713 804 689 796 674 778
+       C 648 746 630 709 620 668 Z"/>
+
+  <!-- Main body, neck, head and beak. -->
+  <path
+    class="outer-keyline"
+    fill="#171717"
+    d="M 328 582
+       C 376 484 492 389 612 331
+       C 648 314 662 269 689 221
+       C 715 176 767 172 810 217
+       C 850 219 885 228 915 246
+       C 879 258 845 269 819 284
+       C 797 297 798 328 803 360
+       C 818 452 792 544 729 617
+       C 697 654 661 679 621 692
+       C 578 706 535 698 494 674
+       C 447 646 402 615 328 582 Z"/>
+
+  <!-- Opaque white breast. -->
+  <path
+    fill="#FEF5E6"
+    d="M 612 331
+       C 665 346 708 386 725 439
+       C 747 508 718 574 662 617
+       C 633 640 600 656 565 665
+       C 603 620 632 570 647 518
+       C 669 438 656 374 612 331 Z"/>
+
+  <!-- Folded wing. -->
+  <path
+    class="inner-keyline"
+    fill="#171717"
+    d="M 324 581
+       C 382 476 497 381 612 333
+       C 672 347 719 393 731 452
+       C 747 532 689 604 596 627
+       C 502 650 408 616 324 581 Z"/>
+
+  <!-- Open-page / audio-wave motif. -->
+  <path
+    fill="#FEF5E6"
+    d="M 390 516
+       C 440 483 497 490 545 536
+       C 589 493 641 483 690 506
+       C 634 503 584 520 545 557
+       C 504 521 452 503 390 516 Z"/>
+
+  <circle cx="770" cy="239" r="10" fill="#FEF5E6"/>
+</svg>

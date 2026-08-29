@@ -33,10 +33,10 @@ struct SettingsView: View {
                     Text("Voice")
                 } footer: {
                     Text(
-                        "Hearful shows every voice available on this iPhone. Download "
+                        "Magpie shows every voice available on this iPhone. Download "
                             + "higher-quality Apple voices in "
                             + "Settings → Accessibility → Spoken Content → Voices, "
-                            + "then reopen Hearful Settings."
+                            + "then reopen Magpie Settings."
                     )
                 }
 
@@ -64,7 +64,7 @@ struct SettingsView: View {
                         Text("Server")
                     } footer: {
                         Text(
-                            "Hearful is talking to a test server instead of the usual one. "
+                            "Magpie is talking to a test server instead of the usual one. "
                                 + "Changing this takes effect immediately."
                         )
                     }
@@ -95,7 +95,7 @@ struct SettingsView: View {
                 } footer: {
                     Text(
                         "Voice requests use OpenRouter and an AI model provider only after you allow it. "
-                            + "Turning it off leaves the rest of Hearful available."
+                            + "Turning it off leaves the rest of Magpie available."
                     )
                 }
 
@@ -152,7 +152,7 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text(
-                    "Hearful will stop sending spoken requests and episode details to AI providers. "
+                    "Magpie will stop sending spoken requests and episode details to AI providers. "
                         + "You can turn it on again here later."
                 )
             }

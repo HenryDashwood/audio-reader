@@ -197,7 +197,7 @@ async def _fetch_public_resource(
                             continue
                         if response.status_code == 429:
                             raise FeedRateLimitedError(
-                                "the site temporarily limited Hearful's feed requests",
+                                "the site temporarily limited Magpie's feed requests",
                                 status_code=429,
                             )
                     try:

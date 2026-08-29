@@ -50,7 +50,7 @@ struct FeedDiscoveryView: View {
             } header: {
                 Text("Choose a feed")
             } footer: {
-                Text("Only the feed you open will be added to Hearful’s catalogue.")
+                Text("Only the feed you open will be added to Magpie’s catalogue.")
             }
         }
         .listStyle(.plain)
@@ -140,7 +140,7 @@ final class FeedDiscoveryModel: ObservableObject {
         do {
             let response = try await api.discoverFeeds(url: url)
             guard !response.candidates.isEmpty else {
-                state = .failed("Hearful reached that site, but it did not advertise a readable feed.")
+                state = .failed("Magpie reached that site, but it did not advertise a readable feed.")
                 return
             }
             state = .loaded(response.candidates)

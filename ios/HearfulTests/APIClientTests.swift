@@ -429,14 +429,14 @@ struct AuthAndPositionTests {
     }
 
     @Test func unauthorizedIsFlaggedAsAuthFailure() async throws {
-        let json = #"{"detail":{"spoken_response":"Please open Hearful and sign in."}}"#
+        let json = #"{"detail":{"spoken_response":"Please open Magpie and sign in."}}"#
         await withToken("stale") {
             do {
                 _ = try await makeClient(FakeTransport(status: 401, json: json)).shows()
                 Issue.record("expected a thrown error")
             } catch let error as APIError {
                 #expect(error.isAuthFailure)
-                #expect(error.spokenResponse == "Please open Hearful and sign in.")
+                #expect(error.spokenResponse == "Please open Magpie and sign in.")
             } catch {
                 Issue.record("wrong error type")
             }
