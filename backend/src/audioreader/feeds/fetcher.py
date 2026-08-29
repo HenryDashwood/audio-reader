@@ -54,6 +54,15 @@ class FeedRateLimitedError(FeedFetchError):
     code = "site_rate_limited"
 
 
+class FeedResolutionError(FeedFetchError):
+    """DNS returned no address for the hostname.
+
+    Distinct from other fetch failures so discovery can tell "this host does
+    not exist" apart from "the host refused us" and try a nearby hostname —
+    Substack custom domains, for one, often exist only at www.
+    """
+
+
 @dataclass(frozen=True)
 class FeedFetchResult:
     """A feed body, or a successful conditional response with no new body."""
@@ -92,7 +101,7 @@ async def resolve_host_addresses(host: str, port: int) -> set[str]:
 def validate_public_addresses(addresses: Iterable[str]) -> None:
     addresses = set(addresses)
     if not addresses:
-        raise FeedFetchError("the address did not resolve")
+        raise FeedResolutionError("the address did not resolve")
     for address in addresses:
         try:
             parsed = ipaddress.ip_address(address)
@@ -119,7 +128,7 @@ async def validate_public_url(url: str) -> None:
     try:
         validate_public_addresses(await resolve_host_addresses(parsed.hostname, port))
     except (OSError, UnicodeError) as exc:
-        raise FeedFetchError("the address could not be resolved") from exc
+        raise FeedResolutionError("the address could not be resolved") from exc
 
 
 async def fetch_public_bytes(
