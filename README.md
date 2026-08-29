@@ -67,7 +67,7 @@ with development authentication enabled:
 make backend-dev
 ```
 
-Then run Hearful from Xcode or Codex. A Debug build pointed at a loopback
+Then run Hearful from Xcode, Cursor, or Codex. A Debug build pointed at a loopback
 server uses the matching local development account automatically, so Sign in
 with Apple is not part of the simulator loop. The token is a non-secret marker:
 the backend accepts it only when `AUDIOREADER_DEVELOPMENT_AUTH_TOKEN` is set in
@@ -116,6 +116,17 @@ pointed at a laptop follows the app around afterwards — including when it is
 opened from the home screen with no laptop in sight. When an override is in
 force, Settings grows a **Server** section showing the address with a button
 to forget it. On an ordinary install that section does not appear.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` is the automatic quality gate for every pull request
+and push to `main`. Its Linux job installs the locked backend environment, runs
+Ruff formatting and linting, type-checks with ty, executes the backend and
+repository-script tests, and validates the App Store listing. Its macOS job
+selects Xcode 26 or newer and runs the full iOS simulator test suite.
+
+The Xcode Cloud **Test** workflow is manual-only so it does not duplicate these
+checks. GitHub Actions also owns TestFlight releases.
 
 ### Releasing to TestFlight
 

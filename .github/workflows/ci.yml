@@ -1,5 +1,7 @@
 name: CI
 
+# GitHub Actions owns automatic pull-request and main-branch validation.
+# Xcode Cloud's Test workflow is manual-only to avoid duplicate iOS runs.
 on:
   pull_request:
   push:
@@ -31,6 +33,9 @@ jobs:
       - name: Run backend checks
         run: make backend-check
 
+      - name: Validate the App Store listing
+        run: make app-store-validate
+
   ios:
     name: iOS tests
     runs-on: macos-latest
@@ -48,9 +53,6 @@ jobs:
 
       - name: Verify the iOS toolchain
         run: make ios-doctor
-
-      - name: Validate the App Store listing
-        run: make app-store-validate
 
       - name: Run the iOS tests
         run: make ios-test

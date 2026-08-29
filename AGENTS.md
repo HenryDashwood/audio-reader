@@ -5,6 +5,12 @@
 - Preserve unrelated working-tree changes. This repository is often used for parallel backend and iOS work.
 - Do not tag, publish, upload to TestFlight, change credentials, or modify production services unless the user explicitly asks.
 - Treat API contract changes as cross-platform: update and verify both the FastAPI backend and the Swift client when either side changes.
+- GitHub Actions owns automatic pull-request and `main` CI. The Xcode Cloud Test workflow is manual-only, and `.github/workflows/testflight.yml` owns releases.
+
+## Backend
+
+- Run `make backend-check` for the complete local CI gate: frozen dependency sync, Ruff lint and formatting, ty, backend tests, and repository-script tests.
+- Backend and repository-script tests use mocks and in-memory SQLite, so they require neither Docker nor network access.
 
 ## iOS
 
@@ -20,6 +26,7 @@
 
 ## Verification
 
+- For backend changes, run `make backend-check`.
 - For isolated Swift logic changes, run the relevant test or the full `make ios-test` suite.
 - For project settings, app entry points, or broad refactors, run both `make ios-build` and `make ios-test`.
 - For SDK-sensitive changes, also run `make ios-test-latest` when a newer simulator runtime is installed.
