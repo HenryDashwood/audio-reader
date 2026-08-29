@@ -38,7 +38,7 @@ RETRYABLE_STATUSES = {429, 502, 503, 504}
 
 # Rate limiters treat identifiable feed readers far better than anonymous
 # scripts, so name the product and give site operators somewhere to reach us.
-FEED_USER_AGENT = "Hearful/1.0 (+https://audio-reader-production.up.railway.app/support; feed reader)"
+FEED_USER_AGENT = "Magpie/1.0 (+https://audio-reader-production.up.railway.app/support; feed reader)"
 FEED_ACCEPT = (
     "application/rss+xml, application/atom+xml, application/feed+json, "
     "application/json;q=0.9, application/xml;q=0.8, text/xml;q=0.8, text/html;q=0.7, */*;q=0.1"

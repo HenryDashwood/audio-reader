@@ -90,6 +90,6 @@ async def test_requests_identify_the_app_to_rate_limiters(respx_mock):
 
     agent = route.calls[0].request.headers["user-agent"]
     assert agent == fetcher.FEED_USER_AGENT
-    assert agent.startswith("Hearful/")
+    assert agent.startswith("Magpie/")
     # Operators deciding whether to throttle us need somewhere to look us up.
     assert "+https://" in agent
