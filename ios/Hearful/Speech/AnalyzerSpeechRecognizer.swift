@@ -10,6 +10,17 @@ private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "spee
 /// once the language model has been downloaded.
 @MainActor
 final class AnalyzerSpeechRecognizer: SpeechRecognizing {
+    /// Keep tentative results for end-of-speech detection, but let the model
+    /// use its full context window. The stock progressive preset includes
+    /// `.fastResults`, which Apple documents as faster but less accurate.
+    static let accuracyBiasedPreset: SpeechTranscriber.Preset = {
+        let progressive = SpeechTranscriber.Preset.progressiveTranscription
+        return SpeechTranscriber.Preset(
+            transcriptionOptions: progressive.transcriptionOptions,
+            reportingOptions: progressive.reportingOptions.subtracting([.fastResults]),
+            attributeOptions: progressive.attributeOptions)
+    }()
+
     private let locale: Locale
     private var engine = AVAudioEngine()
     private var analyzer: SpeechAnalyzer?
@@ -35,7 +46,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         VoiceAttempt.current?.recogniser = "analyzer"
         try await requestMicrophonePermission()
 
-        let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
+        let transcriber = SpeechTranscriber(locale: locale, preset: Self.accuracyBiasedPreset)
         try await ensureModelInstalled(for: transcriber)
 
         guard
