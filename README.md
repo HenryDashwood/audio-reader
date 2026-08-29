@@ -1,8 +1,19 @@
 # audio-reader
 
-**Magpie** — a voice-controlled podcast and RSS/Substack reader, designed for visually impaired users.
-iOS app (SwiftUI) backed by a FastAPI service; the phone stays thin and the
-backend owns feeds, search, and the LLM that turns spoken requests into actions.
+**Magpie** is an iOS podcast and RSS reader. It plays audio podcast episodes
+and reads written articles aloud using iOS system voices through a single
+shared audio player. Because both content types use the same player,
+lock-screen controls, headphone controls, playback speed settings, and sleep
+timers function identically for articles and podcast episodes. The entire
+application can be controlled by voice using either an in-app microphone or
+Siri, with an LLM converting spoken requests into application actions. This
+enables complete non-visual operation while retaining full on-screen touch
+functionality. Every ingested article retains a direct link to its original
+source page.
+
+The system consists of a SwiftUI iOS client backed by a FastAPI service. The
+mobile client operates as a thin client, delegating feed ingestion and
+management, search, and the LLM-based voice action processing to the backend.
 
 ## Layout
 

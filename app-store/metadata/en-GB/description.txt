@@ -1,21 +1,21 @@
-Magpie is a podcast and article player you can drive by voice.
+Magpie is a podcast and article player that can be controlled by voice.
 
-Podcasts, blogs and newsletters live together in one library. Podcast episodes play as normal. Written articles are read aloud with the Apple voice you choose, and they play like any other audio: lock-screen and headphone controls, adjustable speed, a sleep timer, and your place remembered. You do not need screen-reader gestures or a special reading mode to have an article read to you.
+Podcasts, blogs, and newsletters are organised in a single library. Podcast episodes play as standard audio. Written articles are read aloud using the Apple system voice you choose, with standard playback controls including lock-screen and headphone support, adjustable speed, a sleep timer, and saved listening positions. You do not need screen-reader gestures or a separate reading mode to listen to an article.
 
-Ask for what you want by tapping the microphone, or through Siri: “play the latest In Our Time”, “subscribe to Astral Codex Ten”, “play the one about Agincourt”. An AI model works out what you meant, so you can ask by topic, title, show, guest or position instead of remembering exact names.
+You can make requests by tapping the microphone or through Siri, such as: “play the latest In Our Time”, “subscribe to Astral Codex Ten”, or “play the one about Agincourt”. An AI model interprets your request so you can search by topic, title, show, guest, or position instead of remembering exact names.
 
-• Find, follow and play shows by speaking, in the app or through Siri
-• Ask by topic, title, show, guest or position
-• Pause, resume, skip, change speed and set a sleep timer by voice
+• Find, follow, and play shows by voice, in the app or through Siri
+• Ask by topic, title, show, guest, or position
+• Pause, resume, skip, change speed, and set a sleep timer by voice
 • Hear articles read in the system voice you choose
-• Continue from where you stopped on another device
+• Continue playback from where you stopped on another device
 • Use lock-screen and headphone controls
-• Browse and play everything on screen when you prefer
+• Browse and play everything on screen if you prefer
 
-Magpie is not a walled garden. It plays open podcast and RSS feeds, and every article keeps a link to the original page, one tap away.
+Magpie supports open podcast and RSS feeds, and every article includes a direct link to the original web page.
 
-Voice control makes Magpie usable without looking at the screen, which matters most if you are blind or partially sighted, but the app is for anyone. It uses clear native controls, supports VoiceOver and Dynamic Type, and gives spoken or non-visual feedback when an action completes.
+The app can be used entirely without looking at the screen. It is designed for blind and partially sighted users, as well as sighted users. It uses native controls, supports VoiceOver and Dynamic Type, and provides spoken or non-visual feedback when an action completes.
 
-Speech is converted to text on your device. Magpie never receives or stores an audio recording of your voice. Before any spoken request or explicit AI web search is sent to an AI provider, the app explains exactly what will be shared and asks for your permission. You can withdraw that permission at any time.
+Speech is converted to text on your device. Magpie never receives or stores audio recordings of your voice. Before any spoken request or explicit AI web search is sent to an AI provider, the app explains what data will be shared and asks for your permission. You can withdraw this permission at any time.
 
-Sign in with Apple keeps your library and listening positions in sync. You can delete your account and its data from Settings.
+Sign in with Apple syncs your library and listening positions across devices. You can delete your account and its data from Settings.

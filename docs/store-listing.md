@@ -14,18 +14,19 @@ Privacy policy URL: <https://audio-reader-production.up.railway.app/privacy>
 *TestFlight → Test Information → Beta App Description. This is what testers
 read on the TestFlight invitation.*
 
-> Magpie is a podcast and article player you can drive by voice.
+> Magpie is a podcast and article player that can be controlled by voice.
 >
-> Tap the microphone, or ask Siri, and say what you want — "play the latest In
-> Our Time", "subscribe to Astral Codex Ten", "play the one about Agincourt".
-> It also reads written articles and newsletters aloud with the iPhone's own
-> voices, so blogs and Substacks play the same way podcasts do — lock screen,
-> AirPods, speed and sleep timer included — and every article keeps a link to
-> the original page.
+> Tap the microphone or use Siri to make requests, such as "play the latest In
+> Our Time", "subscribe to Astral Codex Ten", or "play the one about
+> Agincourt". Magpie also reads written articles and newsletters aloud using
+> iPhone system voices. Blogs and Substacks get the same playback controls as
+> podcasts: lock-screen controls, AirPods support, adjustable playback speed,
+> and a sleep timer. Every article includes a direct link to the original web
+> page.
 >
-> It remembers where you stopped in every episode. It is useful for anyone, but
-> it is built so the whole app can be used without looking at the screen, so if
-> you use VoiceOver, that is the way it is meant to be used.
+> The app saves your playback position in every episode and is designed so the
+> whole app can be used without looking at the screen. If you use VoiceOver,
+> that is the way it is meant to be used.
 
 ---
 

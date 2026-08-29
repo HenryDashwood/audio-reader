@@ -162,6 +162,7 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 
 - [ ] 📱 Lock the phone → title and artwork on the lock screen, controls work
 - [ ] 📱 Play/pause from the lock screen, and scrub from it
+- [ ] 📱 Same while an **article** is being read — the lock screen must control it like any episode
 - [ ] 📱 AirPods: pinch to pause and resume
 - [ ] 📱 "Hey Siri, pause" while listening
 
@@ -194,6 +195,7 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 - [ ] Search for an episode older than the newest 50 in a show → it is returned under **Episodes in your library**, with its show name
 - [ ] Search for a publication absent from the directory → **Search the web** appears; it asks for AI permission if needed and returns only a feed that can be verified
 - [ ] Tap a search result → preview page, Subscribe works
+- [ ] Open a written article → the **Open the original** button is present and opens the source page
 - [ ] Subscribe to something already subscribed → says so rather than duplicating
 - [ ] Show detail → episodes newest first, Unsubscribe present
 - [ ] Unsubscribe → returns to the library, show gone
