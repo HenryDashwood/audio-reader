@@ -14,18 +14,18 @@ Privacy policy URL: <https://audio-reader-production.up.railway.app/privacy>
 *TestFlight → Test Information → Beta App Description. This is what testers
 read on the TestFlight invitation.*
 
-> Magpie is a podcast and article player you control by speaking.
+> Magpie is a podcast and article player you can drive by voice.
 >
-> Tap the microphone and ask for what you want — "play the latest In Our Time",
-> "subscribe to Astral Codex Ten", "play the one about Agincourt". It also reads
-> written articles and newsletters aloud, so blogs and Substacks work the same
-> way podcasts do.
+> Tap the microphone, or ask Siri, and say what you want — "play the latest In
+> Our Time", "subscribe to Astral Codex Ten", "play the one about Agincourt".
+> It also reads written articles and newsletters aloud with the iPhone's own
+> voices, so blogs and Substacks play the same way podcasts do — lock screen,
+> AirPods, speed and sleep timer included — and every article keeps a link to
+> the original page.
 >
-> It remembers where you stopped in every episode, works from the lock screen
-> and AirPods, and has a sleep timer you can set by voice.
->
-> It is built to be used without looking at the screen, so if you use VoiceOver,
-> that is the way it is meant to be used.
+> It remembers where you stopped in every episode. It is useful for anyone, but
+> it is built so the whole app can be used without looking at the screen, so if
+> you use VoiceOver, that is the way it is meant to be used.
 
 ---
 
@@ -39,6 +39,10 @@ Everything is reachable by voice. That is the main thing to try.
 - Ask in different ways: by topic ("the one about the Delian League"), by position ("the latest"), by show, or by guest.
 - Try the transport words while something is playing: pause, skip, go back, faster, slower.
 - Set a sleep timer e.g "stop in twenty minutes" and cancel it.
+- Subscribe to a blog or newsletter and play an article. It should read in the voice chosen under Settings, and pause, resume and scrub from the lock screen and headphones like any podcast.
+- Change the reading voice in Settings and play the article again.
+- Open an article on screen and tap the Safari button to check the original page opens.
+- Try Siri without opening the app: "Play the latest In Our Time on Magpie", or "Ask Magpie" to open the microphone.
 - Let an episode play to the end; you should hear a short tone rather than just silence.
 - Take a phone call while listening. Playback should pause and resume by itself when the call ends.
 - Pull your headphones out mid-episode. It should go quiet rather than continue out loud.

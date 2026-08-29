@@ -1,19 +1,20 @@
-Magpie is a podcast and article player made to be used by voice.
+Magpie is a podcast and article player you can drive by voice.
 
-Tap the microphone and ask for what you want: “play the latest In Our Time”, “subscribe to Astral Codex Ten”, or “play the one about Agincourt”. Magpie searches your library, finds the right episode and starts it for you.
+Podcasts, blogs and newsletters live together in one library. Podcast episodes play as normal. Written articles are read aloud with the Apple voice you choose, and they play like any other audio: lock-screen and headphone controls, adjustable speed, a sleep timer, and your place remembered. You do not need screen-reader gestures or a special reading mode to have an article read to you.
 
-Podcasts, blogs and newsletters live together in one simple library. When a publication contains written articles instead of audio, Magpie reads them aloud with your chosen system voice.
+Ask for what you want by tapping the microphone, or through Siri: “play the latest In Our Time”, “subscribe to Astral Codex Ten”, “play the one about Agincourt”. An AI model works out what you meant, so you can ask by topic, title, show, guest or position instead of remembering exact names.
 
-Made for listening without looking
-
-• Find, follow and play shows by speaking
+• Find, follow and play shows by speaking, in the app or through Siri
 • Ask by topic, title, show, guest or position
 • Pause, resume, skip, change speed and set a sleep timer by voice
+• Hear articles read in the system voice you choose
 • Continue from where you stopped on another device
 • Use lock-screen and headphone controls
 • Browse and play everything on screen when you prefer
 
-Accessibility is part of the design, not an extra. Magpie uses clear native controls, supports VoiceOver and Dynamic Type, and gives spoken or non-visual feedback when an action completes.
+Magpie is not a walled garden. It plays open podcast and RSS feeds, and every article keeps a link to the original page, one tap away.
+
+Voice control makes Magpie usable without looking at the screen, which matters most if you are blind or partially sighted, but the app is for anyone. It uses clear native controls, supports VoiceOver and Dynamic Type, and gives spoken or non-visual feedback when an action completes.
 
 Speech is converted to text on your device. Magpie never receives or stores an audio recording of your voice. Before any spoken request or explicit AI web search is sent to an AI provider, the app explains exactly what will be shared and asks for your permission. You can withdraw that permission at any time.
 

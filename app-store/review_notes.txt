@@ -1,4 +1,4 @@
-Magpie is a podcast and article player designed for blind and partially sighted listeners. Almost everything can be done by speaking, so it will not review like an ordinary media app: the library starts empty and fills up by voice.
+Magpie is a podcast and article player that can be driven entirely by voice, in the app or through Siri. It is designed so blind and partially sighted listeners can use every part of it without sight, though it is intended for anyone. It will not review like an ordinary media app: the library starts empty and fills up by voice. Written articles from blogs and newsletters are read aloud with Apple's system voices through the normal player, and every article carries a link to the original page.
 
 No demo account is provided because none exists. Sign in with Apple is the only sign-in method, so please sign in with your own Apple ID. An account is created automatically; there is no username or password to supply.
 
