@@ -137,6 +137,23 @@ final class FakeFeedback: FeedbackPlaying {
     func play(_ cue: Cue) { recorder.events.append(.cue(cue)) }
 }
 
+actor CommandGate {
+    private var isReleased = false
+    private var waiting: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { waiting = $0 }
+    }
+
+    func release() {
+        isReleased = true
+        let waiting = waiting
+        self.waiting = nil
+        waiting?.resume()
+    }
+}
+
 final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     var response: CommandResponse?
     /// Answers in order, for exchanges that take more than one turn. Falls back
@@ -147,6 +164,9 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     var transcripts: [String] = []
     /// How long the backend takes to answer.
     var delay: Duration = .zero
+    /// Holds an answer until a timing-sensitive test has observed the state
+    /// that must precede it.
+    var commandGate: CommandGate?
 
     /// What the phone said was playing, per request.
     var nowPlayingIDs: [Int?] = []
@@ -162,6 +182,7 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
         transcripts.append(transcript)
         nowPlayingIDs.append(nowPlayingEpisodeID)
         turnsSent.append(turns)
+        if let commandGate { await commandGate.wait() }
         if delay > .zero { try? await Task.sleep(for: delay) }
         if let error { throw error }
         if !responses.isEmpty { return responses.removeFirst() }
@@ -290,6 +311,16 @@ private func wait(until condition: () -> Bool) async {
     for _ in 0..<1000 {
         if condition() { return }
         await Task.yield()
+    }
+}
+
+/// Waits through the real notice threshold without racing it against another
+/// timer. The command gate keeps the backend pending until this has settled.
+@MainActor
+private func waitForHoldingLine(_ recorder: Recorder) async {
+    for _ in 0..<100 {
+        if recorder.spoken.contains("One moment.") { return }
+        try? await Task.sleep(for: .milliseconds(50))
     }
 }
 
@@ -480,17 +511,16 @@ struct VoiceControllerTests {
     @Test func saysOneMomentWhileASlowAnswerIsFetched() async {
         // An unexplained silence is indistinguishable from being ignored.
         let (controller, recorder, _, api, _) = makeController()
-        // Two seconds clear of the notice threshold, not four hundred
-        // milliseconds. The margin has to absorb a loaded machine: on busy
-        // shared hardware the notice's sleep overshoots, the answer arrives
-        // first, and the filler is correctly suppressed — a real pass that
-        // reads as a failure. What is being tested is that a slow answer
-        // gets a holding line, and a wider gap tests that just as well.
-        api.delay = VoiceController.noticeAfter + .milliseconds(2000)
+        let gate = CommandGate()
+        api.commandGate = gate
         api.response = CommandResponse(
             action: .unknown, spokenResponse: "Which show?", episode: nil)
 
-        await controller.beginCommand()
+        let command = Task { await controller.beginCommand() }
+        await waitForHoldingLine(recorder)
+        #expect(recorder.spoken == ["One moment."])
+        await gate.release()
+        await command.value
 
         #expect(recorder.spoken == ["One moment.", "Which show?"])
     }
@@ -736,14 +766,18 @@ struct VoiceConversationTests {
         // exchange, and reading it back to the model says nothing.
         let speech = FakeSpeech()
         let api = FakeAPI()
-        api.delay = VoiceController.noticeAfter + .milliseconds(2000)
+        let gate = CommandGate()
+        api.commandGate = gate
         api.response = CommandResponse(
             action: .unknown, spokenResponse: "Which show?", episode: nil)
         let (controller, recorder, _, _, _) = makeController(speech: speech, api: api)
 
-        await controller.beginCommand()
+        let command = Task { await controller.beginCommand() }
+        await waitForHoldingLine(recorder)
+        #expect(recorder.spoken == ["One moment."])
+        await gate.release()
+        await command.value
 
-        #expect(recorder.spoken.contains("One moment."))
         #expect(controller.conversation.turns.map(\.text) == ["play something", "Which show?"])
     }
 
