@@ -81,3 +81,15 @@ async def test_a_long_retry_after_is_reported_without_hammering(respx_mock):
         await fetcher.fetch_feed("https://busy.example/feed")
 
     assert route.call_count == 1
+
+
+async def test_requests_identify_the_app_to_rate_limiters(respx_mock):
+    route = respx_mock.get("https://ua.example/feed").respond(content=b"feed")
+
+    await fetcher.fetch_feed("https://ua.example/feed")
+
+    agent = route.calls[0].request.headers["user-agent"]
+    assert agent == fetcher.FEED_USER_AGENT
+    assert agent.startswith("Hearful/")
+    # Operators deciding whether to throttle us need somewhere to look us up.
+    assert "+https://" in agent
