@@ -137,6 +137,8 @@ struct ShowDetailView: View {
 }
 
 struct EpisodeRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let episode: Episode
     var isCurrent = false
     /// Starts it, from the row, without going to its page first.
@@ -149,7 +151,7 @@ struct EpisodeRow: View {
     var play: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 12) {
             summary
             if let play {
                 Button(action: play) {
@@ -174,21 +176,27 @@ struct EpisodeRow: View {
     }
 
     private var summary: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 12) {
             Artwork(url: episode.imageURL, size: 56)
             VStack(alignment: .leading, spacing: 4) {
                 Text(episode.title)
                     .font(.body.weight(isCurrent ? .semibold : .regular))
-                    .lineLimit(2)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let feedTitle = episode.feedTitle, !feedTitle.isEmpty {
                     Text(feedTitle)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 EpisodeMetadata(episode: episode)
                 if let description = episode.description, !description.isEmpty {
-                    Text(description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 8)

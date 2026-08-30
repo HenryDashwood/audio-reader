@@ -15,7 +15,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "AA00000000000000000000D1"
-               BuildableName = "Hearful.app"
+               BuildableName = "Magpie.app"
                BlueprintName = "Hearful"
                ReferencedContainer = "container:Hearful.xcodeproj">
             </BuildableReference>
@@ -55,7 +55,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AA00000000000000000000D1"
-            BuildableName = "Hearful.app"
+            BuildableName = "Magpie.app"
             BlueprintName = "Hearful"
             ReferencedContainer = "container:Hearful.xcodeproj">
          </BuildableReference>
@@ -72,7 +72,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AA00000000000000000000D1"
-            BuildableName = "Hearful.app"
+            BuildableName = "Magpie.app"
             BlueprintName = "Hearful"
             ReferencedContainer = "container:Hearful.xcodeproj">
          </BuildableReference>

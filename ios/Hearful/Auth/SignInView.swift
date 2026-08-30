@@ -16,9 +16,12 @@ struct SignInView: View {
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
-            Image(systemName: "headphones.circle.fill")
-                .font(.system(size: 96))
-                .foregroundStyle(.tint)
+            Image("MagpieMark")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 112, height: 112)
+                .padding(4)
+                .background(Color(red: 0.055, green: 0.067, blue: 0.078), in: Circle())
                 .accessibilityHidden(true)
             Text("Magpie")
                 .font(.largeTitle.bold())

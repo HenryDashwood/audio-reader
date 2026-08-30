@@ -626,6 +626,9 @@ private struct ArticleWebView: UIViewRepresentable {
         view.isOpaque = false
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
+        configureScrollIndicator(
+            on: view.scrollView,
+            colorScheme: context.environment.colorScheme)
         // The page sits behind both bars, so its own content has to start and
         // stop clear of them — otherwise the first line is under the clock and
         // the last is under the tab bar for good.
@@ -641,6 +644,9 @@ private struct ArticleWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {
+        configureScrollIndicator(
+            on: view.scrollView,
+            colorScheme: context.environment.colorScheme)
         let documentChanged = context.coordinator.loaded != document
         context.coordinator.update(
             episodeID: episodeID,
@@ -652,6 +658,16 @@ private struct ArticleWebView: UIViewRepresentable {
         guard documentChanged else { return }
         context.coordinator.loaded = document
         view.loadHTMLString(document, baseURL: baseURL)
+    }
+
+    /// WKWebView's default indicator is dark even when its transparent page
+    /// sits over the app's dark background. Match SwiftUI lists by keeping the
+    /// native indicator enabled and choosing a contrasting style explicitly.
+    private func configureScrollIndicator(on scrollView: UIScrollView, colorScheme: ColorScheme) {
+        scrollView.showsVerticalScrollIndicator = true
+        scrollView.indicatorStyle = colorScheme == .dark ? .white : .black
+        scrollView.verticalScrollIndicatorInsets = UIEdgeInsets(
+            top: 8, left: 0, bottom: 8, right: 2)
     }
 
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
@@ -774,6 +790,9 @@ private struct ArticleWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             pageIsReady = true
+            // Reveal the affordance once when an article opens; after that it
+            // behaves like every native list indicator and appears on scroll.
+            webView.scrollView.flashScrollIndicators()
             configureMarker()
         }
 

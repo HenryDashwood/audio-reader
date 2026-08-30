@@ -168,7 +168,7 @@ choose_simulator() {
 
 if [[ "$action" == "device" ]]; then
   choose_device
-  app_path="$device_derived_data/Build/Products/Release-iphoneos/Hearful.app"
+  app_path="$device_derived_data/Build/Products/Release-iphoneos/Magpie.app"
 
   echo "Using $device_name on iOS $device_os ($device_id)"
   echo "Release app: $app_path"

@@ -352,13 +352,18 @@ private struct OpenFeedRow: View {
 }
 
 private struct ShowRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let show: Show
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 12) {
             Artwork(url: show.artworkURL)
             VStack(alignment: .leading, spacing: 2) {
-                Text(show.title).font(.headline).lineLimit(2)
+                Text(show.title)
+                    .font(.headline)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(show.itemCountLabel)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

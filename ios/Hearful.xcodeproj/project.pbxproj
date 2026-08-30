@@ -17,7 +17,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		AA00000000000000000000D2 /* Hearful.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hearful.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA00000000000000000000D2 /* Magpie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Magpie.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00000000000000000000D4 /* HearfulTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HearfulTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -64,7 +64,7 @@
 		AA00000000000000000000C2 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				AA00000000000000000000D2 /* Hearful.app */,
+				AA00000000000000000000D2 /* Magpie.app */,
 				AA00000000000000000000D4 /* HearfulTests.xctest */,
 			);
 			name = Products;
@@ -92,7 +92,7 @@
 			packageProductDependencies = (
 			);
 			productName = Hearful;
-			productReference = AA00000000000000000000D2 /* Hearful.app */;
+			productReference = AA00000000000000000000D2 /* Magpie.app */;
 			productType = "com.apple.product-type.application";
 		};
 		AA00000000000000000000D3 /* HearfulTests */ = {
@@ -321,7 +321,8 @@
 				);
 				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = Hearful;
+				PRODUCT_NAME = Magpie;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
@@ -356,7 +357,8 @@
 				);
 				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = Hearful;
+				PRODUCT_NAME = Magpie;
 				PROVISIONING_PROFILE_SPECIFIER = "$(HEARFUL_APP_PROFILE_UUID)";
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -379,7 +381,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hearful.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hearful";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Magpie.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Magpie";
 			};
 			name = Debug;
 		};
@@ -397,7 +399,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Hearful.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Hearful";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Magpie.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Magpie";
 			};
 			name = Release;
 		};

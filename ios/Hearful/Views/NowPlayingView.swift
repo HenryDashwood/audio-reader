@@ -290,6 +290,11 @@ struct MiniPlayer: View {
             }
             .padding(.leading, 10)
             .padding(.trailing, 2)
+            // This is a fixed-height transport control, not reading content.
+            // Cap its type size so accessibility categories cannot make its
+            // buttons overlap the tab bar; the full title remains exposed to
+            // VoiceOver and tapping it opens the unconstrained full player.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .frame(width: metrics.pillWidth ?? TabBarMetrics.fallbackWidth, height: Self.height)
             .glassEffect(in: .capsule)
             .overlay(alignment: .bottom) {
