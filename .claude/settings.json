@@ -3,7 +3,37 @@
     "allow": [
       "Bash(railway status:*)",
       "Bash(railway logs:*)",
-      "Bash(railway redeploy:*)"
+      "Bash(railway redeploy:*)",
+      "Bash(make backend-check)",
+      "Bash(make ios-doctor)",
+      "Bash(make ios-build)",
+      "Bash(make ios-test)",
+      "Bash(make ios-test-latest)",
+      "Bash(make ios-index)",
+      "Bash(make app-store-validate)",
+      "Bash(make app-store-fixtures)",
+      "Bash(cd:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv run ruff:*)",
+      "Bash(uv run ty:*)",
+      "Bash(uv run alembic check:*)",
+      "Bash(uv run alembic history:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(xcrun simctl list:*)",
+      "Bash(xcrun simctl listapps:*)",
+      "Bash(xcrun simctl launch:*)",
+      "Bash(xcrun simctl terminate:*)",
+      "Bash(xcrun simctl io:*)",
+      "Bash(xcrun simctl get_app_container:*)",
+      "Bash(xcrun simctl spawn booted log:*)",
+      "Bash(xcodebuild -version:*)",
+      "Bash(xcodebuild -showsdks:*)",
+      "Bash(xcode-select -p)"
     ]
   }
 }
