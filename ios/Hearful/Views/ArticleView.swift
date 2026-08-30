@@ -49,11 +49,6 @@ struct ArticleView: View {
         // them, so this is the difference between bars that get out of the way
         // and bars that sit there.
         .ignoresSafeArea()
-        // Which leaves the clock sitting on the first line of the article
-        // once it has scrolled up. The system chrome elsewhere in the app
-        // lets content soften beneath it rather than clipping it at a hard
-        // edge, so the reader does the same at the top bezel.
-        .overlay(alignment: .top) { statusBarFade }
         // No title in the bar: it is the same sentence as the heading the
         // article opens with, a foot below it, and the article's own is the
         // one that belongs to the page.
@@ -102,35 +97,6 @@ struct ArticleView: View {
 
     /// The gap between one piece of floating furniture and the next.
     static let gap: CGFloat = 10
-
-    /// A material behind the clock, fully present through the status bar and
-    /// feathered into the page below it. That keeps the clock readable while
-    /// prose blurs and fades on its way behind the bezel, like it does beneath
-    /// the navigation chrome on the shows list.
-    private var statusBarFade: some View {
-        GeometryReader { proxy in
-            let fadeDepth: CGFloat = 32
-            let height = proxy.safeAreaInsets.top + fadeDepth
-            let solidStop = proxy.safeAreaInsets.top / height
-
-            Rectangle()
-                .fill(.thinMaterial)
-                .mask {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black, location: 0),
-                            .init(color: .black, location: solidStop),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom)
-                }
-                .frame(height: height)
-                .ignoresSafeArea(edges: .top)
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
 
     @ViewBuilder
     private var content: some View {
@@ -626,6 +592,11 @@ private struct ArticleWebView: UIViewRepresentable {
         view.isOpaque = false
         view.backgroundColor = .clear
         view.scrollView.backgroundColor = .clear
+        // WKWebView locks a drag to its initially detected axis; SwiftUI's
+        // lists do not. An article is vertically scrollable too, so keeping
+        // that lock only adds a small hesitation before the page follows a
+        // changing finger direction.
+        view.scrollView.isDirectionalLockEnabled = false
         configureScrollIndicator(
             on: view.scrollView,
             colorScheme: context.environment.colorScheme)
@@ -644,7 +615,7 @@ private struct ArticleWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {
-        configureScrollIndicator(
+        updateScrollIndicatorStyle(
             on: view.scrollView,
             colorScheme: context.environment.colorScheme)
         let documentChanged = context.coordinator.loaded != document
@@ -663,11 +634,29 @@ private struct ArticleWebView: UIViewRepresentable {
     /// WKWebView's default indicator is dark even when its transparent page
     /// sits over the app's dark background. Match SwiftUI lists by keeping the
     /// native indicator enabled and choosing a contrasting style explicitly.
+    ///
+    /// The article content still follows the safe areas, but the indicator
+    /// has one fixed track. If UIKit adjusts that track for the floating bars,
+    /// its thumb jumps whenever their controls fade in or out even though the
+    /// content offset has not moved.
     private func configureScrollIndicator(on scrollView: UIScrollView, colorScheme: ColorScheme) {
         scrollView.showsVerticalScrollIndicator = true
-        scrollView.indicatorStyle = colorScheme == .dark ? .white : .black
+        scrollView.automaticallyAdjustsScrollIndicatorInsets = false
         scrollView.verticalScrollIndicatorInsets = UIEdgeInsets(
             top: 8, left: 0, bottom: 8, right: 2)
+        updateScrollIndicatorStyle(on: scrollView, colorScheme: colorScheme)
+    }
+
+    /// Appearance can change while this view is alive. The indicator's
+    /// geometry cannot: writing its insets again while a chrome transition
+    /// redraws the representable makes the thumb recalculate in mid-drag.
+    private func updateScrollIndicatorStyle(
+        on scrollView: UIScrollView,
+        colorScheme: ColorScheme
+    ) {
+        let style: UIScrollView.IndicatorStyle = colorScheme == .dark ? .white : .black
+        guard scrollView.indicatorStyle != style else { return }
+        scrollView.indicatorStyle = style
     }
 
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
