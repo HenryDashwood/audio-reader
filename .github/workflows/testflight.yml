@@ -199,14 +199,14 @@ jobs:
       - name: Verify voice models are not bundled
         run: |
           set -euo pipefail
-          app="$RUNNER_TEMP/Hearful.xcarchive/Products/Applications/Hearful.app"
+          app="$RUNNER_TEMP/Hearful.xcarchive/Products/Applications/Magpie.app"
           bundled=$(find "$app" -type f \( \
             -name '*.onnx' -o \
             -name '*.safetensors' -o \
             -name 'weight.bin' \
           \) -print)
           if [ -n "$bundled" ]; then
-            echo "::error::on-device speech-model files were embedded in Hearful.app"
+            echo "::error::on-device speech-model files were embedded in Magpie.app"
             echo "$bundled"
             exit 1
           fi
