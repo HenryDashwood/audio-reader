@@ -130,6 +130,8 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
         # Mirrors the fallback chain in feeds/articles.py: anything that can
         # yield text marks the episode readable, so articles are playable.
         read.has_text = bool(episode.article_text or episode.content_html or episode.link or episode.description)
+        if episode.audio_url is None and read.has_text:
+            read.word_count = articles.known_word_count(episode)
         if (position := stored.get(episode.id)) is not None:
             read.position_seconds = position.position_seconds
             read.completed = position.completed

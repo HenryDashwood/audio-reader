@@ -101,6 +101,9 @@ class EpisodeRead(BaseModel):
     feed_url: str | None = None
     audio_url: str | None
     duration_seconds: int | None
+    #: Length of a written article when its full text is already known. Null
+    #: for audio, old payloads, and teaser-only articles not yet extracted.
+    word_count: int | None = None
     published_at: datetime | None
     link: str | None
     # Per-episode artwork; the routers fall back to the show's artwork when

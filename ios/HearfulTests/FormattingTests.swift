@@ -42,6 +42,22 @@ struct EpisodeLengthTests {
     }
 }
 
+@Suite("Article word-count labels")
+struct ArticleWordCountTests {
+    @Test func showsTheCountAsWords() {
+        #expect(formatWordCount(850) == "850 words")
+    }
+
+    @Test func usesTheSingular() {
+        #expect(formatWordCount(1) == "1 word")
+    }
+
+    @Test func missingOrInvalidCountsHaveNoLabel() {
+        #expect(formatWordCount(nil) == nil)
+        #expect(formatWordCount(0) == nil)
+    }
+}
+
 @Suite("Listening progress")
 struct ListeningProgressTests {
     private func progress(

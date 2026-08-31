@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes
 from audioreader.latex import with_mathml
 from audioreader.models import Episode
-from audioreader.text import article_text
+from audioreader.text import article_text, word_count
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,26 @@ _STRIPPED_WHOLE = {"script", "style", "annotation", "annotation-xml"}
 #: thousands of characters. Measured on the text, not the markup, so a
 #: paragraph wrapped in a div-per-word template is still a teaser.
 FULL_TEXT_THRESHOLD = 600
+
+
+def known_word_count(episode: Episode) -> int | None:
+    """The article's word count when the full body is already available.
+
+    A short feed body with a link is usually a teaser. Calling its handful of
+    words the article's length would be worse than omitting the count until
+    the full page has been extracted. Articles embedded in full, articles
+    already cached after opening, and linkless pieces can all be counted
+    without another network request.
+    """
+    if episode.article_text:
+        return word_count(episode.article_text) or None
+
+    text = article_text(sanitised(episode.content_html))
+    if episode.link and len(text) < FULL_TEXT_THRESHOLD:
+        return None
+    if not text:
+        text = article_text(sanitised(episode.description))
+    return word_count(text) or None
 
 
 async def content_for(session: AsyncSession, episode: Episode) -> tuple[str, str | None]:

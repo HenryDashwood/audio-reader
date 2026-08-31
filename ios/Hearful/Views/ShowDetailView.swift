@@ -219,13 +219,17 @@ struct EpisodeRow: View {
 
 /// Keeps short metadata labels intact while adapting from compact rows to the
 /// largest Dynamic Type sizes. A compressible HStack lets Text hyphenate words
-/// such as "Article"; these candidates wrap between fields instead.
+/// in a length; these candidates wrap between fields instead.
 private struct EpisodeMetadata: View {
     let episode: Episode
 
-    private var length: String? { formatLength(seconds: episode.durationSeconds) }
+    private var length: String? {
+        episode.isArticle
+            ? formatWordCount(episode.wordCount)
+            : formatLength(seconds: episode.durationSeconds)
+    }
     private var progress: String? { episode.listeningProgress.label }
-    private var hasPrimary: Bool { episode.publishedAt != nil || length != nil || episode.isArticle }
+    private var hasPrimary: Bool { episode.publishedAt != nil || length != nil }
     private var hasStatus: Bool { progress != nil || episode.dismissed == true }
 
     var body: some View {
@@ -260,10 +264,6 @@ private struct EpisodeMetadata: View {
             if let length {
                 if episode.publishedAt != nil { Text("·") }
                 Text(length)
-            } else if episode.isArticle {
-                if episode.publishedAt != nil { Text("·") }
-                Label("Article", systemImage: "doc.plaintext")
-                    .labelStyle(.titleAndIcon)
             }
         }
     }
@@ -295,10 +295,6 @@ private struct EpisodeMetadata: View {
             }
             if let length {
                 Text(length).fixedSize(horizontal: true, vertical: false)
-            } else if episode.isArticle {
-                Label("Article", systemImage: "doc.plaintext")
-                    .labelStyle(.titleAndIcon)
-                    .fixedSize(horizontal: true, vertical: false)
             }
             if let progress {
                 Text(progress)

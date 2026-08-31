@@ -52,6 +52,9 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
     var feedURL: URL? = nil
     let audioURL: URL?
     let durationSeconds: Int?
+    /// Length of the article's full text, where the backend already knows it.
+    /// Optional for audio, teaser-only feeds and payloads cached by older apps.
+    var wordCount: Int? = nil
     let publishedAt: Date?
     let link: URL?
     /// Episode artwork; the backend falls back to the show's artwork, so this
@@ -75,6 +78,7 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
         case feedURL = "feed_url"
         case audioURL = "audio_url"
         case durationSeconds = "duration_seconds"
+        case wordCount = "word_count"
         case publishedAt = "published_at"
         case imageURL = "image_url"
         case positionSeconds = "position_seconds"

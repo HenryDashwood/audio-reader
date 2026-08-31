@@ -576,6 +576,16 @@ struct AuthAndPositionTests {
         #expect(episode.imageURL?.absoluteString == "https://example.com/ep104.jpg")
     }
 
+    @Test func episodeDecodesArticleWordCount() async throws {
+        let json = """
+            {"id":104,"title":"t","description":null,"audio_url":null,
+             "duration_seconds":null,"word_count":1842,"published_at":null,"link":null,
+             "has_text":true}
+            """
+        let episode = try await makeClient(FakeTransport(json: json)).episode(id: 104)
+        #expect(episode.wordCount == 1842)
+    }
+
     @Test func commandDecodesSetSpeed() async throws {
         let json = """
             {"action":"set_speed","spoken_response":"1.5 times speed.",

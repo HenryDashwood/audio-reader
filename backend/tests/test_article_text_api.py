@@ -36,6 +36,19 @@ class TestHasText:
         assert all(e["audio_url"] is None for e in episodes)
         assert all(e["has_text"] is True for e in episodes)
 
+    async def test_teasers_do_not_pretend_to_be_the_whole_article(self, client, respx_mock, article_xml):
+        feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
+        episodes = (await client.get(f"/feeds/{feed_id}/episodes")).json()
+
+        assert all(e["word_count"] is None for e in episodes)
+
+    async def test_full_feed_articles_carry_a_word_count(self, client, respx_mock, article_xml, monkeypatch):
+        monkeypatch.setattr(articles, "FULL_TEXT_THRESHOLD", 10)
+        feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
+        episodes = (await client.get(f"/feeds/{feed_id}/episodes")).json()
+
+        assert episodes[0]["word_count"] == 8
+
 
 class TestEpisodeText:
     async def test_full_feed_content_is_used_without_fetching(self, client, respx_mock, article_xml, monkeypatch):
@@ -80,6 +93,18 @@ class TestEpisodeText:
 
         assert first == second
         assert page.call_count == 1
+
+    async def test_an_extracted_article_reports_its_full_word_count(self, client, respx_mock, article_xml):
+        feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
+        episode = (await client.get(f"/feeds/{feed_id}/episodes")).json()[0]
+        respx_mock.get("https://notesonprogress.example.com/p/sewers").respond(
+            content=ARTICLE_PAGE, content_type="text/html"
+        )
+
+        text = (await client.get(f"/episodes/{episode['id']}/text")).json()["text"]
+        refreshed = (await client.get(f"/episodes/{episode['id']}")).json()
+
+        assert refreshed["word_count"] == len(text.split())
 
     async def test_unreachable_page_still_reads_the_feed_content(self, client, respx_mock, article_xml):
         feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]

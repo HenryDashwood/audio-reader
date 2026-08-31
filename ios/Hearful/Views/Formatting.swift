@@ -16,6 +16,12 @@ func formatLength(seconds: Int?) -> String? {
     return "\(max(1, Int((Double(seconds) / 60).rounded()))) min"
 }
 
+/// Written equivalent of a podcast duration in a list row.
+func formatWordCount(_ count: Int?) -> String? {
+    guard let count, count > 0 else { return nil }
+    return "\(count) \(count == 1 ? "word" : "words")"
+}
+
 /// How far through an episode she is, as a list row should describe it.
 ///
 /// The backend stores a position for anything she has played, including the

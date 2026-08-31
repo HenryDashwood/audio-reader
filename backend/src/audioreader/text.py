@@ -106,6 +106,15 @@ def article_text(value: str | None) -> str:
     return "\n\n".join(article_paragraphs(value))
 
 
+def word_count(value: str | None) -> int:
+    """How many readable whitespace-delimited words are in article text.
+
+    This is the same convention the phone uses to estimate the spoken
+    timeline. Tokens made only from punctuation do not inflate the label.
+    """
+    return sum(1 for token in (value or "").split() if any(character.isalnum() for character in token))
+
+
 #: Letters decomposition leaves alone, and every spelling a transcript might
 #: plausibly use for them. More than one, because expanding the ligature is not
 #: enough on its own: the BBC writes "Æthelstan", speech recognition writes

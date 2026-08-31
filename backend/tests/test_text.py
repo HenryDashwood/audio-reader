@@ -1,5 +1,5 @@
 from audioreader import text
-from audioreader.text import article_paragraphs, article_text, for_speech, summarise
+from audioreader.text import article_paragraphs, article_text, for_speech, summarise, word_count
 
 
 class TestSummarise:
@@ -67,6 +67,17 @@ class TestArticleText:
     def test_handles_none_and_empty(self):
         assert article_paragraphs(None) == []
         assert article_text("") == ""
+
+
+class TestWordCount:
+    def test_counts_prose_not_punctuation(self):
+        assert word_count("One, two... three! -- four?") == 4
+
+    def test_contractions_and_hyphenated_compounds_are_one_word_each(self):
+        assert word_count("It's a reader-friendly count") == 4
+
+    def test_handles_none(self):
+        assert word_count(None) == 0
 
 
 class TestSearchKey:
