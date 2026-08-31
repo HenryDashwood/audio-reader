@@ -150,6 +150,58 @@ struct ArticleReaderTests {
         #expect(player.isPlaying)
     }
 
+    @Test func aSavedFeedTeaserIsRefreshedBeforeItIsRead() async {
+        let cache = makeCache()
+        cache.save(
+            EpisodeText(
+                episodeID: 7, title: "An article",
+                text: "A short introduction. Continue reading"),
+            for: .articleText(episodeID: 7))
+        let api = FakeAPI()
+        api.articleText = String(repeating: "The recovered full article. ", count: 40)
+        let synthesizer = SilentSynthesizer()
+        let player = ArticlePlayer(api: api, cache: cache, synthesizer: synthesizer)
+        let episode = Episode(
+            id: 7, title: "An article", description: nil, audioURL: nil,
+            durationSeconds: nil, publishedAt: nil,
+            link: URL(string: "https://example.com/article"), imageURL: nil,
+            positionSeconds: nil, completed: nil, hasText: true)
+
+        player.play(episode)
+        for _ in 0..<100 where synthesizer.lastSpoken == nil {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(synthesizer.lastSpoken?.contains("recovered full article") == true)
+        #expect(
+            cache.load(EpisodeText.self, for: .articleText(episodeID: 7))?.text
+                == api.articleText)
+    }
+
+    @Test func aSavedFeedTeaserRemainsAnOfflineFallback() async {
+        let cache = makeCache()
+        let teaser = "A short introduction. Continue reading"
+        cache.save(
+            EpisodeText(episodeID: 7, title: "An article", text: teaser),
+            for: .articleText(episodeID: 7))
+        let synthesizer = SilentSynthesizer()
+        let player = ArticlePlayer(
+            api: FailingAPI(), cache: cache, synthesizer: synthesizer)
+        let episode = Episode(
+            id: 7, title: "An article", description: nil, audioURL: nil,
+            durationSeconds: nil, publishedAt: nil,
+            link: URL(string: "https://example.com/article"), imageURL: nil,
+            positionSeconds: nil, completed: nil, hasText: true)
+
+        player.play(episode)
+        for _ in 0..<100 where synthesizer.lastSpoken == nil {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(synthesizer.lastSpoken == teaser)
+        #expect(player.isPlaying)
+    }
+
     @Test func anExpiredSessionIsNotPaperedOver() async {
         // Same rule as the library: showing her the saved copy while every
         // other request 401s hides the one thing she needs to know.

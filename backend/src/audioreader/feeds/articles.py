@@ -80,6 +80,25 @@ _STRIPPED_WHOLE = {"script", "style", "annotation", "annotation-xml"}
 FULL_TEXT_THRESHOLD = 600
 
 
+def _is_cached_feed_fallback(episode: Episode) -> bool:
+    """Whether an earlier failed page extraction was saved as an article.
+
+    A summary-only feed has no body of its own. Older versions fell back to
+    its description when the linked page could not be fetched, then cached
+    that teaser as though extraction had succeeded. Match the exact stored
+    shapes rather than every short article: genuinely brief pieces still
+    deserve a stable cache.
+    """
+    if not (episode.link and episode.article_text):
+        return False
+    fallback_html = sanitised(episode.description)
+    return bool(
+        fallback_html
+        and episode.article_text == article_text(fallback_html)
+        and (episode.article_html is None or episode.article_html == fallback_html)
+    )
+
+
 def known_word_count(episode: Episode) -> int | None:
     """The article's word count when the full body is already available.
 
@@ -89,7 +108,7 @@ def known_word_count(episode: Episode) -> int | None:
     already cached after opening, and linkless pieces can all be counted
     without another network request.
     """
-    if episode.article_text:
+    if episode.article_text and not _is_cached_feed_fallback(episode):
         return word_count(episode.article_text) or None
 
     text = article_text(sanitised(episode.content_html))
@@ -106,29 +125,42 @@ async def content_for(session: AsyncSession, episode: Episode) -> tuple[str, str
     Caches on first success. Failures are not cached, so a page that was
     temporarily down is retried on the next request.
     """
-    if episode.article_text and episode.article_html:
+    cached_feed_fallback = _is_cached_feed_fallback(episode)
+    if episode.article_text and episode.article_html and not cached_feed_fallback:
         return episode.article_text, rendered(episode.article_html)
 
     html = sanitised(episode.content_html)
-    if len(article_text(html)) < FULL_TEXT_THRESHOLD and episode.link:
+    embedded_length = len(article_text(html))
+    page_body_won = False
+    if embedded_length < FULL_TEXT_THRESHOLD and episode.link:
         fetched = await _extract_from_page(episode.link)
         # The page body wins only when it is actually richer than the feed's.
         if fetched and len(article_text(fetched)) > len(article_text(html)):
             html = fetched
+            page_body_won = True
     if not article_text(html):
         html = sanitised(episode.description)
 
     # An article already read aloud keeps the exact text it was read from.
     # Re-deriving it could shift the player's estimated timeline under a
     # position she saved against the old one, and land her in the wrong place.
-    text = episode.article_text or article_text(html)
+    # A known feed fallback is not the historical article text this rule was
+    # designed to preserve. Replace it once the real page becomes available.
+    text = None if cached_feed_fallback and page_body_won else episode.article_text
+    text = text or article_text(html)
     if not text:
         return "", None
 
-    episode.article_text = text
-    episode.article_html = html or None
-    await session.commit()
-    return text, rendered(episode.article_html)
+    # A linked teaser is useful for this response, but it is not a successful
+    # extraction. Leaving it uncached makes the next request retry the page.
+    # Existing poisoned rows remain recognisable by the early check above and
+    # heal themselves as soon as a later fetch succeeds.
+    cacheable = not episode.link or embedded_length >= FULL_TEXT_THRESHOLD or page_body_won
+    if cacheable:
+        episode.article_text = text
+        episode.article_html = html or None
+        await session.commit()
+    return text, rendered(html or None)
 
 
 async def text_for(session: AsyncSession, episode: Episode) -> str | None:

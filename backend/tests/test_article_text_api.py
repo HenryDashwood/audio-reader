@@ -49,6 +49,18 @@ class TestHasText:
 
         assert episodes[0]["word_count"] == 8
 
+    def test_a_cached_feed_fallback_does_not_claim_to_be_the_article(self):
+        episode = Episode(
+            guid="teaser-1",
+            title="A linked article",
+            link="https://example.com/article",
+            description="<p>A short introduction.</p>",
+            article_text="A short introduction.",
+            article_html="<p>A short introduction.</p>",
+        )
+
+        assert articles.known_word_count(episode) is None
+
 
 class TestEpisodeText:
     async def test_full_feed_content_is_used_without_fetching(self, client, respx_mock, article_xml, monkeypatch):
@@ -106,15 +118,55 @@ class TestEpisodeText:
 
         assert refreshed["word_count"] == len(text.split())
 
-    async def test_unreachable_page_still_reads_the_feed_content(self, client, respx_mock, article_xml):
+    async def test_unreachable_page_reads_but_does_not_cache_the_feed_content(
+        self, client, session, respx_mock, article_xml
+    ):
         feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
         episode = (await client.get(f"/feeds/{feed_id}/episodes")).json()[0]
-        respx_mock.get("https://notesonprogress.example.com/p/sewers").respond(status_code=500)
+        page = respx_mock.get("https://notesonprogress.example.com/p/sewers").respond(status_code=500)
 
-        response = await client.get(f"/episodes/{episode['id']}/text")
+        first = await client.get(f"/episodes/{episode['id']}/text")
+        second = await client.get(f"/episodes/{episode['id']}/text")
+        stored = await session.get(Episode, episode["id"])
 
-        assert response.status_code == 200
-        assert "For most of history" in response.json()["text"]
+        assert first.status_code == second.status_code == 200
+        assert "For most of history" in first.json()["text"]
+        assert page.call_count == 2
+        assert stored.article_text is None
+        assert stored.article_html is None
+
+    async def test_a_cached_feed_fallback_is_retried_and_healed(self, client, session, respx_mock):
+        teaser_html = articles.sanitised(
+            '<p>A short introduction.</p><p><a href="https://old.example.com/p/one">Continue reading</a></p>'
+        )
+        feed = Feed(url="https://old.example.com/feed", title="Old")
+        feed.episodes.append(
+            Episode(
+                guid="old-teaser-1",
+                title="A recovered article",
+                link="https://old.example.com/p/one",
+                description=teaser_html,
+                article_text=articles.article_text(teaser_html),
+                # The first article-reader release cached speech before the
+                # companion HTML column existed.
+                article_html=None,
+            )
+        )
+        session.add(feed)
+        await session.commit()
+        episode = feed.episodes[0]
+        page = respx_mock.get(episode.link).respond(content=ARTICLE_PAGE, content_type="text/html")
+
+        first = (await client.get(f"/episodes/{episode.id}/text")).json()
+        second = (await client.get(f"/episodes/{episode.id}/text")).json()
+        await session.refresh(episode)
+
+        assert "Victorian sewer" in first["text"]
+        assert second["text"] == first["text"]
+        assert page.call_count == 1
+        assert episode.article_text == first["text"]
+        assert episode.article_html is not None
+        assert "Victorian sewer" in episode.article_html
 
     async def test_unknown_episode_is_404(self, client):
         assert (await client.get("/episodes/9999/text")).status_code == 404

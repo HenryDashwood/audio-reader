@@ -55,6 +55,10 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// are stale and ignored.
     private var currentUtterance: ObjectIdentifier?
     private var loadTask: Task<Void, Never>?
+    /// Mirrors the backend's teaser boundary. A linked saved copy below this
+    /// size may have come from the old failed-extraction fallback, so give the
+    /// server one chance to replace it before speaking it.
+    private static let likelyTeaserCharacterLimit = 600
     /// Sounded when an article is read to the end. Injectable for tests.
     var feedback: FeedbackPlaying = Feedback.shared
     /// Announces that the article has been read to the end, for the
@@ -235,14 +239,19 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             // it. Reading must use the same copy first: asking the server for
             // text we can see makes a brief outage turn a readable article
             // into a spoken network error.
-            if let article = cache.load(
+            let saved = cache.load(
                 EpisodeText.self,
                 for: .articleText(episodeID: episode.id)
-            ), !article.text.isEmpty {
+            )
+            let savedMayBeFeedTeaser =
+                episode.link != nil
+                && (saved?.text.count ?? Self.likelyTeaserCharacterLimit)
+                    < Self.likelyTeaserCharacterLimit
+            if let saved, !saved.text.isEmpty, !savedMayBeFeedTeaser {
                 guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id else {
                     return
                 }
-                self.scriptLoaded(ArticleScript(text: article.text))
+                self.scriptLoaded(ArticleScript(text: saved.text))
                 return
             }
 
@@ -255,6 +264,16 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
                 self.scriptLoaded(ArticleScript(text: article.text))
             } catch {
                 guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id else {
+                    return
+                }
+                // A suspicious short copy is still better than silence when
+                // she is genuinely offline. Keep it as a fallback, but do not
+                // use it to conceal an expired sign-in session.
+                if (error as? APIError)?.isAuthFailure != true,
+                    let saved,
+                    !saved.text.isEmpty
+                {
+                    self.scriptLoaded(ArticleScript(text: saved.text))
                     return
                 }
                 self.loadFailed(with: error)
