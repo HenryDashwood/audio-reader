@@ -257,9 +257,15 @@ choose_simulator
 
 if [[ "$action" == "doctor" ]]; then
   developer_dir="$(xcode-select -p)"
-  xcode_version="$(xcodebuild -version | paste -sd ' ' -)"
-  swift_version="$(xcrun swift --version 2>&1 | grep -m 1 'Apple Swift version')"
-  xcode_major="$(xcodebuild -version | head -n 1 | sed -E 's/Xcode ([0-9]+).*/\1/')"
+  # Capture each producer completely before selecting a line from its output.
+  # With `pipefail`, `grep -m 1` and `head -n 1` can close their pipe while
+  # Xcode is still writing; the resulting SIGPIPE is exit 141 and used to make
+  # CI fail in the doctor step before it could print a single diagnostic.
+  xcode_output="$(xcodebuild -version)"
+  swift_output="$(xcrun swift --version 2>&1)"
+  xcode_version="$(paste -sd ' ' - <<<"$xcode_output")"
+  swift_version="$(awk '/Apple Swift version/ && !found { print; found=1 }' <<<"$swift_output")"
+  xcode_major="$(sed -nE '1s/Xcode ([0-9]+).*/\1/p' <<<"$xcode_output")"
 
   echo "Developer directory: $developer_dir"
   echo "Xcode: $xcode_version"
