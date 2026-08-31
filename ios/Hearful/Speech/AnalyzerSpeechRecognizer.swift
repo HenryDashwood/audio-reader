@@ -4,20 +4,21 @@ import Speech
 
 private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "speech")
 
-/// Speech recognition on iOS 26's SpeechAnalyzer. Unlike the older
-/// SFSpeechRecognizer this is built for long-form, fully on-device
-/// transcription: no server round trip, no time limit, and it works offline
-/// once the language model has been downloaded.
+/// Apple's iOS 26 system-dictation recogniser, hosted by SpeechAnalyzer.
+/// DictationTranscriber uses the same speech-to-text models as keyboard
+/// Dictation while keeping audio on-device.
 @MainActor
 final class AnalyzerSpeechRecognizer: SpeechRecognizing {
-    /// Keep tentative results for end-of-speech detection, but let the model
-    /// use its full context window. The stock progressive preset includes
-    /// `.fastResults`, which Apple documents as faster but less accurate.
-    static let accuracyBiasedPreset: SpeechTranscriber.Preset = {
-        let progressive = SpeechTranscriber.Preset.progressiveTranscription
-        return SpeechTranscriber.Preset(
+    /// Keep live guesses so the UI can stop promptly, but avoid frequent
+    /// finalisation: Apple documents that option as more responsive at the
+    /// cost of accuracy. Far-field tuning matches the phone-at-a-distance
+    /// conditions in which voice control is normally used.
+    static let accuracyBiasedPreset: DictationTranscriber.Preset = {
+        let progressive = DictationTranscriber.Preset.progressiveShortDictation
+        return DictationTranscriber.Preset(
+            contentHints: progressive.contentHints.union([.farField]),
             transcriptionOptions: progressive.transcriptionOptions,
-            reportingOptions: progressive.reportingOptions.subtracting([.fastResults]),
+            reportingOptions: progressive.reportingOptions.subtracting([.frequentFinalization]),
             attributeOptions: progressive.attributeOptions)
     }()
 
@@ -36,17 +37,27 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     /// Set once any words arrive, which switches the wait from "waiting for
     /// her to begin" to "she has finished".
     private var hasHeardSpeech = false
+    private var onPartial: (@MainActor (String) -> Void)?
 
     init(locale: Locale = Locale(identifier: "en-GB")) {
         self.locale = locale
     }
 
     func listen(onReady: @MainActor () -> Void) async throws -> String {
+        try await listen(onReady: onReady, onPartial: { _ in })
+    }
+
+    func listen(
+        onReady: @MainActor () -> Void,
+        onPartial: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
         hasHeardSpeech = false
-        VoiceAttempt.current?.recogniser = "analyzer"
+        self.onPartial = onPartial
+        defer { self.onPartial = nil }
+        VoiceAttempt.current?.recogniser = "dictation-transcriber"
         try await requestMicrophonePermission()
 
-        let transcriber = SpeechTranscriber(locale: locale, preset: Self.accuracyBiasedPreset)
+        let transcriber = DictationTranscriber(locale: locale, preset: Self.accuracyBiasedPreset)
         try await ensureModelInstalled(for: transcriber)
 
         guard
@@ -84,7 +95,9 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         log.info("analyzer listening")
         onReady()
 
-        defer { cancel() }
+        defer {
+            cancel()
+        }
         return try await collectTranscript(from: transcriber)
     }
 
@@ -99,7 +112,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     /// still has an unfinalised guess in hand is a longer one — so pausing
     /// mid-sentence does not cut her off, and neither does the transcriber
     /// pausing to think.
-    private func collectTranscript(from transcriber: SpeechTranscriber) async throws -> String {
+    private func collectTranscript(from transcriber: DictationTranscriber) async throws -> String {
         finalised = ""
         volatile = ""
 
@@ -113,7 +126,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         }
     }
 
-    private func readResults(from transcriber: SpeechTranscriber) async throws -> String {
+    private func readResults(from transcriber: DictationTranscriber) async throws -> String {
         for try await result in transcriber.results {
             let text = String(result.text.characters)
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -125,6 +138,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
             } else {
                 volatile = text
             }
+            onPartial?(finalised + volatile)
             restartSilenceTimer()
         }
         return finalised + volatile
@@ -269,7 +283,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     }
 
     /// The language model is a download, not part of the OS image.
-    private func ensureModelInstalled(for transcriber: SpeechTranscriber) async throws {
+    private func ensureModelInstalled(for transcriber: DictationTranscriber) async throws {
         if let request = try await AssetInventory.assetInstallationRequest(
             supporting: [transcriber])
         {

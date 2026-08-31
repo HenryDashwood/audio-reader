@@ -28,9 +28,9 @@ struct AIDataSharingConsentView: View {
                             .font(.title2.bold())
 
                         Text(
-                            "Magpie uses OpenRouter and an AI model provider to understand "
-                                + "what you ask it to play and to find publications missing "
-                                + "from the podcast directory."
+                            "Magpie normally turns speech into text on your iPhone. "
+                                + "It uses OpenAI to understand what you ask it to play, "
+                                + "carry out requests and find publications."
                         )
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -41,7 +41,7 @@ struct AIDataSharingConsentView: View {
                         DisclosureRow(
                             icon: "text.bubble",
                             title: "What is shared",
-                            detail: "Recognised words or a publication search, plus relevant episode titles, shows, dates and short descriptions."
+                            detail: "Recognised words or a publication search, plus relevant library details, go to OpenAI. Your live microphone audio stays with Apple's speech recognisers."
                         )
 
                         Divider().padding(.leading, 42)
@@ -49,7 +49,15 @@ struct AIDataSharingConsentView: View {
                         DisclosureRow(
                             icon: "lock.shield",
                             title: "What is not shared",
-                            detail: "No voice recording, name, email address or account identifier."
+                            detail: "Your voice recording is not sent to Magpie or OpenAI and is not stored. OpenAI does not receive your name, email address or account identifier."
+                        )
+
+                        Divider().padding(.leading, 42)
+
+                        DisclosureRow(
+                            icon: "building.columns",
+                            title: "Provider handling",
+                            detail: "OpenAI does not use API data to train its models. It may retain content for up to 30 days for abuse monitoring."
                         )
 
                         Divider().padding(.leading, 42)
@@ -100,7 +108,7 @@ struct AIDataSharingConsentView: View {
                 .disabled(saving)
                 .accessibilityLabel("Allow AI data sharing")
                 .accessibilityHint(
-                    "Allows recognised words, publication searches and relevant episode details to be sent to OpenRouter and an AI model provider"
+                    "Allows recognised words and relevant library details to be sent to OpenAI. Your live voice audio stays with Apple's speech recognisers"
                 )
 
                 Button("Not Now", action: onNotNow)

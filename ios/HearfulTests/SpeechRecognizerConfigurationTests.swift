@@ -6,9 +6,11 @@ import Testing
 @MainActor
 struct SpeechRecognizerConfigurationTests {
     @Test func retainsLiveGuessesWithoutTradingAwayAccuracy() {
-        let options = AnalyzerSpeechRecognizer.accuracyBiasedPreset.reportingOptions
+        let preset = AnalyzerSpeechRecognizer.accuracyBiasedPreset
 
-        #expect(options.contains(.volatileResults))
-        #expect(!options.contains(.fastResults))
+        #expect(preset.reportingOptions.contains(.volatileResults))
+        #expect(!preset.reportingOptions.contains(.frequentFinalization))
+        #expect(preset.contentHints.contains(.shortForm))
+        #expect(preset.contentHints.contains(.farField))
     }
 }

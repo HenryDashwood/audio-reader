@@ -18,9 +18,16 @@ final class FallbackSpeechRecognizer: SpeechRecognizing {
     }
 
     func listen(onReady: @MainActor () -> Void) async throws -> String {
+        try await listen(onReady: onReady, onPartial: { _ in })
+    }
+
+    func listen(
+        onReady: @MainActor () -> Void,
+        onPartial: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
         if !preferredHasFailed {
             do {
-                return try await preferred.listen(onReady: onReady)
+                return try await preferred.listen(onReady: onReady, onPartial: onPartial)
             } catch is SpeechPermissionDenied {
                 // Not a reason to try the backup — it needs the same
                 // permission and would fail the same way, a second or two
@@ -28,7 +35,10 @@ final class FallbackSpeechRecognizer: SpeechRecognizing {
                 // off for the rest of the session either: it is fine, we are
                 // simply not allowed to listen yet.
                 throw SpeechPermissionDenied()
-            } catch {
+            } catch let error {
+                if error is any RecognitionFailureAfterCapture {
+                    throw error
+                }
                 // A failure about this attempt rather than about the
                 // recogniser does not disqualify it. The microphone not
                 // coming up on the first request after launch is the case
@@ -45,7 +55,7 @@ final class FallbackSpeechRecognizer: SpeechRecognizing {
                 }
             }
         }
-        return try await backup.listen(onReady: onReady)
+        return try await backup.listen(onReady: onReady, onPartial: onPartial)
     }
 
     func cancel() {

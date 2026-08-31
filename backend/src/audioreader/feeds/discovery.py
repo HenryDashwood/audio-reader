@@ -36,6 +36,7 @@ from audioreader.feeds.search import (
     feed_for_shared_link,
     loosely_identifies,
     meaningful_words,
+    mentions_substack,
 )
 from audioreader.llm.client import LLMClient, LLMError
 
@@ -805,7 +806,7 @@ def substack_guesses(query: str) -> list[str]:
     guess still goes through fetch, parse and name verification.
     """
     words = meaningful_words(query)
-    if "substack" not in query.casefold() or not words:
+    if not mentions_substack(query) or not words:
         return []
     slugs = ["".join(words)]
     if len(words) > 1:
@@ -813,7 +814,13 @@ def substack_guesses(query: str) -> list[str]:
     return [f"https://{slug}.substack.com/feed" for slug in slugs]
 
 
-async def find_feed_by_name(query: str, llm: LLMClient) -> DiscoveredFeed | None:
+async def find_feed_by_name(
+    query: str,
+    llm: LLMClient,
+    *,
+    attempts: int = 2,
+    candidate_limit: int = 6,
+) -> DiscoveredFeed | None:
     """A verified feed for a spoken publication name, or None.
 
     Every candidate — guessed or model-proposed — is fetched and parsed, and
@@ -833,7 +840,7 @@ async def find_feed_by_name(query: str, llm: LLMClient) -> DiscoveredFeed | None
         if loosely_identifies(query, f"{parsed.title} {feed_url}"):
             return DiscoveredFeed(feed_url=feed_url, title=parsed.title)
 
-    for _attempt in range(2):
+    for _attempt in range(attempts):
         prompt = f'She said: "{query}"'
         if tried:
             prompt += (
@@ -848,7 +855,7 @@ async def find_feed_by_name(query: str, llm: LLMClient) -> DiscoveredFeed | None
             logger.warning("feed discovery failed for %r: %s", query, exc)
             return None
 
-        for url in candidates.urls[:6]:
+        for url in candidates.urls[:candidate_limit]:
             url = url.strip()
             if not url.startswith(("http://", "https://")):
                 url = f"https://{url}"

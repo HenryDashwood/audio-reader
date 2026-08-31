@@ -15,7 +15,7 @@ nonisolated enum KeychainTokenStore {
 
     static var token: String? {
         get {
-            #if DEBUG
+            #if DEBUG || HEARFUL_LOCAL_DEVICE
                 if !TestEnvironment.isRunningTests,
                     let token = DevelopmentAuthentication.token(
                         baseURL: AppConfiguration.apiBaseURL,

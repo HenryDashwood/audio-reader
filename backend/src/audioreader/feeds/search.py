@@ -329,6 +329,31 @@ def meaningful_words(spoken: str) -> list[str]:
     ]
 
 
+def publication_name(spoken: str) -> str:
+    """The identifying part of a spoken publication description.
+
+    Dictation commonly renders brands and media as separate words — notably
+    ``Substack`` as ``sub stack``. Publication types describe where to look,
+    not what the publication is called, so keep them out of directory queries
+    and candidate verification.
+    """
+
+    return " ".join(meaningful_words(spoken)) or spoken.strip()
+
+
+def publication_display_name(spoken: str) -> str:
+    """What to repeat aloud after removing a dictated platform suffix."""
+
+    without_substack = re.sub(r"\bsub(?:[\s-]+)?stack\b", "", spoken, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", without_substack).strip() or spoken.strip()
+
+
+def mentions_substack(spoken: str) -> bool:
+    """Whether speech named Substack, including the split dictation form."""
+
+    return "substack" in _normalise(spoken).split()
+
+
 def loosely_identifies(spoken: str, haystack: str) -> bool:
     """Does speech identify text whose words may be glued in a URL?"""
 
@@ -453,7 +478,13 @@ def _country_code(value: str | None) -> str | None:
 
 def _normalise(value: str) -> str:
     stripped = unicodedata.normalize("NFKD", value.casefold())
-    return re.sub(r"[^a-z0-9 ]", " ", stripped).strip()
+    words = re.sub(r"[^a-z0-9 ]", " ", stripped)
+    words = re.sub(r"\s+", " ", words).strip()
+    # Apple's dictation model hears the two ordinary English words clearly,
+    # but often does not join the product name. Canonicalising it here lets
+    # the existing generic-publication filter discard it without weakening
+    # the safety check for unrelated names.
+    return re.sub(r"\bsub stack\b", "substack", words)
 
 
 # Words likely to be spoken but carrying no identifying information.

@@ -33,4 +33,20 @@ struct DevelopmentAuthenticationTests {
             environment: ["HEARFUL_DEVELOPMENT_AUTH_TOKEN": "another-local-token"])
         #expect(token == nil)
     }
+
+    @Test(arguments: ["10.0.0.2", "172.16.1.2", "172.31.255.254", "192.168.1.2"])
+    func privateLANAddressesCanUseTheDevelopmentToken(host: String) {
+        let token = DevelopmentAuthentication.token(
+            baseURL: URL(string: "http://\(host):8000")!, environment: [:])
+
+        #expect(token == "hearful-local-development")
+    }
+
+    @Test(arguments: ["172.15.1.2", "172.32.1.2", "192.0.2.1"])
+    func publicAddressesNeverReceiveTheDevelopmentToken(host: String) {
+        let token = DevelopmentAuthentication.token(
+            baseURL: URL(string: "http://\(host):8000")!, environment: [:])
+
+        #expect(token == nil)
+    }
 }

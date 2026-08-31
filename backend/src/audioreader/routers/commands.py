@@ -1,17 +1,26 @@
+import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 import logfire
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader import telemetry
 from audioreader.auth.dependencies import get_current_user
 from audioreader.commands import service
+from audioreader.commands.conversation import AssistantDelta, ConversationFinished, converse
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.llm.client import LLMClient, LLMError
-from audioreader.llm.provider import get_discovery_llm_client, get_llm_client
+from audioreader.llm.openai_responses import OpenAIResponsesClient
+from audioreader.llm.provider import (
+    get_conversation_llm_client,
+    get_discovery_llm_client,
+    get_llm_client,
+)
 from audioreader.models import User, utcnow
 from audioreader.ratelimit import SlidingWindow
 from audioreader.routers.auth import has_current_ai_data_sharing_consent
@@ -26,6 +35,7 @@ router = APIRouter(tags=["commands"])
 Session = Annotated[AsyncSession, Depends(get_session)]
 LLM = Annotated[LLMClient, Depends(get_llm_client)]
 DiscoveryLLM = Annotated[LLMClient, Depends(get_discovery_llm_client)]
+ConversationLLM = Annotated[OpenAIResponsesClient, Depends(get_conversation_llm_client)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 # Even failures must give the app something to say: an error tone alone tells
@@ -34,6 +44,14 @@ OUTAGE_RESPONSE = "Sorry, I cannot reach my assistant right now. Please try agai
 
 _burst_limit = SlidingWindow(settings.command_rate_limit_per_minute, window_seconds=60)
 _daily_limit = SlidingWindow(settings.command_rate_limit_per_day, window_seconds=86400)
+
+
+def _model_name() -> str:
+    if settings.llm_provider is LLMProvider.OPENROUTER:
+        return settings.openrouter_model
+    if settings.llm_provider is LLMProvider.OPENAI:
+        return settings.openai_model
+    return settings.llm_model
 
 
 def check_rate_limit(user: CurrentUser) -> None:
@@ -92,7 +110,7 @@ async def command(
             "command",
             telemetry_id=str(user.telemetry_id),
             provider=settings.llm_provider.value,
-            model=settings.openrouter_model if settings.llm_provider is LLMProvider.OPENROUTER else settings.llm_model,
+            model=_model_name(),
             # How much she actually said. A request that arrives as two or
             # three words is usually the phone cutting her off rather than the
             # model misreading her, and the two are indistinguishable from the
@@ -165,3 +183,65 @@ async def command(
             speed=result.speed,
             expects_reply=result.expects_reply,
         )
+
+
+@router.post("/command/stream", dependencies=[Depends(check_rate_limit)])
+async def command_stream(
+    body: CommandRequest,
+    session: Session,
+    llm: ConversationLLM,
+    user: CurrentUser,
+) -> StreamingResponse:
+    """Stream the model's words while it searches and operates Magpie.
+
+    NDJSON keeps the wire format deliberately small: text deltas arrive as
+    complete lines, followed by one ordinary CommandResponse which older app
+    logic can handle unchanged.
+    """
+    if not has_current_ai_data_sharing_consent(user):
+        raise HTTPException(
+            status_code=403,
+            detail={"spoken_response": "Before using voice commands, open Magpie and allow AI data sharing."},
+        )
+
+    async def events() -> AsyncIterator[bytes]:
+        try:
+            async for event in converse(
+                session,
+                llm,
+                transcript=body.transcript,
+                user=user,
+                now_playing_episode_id=body.now_playing_episode_id,
+                turns=body.turns,
+                country=body.country,
+            ):
+                if isinstance(event, AssistantDelta):
+                    yield _line({"type": "assistant_delta", "text": event.text})
+                    continue
+                if isinstance(event, ConversationFinished):
+                    result = event.result
+                    episode = None
+                    if result.episode is not None:
+                        episode = (await episodes_read(session, user, [result.episode]))[0]
+                    response = CommandResponse(
+                        action=result.action.value,
+                        spoken_response=result.spoken_response,
+                        episode=episode,
+                        speed=result.speed,
+                        expects_reply=result.expects_reply,
+                    )
+                    yield _line({"type": "result", "response": response.model_dump(mode="json")})
+                    return
+        except LLMError as exc:
+            logger.warning("streamed command failed: %s", exc)
+            yield _line({"type": "error", "spoken_response": OUTAGE_RESPONSE})
+
+    return StreamingResponse(
+        events(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _line(value: dict) -> bytes:
+    return (json.dumps(value, separators=(",", ":")) + "\n").encode()

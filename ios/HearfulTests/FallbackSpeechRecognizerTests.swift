@@ -22,6 +22,18 @@ private final class ScriptedRecognizer: SpeechRecognizing {
 
 private struct Boom: Error {}
 
+private struct DroppedAfterReady: RecognitionFailureAfterCapture {}
+
+@MainActor
+private final class StartedThenFailedRecognizer: SpeechRecognizing {
+    func listen(onReady: @MainActor () -> Void) async throws -> String {
+        onReady()
+        throw DroppedAfterReady()
+    }
+
+    func cancel() {}
+}
+
 @Suite("Fallback speech recognizer")
 @MainActor
 struct FallbackSpeechRecognizerTests {
@@ -84,6 +96,17 @@ struct FallbackSpeechRecognizerTests {
         _ = try await recognizer.listen { readyCount += 1 }
 
         #expect(readyCount == 1)
+    }
+
+    @Test func doesNotStartABackupAfterTheUserWasToldToSpeak() async {
+        let backup = ScriptedRecognizer(.success("words the backup could not have heard"))
+        let recognizer = FallbackSpeechRecognizer(
+            preferred: StartedThenFailedRecognizer(), backup: backup)
+
+        await #expect(throws: DroppedAfterReady.self) {
+            _ = try await recognizer.listen()
+        }
+        #expect(backup.listenCount == 0)
     }
 
     @Test func cancelReachesBoth() async {

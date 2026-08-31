@@ -4,6 +4,7 @@ from audioreader.config import settings
 from audioreader.llm.anthropic_client import AnthropicClient
 from audioreader.llm.client import LLMClient
 from audioreader.llm.openai_compatible import OpenAICompatibleClient
+from audioreader.llm.openai_responses import OpenAIResponsesClient
 from audioreader.settings_types import LLMProvider
 
 # Fail closed: a provider endpoint that may retain or train on a listener's
@@ -38,6 +39,15 @@ def build_llm_client() -> LLMClient:
                     "provider": OPENROUTER_PRIVACY,
                 },
             )
+        case LLMProvider.OPENAI:
+            if not settings.openai_api_key:
+                raise RuntimeError("OPENAI_API_KEY is not set")
+            return OpenAIResponsesClient(
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+                url=settings.openai_responses_url,
+                reasoning_effort=settings.openai_reasoning_effort,
+            )
 
 
 def build_discovery_llm_client() -> LLMClient:
@@ -69,6 +79,30 @@ def build_discovery_llm_client() -> LLMClient:
                 timeout=settings.discovery_timeout_seconds,
                 extra_payload=extra,
             )
+        case LLMProvider.OPENAI:
+            if not settings.openai_api_key:
+                raise RuntimeError("OPENAI_API_KEY is not set")
+            return OpenAIResponsesClient(
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+                url=settings.openai_responses_url,
+                reasoning_effort=settings.openai_reasoning_effort,
+                timeout=settings.discovery_timeout_seconds,
+                web_search=settings.discovery_web_search,
+            )
+
+
+def build_conversation_llm_client() -> OpenAIResponsesClient:
+    """Direct Responses client used by the streamed voice conversation."""
+    if not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+    return OpenAIResponsesClient(
+        api_key=settings.openai_api_key,
+        model=settings.openai_model,
+        url=settings.openai_responses_url,
+        reasoning_effort=settings.openai_reasoning_effort,
+        timeout=settings.discovery_timeout_seconds,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -89,3 +123,12 @@ def _cached_discovery_client() -> LLMClient:
 def get_discovery_llm_client() -> LLMClient:
     """FastAPI dependency; overridden with a fake in tests."""
     return _cached_discovery_client()
+
+
+@lru_cache(maxsize=1)
+def _cached_conversation_client() -> OpenAIResponsesClient:
+    return build_conversation_llm_client()
+
+
+def get_conversation_llm_client() -> OpenAIResponsesClient:
+    return _cached_conversation_client()

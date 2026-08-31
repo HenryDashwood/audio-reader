@@ -1,4 +1,4 @@
-.PHONY: backend-dev backend-check ios-doctor ios-build ios-index ios-test ios-test-latest ios-phone app-store-validate app-store-fixtures app-store-backend app-store-screenshot app-store-sync
+.PHONY: backend-dev backend-check ios-doctor ios-build ios-index ios-test ios-test-latest ios-phone ios-phone-debug ios-phone-debug-stop app-store-validate app-store-fixtures app-store-backend app-store-screenshot app-store-sync
 
 backend-dev:
 	docker compose up -d db
@@ -30,6 +30,12 @@ ios-test-latest:
 
 ios-phone:
 	@./scripts/ios-dev.sh device
+
+ios-phone-debug:
+	@./scripts/ios-phone-debug.sh
+
+ios-phone-debug-stop:
+	@./scripts/ios-phone-debug.sh stop
 
 app-store-validate:
 	@python3 scripts/app_store_sync.py validate

@@ -59,18 +59,24 @@ async def _poll_forever(interval_seconds: int) -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # First thing in the logs, so a misconfigured deployment is obvious
     # immediately rather than as a connection error further down.
+    if settings.llm_provider is LLMProvider.OPENROUTER:
+        model = settings.openrouter_model
+    elif settings.llm_provider is LLMProvider.OPENAI:
+        model = settings.openai_model
+    else:
+        model = settings.llm_model
     logger.info(
         "starting: database=%s llm=%s/%s poll=%ss",
         redacted_database_url(settings.database_url),
         settings.llm_provider,
-        settings.openrouter_model if settings.llm_provider is LLMProvider.OPENROUTER else settings.llm_model,
+        model,
         settings.poll_interval_seconds,
     )
 
     if settings.development_auth_enabled:
         async with SessionMaker() as session:
             await auth_service.development_user(session)
-        logger.warning("development authentication is enabled for the local simulator")
+        logger.warning("development authentication is enabled for local clients")
 
     poll_task = None
     if settings.poll_interval_seconds > 0:

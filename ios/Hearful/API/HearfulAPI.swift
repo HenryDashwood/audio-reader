@@ -16,6 +16,12 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
         transcript: String, nowPlayingEpisodeID: Int?, turns: [ConversationTurn],
         traceparent: String?
     ) async throws -> CommandResponse
+    /// Text arrives as the model writes it, followed by the same final command
+    /// result used by the non-streaming endpoint.
+    nonisolated func commandStream(
+        transcript: String, nowPlayingEpisodeID: Int?, turns: [ConversationTurn],
+        traceparent: String?
+    ) -> AsyncThrowingStream<CommandStreamEvent, Error>
     func episode(id: Int) async throws -> Episode
     func articleText(episodeID: Int) async throws -> EpisodeText
     func recentEpisodes(limit: Int) async throws -> [Episode]
@@ -57,6 +63,27 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
 }
 
 extension HearfulAPIProtocol {
+    nonisolated func commandStream(
+        transcript: String, nowPlayingEpisodeID: Int?, turns: [ConversationTurn],
+        traceparent: String?
+    ) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let response = try await command(
+                        transcript: transcript, nowPlayingEpisodeID: nowPlayingEpisodeID,
+                        turns: turns, traceparent: traceparent)
+                    continuation.yield(.assistantDelta(response.spokenResponse))
+                    continuation.yield(.result(response))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
     // Keeps test doubles that do not exercise Latest source-compatible.
     func clearLatest() async throws {
         throw APIError(underlying: "Clearing Latest is not implemented by this API client")
@@ -151,6 +178,106 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
                 turns: turns,
                 country: Self.countryCode))
         return try await send(request)
+    }
+
+    nonisolated func commandStream(
+        transcript: String, nowPlayingEpisodeID: Int? = nil,
+        turns: [ConversationTurn] = [], traceparent: String? = nil
+    ) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+        guard let session = transport as? URLSession else {
+            return fallbackCommandStream(
+                transcript: transcript, nowPlayingEpisodeID: nowPlayingEpisodeID,
+                turns: turns, traceparent: traceparent)
+        }
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var request = URLRequest(url: baseURL.appendingPathComponent("command/stream"))
+                    request.httpMethod = "POST"
+                    request.timeoutInterval = 300
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue(traceparent, forHTTPHeaderField: "traceparent")
+                    if let token = Self.tokenProvider() {
+                        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    }
+                    request.httpBody = try JSONEncoder().encode(
+                        CommandRequest(
+                            transcript: transcript,
+                            nowPlayingEpisodeID: nowPlayingEpisodeID,
+                            turns: turns,
+                            country: Self.countryCode))
+
+                    let (bytes, response) = try await session.bytes(for: request)
+                    guard let http = response as? HTTPURLResponse else {
+                        throw APIError(underlying: "response was not HTTP")
+                    }
+                    guard (200..<300).contains(http.statusCode) else {
+                        var data = Data()
+                        for try await byte in bytes { data.append(byte) }
+                        if http.statusCode == 401 {
+                            NotificationCenter.default.post(name: .hearfulAuthRequired, object: nil)
+                        }
+                        throw APIError(
+                            spokenResponse: Self.spokenResponse(from: data)
+                                ?? APIError.genericSpokenResponse,
+                            underlying: "HTTP \(http.statusCode)",
+                            isAuthFailure: http.statusCode == 401)
+                    }
+
+                    for try await line in bytes.lines where !line.isEmpty {
+                        let envelope = try Self.decoder.decode(
+                            CommandStreamEnvelope.self, from: Data(line.utf8))
+                        switch envelope.type {
+                        case "assistant_delta":
+                            if let text = envelope.text { continuation.yield(.assistantDelta(text)) }
+                        case "result":
+                            guard let response = envelope.response else {
+                                throw APIError(underlying: "stream result was empty")
+                            }
+                            continuation.yield(.result(response))
+                        case "error":
+                            throw APIError(
+                                spokenResponse: envelope.spokenResponse
+                                    ?? APIError.genericSpokenResponse,
+                                underlying: "streamed command failed")
+                        default:
+                            continue
+                        }
+                    }
+                    continuation.finish()
+                } catch let error as APIError {
+                    continuation.finish(throwing: error)
+                } catch {
+                    continuation.finish(
+                        throwing: APIError(
+                            spokenResponse: "I cannot reach the internet right now. Please try again shortly.",
+                            underlying: error.localizedDescription))
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
+    }
+
+    nonisolated private func fallbackCommandStream(
+        transcript: String, nowPlayingEpisodeID: Int?, turns: [ConversationTurn],
+        traceparent: String?
+    ) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let response = try await command(
+                        transcript: transcript, nowPlayingEpisodeID: nowPlayingEpisodeID,
+                        turns: turns, traceparent: traceparent)
+                    continuation.yield(.assistantDelta(response.spokenResponse))
+                    continuation.yield(.result(response))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { @Sendable _ in task.cancel() }
+        }
     }
 
     func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String?) async throws {

@@ -11,3 +11,8 @@
 protocol TransientRecognitionFailure: Error {
     var isTransient: Bool { get }
 }
+
+/// The recogniser had already told her to speak before it failed. Starting a
+/// backup at that point would silently ask her to repeat words that have
+/// already gone, so the fallback must surface the failure instead.
+protocol RecognitionFailureAfterCapture: Error {}

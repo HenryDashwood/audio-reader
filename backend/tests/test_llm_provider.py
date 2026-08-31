@@ -3,6 +3,7 @@ import pytest
 from audioreader.llm.anthropic_client import AnthropicClient
 from audioreader.llm.client import LLMClient
 from audioreader.llm.openai_compatible import OpenAICompatibleClient
+from audioreader.llm.openai_responses import OpenAIResponsesClient
 from audioreader.llm.provider import build_discovery_llm_client, build_llm_client
 from audioreader.settings_types import LLMProvider
 
@@ -28,6 +29,15 @@ class TestBuildLLMClient:
             "zdr": True,
         }
 
+    def test_direct_openai_provider(self, monkeypatch):
+        from audioreader.config import settings
+
+        monkeypatch.setattr(settings, "llm_provider", LLMProvider.OPENAI)
+        monkeypatch.setattr(settings, "openai_api_key", "sk-test")
+        client = build_llm_client()
+        assert isinstance(client, OpenAIResponsesClient)
+        assert client.model == "gpt-5.6-luna"
+
     def test_missing_key_fails_loudly(self, monkeypatch):
         # Better to fail at startup than to serve 503s to a blind user.
         from audioreader.config import settings
@@ -51,6 +61,6 @@ class TestBuildLLMClient:
 
 
 class TestProtocolConformance:
-    @pytest.mark.parametrize("client_class", [AnthropicClient, OpenAICompatibleClient])
+    @pytest.mark.parametrize("client_class", [AnthropicClient, OpenAICompatibleClient, OpenAIResponsesClient])
     def test_satisfies_llm_client_protocol(self, client_class):
         assert issubclass(client_class, LLMClient)

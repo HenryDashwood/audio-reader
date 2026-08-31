@@ -22,14 +22,15 @@ management, search, and the LLM-based voice action processing to the backend.
 - `ios/` — SwiftUI app, targeting **iOS 26+**. Ships as **Magpie**; the Xcode
   project, target, and bundle identifier keep the original `Hearful` name.
 
-The deployment target is iOS 26 because `AnalyzerSpeechRecognizer` uses
-`SpeechAnalyzer`, which is the only recogniser that transcribes long-form
-speech on-device with no time limit. There is a fallback to the older
-`SFSpeechRecognizer` for devices where the analyser's models are missing (the
-simulator, notably), so lowering the target is possible — it needs
-`@available(iOS 26, *)` on that one class and a check around
-`.allowBluetoothHFP` — but it would mean most users landing on the weaker
-recogniser.
+Voice commands use iOS 26 `DictationTranscriber` as the primary recogniser. It
+uses the same on-device model family as keyboard Dictation and is tuned for
+short, far-field commands. If its model or microphone route is unavailable,
+the app falls back to Apple's older `SFSpeechRecognizer`. Microphone audio is
+never sent to Magpie's backend or to OpenAI.
+The recognised text is sent to OpenAI's Responses API, which streams its reply
+and calls narrowly scoped Magpie tools to search, subscribe, play, file, or
+change speed. Conversation history stays on the phone and is sent back only
+for the few turns needed to answer a clarification.
 
 ## iOS development
 
@@ -43,6 +44,7 @@ make ios-index        # refresh Cursor's local SourceKit-LSP build settings
 make ios-test         # run the full Swift test suite there
 make ios-test-latest  # also check the newest installed runtime
 make ios-phone        # Release build, install over Wi-Fi, and launch on the paired iPhone
+make ios-phone-debug  # same Release install, pointed at this Mac's local API
 ```
 
 The commands choose an available iPhone automatically and keep DerivedData in
@@ -109,6 +111,22 @@ clearing any laptop address remembered by an older development run. Set
 intentional. If more than one iPhone is paired, select one with
 `IOS_DEVICE_ID=<udid> make ios-phone`. To verify device selection without
 building or touching the phone, run `IOS_DEVICE_DRY_RUN=1 make ios-phone`.
+
+For phone-to-Mac development, use the combined local-device shortcut:
+
+```bash
+make ios-phone-debug
+```
+
+`ios-phone-debug` starts PostgreSQL, repairs a stale database container with no
+published port if necessary, runs migrations, and leaves a reloadable local
+backend running in the background. It waits for that backend to be healthy,
+then automatically uses the Mac's active LAN address on port 8000 and installs
+a Release build so App Intents and Siri shortcuts register. This specific
+local Release build uses the development account; ordinary Release and App
+Store builds cannot. Override the address with `IOS_DEVICE_API_URL` if
+necessary. Backend output is in `build/phone-debug/backend.log`; stop its
+managed process with `make ios-phone-debug-stop`.
 
 Gotchas that cost real time, in the order they bite:
 
@@ -262,6 +280,11 @@ no useful microphone), launch with a canned transcript:
 SIMCTL_CHILD_HEARFUL_FAKE_TRANSCRIPT="play the one about the aliens lady" xcrun simctl launch booted com.henrydashwood.hearful
 ```
 
+That deterministic path bypasses every recogniser, so command-routing tests do
+not depend on acoustic transcription. Unit tests separately cover Realtime
+event parsing and the fallback boundary. A physical-device check is still
+required when changing microphone capture or provider session settings.
+
 ## Backend development
 
 Requires [uv](https://docs.astral.sh/uv/) and Docker.
@@ -323,9 +346,13 @@ development needs no configuration.
 - `AUDIOREADER_COMMAND_RATE_LIMIT_PER_MINUTE` / `_PER_DAY` — what one account
   may spend on spoken commands (defaults 12 and 500; 0 disables either).
   In-process, so with several replicas the effective limit multiplies.
+- `OPENAI_API_KEY` (or `AUDIOREADER_OPENAI_API_KEY`) — calls OpenAI Responses
+  for streamed voice understanding. The standard key is never sent to the app.
+- `AUDIOREADER_OPENAI_MODEL` / `_REASONING_EFFORT` — direct Responses model
+  and reasoning level (defaults `gpt-5.6-luna` and `none`).
 - `AUDIOREADER_SESSION_IDLE_TIMEOUT_DAYS` — how long a session token stays
   valid after its last use (default 180; 0 disables expiry)
-- `AUDIOREADER_DEVELOPMENT_AUTH_TOKEN` — enables the fixed local simulator
+- `AUDIOREADER_DEVELOPMENT_AUTH_TOKEN` — enables the fixed local development
   account only when `AUDIOREADER_ENVIRONMENT=development`; production rejects
   any non-empty value
 - `AUDIOREADER_FEED_FAILURE_THRESHOLD` — consecutive failed polls before a

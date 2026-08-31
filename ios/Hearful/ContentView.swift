@@ -257,8 +257,14 @@ struct VoiceSheet: View {
                 // answers that look like the model being stupid. It is also
                 // what gets sent back with her next sentence, so the exchange
                 // on screen is exactly the exchange the model reads.
-                if !controller.conversation.isEmpty {
-                    TranscriptView(turns: controller.conversation.turns)
+                if !controller.conversation.isEmpty
+                    || !controller.liveUserText.isEmpty
+                    || !controller.liveAssistantText.isEmpty
+                {
+                    TranscriptView(
+                        turns: controller.conversation.turns,
+                        liveUserText: controller.liveUserText,
+                        liveAssistantText: controller.liveAssistantText)
                         // Between the microphone and the close button: it is
                         // the record of what happened, which matters more than
                         // the escape hatch and less than the thing she came for.
@@ -339,6 +345,7 @@ struct VoiceSheet: View {
     private var icon: String {
         switch controller.state {
         case .idle: "mic.circle.fill"
+        case .preparing: "mic.circle"
         case .listening: "waveform.circle.fill"
         case .thinking: "ellipsis.circle.fill"
         case .playing: "speaker.wave.2.circle.fill"
@@ -357,8 +364,9 @@ struct VoiceSheet: View {
                     ? "Double tap to say what you would like"
                     : "Tap anywhere and say what you would like")
                 : controller.lastSpokenResponse
+        case .preparing: "Getting ready…"
         case .listening: "Listening…"
-        case .thinking: "One moment…"
+        case .thinking: "Thinking…"
         case .playing(let episode): "Playing \(episode.title)"
         }
     }
@@ -374,6 +382,8 @@ struct VoiceSheet: View {
 /// at large type, or seen by someone who cannot tell the two tints apart.
 struct TranscriptView: View {
     let turns: [ConversationTurn]
+    var liveUserText = ""
+    var liveAssistantText = ""
 
     /// Enough for the last few exchanges without crowding out the microphone,
     /// which she has to be able to hit without aiming. The sheet's large
@@ -402,6 +412,12 @@ struct TranscriptView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("\(Self.name(of: turn.speaker)) said: \(turn.text)")
                 }
+                if !liveUserText.isEmpty {
+                    liveTurn(name: "You", text: liveUserText, isUser: true)
+                }
+                if !liveAssistantText.isEmpty {
+                    liveTurn(name: "Magpie", text: liveAssistantText, isUser: false)
+                }
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 8)
@@ -413,6 +429,22 @@ struct TranscriptView: View {
         // loose text between the microphone and the close button.
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Conversation")
+    }
+
+    private func liveTurn(name: String, text: String, isUser: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(name)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.body)
+                .foregroundStyle(isUser ? .primary : .secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Partial dictation changes word by word. Let VoiceOver read the final
+        // turn once rather than repeatedly interrupting itself for every edit.
+        .accessibilityHidden(true)
     }
 
     private static func name(of speaker: ConversationTurn.Speaker) -> String {
@@ -428,11 +460,13 @@ extension VoiceController {
     @MainActor
     static func live(telemetryAccountID: String? = nil) -> VoiceController {
         let canned = ProcessInfo.processInfo.environment["HEARFUL_FAKE_TRANSCRIPT"]
-        // Prefer iOS 26's on-device analyser; fall back to the older recogniser
-        // where its models are unavailable (notably the simulator).
+        let api = HearfulAPI()
+        // Apple's DictationTranscriber uses the same model family as keyboard
+        // Dictation, which is both faster and more accurate for these short
+        // commands in real-device testing. The older Apple recogniser remains
+        // available when the newer on-device model cannot initialise.
         let speech = FallbackSpeechRecognizer(
             preferred: AnalyzerSpeechRecognizer(), backup: SpeechRecognizer())
-        let api = HearfulAPI()
         return VoiceController(
             api: api,
             speech: canned.map(CannedSpeechRecognizer.init(transcript:)) ?? speech,

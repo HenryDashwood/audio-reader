@@ -39,6 +39,11 @@ final class FakeSpeech: SpeechRecognizing {
     /// which is nothing; the older recogniser fails instead. Both reach the
     /// controller, so both are worth testing.
     var failsWhenCancelled = false
+    /// Replacement-style partials delivered before the final transcript.
+    var partials: [String] = []
+    /// Holds setup before the microphone becomes ready, so the controller can
+    /// prove it does not advertise a live microphone prematurely.
+    var readyGate: CommandGate?
     private var pending: CheckedContinuation<String, Error>?
 
     /// Whether the microphone is open right now, so a test can close the sheet
@@ -46,9 +51,18 @@ final class FakeSpeech: SpeechRecognizing {
     var isListening: Bool { pending != nil }
 
     func listen(onReady: @MainActor () -> Void) async throws -> String {
+        try await listen(onReady: onReady, onPartial: { _ in })
+    }
+
+    func listen(
+        onReady: @MainActor () -> Void,
+        onPartial: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
         listenCount += 1
         if let error { throw error }
+        if let readyGate { await readyGate.wait() }
         onReady()
+        for partial in partials { onPartial(partial) }
         guard keepsListening else { return next() }
         return try await withCheckedThrowingContinuation { continuation in
             pending = continuation
@@ -384,6 +398,23 @@ struct VoiceControllerTests {
         #expect(recorder.events.contains(.cue(.listening)))
     }
 
+    @Test func doesNotSayListeningBeforeTheMicrophoneIsReady() async {
+        let speech = FakeSpeech()
+        let gate = CommandGate()
+        speech.readyGate = gate
+        let (controller, recorder, _, _, _) = makeController(speech: speech)
+
+        let command = Task { await controller.beginCommand() }
+        await wait { speech.listenCount == 1 }
+
+        #expect(controller.state == .preparing)
+        #expect(!recorder.events.contains(.cue(.listening)))
+
+        await gate.release()
+        await command.value
+        #expect(recorder.events.contains(.cue(.listening)))
+    }
+
     @Test func theGoAheadWaitsForTheMicrophone() async {
         // Told to speak before the mic is capturing, her first words are lost —
         // and setting up can mean a permission prompt or a model download.
@@ -508,8 +539,25 @@ struct VoiceControllerTests {
         #expect(controller.state == .idle)
     }
 
-    @Test func saysOneMomentWhileASlowAnswerIsFetched() async {
-        // An unexplained silence is indistinguishable from being ignored.
+    @Test func partialDictationIsVisibleBeforeTheTurnEnds() async {
+        let speech = FakeSpeech()
+        speech.partials = ["Subscribe to semi", "Subscribe to semi analysis sub stack"]
+        speech.keepsListening = true
+        let (controller, _, _, _, _) = makeController(speech: speech)
+
+        let command = Task { await controller.beginCommand() }
+        await wait { speech.isListening }
+
+        #expect(controller.liveUserText == "Subscribe to semi analysis sub stack")
+        #expect(controller.conversation.isEmpty)
+
+        controller.cancel()
+        await command.value
+    }
+
+    @Test func doesNotSpeakAFillerWhileASlowAnswerIsFetched() async {
+        // The streamed transcript is the progress UI. A spoken holding line
+        // only delays the useful answer and makes the exchange feel slower.
         let (controller, recorder, _, api, _) = makeController()
         let gate = CommandGate()
         api.commandGate = gate
@@ -517,12 +565,12 @@ struct VoiceControllerTests {
             action: .unknown, spokenResponse: "Which show?", episode: nil)
 
         let command = Task { await controller.beginCommand() }
-        await waitForHoldingLine(recorder)
-        #expect(recorder.spoken == ["One moment."])
+        await wait { controller.state == .thinking }
+        #expect(recorder.spoken.isEmpty)
         await gate.release()
         await command.value
 
-        #expect(recorder.spoken == ["One moment.", "Which show?"])
+        #expect(recorder.spoken == ["Which show?"])
     }
 
     @Test func aPromptAnswerIsNotDelayedByFiller() async {
@@ -761,9 +809,7 @@ struct VoiceConversationTests {
         #expect(controller.conversation.turns == [ConversationTurn(speaker: .her, text: "pause")])
     }
 
-    @Test func theHoldingLineIsNotInTheTranscript() async {
-        // "One moment" answers "is it still there?". It is not part of the
-        // exchange, and reading it back to the model says nothing.
+    @Test func waitingDoesNotAddAFillerToTheTranscript() async {
         let speech = FakeSpeech()
         let api = FakeAPI()
         let gate = CommandGate()
@@ -773,8 +819,8 @@ struct VoiceConversationTests {
         let (controller, recorder, _, _, _) = makeController(speech: speech, api: api)
 
         let command = Task { await controller.beginCommand() }
-        await waitForHoldingLine(recorder)
-        #expect(recorder.spoken == ["One moment."])
+        await wait { controller.state == .thinking }
+        #expect(recorder.spoken.isEmpty)
         await gate.release()
         await command.value
 

@@ -1,5 +1,7 @@
 """Subscribing to a blog by voice: the directory fails, web discovery saves it."""
 
+import asyncio
+
 from sqlalchemy import select
 
 from audioreader.commands import service
@@ -49,6 +51,12 @@ class TestLooseIdentification:
     def test_all_filler_matches_nothing(self):
         assert not loosely_identifies("the substack", "anything at all")
 
+    def test_split_substack_is_a_medium_not_part_of_the_name(self):
+        assert loosely_identifies(
+            "semi analysis sub stack",
+            "SemiAnalysis https://newsletter.semianalysis.com/feed",
+        )
+
 
 class TestSubstackGuess:
     def test_guesses_built_from_meaningful_words(self):
@@ -58,6 +66,12 @@ class TestSubstackGuess:
         ]
         # No "substack" spoken: no reason to guess.
         assert substack_guesses("the rest is history") == []
+
+    def test_split_dictation_form_builds_the_same_guesses(self):
+        assert substack_guesses("semi analysis sub stack") == [
+            "https://semianalysis.substack.com/feed",
+            "https://semi-analysis.substack.com/feed",
+        ]
 
     async def test_substack_phrasing_skips_the_model_entirely(self, respx_mock, article_xml):
         xml = article_xml.replace(b"Notes on Progress", b"When The Facts Change")
@@ -202,6 +216,31 @@ class TestFindFeedByName:
 
 
 class TestSubscribeFallsBackToDiscovery:
+    async def test_split_substack_transcript_finds_semianalysis_without_web_search(
+        self, session, user, respx_mock, article_xml
+    ):
+        directory = respx_mock.get(SEARCH_URL).respond(json={"resultCount": 0, "results": []})
+        xml = article_xml.replace(b"Notes on Progress", b"SemiAnalysis")
+        respx_mock.get("https://semianalysis.substack.com/feed").respond(
+            content=xml,
+            content_type="application/rss+xml",
+        )
+        llm = FakeLLMClient(subscribe_decision("semi analysis sub stack"))
+
+        result = await service.interpret(
+            session,
+            llm,
+            user=user,
+            transcript="subscribe to semi analysis sub stack",
+        )
+
+        assert result.action == Action.SUBSCRIBED
+        assert result.spoken_response == "Subscribed to SemiAnalysis."
+        assert directory.calls.last.request.url.params["term"] == "semi analysis"
+        # Only the command decision: deterministic Substack discovery avoids
+        # both expensive web-search attempts.
+        assert len(llm.calls) == 1
+
     async def test_blog_not_in_directory_is_found_and_subscribed(self, session, user, respx_mock, article_xml):
         empty_itunes(respx_mock)
         respx_mock.get(f"{SITE_URL}/").respond(content=HOMEPAGE, content_type="text/html")
@@ -226,6 +265,25 @@ class TestSubscribeFallsBackToDiscovery:
         )
 
         result = await service.interpret(session, llm, user=user, transcript="subscribe to an obscure zine")
+
+        assert result.action == Action.UNKNOWN
+        assert "an obscure zine" in result.spoken_response
+
+    async def test_voice_discovery_has_a_firm_deadline(self, session, user, respx_mock, monkeypatch):
+        empty_itunes(respx_mock)
+
+        async def stalled_discovery(*_args, **_kwargs):
+            await asyncio.sleep(1)
+
+        monkeypatch.setattr(service, "find_feed_by_name", stalled_discovery)
+        monkeypatch.setattr(service, "_VOICE_DISCOVERY_TIMEOUT_SECONDS", 0.01)
+
+        result = await service.interpret(
+            session,
+            FakeLLMClient(subscribe_decision("an obscure zine")),
+            user=user,
+            transcript="subscribe to an obscure zine",
+        )
 
         assert result.action == Action.UNKNOWN
         assert "an obscure zine" in result.spoken_response

@@ -17,12 +17,22 @@ final class SpeechRecognizer: SpeechRecognizing {
     private var continuation: CheckedContinuation<String, Error>?
     private var silenceTimer: Timer?
     private var transcript = ""
+    private var onPartial: (@MainActor (String) -> Void)?
 
     private let timeouts = ListeningTimeouts()
     private var hasHeardSpeech = false
     private var arrivals = BufferArrivals()
 
     func listen(onReady: @MainActor () -> Void) async throws -> String {
+        try await listen(onReady: onReady, onPartial: { _ in })
+    }
+
+    func listen(
+        onReady: @MainActor () -> Void,
+        onPartial: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        self.onPartial = onPartial
+        defer { self.onPartial = nil }
         VoiceAttempt.current?.recogniser = "fallback"
         VoiceAttempt.current?.usedFallback = true
         try await requestPermissions()
@@ -104,6 +114,7 @@ final class SpeechRecognizer: SpeechRecognizing {
                     guard let self else { return }
                     if let result {
                         self.transcript = result.bestTranscription.formattedString
+                        self.onPartial?(self.transcript)
                         if !self.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             self.hasHeardSpeech = true
                         }

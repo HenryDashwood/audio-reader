@@ -30,7 +30,7 @@
 <body>
 
 <h1>Magpie — Privacy Policy</h1>
-<p class="updated">Last updated 29 August 2026</p>
+<p class="updated">Last updated 31 August 2026</p>
 
 <p>
   Magpie is a podcast and article player. All features can be operated on
@@ -44,8 +44,10 @@
 <h2>The short version</h2>
 <ul>
   <li>We keep your email address, the shows you follow, and how far through each episode you are.</li>
-  <li>Only after you allow AI data sharing, what you say is turned into text and sent to OpenRouter and an AI model provider so the app can work out which episode you meant. If you explicitly choose <strong>Search the web</strong>, the publication name you typed is sent to the same providers to find its feed. The text is sent, never a voice recording.</li>
+  <li>Voice is transcribed by Apple's speech recognisers. Magpie and OpenAI do not receive or store the live microphone audio.</li>
+  <li>The recognised text and relevant library details are sent directly to OpenAI so Magpie can understand the request, carry it out, or ask a short clarification.</li>
   <li>That request is sent along with a list of recent episodes from the shows you follow, so the AI has something to choose between.</li>
+  <li>OpenAI does not use API data to train its models. By default, it may keep content in abuse-monitoring logs for up to 30 days.</li>
   <li>A record of each request, including the words you said, is kept for 30 days so that mistakes can be found and put right.</li>
   <li>The app also reports how well its own microphone and speech recognition worked, so that times it could not hear you can be found and fixed. That report contains timings only — never your words, and never any audio.</li>
   <li>Diagnostic records use a random code instead of your account identifier. Deleting your account destroys the only mapping to that code.</li>
@@ -109,29 +111,28 @@
   AI requests immediately; the rest of the on-screen app remains available.
 </p>
 <p>
-  Speech is turned into text on your device, using Apple's speech recognition.
-  If your device does not have the on-device speech models available, Apple's
-  system falls back to processing the audio on Apple's servers — that part is
-  handled by Apple under
-  <a href="https://www.apple.com/legal/privacy/">Apple's privacy policy</a>,
-  not by us.
+  Magpie first uses Apple's on-device Dictation Transcriber. If that recogniser
+  is unavailable, the app falls back to Apple's older speech recogniser. The
+  live microphone audio is never sent to Magpie's server or to OpenAI, and
+  Magpie does not store the recording.
 </p>
 <p>
-  The resulting <strong>text</strong> is sent to our server. We do not receive,
-  store or transmit any audio recording of your voice at any point. If you
-  choose <strong>Search the web</strong> after an ordinary search finds no
-  publication, the typed publication name is sent to our server instead.
+  Apple's older recogniser prefers processing on your device; when Apple
+  processes audio on its servers, that is handled under
+  <a href="https://www.apple.com/legal/privacy/">Apple's privacy policy</a>.
+  The resulting <strong>text</strong> is sent to our server. If you choose
+  <strong>Search the web</strong> after an ordinary search finds no publication,
+  the typed publication name is sent to our server instead.
 </p>
 <p>
-  To work out which episode you meant, our server sends that text to an AI
-  language-model provider —
-  <a href="https://openrouter.ai/privacy">OpenRouter</a>, which routes the
-  request to a model provider on our behalf. Alongside your words, we send a
-  list of recent episodes from the shows you follow: their titles, the show
-  names, publication dates, and a short extract of each description. The AI
-  needs that list in order to have something to choose between. A typed web
-  search sends the publication name and, if the first suggestions fail, the
-  addresses already checked; it does not send your listening library.
+  To understand and carry out a voice request, our server sends the recognised
+  text directly to OpenAI's Responses API. Alongside your words, we send the
+  recent conversation, the shows you follow, and relevant episode or article
+  titles, show names, publication dates, and short description extracts. The
+  model can search the web or the public podcast directory when it needs to
+  resolve a show or publication, and can call only the specific Magpie actions
+  our server makes available. A typed web search sends the publication name
+  and the addresses already checked; it does not send your listening library.
 </p>
 <p>
   In plain terms: for voice, <strong>the AI provider sees what you asked for,
@@ -142,10 +143,13 @@
   recognise, the name you said is also used to search the web for its feed.
 </p>
 <p>
-  Every request tells OpenRouter to use only a model endpoint that declares
-  zero data retention and does not collect the request for training or other
-  non-transient use. If no such endpoint is available, the request fails rather
-  than being sent under a weaker data policy.
+  OpenAI says data sent through its API is not used to train its models unless
+  the API customer explicitly opts in; we do not opt in. By default, OpenAI
+  may retain customer content in abuse-monitoring logs for up to 30 days. Its
+  current terms are described in
+  <a href="https://developers.openai.com/api/docs/guides/your-data">OpenAI's API data controls</a>.
+  A stable one-way code is attached for provider safety monitoring; it does
+  not contain your name, email address or Magpie account identifier.
 </p>
 
 <h2>Keeping the app working</h2>
@@ -203,9 +207,9 @@
     back to Apple's servers.
   </li>
   <li>
-    <strong>OpenRouter and the model provider it routes to</strong> — your
-    spoken requests as text and the episode list described above; or the
-    publication name from an explicit typed web search.
+    <strong>OpenAI</strong> — your spoken requests as text and the relevant
+    library details described above, and the publication name from an explicit
+    web search. OpenAI does not receive microphone audio.
   </li>
   <li>
     <strong>Railway</strong> — our hosting provider, which runs the servers and
@@ -233,7 +237,7 @@
   <li>No advertising, and no advertising identifiers.</li>
   <li>No advertising analytics or tracking across other apps or websites.</li>
   <li>No selling or sharing of personal data with data brokers.</li>
-  <li>No storing of voice recordings.</li>
+  <li>Magpie and its backend do not store voice recordings.</li>
 </ul>
 
 <h2>How long we keep things</h2>

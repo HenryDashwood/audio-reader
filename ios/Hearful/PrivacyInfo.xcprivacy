@@ -42,12 +42,10 @@
 			</array>
 		</dict>
 
-		<!-- What she says out loud, as text. Speech is turned into a
-		     transcript on the device; the transcript — never the audio — is
-		     sent to our backend and on to a language-model provider, which
-		     decides which episode she meant. This is the entry that most
-		     needs to match the App Store Connect questionnaire and the
-		     privacy policy, because voice is how she uses the whole app. -->
+		<!-- The resulting transcript is sent to Magpie's backend and on to a
+		     language-model provider, which decides which episode she meant.
+		     The live audio remains inside Apple's speech-recognition path and
+		     is not collected by Magpie. -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>

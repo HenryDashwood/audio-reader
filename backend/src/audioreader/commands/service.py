@@ -1,5 +1,6 @@
 """Turn a spoken request into an action, using an LLM to pick the episode."""
 
+import asyncio
 import logging
 import operator
 import re
@@ -36,6 +37,9 @@ from audioreader.feeds.search import (
     PodcastMatch,
     PodcastSearchError,
     matches_name,
+    mentions_substack,
+    publication_display_name,
+    publication_name,
     search_podcasts,
     select_unambiguous_match,
 )
@@ -80,6 +84,10 @@ there because it answers to her words, and is very likely the one she means.
   search_query exactly as she said it — naming a site means she wants that
   site's own feed. Leave spoken_response empty: the app says what was
   actually found.
+  Speech recognition may split a brand into ordinary words. In particular,
+  "sub stack" means Substack. A platform or publication type describes where
+  to look and is not part of the name: "subscribe to semi analysis sub stack"
+  means action subscribe and search_query "semi analysis".
 - Choose unsubscribe when she wants to stop following a show she already has
   ("unsubscribe from", "remove", "stop following", "get rid of"). Put just the
   show's name in search_query, and leave spoken_response empty.
@@ -661,6 +669,13 @@ class AmbiguousShowError(Exception):
         self.matches = matches
 
 
+# A spoken command should never wait through the discovery client's full
+# research timeout. Typed discovery can remain exhaustive; voice gets one
+# web-search pass and a firm end-to-end deadline after the cheap deterministic
+# guesses and podcast directory have run.
+_VOICE_DISCOVERY_TIMEOUT_SECONDS = 15.0
+
+
 async def _find_show(
     query: str,
     transcript: str,
@@ -684,17 +699,34 @@ async def _find_show(
             continue
         return DiscoveredFeed(feed_url=feed_url, title=parsed.title)
 
+    lookup_query = publication_name(query)
     try:
-        matches = await search_podcasts(query, country=country)
+        matches = await search_podcasts(lookup_query, country=country)
     except PodcastSearchError as exc:
         # The directory being down does not stop web discovery from working.
-        logger.warning("podcast search failed for %r: %s", query, exc)
+        logger.warning("podcast search failed for %r: %s", lookup_query, exc)
         matches = []
     if matches:
-        if chosen := select_unambiguous_match(matches, query):
+        if chosen := select_unambiguous_match(matches, lookup_query):
             return DiscoveredFeed(feed_url=chosen.feed_url, title=chosen.title)
         raise AmbiguousShowError(matches)
-    return await find_feed_by_name(query, discovery_llm)
+    discovery_query = lookup_query
+    if mentions_substack(f"{transcript} {query}"):
+        discovery_query += " substack"
+    try:
+        return await asyncio.wait_for(
+            find_feed_by_name(
+                discovery_query,
+                discovery_llm,
+                attempts=1,
+                candidate_limit=4,
+            ),
+            timeout=_VOICE_DISCOVERY_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("voice feed discovery timed out for %r", discovery_query)
+        telemetry.annotate(failure="feed_discovery_timeout")
+        return None
 
 
 def _ambiguous_show_question(matches: list[PodcastMatch]) -> str:
@@ -724,6 +756,7 @@ async def _subscribe(
     if not query or not query.strip():
         return _asking("Which show would you like to subscribe to?")
 
+    display_name = publication_display_name(query)
     try:
         found = await _find_show(query, transcript, discovery_llm, country=country)
     except AmbiguousShowError as exc:
@@ -735,7 +768,7 @@ async def _subscribe(
         telemetry.annotate(failure="show_not_found")
         return InterpretResult(
             action=Action.UNKNOWN,
-            spoken_response=f"I could not find a podcast or publication called {query}.",
+            spoken_response=f"I could not find a podcast or publication called {display_name}.",
         )
 
     try:

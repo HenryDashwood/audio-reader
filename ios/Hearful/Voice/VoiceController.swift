@@ -9,11 +9,25 @@ protocol SpeechRecognizing {
     /// take seconds, and anything said during that is simply lost, so the
     /// go-ahead she hears must wait for this rather than for the tap.
     func listen(onReady: @MainActor () -> Void) async throws -> String
+    /// Delivers the recogniser's best current text whenever it changes. The
+    /// value is a replacement, not a suffix: dictation is allowed to revise
+    /// earlier words as more audio arrives.
+    func listen(
+        onReady: @MainActor () -> Void,
+        onPartial: @escaping @MainActor (String) -> Void
+    ) async throws -> String
     func cancel()
 }
 
 extension SpeechRecognizing {
     func listen() async throws -> String { try await listen(onReady: {}) }
+
+    func listen(
+        onReady: @MainActor () -> Void,
+        onPartial: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        try await listen(onReady: onReady)
+    }
 }
 
 @MainActor
@@ -41,6 +55,7 @@ protocol AudioPlaying {
 
 enum VoiceState: Equatable {
     case idle
+    case preparing
     case listening
     case thinking
     case playing(Episode)
@@ -81,6 +96,11 @@ final class VoiceController: ObservableObject {
     /// believes it heard. A misheard word is obvious on screen and invisible
     /// from the answer.
     @Published private(set) var conversation = Conversation()
+    /// The two unfinished lines shown like live dictation. They remain out of
+    /// Conversation until final, so a changing partial is never sent back to
+    /// the model as settled history.
+    @Published private(set) var liveUserText = ""
+    @Published private(set) var liveAssistantText = ""
     /// True once listening has been refused for want of permission. The sheet
     /// puts a button on screen so the trip to Settings is one tap rather than
     /// a hunt through someone else's app.
@@ -188,16 +208,28 @@ final class VoiceController: ObservableObject {
         }
 
         do {
-            state = .listening
+            // Fetching a provider credential and opening the audio route can
+            // take a moment. Calling that "Listening" invites her to speak
+            // before a microphone exists, which loses the beginning of the
+            // command. Only onReady is the real go-ahead.
+            state = .preparing
             // A recogniser may start capture more than once — the older one
             // retries server-side — but she should be told to speak only once.
             var announced = false
             let listenStarted = ContinuousClock.now
-            let transcript = try await speech.listen {
-                guard !announced else { return }
-                announced = true
-                self.feedback.play(.listening)
-            }
+            liveUserText = ""
+            liveAssistantText = ""
+            let transcript = try await speech.listen(
+                onReady: {
+                    guard !announced, !self.isCancelled else { return }
+                    announced = true
+                    self.state = .listening
+                    self.feedback.play(.listening)
+                },
+                onPartial: { text in
+                    guard !self.isCancelled else { return }
+                    self.liveUserText = text
+                })
             attempt.listenSeconds = Self.seconds(since: listenStarted)
             // Cancelling a recogniser mid-turn is how closing the sheet ends
             // the wait, and the analyser answers that by handing back whatever
@@ -223,6 +255,7 @@ final class VoiceController: ObservableObject {
             // by listening, and a misheard word explains almost every answer
             // that looks like the model being stupid.
             conversation.sheSaid(heard)
+            liveUserText = ""
 
             // Transport controls and the sleep timer resolve here, with no
             // network and no model. Sleep is checked first: its phrases are
@@ -250,10 +283,21 @@ final class VoiceController: ObservableObject {
             // Everything except the line she has just spoken, which travels as
             // the transcript.
             let earlier = conversation.payload.dropLast()
-            let response = try await announcingDelay {
-                try await self.api.command(
-                    transcript: transcript, nowPlayingEpisodeID: nowPlaying,
-                    turns: Array(earlier), traceparent: attempt.traceparent())
+            var response: CommandResponse?
+            for try await event in api.commandStream(
+                transcript: transcript, nowPlayingEpisodeID: nowPlaying,
+                turns: Array(earlier), traceparent: attempt.traceparent())
+            {
+                guard !isCancelled else { return .done }
+                switch event {
+                case .assistantDelta(let text):
+                    liveAssistantText += text
+                case .result(let result):
+                    response = result
+                }
+            }
+            guard let response else {
+                throw APIError(underlying: "stream ended without a command result")
             }
             guard !isCancelled else { return .done }
             attempt.outcome = Self.outcome(of: response)
@@ -318,7 +362,7 @@ final class VoiceController: ObservableObject {
         case .playEpisode: .played
         case .setSpeed: .speed
         case .markPlayed, .dismiss, .restore: .filed
-        case .unknown: .spoken
+        case .subscribed, .unsubscribed, .unknown: .spoken
         }
     }
 
@@ -374,6 +418,10 @@ final class VoiceController: ObservableObject {
     private func handle(_ response: CommandResponse) async {
         switch response.action {
         case .unknown:
+            await finish(saying: response.spokenResponse)
+
+        case .subscribed, .unsubscribed:
+            NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
             await finish(saying: response.spokenResponse)
 
         case .markPlayed, .dismiss, .restore:
@@ -481,6 +529,7 @@ final class VoiceController: ObservableObject {
         // sent, and what is on screen is what she actually heard. The holding
         // line does not come through here, which is why it stays out.
         conversation.appSaid(text)
+        liveAssistantText = ""
         await speaker.speak(text)
     }
 

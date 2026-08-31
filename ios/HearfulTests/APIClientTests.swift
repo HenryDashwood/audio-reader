@@ -95,12 +95,22 @@ struct CommandEndpointTests {
         // her phone; an unfamiliar one must degrade to "just say it", never
         // fail the whole request.
         let json = """
-            {"action":"subscribed","spoken_response":"Subscribed to The Rest Is History.","episode":null}
+            {"action":"a_future_action","spoken_response":"Done.","episode":null}
             """
         let result = try await makeClient(FakeTransport(json: json)).command(transcript: "x", nowPlayingEpisodeID: nil, traceparent: nil)
 
         #expect(result.action == .unknown)
-        #expect(result.spokenResponse == "Subscribed to The Rest Is History.")
+        #expect(result.spokenResponse == "Done.")
+    }
+
+    @Test func decodesSubscriptionOutcomes() async throws {
+        let json = """
+            {"action":"subscribed","spoken_response":"Subscribed to SemiAnalysis.","episode":null}
+            """
+        let result = try await makeClient(FakeTransport(json: json))
+            .command(transcript: "x", nowPlayingEpisodeID: nil, traceparent: nil)
+
+        #expect(result.action == .subscribed)
     }
 
     @Test func sendsTranscriptAsJSONPost() async throws {

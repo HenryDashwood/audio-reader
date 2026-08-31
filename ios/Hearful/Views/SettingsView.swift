@@ -79,7 +79,7 @@ struct SettingsView: View {
                             confirmingDisableAI = true
                         }
                         .accessibilityHint(
-                            "Stops future spoken requests and library details being sent to AI providers"
+                            "Stops future spoken requests and library details being sent to OpenAI"
                         )
                     } else {
                         Button("Review AI Data Sharing") {
@@ -94,7 +94,7 @@ struct SettingsView: View {
                     Text("Privacy & Support")
                 } footer: {
                     Text(
-                        "Voice requests use OpenRouter and an AI model provider only after you allow it. "
+                        "Voice requests use OpenAI only after you allow it. "
                             + "Turning it off leaves the rest of Magpie available."
                     )
                 }
@@ -152,7 +152,7 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text(
-                    "Magpie will stop sending spoken requests and episode details to AI providers. "
+                    "Magpie will stop sending spoken requests and episode details to OpenAI. "
                         + "You can turn it on again here later."
                 )
             }

@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated enum CommandAction: String, Decodable {
+nonisolated enum CommandAction: String, Decodable, Sendable {
     case playEpisode = "play_episode"
     case setSpeed = "set_speed"
     /// The backend has already filed the episode; the app updates its lists
@@ -8,6 +8,8 @@ nonisolated enum CommandAction: String, Decodable {
     case markPlayed = "mark_played"
     case dismiss
     case restore
+    case subscribed
+    case unsubscribed
     case unknown
 
     /// The backend can add actions faster than the app gets reinstalled on her
@@ -25,7 +27,7 @@ nonisolated enum CommandAction: String, Decodable {
         case .markPlayed: .played
         case .dismiss: .dismissed
         case .restore: .restored
-        case .playEpisode, .setSpeed, .unknown: nil
+        case .playEpisode, .setSpeed, .subscribed, .unsubscribed, .unknown: nil
         }
     }
 }
@@ -106,7 +108,7 @@ nonisolated struct EpisodeText: Codable, Equatable {
     }
 }
 
-nonisolated struct CommandResponse: Decodable {
+nonisolated struct CommandResponse: Decodable, Sendable {
     let action: CommandAction
     let spokenResponse: String
     let episode: Episode?
@@ -126,6 +128,23 @@ nonisolated struct CommandResponse: Decodable {
         case action, episode, speed
         case spokenResponse = "spoken_response"
         case expectsReply = "expects_reply"
+    }
+}
+
+nonisolated enum CommandStreamEvent: Sendable {
+    case assistantDelta(String)
+    case result(CommandResponse)
+}
+
+nonisolated struct CommandStreamEnvelope: Decodable {
+    let type: String
+    let text: String?
+    let response: CommandResponse?
+    let spokenResponse: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type, text, response
+        case spokenResponse = "spoken_response"
     }
 }
 

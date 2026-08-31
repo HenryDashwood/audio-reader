@@ -35,7 +35,7 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 # Increment this whenever the consent screen's description of the data or the
 # receiving providers changes materially. Existing permission then stops being
 # sufficient until the user sees and accepts the new wording.
-AI_DATA_SHARING_CONSENT_VERSION = 2
+AI_DATA_SHARING_CONSENT_VERSION = 3
 
 
 def has_current_ai_data_sharing_consent(user: User) -> bool:

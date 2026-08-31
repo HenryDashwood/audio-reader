@@ -56,10 +56,10 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AUDIOREADER_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME"),
     )
 
-    # A fixed bearer token for simulator development. Empty by default: the
-    # ordinary server still requires Sign in with Apple unless the developer
-    # deliberately starts it with this setting. Production rejects the
-    # setting outright rather than trusting deployment convention alone.
+    # A fixed bearer token for local simulator and physical-device development.
+    # Empty by default: the ordinary server still requires Sign in with Apple
+    # unless the developer deliberately starts it with this setting. Production
+    # rejects the setting outright rather than trusting deployment convention.
     development_auth_token: str = ""
 
     @model_validator(mode="after")
@@ -165,9 +165,10 @@ class Settings(BaseSettings):
     # Every request refreshes the clock; 0 disables expiry.
     session_idle_timeout_days: int = 180
 
-    # OpenRouter, so the model is a config change rather than a code change.
-    # Switch to AUDIOREADER_LLM_PROVIDER=anthropic to talk to Claude directly.
-    llm_provider: LLMProvider = LLMProvider.OPENROUTER
+    # Direct OpenAI Responses is the default. It supports the streamed,
+    # tool-using conversation used by voice control without routing a
+    # listener's words through an additional provider.
+    llm_provider: LLMProvider = LLMProvider.OPENAI
 
     # Also accept the bare vendor key names the SDKs and CLIs already use, so
     # there is one key name to manage rather than an audioreader-specific one.
@@ -209,6 +210,19 @@ class Settings(BaseSettings):
     # she names it. These only cost tokens when her words match something old.
     # Set to 0 to go back to a pure recency window.
     command_search_limit: int = 15
+
+    # Direct OpenAI Responses interprets the text produced on the phone. The
+    # standard key never leaves the backend.
+    openai_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("AUDIOREADER_OPENAI_API_KEY", "OPENAI_API_KEY"),
+    )
+    openai_responses_url: str = "https://api.openai.com/v1/responses"
+    openai_model: str = "gpt-5.6-luna"
+    # Luna can use the tools and infer likely names without emitting separate
+    # reasoning tokens. Those tokens added roughly ten seconds to a simple
+    # already-subscribed answer in real-device testing.
+    openai_reasoning_effort: str = "none"
 
     # Finding a blog's feed from a spoken name is the one task worth being
     # slow and thorough at: it happens once per publication, and OpenRouter's
