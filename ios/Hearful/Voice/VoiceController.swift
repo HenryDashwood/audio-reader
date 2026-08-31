@@ -250,6 +250,11 @@ final class VoiceController: ObservableObject {
                 await fail(saying: "I did not hear anything. Tap and try again.")
                 return .done
             }
+            // Replace the last live guess with the recogniser's final answer
+            // before committing it. The settled line on screen is therefore
+            // byte-for-byte the text sent below, including any proper noun
+            // Apple corrected while finalising the audio.
+            liveUserText = heard
             // On screen from here on, whether or not it reaches the network.
             // What the app thought it heard is the one thing she cannot check
             // by listening, and a misheard word explains almost every answer
@@ -261,13 +266,13 @@ final class VoiceController: ObservableObject {
             // network and no model. Sleep is checked first: its phrases are
             // the more specific of the two ("stop" is a pause, "stop in
             // twenty minutes" is not).
-            if let sleep = SleepCommand.match(transcript) {
+            if let sleep = SleepCommand.match(heard) {
                 attempt.outcome = .sleep
                 attempt.sleepCommand = sleep == .cancel ? "cancel" : "after"
                 await perform(sleep)
                 return .done
             }
-            if let transport = TransportCommand.match(transcript) {
+            if let transport = TransportCommand.match(heard) {
                 attempt.outcome = .transport
                 attempt.transportCommand = String(describing: transport)
                 perform(transport)
@@ -285,7 +290,7 @@ final class VoiceController: ObservableObject {
             let earlier = conversation.payload.dropLast()
             var response: CommandResponse?
             for try await event in api.commandStream(
-                transcript: transcript, nowPlayingEpisodeID: nowPlaying,
+                transcript: heard, nowPlayingEpisodeID: nowPlaying,
                 turns: Array(earlier), traceparent: attempt.traceparent())
             {
                 guard !isCancelled else { return .done }

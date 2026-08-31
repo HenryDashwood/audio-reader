@@ -15,7 +15,7 @@ from audioreader.commands.conversation import AssistantDelta, ConversationFinish
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.llm.client import LLMClient, LLMError
-from audioreader.llm.openai_responses import OpenAIResponsesClient
+from audioreader.llm.openai_responses import ResponsesStreamingClient
 from audioreader.llm.provider import (
     get_conversation_llm_client,
     get_discovery_llm_client,
@@ -35,7 +35,7 @@ router = APIRouter(tags=["commands"])
 Session = Annotated[AsyncSession, Depends(get_session)]
 LLM = Annotated[LLMClient, Depends(get_llm_client)]
 DiscoveryLLM = Annotated[LLMClient, Depends(get_discovery_llm_client)]
-ConversationLLM = Annotated[OpenAIResponsesClient, Depends(get_conversation_llm_client)]
+ConversationLLM = Annotated[ResponsesStreamingClient, Depends(get_conversation_llm_client)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 # Even failures must give the app something to say: an error tone alone tells
@@ -205,36 +205,68 @@ async def command_stream(
         )
 
     async def events() -> AsyncIterator[bytes]:
-        try:
-            async for event in converse(
-                session,
-                llm,
-                transcript=body.transcript,
-                user=user,
-                now_playing_episode_id=body.now_playing_episode_id,
-                turns=body.turns,
-                country=body.country,
-            ):
-                if isinstance(event, AssistantDelta):
-                    yield _line({"type": "assistant_delta", "text": event.text})
-                    continue
-                if isinstance(event, ConversationFinished):
-                    result = event.result
-                    episode = None
-                    if result.episode is not None:
-                        episode = (await episodes_read(session, user, [result.episode]))[0]
-                    response = CommandResponse(
-                        action=result.action.value,
-                        spoken_response=result.spoken_response,
-                        episode=episode,
-                        speed=result.speed,
-                        expects_reply=result.expects_reply,
-                    )
-                    yield _line({"type": "result", "response": response.model_dump(mode="json")})
-                    return
-        except LLMError as exc:
-            logger.warning("streamed command failed: %s", exc)
-            yield _line({"type": "error", "spoken_response": OUTAGE_RESPONSE})
+        # StreamingResponse consumes this generator after the route function
+        # returns, so the span must live inside it. Otherwise all OpenAI, web,
+        # tool and database work becomes a set of unrelated traces and the
+        # exact path behind a slow or wrong conversation is invisible.
+        with (
+            logfire.span(
+                "command",
+                telemetry_id=str(user.telemetry_id),
+                provider=LLMProvider.OPENAI.value,
+                model=settings.openai_model,
+                pipeline="conversation",
+                transcript_words=len(body.transcript.split()),
+                conversation_turns=len(body.turns),
+                action="error",
+                failure="none",
+            ) as span,
+            telemetry.collect_llm_usage(),
+        ):
+            if settings.telemetry_transcripts:
+                span.set_attribute("transcript", body.transcript)
+
+            try:
+                async for event in converse(
+                    session,
+                    llm,
+                    transcript=body.transcript,
+                    user=user,
+                    now_playing_episode_id=body.now_playing_episode_id,
+                    turns=body.turns,
+                    country=body.country,
+                ):
+                    if isinstance(event, AssistantDelta):
+                        yield _line({"type": "assistant_delta", "text": event.text})
+                        continue
+                    if isinstance(event, ConversationFinished):
+                        result = event.result
+                        span.set_attribute("action", result.action.value)
+                        span.set_attribute("expects_reply", result.expects_reply)
+                        if settings.telemetry_transcripts:
+                            span.set_attribute("assistant_response", result.spoken_response)
+                        if result.speed is not None:
+                            span.set_attribute("speed", result.speed)
+
+                        episode = None
+                        if result.episode is not None:
+                            span.set_attribute("episode_id", result.episode.id)
+                            span.set_attribute("episode_title", result.episode.title)
+                            span.set_attribute("feed_title", result.episode.feed.title or "")
+                            episode = (await episodes_read(session, user, [result.episode]))[0]
+                        response = CommandResponse(
+                            action=result.action.value,
+                            spoken_response=result.spoken_response,
+                            episode=episode,
+                            speed=result.speed,
+                            expects_reply=result.expects_reply,
+                        )
+                        yield _line({"type": "result", "response": response.model_dump(mode="json")})
+                        return
+            except LLMError as exc:
+                span.set_attribute("failure", "llm_error")
+                logger.warning("streamed command failed: %s", exc)
+                yield _line({"type": "error", "spoken_response": OUTAGE_RESPONSE})
 
     return StreamingResponse(
         events(),

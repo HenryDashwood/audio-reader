@@ -323,6 +323,12 @@ class VoiceAttemptEvent(BaseModel):
     #: Whether the recogniser had committed to its transcript when the turn
     #: ended, or was still revising and got cut off mid-thought.
     settled_at_end: bool | None = None
+    #: Whether silence arrived while Apple was still holding a volatile guess.
+    settled_before_finalization: bool | None = None
+    #: Seconds spent asking SpeechAnalyzer to finish the captured input.
+    finalization_seconds: float | None = None
+    #: Whether Apple's final pass changed the transcript shown while listening.
+    finalized_transcript_changed: bool | None = None
 
     # Resolved on the phone, so the server otherwise never learns they happened
     transport_command: str | None = None

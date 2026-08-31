@@ -107,22 +107,53 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     private var finalised = ""
     private var volatile = ""
 
-    /// Reads results until she stops speaking. Each new phrase pushes the
-    /// silence deadline out, and a deadline that arrives while the transcriber
-    /// still has an unfinalised guess in hand is a longer one — so pausing
-    /// mid-sentence does not cut her off, and neither does the transcriber
-    /// pausing to think.
+    /// Reads results until she stops speaking, then explicitly asks Apple's
+    /// analyser to finish the audio it already has. The finalisation step is
+    /// load-bearing: silence commonly arrives while DictationTranscriber is
+    /// still holding a plausible-but-wrong guess, and returning that volatile
+    /// text is how names such as "Dattani" became "attorney".
     private func collectTranscript(from transcriber: DictationTranscriber) async throws -> String {
         finalised = ""
         volatile = ""
 
-        return try await withThrowingTaskGroup(of: String.self) { group in
-            group.addTask { try await self.readResults(from: transcriber) }
-            group.addTask { await self.silenceFallback() }
+        let reader = Task { @MainActor in
+            try await self.readResults(from: transcriber)
+        }
 
-            guard let first = try await group.next() else { return "" }
-            group.cancelAll()
-            return first
+        await waitForSilence()
+        let provisional = finalised + volatile
+        VoiceAttempt.current?.settledBeforeFinalization = isSettled
+
+        // End the input sequence before asking the analyser to finish through
+        // its end. This preserves all captured audio while preventing another
+        // microphone buffer from moving the finishing line underneath it.
+        stopCapture()
+        guard let analyzer else {
+            // The sheet was closed while the silence timer was pending.
+            reader.cancel()
+            return provisional
+        }
+
+        let startedFinalizing = ContinuousClock.now
+        do {
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+            self.analyzer = nil
+            let transcript = try await reader.value
+            let elapsed = ContinuousClock.now - startedFinalizing
+            VoiceAttempt.current?.finalizationSeconds =
+                Double(elapsed.components.seconds)
+                + Double(elapsed.components.attoseconds) / 1e18
+            VoiceAttempt.current?.finalizedTranscriptChanged = transcript != provisional
+            VoiceAttempt.current?.settledAtEnd = isSettled
+
+            // Publish once more even when the final words arrived in the same
+            // scheduler turn. The line on screen must be the exact string
+            // returned to VoiceController and sent to the backend.
+            onPartial?(transcript)
+            return transcript
+        } catch {
+            reader.cancel()
+            throw error
         }
     }
 
@@ -141,16 +172,6 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
             onPartial?(finalised + volatile)
             restartSilenceTimer()
         }
-        return finalised + volatile
-    }
-
-    /// Silence wins the race: hand back whatever she has said so far.
-    private func silenceFallback() async -> String {
-        await waitForSilence()
-        // Whether she was cut off mid-thought or had genuinely finished. The
-        // difference is invisible in the transcript and decides whether a
-        // wrong answer was the model's fault or ours.
-        VoiceAttempt.current?.settledAtEnd = isSettled
         return finalised + volatile
     }
 
@@ -307,11 +328,12 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         }
     }
 
-    func cancel() {
+    /// Stop feeding the analyser but leave its fate to the caller. The normal
+    /// path follows this with graceful finalisation; cancellation follows it
+    /// with an immediate finish.
+    private func stopCapture() {
         silenceTimer?.invalidate()
         silenceTimer = nil
-        silenceContinuation?.resume()
-        silenceContinuation = nil
         if engine.isRunning {
             engine.stop()
             engine.inputNode.removeTap(onBus: 0)
@@ -319,6 +341,12 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         }
         inputContinuation?.finish()
         inputContinuation = nil
+    }
+
+    func cancel() {
+        silenceContinuation?.resume()
+        silenceContinuation = nil
+        stopCapture()
         let analyzer = self.analyzer
         self.analyzer = nil
         Task { await analyzer?.cancelAndFinishNow() }

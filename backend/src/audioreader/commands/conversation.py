@@ -14,12 +14,14 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+import logfire
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from audioreader.commands import service
 from audioreader.commands.intents import Action, Candidate, InterpretResult, Speaker, Turn
+from audioreader.config import settings
 from audioreader.feeds import service as feed_service
 from audioreader.feeds.discovery import resolve_feed
 from audioreader.feeds.fetcher import FeedFetchError
@@ -46,12 +48,15 @@ web results. Transcription may split one brand into ordinary words, omit
 punctuation, or choose a common word with the same sound. Do not search only
 for the literal transcript when its intended meaning is clear.
 
-Prefer completing a request in one turn. Use web search or the podcast
-directory when needed, inspect a publication's website to find its real feed,
-then call the action tool. Do not ask for confirmation when one candidate is
-overwhelmingly more likely than the others. Ask one short clarification only
-when genuine uncertainty would materially change the action. A useful
-clarification names the likely candidate and a short distinguishing fact.
+Prefer completing a request in one turn. Publications can use a custom domain
+even when the user calls them a Substack: use web search to identify a named
+newsletter, blog, publication, or person's writing, then inspect its real site
+to find its feed. Use the podcast directory only for podcasts. Do not invent a
+hostname from a person's or publication's name. Do not ask for confirmation
+when one candidate is overwhelmingly more likely than the others. Ask one
+short clarification only when genuine uncertainty would materially change the
+action. A useful clarification names the likely candidate and one short
+distinguishing fact.
 
 Never say an action succeeded before calling its action tool. Do not narrate
 searches or announce that you are about to use a tool. Call an action tool
@@ -70,7 +75,11 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "name": "search_podcast_directory",
-        "description": "Search the public podcast directory. Returns candidates for you to interpret.",
+        "description": (
+            "Search the public podcast directory for a podcast. Use this only when the requested "
+            "thing is a podcast; do not use it for a newsletter, blog, publication, Substack, "
+            "or a person's writing. Returns candidates for you to interpret."
+        ),
         "strict": True,
         "parameters": {
             "type": "object",
@@ -82,7 +91,11 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "name": "inspect_publication",
-        "description": "Inspect a website or feed URL and return its verified canonical feed and title.",
+        "description": (
+            "Inspect a website or feed URL and return its verified canonical feed and title. "
+            "Use a URL supplied by the user or returned by web or podcast search; never guess or "
+            "invent a hostname from a name."
+        ),
         "strict": True,
         "parameters": {
             "type": "object",
@@ -94,7 +107,10 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "name": "subscribe_to_feed",
-        "description": "Subscribe the user to a verified podcast or publication feed URL.",
+        "description": (
+            "Subscribe the user to a verified podcast or publication feed URL returned by "
+            "inspect_publication or the podcast directory. Never construct or guess the URL."
+        ),
         "strict": True,
         "parameters": {
             "type": "object",
@@ -259,15 +275,20 @@ async def converse(
 
         input_items.extend(output)
         for call in calls:
-            tool_result = await _call_tool(
-                session,
-                name=call.get("name", ""),
-                arguments=call.get("arguments", "{}"),
-                user=user,
-                allowed_episode_ids=allowed,
-                candidates=candidates,
-                country=country,
-            )
+            name = call.get("name", "")
+            arguments = call.get("arguments", "{}")
+            with logfire.span("conversation tool", tool_name=name) as span:
+                _annotate_tool_arguments(span, arguments)
+                tool_result = await _call_tool(
+                    session,
+                    name=name,
+                    arguments=arguments,
+                    user=user,
+                    allowed_episode_ids=allowed,
+                    candidates=candidates,
+                    country=country,
+                )
+                _annotate_tool_result(span, tool_result)
             input_items.append(
                 {
                     "type": "function_call_output",
@@ -287,6 +308,35 @@ async def converse(
             return
 
     raise LLMError("OpenAI exceeded the app tool-call limit")
+
+
+def _annotate_tool_arguments(span: Any, arguments: str) -> None:
+    """Make a tool choice legible without bypassing transcript privacy."""
+    if not settings.telemetry_transcripts:
+        return
+    try:
+        values = json.loads(arguments)
+    except json.JSONDecodeError:
+        span.set_attribute("arguments_valid", False)
+        return
+    if not isinstance(values, dict):
+        span.set_attribute("arguments_valid", False)
+        return
+    span.set_attribute("arguments_valid", True)
+    for key in ("query", "url", "feed_url", "feed_id", "episode_id", "episode_query", "action", "speed"):
+        value = values.get(key)
+        if value is not None:
+            span.set_attribute(f"tool_{key}", value)
+
+
+def _annotate_tool_result(span: Any, result: _ToolResult) -> None:
+    """Attach the small outcome fields needed to understand a tool chain."""
+    for key in ("ok", "status", "title", "feed_url", "show", "speed", "error"):
+        value = result.output.get(key)
+        if value is not None:
+            span.set_attribute(f"tool_result_{key}", value)
+    if result.terminal is not None:
+        span.set_attribute("terminal_action", result.terminal.action.value)
 
 
 def _conversation_input(

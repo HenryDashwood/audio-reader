@@ -42,6 +42,14 @@ final class VoiceAttempt {
     /// Whether the recogniser had committed to its transcript, or was still
     /// revising when the turn ended.
     var settledAtEnd: Bool?
+    /// Whether the recogniser was still holding a volatile guess when silence
+    /// told us to stop capturing. This preserves the distinction that
+    /// `settledAtEnd` no longer carries now that we finalise before sending.
+    var settledBeforeFinalization: Bool?
+    /// The cost of turning the last volatile guess into the value we sent.
+    var finalizationSeconds: Double?
+    /// Whether finalisation actually rewrote the displayed transcript.
+    var finalizedTranscriptChanged: Bool?
 
     /// Answered on the phone, so the server never learns they happened.
     var transportCommand: String?
@@ -129,6 +137,9 @@ final class VoiceAttempt {
         fields["listen_seconds"] = listenSeconds
         fields["transcript_empty"] = transcriptEmpty
         fields["settled_at_end"] = settledAtEnd
+        fields["settled_before_finalization"] = settledBeforeFinalization
+        fields["finalization_seconds"] = finalizationSeconds
+        fields["finalized_transcript_changed"] = finalizedTranscriptChanged
         fields["transport_command"] = transportCommand
         fields["sleep_command"] = sleepCommand
         fields["conversation_turns"] = conversationTurns

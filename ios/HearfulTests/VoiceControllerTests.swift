@@ -555,6 +555,29 @@ struct VoiceControllerTests {
         await command.value
     }
 
+    @Test func finalizedTranscriptReplacesTheLastGuessBeforeItIsSent() async {
+        // Dictation is allowed to revise names during finalisation. The line
+        // she sees while the backend is working must be that final value, not
+        // the plausible live guess it replaced.
+        let speech = FakeSpeech()
+        speech.partials = ["Subscribe to Saloni attorney's Substack"]
+        speech.transcript = "  Subscribe to Saloni Dattani's Substack  "
+        let api = FakeAPI()
+        let gate = CommandGate()
+        api.commandGate = gate
+        let (controller, _, _, _, _) = makeController(speech: speech, api: api)
+
+        let command = Task { await controller.beginCommand() }
+        await wait { !api.transcripts.isEmpty }
+
+        let finalized = "Subscribe to Saloni Dattani's Substack"
+        #expect(controller.conversation.payload.last?.text == finalized)
+        #expect(api.transcripts == [finalized])
+
+        await gate.release()
+        await command.value
+    }
+
     @Test func doesNotSpeakAFillerWhileASlowAnswerIsFetched() async {
         // The streamed transcript is the progress UI. A spoken holding line
         // only delays the useful answer and makes the exchange feel slower.

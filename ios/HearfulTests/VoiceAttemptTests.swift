@@ -34,6 +34,20 @@ struct VoiceAttemptTests {
         #expect(payload["recogniser"] as? String == "analyzer")
     }
 
+    @Test func recordsWhatExplicitFinalizationChangedAndCost() {
+        let attempt = VoiceAttempt()
+        attempt.settledBeforeFinalization = false
+        attempt.settledAtEnd = true
+        attempt.finalizationSeconds = 0.18
+        attempt.finalizedTranscriptChanged = true
+        let payload = attempt.payload()
+
+        #expect(payload["settled_before_finalization"] as? Bool == false)
+        #expect(payload["settled_at_end"] as? Bool == true)
+        #expect(payload["finalization_seconds"] as? Double == 0.18)
+        #expect(payload["finalized_transcript_changed"] as? Bool == true)
+    }
+
     @Test func onlyOneAttemptPerLaunchIsTheFirst() {
         // The first request after launch failed and the retry worked, every
         // time. Telling them apart has to be a column, not an inference from

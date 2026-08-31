@@ -9,22 +9,19 @@ import UIKit
 /// dead air before the episode starts.
 ///
 /// The third is the one that was missing. While the recogniser is still
-/// revising what it heard, quiet means neither of those — it means the
-/// transcript is not yet safe to act on. Ending there sends a half-formed
-/// guess: "play the In Our Time episode about Athelstan" left as
-/// "play the in our stand", which names a show and no episode, so the app
-/// dutifully played that show's newest episode. She had not finished
-/// speaking and the recogniser had not finished listening.
+/// revising what it heard, quiet means the transcript is not yet safe to act
+/// on. Once this deadline arrives the app now ends the audio input and asks
+/// SpeechAnalyzer to finalise it, instead of returning the half-formed guess.
 struct ListeningTimeouts {
     /// How long to wait for her to begin.
     let beforeFirstWords: TimeInterval
     /// How long a pause counts as the end of the request, once the transcript
     /// has settled.
     let afterLastWords: TimeInterval
-    /// How long to keep waiting while the recogniser is still revising. A
-    /// backstop rather than an expected wait: it applies only when the
-    /// transcript never settles, and it is the difference between a slow
-    /// answer and a wrong one.
+    /// How long to keep listening while the recogniser is still revising.
+    /// Slightly longer than an already-settled phrase so a pause is not
+    /// mistaken for the end, but bounded because explicit finalisation now
+    /// resolves the remaining volatile text.
     let whileStillRevising: TimeInterval
 
     /// With VoiceOver on, the opening wait has to outlast VoiceOver itself. It
@@ -35,7 +32,7 @@ struct ListeningTimeouts {
     init(
         beforeFirstWords: TimeInterval? = nil,
         afterLastWords: TimeInterval = 2.0,
-        whileStillRevising: TimeInterval = 4.0
+        whileStillRevising: TimeInterval = 2.5
     ) {
         self.beforeFirstWords =
             beforeFirstWords ?? (UIAccessibility.isVoiceOverRunning ? 15.0 : 8.0)

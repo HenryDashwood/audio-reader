@@ -45,7 +45,10 @@ class TestVoiceAttempts:
                 "recogniser": "analyzer",
                 "audio_first_buffer_ms": 180,
                 "listen_seconds": 3.2,
+                "settled_before_finalization": False,
                 "settled_at_end": True,
+                "finalization_seconds": 0.18,
+                "finalized_transcript_changed": True,
                 "total_seconds": 4.9,
             },
         )
