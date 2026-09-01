@@ -116,21 +116,59 @@ struct EpisodeFilingTests {
         #expect(changed == false)
     }
 
-    @Test func anAlreadyFiledEpisodeOffersTheWayBack() {
-        // The one action worth having on a row that has already gone.
-        #expect(EpisodeFiling.available(for: episode(id: 7005, played: true)) == [.restored])
-        #expect(EpisodeFiling.available(for: episode(id: 7006, dismissed: true)) == [.restored])
-        #expect(EpisodeFiling.available(for: episode(id: 7007)) == [.played, .dismissed])
+    @Test func anAlreadyFiledEpisodeOffersMarkAsUnplayed() {
+        #expect(
+            EpisodeFiling.available(
+                for: episode(id: 7005, played: true), allowsDismissal: false) == [.restored])
+        #expect(
+            EpisodeFiling.available(
+                for: episode(id: 7006, dismissed: true), allowsDismissal: false) == [.restored])
+    }
+
+    @Test func latestSwipesDismissLeadingAndMarkReadTrailing() {
+        let unread = article(id: 7010)
+
+        #expect(
+            EpisodeFiling.leadingSwipeActions(
+                for: unread, allowsDismissal: true) == [.dismissed])
+        #expect(
+            EpisodeFiling.trailingSwipeActions(
+                for: unread, allowsDismissal: true) == [.played])
+    }
+
+    @Test func showPageHasNoDismissSwipe() {
+        let unplayed = episode(id: 7011)
+
+        #expect(
+            EpisodeFiling.leadingSwipeActions(
+                for: unplayed, allowsDismissal: false).isEmpty)
+        #expect(
+            EpisodeFiling.trailingSwipeActions(
+                for: unplayed, allowsDismissal: false) == [.played])
+    }
+
+    @Test func showPageMarksAFiledEpisodeUnplayedOnTheTrailingEdge() {
+        let filed = episode(id: 7012, played: true)
+
+        #expect(
+            EpisodeFiling.trailingSwipeActions(
+                for: filed, allowsDismissal: false) == [.restored])
     }
 
     @Test func completedActionUsesReadingLanguageForArticles() {
         let post = article(id: 7008)
         let audio = episode(id: 7009)
 
-        #expect(EpisodeFiling.played.actionTitle(for: post) == "Mark read")
+        #expect(EpisodeFiling.played.actionTitle(for: post) == "Mark as read")
         #expect(EpisodeFiling.played.confirmation(for: post) == "Marked as read: Article 7008")
-        #expect(EpisodeFiling.played.actionTitle(for: audio) == "Mark played")
+        #expect(EpisodeFiling.played.actionTitle(for: audio) == "Mark as played")
         #expect(EpisodeFiling.played.confirmation(for: audio) == "Marked as played: Episode 7009")
+        #expect(EpisodeFiling.dismissed.actionTitle(for: post) == "Dismiss")
+        #expect(EpisodeFiling.restored.actionTitle(for: post) == "Mark as unread")
+        #expect(EpisodeFiling.restored.actionTitle(for: audio) == "Mark as unplayed")
+        #expect(EpisodeFiling.restored.confirmation(for: post) == "Marked as unread: Article 7008")
+        #expect(
+            EpisodeFiling.restored.confirmation(for: audio) == "Marked as unplayed: Episode 7009")
     }
 }
 

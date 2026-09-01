@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The shows the user subscribes to, plus search across her library and public
-/// discovery sources.
+/// The podcasts and publications the user follows, plus search across her
+/// library and public discovery sources.
 struct LibraryView: View {
     @EnvironmentObject private var auth: AuthController
     @StateObject private var model = LibraryModel()
@@ -23,15 +23,18 @@ struct LibraryView: View {
                     searchResults
                 }
             }
-            .navigationTitle("Shows")
-            .toolbarTitleDisplayMode(.inlineLarge)
+            .navigationTitle("Following")
+            // A fixed inline title does not change size or position as the
+            // library scrolls.
+            .toolbarTitleDisplayMode(.inline)
             .navigationDestination(for: Show.self) { ShowDetailView(show: $0) }
             .navigationDestination(for: PodcastResult.self) { PodcastPreviewView(podcast: $0) }
             .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     SearchToolbarButton(
-                        label: "Search shows and episodes", focused: $searchFocused)
+                        label: "Search podcasts, publications, and episodes",
+                        focused: $searchFocused)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { openVoiceSheet($showingVoice) } label: {
@@ -43,10 +46,10 @@ struct LibraryView: View {
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .automatic),
-                prompt: "Shows, episodes, or a web address")
+                prompt: "Podcasts, publications, episodes, or a web address")
             .searchScopes($searchScope) {
                 Text("All").tag(LibrarySearchScope.all)
-                Text("Shows").tag(LibrarySearchScope.shows)
+                Text("Sources").tag(LibrarySearchScope.shows)
                 Text("Episodes").tag(LibrarySearchScope.episodes)
             }
             .searchFocused($searchFocused)
@@ -85,18 +88,20 @@ struct LibraryView: View {
     private var library: some View {
         switch model.state {
         case .loading:
-            ProgressView("Loading your shows…")
+            ProgressView("Loading what you follow…")
         case .failed(let message):
             ContentUnavailableView(
-                "Could not load your shows", systemImage: "wifi.exclamationmark",
+                "Could not load what you follow", systemImage: "wifi.exclamationmark",
                 description: Text(message))
         case .empty:
             ContentUnavailableView {
-                Label("No shows yet", systemImage: "waveform")
+                Label("Nothing followed yet", systemImage: "waveform")
             } description: {
-                Text("Tap the microphone and say the name of a podcast, or search for one above.")
+                Text(
+                    "Search for a podcast or publication above, or tap the microphone and say its name."
+                )
             } actions: {
-                Button("Add a show by voice") { openVoiceSheet($showingVoice) }
+                Button("Find something by voice") { openVoiceSheet($showingVoice) }
             }
         case .loaded(let shows):
             showList(shows, offline: false)
@@ -108,7 +113,7 @@ struct LibraryView: View {
     private func showList(_ shows: [Show], offline: Bool) -> some View {
         List {
             if offline {
-                Label("Offline — showing your saved shows", systemImage: "wifi.slash")
+                Label("Offline — showing saved subscriptions", systemImage: "wifi.slash")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

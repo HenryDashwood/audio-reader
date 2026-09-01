@@ -120,10 +120,9 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) { MicToolbarButton() }
             }
-            // Level with the search and microphone buttons rather than on a
-            // line of its own below them: a large title in its own band costs
-            // an inch of every screen before a single episode is shown.
-            .toolbarTitleDisplayMode(.inlineLarge)
+            // Keep the title in one place rather than changing its size and
+            // alignment when the list scrolls.
+            .toolbarTitleDisplayMode(.inline)
             .confirmationDialog(
                 "Delete your account?",
                 isPresented: $confirmingDelete,

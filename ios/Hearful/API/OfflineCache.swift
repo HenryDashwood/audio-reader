@@ -8,7 +8,7 @@ private nonisolated let log = Logger(subsystem: "com.henrydashwood.hearful", cat
 /// The last successful answer to each list request, kept on disk.
 ///
 /// Every screen in this app is a live request, so a weak signal used to turn
-/// the whole library into "Could not load your shows" — an apology, with no
+/// the whole library into "Could not load what you follow" — an apology, with no
 /// way forward, for someone who cannot check whether the Wi-Fi is the problem.
 /// Holding the previous answer means the shows are still there, still
 /// playable if they are downloaded, and the failure is a note rather than a

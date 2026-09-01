@@ -64,10 +64,10 @@ struct ShowDetailView: View {
                         )
                         .contentShape(Rectangle())
                         .onTapGesture { openEpisode = episode }
-                        // The way back. A show's page keeps every episode,
-                        // filed or not, so this is where a mistake made in
-                        // the Latest list — or by voice — is undone.
-                        .episodeFilingActions(for: episode) { filing in
+                        // A podcast or publication page keeps every item and
+                        // only changes whether it has been played or read.
+                        // Dismissal is deliberately confined to Latest.
+                        .episodeFilingActions(for: episode, allowsDismissal: false) { filing in
                             Task { await model.file(filing, episode: episode) }
                         }
                     }
@@ -412,7 +412,7 @@ final class EpisodeListModel: ObservableObject {
         }
     }
 
-    /// Marks an episode played, puts it aside, or puts it back.
+    /// Marks an item played/read, or marks it unplayed/unread again.
     ///
     /// The row stays — this is her whole library, not the "what's new" list —
     /// and changes its label instead, so the action she just took is visible

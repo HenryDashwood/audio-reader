@@ -32,10 +32,9 @@ struct LatestView: View {
                 }
             }
             .navigationTitle("Latest")
-            // Level with the search and microphone buttons rather than on a
-            // line of its own below them: a large title in its own band costs
-            // an inch of every screen before a single episode is shown.
-            .toolbarTitleDisplayMode(.inlineLarge)
+            // Keep the title in one place rather than changing its size and
+            // alignment when the list scrolls.
+            .toolbarTitleDisplayMode(.inline)
             .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
             .toolbar {
                 if model.canClear {
@@ -133,7 +132,7 @@ struct LatestView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture { openEpisode = episode }
-        .episodeFilingActions(for: episode) { filing in
+        .episodeFilingActions(for: episode, allowsDismissal: true) { filing in
             Task { await model.file(filing, episode: episode) }
         }
     }
@@ -184,7 +183,7 @@ final class LatestModel: ObservableObject {
         return nil
     }
 
-    /// Marks an episode played, puts it aside, or puts it back.
+    /// Marks an item played/read or dismisses it from Latest.
     ///
     /// The row goes only once the server has taken it, so a failed request
     /// leaves the list exactly as it was rather than losing an episode to a

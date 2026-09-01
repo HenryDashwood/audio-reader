@@ -40,7 +40,7 @@ struct ContentView: View {
     var body: some View {
         Group {
             TabView(selection: $selectedTab) {
-                Tab("Shows", systemImage: "square.stack", value: .shows) {
+                Tab("Following", systemImage: "square.stack", value: .shows) {
                     LibraryView(
                         showingVoice: $showingVoice,
                         openEpisode: $showsOpenEpisode)
@@ -132,7 +132,7 @@ struct ContentView: View {
         case .latest:
             latestOpenEpisode = episode
         case .settings:
-            // lastContentTab is only ever Shows or Latest.
+            // lastContentTab is only ever Following or Latest.
             break
         }
     }

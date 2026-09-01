@@ -12,7 +12,7 @@ nonisolated enum EpisodeFiling: String, Sendable, Hashable {
     case played
     /// She does not want it, and has not heard it.
     case dismissed
-    /// Neither: back in the list, from the beginning.
+    /// Neither: unplayed and eligible for Latest again, from the beginning.
     case restored
 
     /// What the two flags become. A nil leaves that one as it was.
@@ -28,18 +28,33 @@ nonisolated enum EpisodeFiling: String, Sendable, Hashable {
     /// visible effect, and the reason everything here is announced.
     var hidesFromLatest: Bool { self != .restored }
 
-    /// Which of these are worth offering on a row. An episode already filed
-    /// has one useful action and it is the way back.
-    static func available(for episode: Episode) -> [EpisodeFiling] {
-        episode.completed == true || episode.dismissed == true ? [.restored] : [.played, .dismissed]
+    /// Which of these are worth offering on a row. Dismissal belongs only to
+    /// Latest; a podcast or publication page offers played and unplayed.
+    static func available(for episode: Episode, allowsDismissal: Bool) -> [EpisodeFiling] {
+        if episode.completed == true || episode.dismissed == true { return [.restored] }
+        return allowsDismissal ? [.played, .dismissed] : [.played]
+    }
+
+    /// Leading-edge swipes remove an item; trailing-edge swipes complete it.
+    /// Keeping one action on each edge makes a full swipe unambiguous.
+    static func leadingSwipeActions(
+        for episode: Episode, allowsDismissal: Bool
+    ) -> [EpisodeFiling] {
+        available(for: episode, allowsDismissal: allowsDismissal).filter { $0 == .dismissed }
+    }
+
+    static func trailingSwipeActions(
+        for episode: Episode, allowsDismissal: Bool
+    ) -> [EpisodeFiling] {
+        available(for: episode, allowsDismissal: allowsDismissal).filter { $0 != .dismissed }
     }
 
     /// The swipe action's label, and what VoiceOver reads in the rotor.
     func actionTitle(for episode: Episode) -> String {
         switch self {
-        case .played: episode.isArticle ? "Mark read" : "Mark played"
-        case .dismissed: "Not interested"
-        case .restored: "Put back"
+        case .played: episode.isArticle ? "Mark as read" : "Mark as played"
+        case .dismissed: "Dismiss"
+        case .restored: episode.isArticle ? "Mark as unread" : "Mark as unplayed"
         }
     }
 
@@ -69,7 +84,10 @@ nonisolated enum EpisodeFiling: String, Sendable, Hashable {
                 ? "Marked as read: \(episode.title)"
                 : "Marked as played: \(episode.title)"
         case .dismissed: "Taken off your list: \(episode.title)"
-        case .restored: "Back in your list: \(episode.title)"
+        case .restored:
+            episode.isArticle
+                ? "Marked as unread: \(episode.title)"
+                : "Marked as unplayed: \(episode.title)"
         }
     }
 
@@ -122,14 +140,34 @@ extension View {
     /// Swipe actions, because VoiceOver surfaces them through the Actions
     /// rotor — the same gesture on every row of every list, and the only way
     /// to reach a control that is otherwise hidden behind a swipe you cannot
-    /// see. Full swipe is off deliberately: a gesture that files an episode
-    /// without stopping at a labelled button is one she cannot confirm before
-    /// it happens.
+    /// see. Dismissal lives on the leading edge in Latest only; completion and
+    /// its inverse live on the trailing edge everywhere. With one action on an
+    /// edge, either can be completed in a single full swipe.
     func episodeFilingActions(
-        for episode: Episode, perform: @escaping (EpisodeFiling) -> Void
+        for episode: Episode,
+        allowsDismissal: Bool,
+        perform: @escaping (EpisodeFiling) -> Void
     ) -> some View {
-        swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            ForEach(EpisodeFiling.available(for: episode), id: \.self) { filing in
+        swipeActions(edge: .leading, allowsFullSwipe: true) {
+            ForEach(
+                EpisodeFiling.leadingSwipeActions(
+                    for: episode, allowsDismissal: allowsDismissal),
+                id: \.self
+            ) { filing in
+                Button {
+                    perform(filing)
+                } label: {
+                    Label(filing.actionTitle(for: episode), systemImage: filing.systemImage)
+                }
+                .tint(filing.tint)
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            ForEach(
+                EpisodeFiling.trailingSwipeActions(
+                    for: episode, allowsDismissal: allowsDismissal),
+                id: \.self
+            ) { filing in
                 Button {
                     perform(filing)
                 } label: {
