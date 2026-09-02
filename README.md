@@ -443,7 +443,9 @@ address in. So the first Substack a user is signed up to also requests that
 email (`POST https://substack.com/api/v1/email-login`), the backend follows
 its link when it arrives, and every Substack after that is a plain signup.
 That email comes from whichever publication Substack likes, so it is
-recognised by its subject rather than its sender.
+recognised by its subject rather than its sender. A code or sign-in email
+is a step of signing up, never an issue: it is kept as raw mail for the
+retention window and filed nowhere, whoever it came from.
 
 ### Telemetry
 

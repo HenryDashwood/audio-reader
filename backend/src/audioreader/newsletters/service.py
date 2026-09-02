@@ -86,6 +86,9 @@ FAILED = "failed"
 #: A confirmation email for a signup the app made: its link was followed and
 #: the message itself is not an issue.
 CONFIRMED = "confirmed"
+#: A step of signing up — a code to type in, a link to sign in with — that
+#: nothing here can take. Kept as raw mail for a while, filed nowhere.
+SKIPPED = "skipped"
 
 SIGNUP_SUBMITTED = "submitted"
 SIGNUP_UNSUPPORTED = "unsupported"
@@ -96,8 +99,11 @@ _SUBSCRIPTION_NOTICE = re.compile(r"^\s*subscription confirmed\s*$", re.IGNORECA
 #: Mail that is part of signing up rather than the newsletter itself: a code
 #: to type in, a link to sign in with. A signup is not complete on the
 #: strength of one of these, and the newsletter is not yet writing.
+#: "Sign in to" counts only as the subject's opening: a newsletter's own
+#: issue may well be about signing in to something.
 _TRANSACTIONAL = re.compile(
-    r"verification code|verify your email|confirm your email|sign[- ]in|log[- ]in|magic link|one[- ]time code",
+    r"verification code|verify your email|confirm your (?:email|address|subscription)"
+    r"|^\s*(?:please )?(?:sign|log)[- ]in to(?: |$)|(?:sign|log)[- ]in link|login link|magic link|one[- ]time code",
     re.IGNORECASE,
 )
 
@@ -456,13 +462,16 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
         session.add(record)
         await session.commit()
         return Delivery(CONFIRMED)
-    if signup is not None and _TRANSACTIONAL.search(message.subject):
+    if _TRANSACTIONAL.search(message.subject):
         # Substack answers a new address with a code to type in, from an
-        # address of its choosing. Nothing here can type it, so this is
-        # left for her as a sender waiting, code in the subject, and the
-        # signup stays open for the issue that follows once it is entered.
-        logger.info("a signup step for %s needs a person: %r", signup.publication, message.subject[:80])
-        signup = None
+        # address of its choosing. Nothing here can type it, and a code is
+        # not an issue of anything: it is kept as raw mail for a while and
+        # filed nowhere, so it never sits at the top of a newsletter.
+        logger.info("a signup step needs a person: %r", message.subject[:80])
+        record.error = "a sign-up step; not an issue"
+        session.add(record)
+        await session.commit()
+        return Delivery(SKIPPED)
 
     feed = await session.scalar(
         select(Feed).where(Feed.owner_user_id == user.id, Feed.url == feed_url_for(user, message.sender.key))

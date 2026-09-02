@@ -104,6 +104,11 @@ async def counts_for(session: AsyncSession, feed_id: int) -> tuple[int, int]:
     reliably in memory when the feed was created this request, and a lazy load
     outside the session's greenlet is an error, not a query.
     """
+    feed = await session.get(Feed, feed_id)
+    if feed is not None and feed.companion_feed_id is not None:
+        # A newsletter's page shows its feed on the web too; the count says
+        # how many rows that page has.
+        return await companions.item_counts(session, feed)
     row = (
         await session.execute(
             # count(column) counts non-null values, which is exactly the
@@ -268,7 +273,12 @@ async def list_feeds(session: Session, user: CurrentUser) -> list[FeedRead]:
         .outerjoin(counts, counts.c.feed_id == Feed.id)
         .order_by(Feed.title)
     )
-    return [to_feed_read(feed, count, audio_count) for feed, count, audio_count in rows.all()]
+    shows = []
+    for feed, count, audio_count in rows.all():
+        if feed.companion_feed_id is not None:
+            count, audio_count = await companions.item_counts(session, feed)
+        shows.append(to_feed_read(feed, count, audio_count))
+    return shows
 
 
 @router.delete("/{feed_id}", status_code=204)

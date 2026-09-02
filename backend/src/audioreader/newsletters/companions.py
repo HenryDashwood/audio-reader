@@ -199,20 +199,46 @@ def _title_key(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", title.casefold())
 
 
-def without_duplicates(episodes: list[Episode], own_feed_id: int) -> list[Episode]:
-    """The newsletter's items plus the companion's, one row per post.
+class _Posts:
+    """Her issues' links and titles, for telling the feed's copies apart.
 
     An emailed issue and the feed's copy of it are the same post. Hers is
     kept — it is the one she is subscribed to — and the feed's copy is
     dropped when it shares a link or a title. Titles rather than links
     alone, because an email's link is often a tracking redirect.
     """
-    own_links = {episode.link for episode in episodes if episode.feed_id == own_feed_id and episode.link}
-    own_titles = {_title_key(episode.title) for episode in episodes if episode.feed_id == own_feed_id}
-    kept = []
-    for episode in episodes:
-        if episode.feed_id != own_feed_id:
-            if episode.link in own_links or _title_key(episode.title) in own_titles:
-                continue
-        kept.append(episode)
-    return kept
+
+    def __init__(self, own_feed_id: int, rows: list[tuple[int, str, str | None]]) -> None:
+        self.own_feed_id = own_feed_id
+        self.links = {link for feed_id, _, link in rows if feed_id == own_feed_id and link}
+        self.titles = {_title_key(title) for feed_id, title, _ in rows if feed_id == own_feed_id}
+
+    def is_the_feeds_copy(self, feed_id: int, title: str, link: str | None) -> bool:
+        return feed_id != self.own_feed_id and (link in self.links or _title_key(title) in self.titles)
+
+
+def without_duplicates(episodes: list[Episode], own_feed_id: int) -> list[Episode]:
+    """The newsletter's items plus the companion's, one row per post."""
+    posts = _Posts(own_feed_id, [(episode.feed_id, episode.title, episode.link) for episode in episodes])
+    return [
+        episode for episode in episodes if not posts.is_the_feeds_copy(episode.feed_id, episode.title, episode.link)
+    ]
+
+
+async def item_counts(session: AsyncSession, feed: Feed) -> tuple[int, int]:
+    """How many posts the newsletter's page shows, and how many carry audio.
+
+    Counted the way the page lists them: her issues and the companion's
+    archive together, one per post. Cheap enough because a newsletter has
+    a handful of issues and a feed a few hundred posts at most.
+    """
+    rows = (
+        await session.execute(
+            select(Episode.feed_id, Episode.title, Episode.link, Episode.audio_url).where(
+                Episode.feed_id.in_([feed.id, feed.companion_feed_id])
+            )
+        )
+    ).all()
+    posts = _Posts(feed.id, [(feed_id, title, link) for feed_id, title, link, _ in rows])
+    kept = [row for row in rows if not posts.is_the_feeds_copy(row[0], row[1], row[2])]
+    return len(kept), sum(1 for row in kept if row[3] is not None)

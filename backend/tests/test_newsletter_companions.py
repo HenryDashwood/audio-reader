@@ -235,6 +235,17 @@ class TestWhatSheSees:
         assert shows[0]["image_url"] == "https://cdn.example.com/baldwin.png"
         assert shows[0]["source"] == "email"
 
+    async def test_the_count_is_what_her_page_shows(self, client, session, user, substack_site):
+        feed = await newsletter(session, user)
+        await companions.attach_companion(session, feed)
+
+        shows = (await client.get("/feeds")).json()
+        page = (await client.get(f"/feeds/{feed.id}/episodes")).json()
+
+        # Her one issue and the feed's three posts, with Post A counted once.
+        assert shows[0]["episode_count"] == len(page) == 3
+        assert shows[0]["is_article_feed"] is True
+
     async def test_searching_the_page_covers_the_archive(self, client, session, user, substack_site):
         feed = await newsletter(session, user)
         await companions.attach_companion(session, feed)

@@ -12,7 +12,15 @@ from audioreader.commands.intents import Action
 from audioreader.config import settings
 from audioreader.llm.fake import FakeLLMClient
 from audioreader.llm.openai_responses import ResponseCompleted
-from audioreader.models import APPROVAL_APPROVED, APPROVAL_PENDING, Episode, Feed, NewsletterSignup, Subscription
+from audioreader.models import (
+    APPROVAL_APPROVED,
+    APPROVAL_PENDING,
+    Episode,
+    Feed,
+    InboundMessage,
+    NewsletterSignup,
+    Subscription,
+)
 from audioreader.newsletters import service
 from audioreader.newsletters.signup import (
     SignupUnsupported,
@@ -494,10 +502,51 @@ class TestWhatComesBack:
 
         delivery = await service.receive(session, user, raw)
 
-        assert delivery.status == "pending"
+        assert delivery.status == "skipped"
         assert signup.completed_at is None and signup.confirmed_at is None
+        # A code is not an issue of anything, so nothing is filed for it.
+        assert (await session.scalars(select(Feed))).all() == []
+        record = (await session.scalars(select(InboundMessage))).one()
+        assert record.error == "a sign-up step; not an issue"
+
+    async def test_a_code_never_sits_on_top_of_a_newsletter_she_follows(self, session, user, newsletters_enabled):
+        # Substack sends its codes from a publication's address, List-ID and
+        # all, so one used to land as the newest issue of that publication.
+        issue = build_email(
+            sender="Ben Southwood from Baldwin <bensouthwood@substack.com>",
+            subject="On growth",
+            html="<p>An issue.</p>",
+            message_id="<issue@substack.com>",
+            list_id="<bensouthwood.substack.com>",
+        )
+        await service.receive(session, user, issue)
         feed = (await session.scalars(select(Feed))).one()
-        assert feed.approval == APPROVAL_PENDING
+        await service.approve(session, user, feed.id)
+        code = build_email(
+            sender="Ben Southwood from Baldwin <bensouthwood@substack.com>",
+            subject="756893 is your Substack verification code",
+            html="<p>Your code is 756893.</p>",
+            message_id="<code@substack.com>",
+            list_id="<bensouthwood.substack.com>",
+        )
+
+        delivery = await service.receive(session, user, code)
+
+        assert delivery.status == "skipped"
+        titles = (await session.scalars(select(Episode.title).where(Episode.feed_id == feed.id))).all()
+        assert titles == ["On growth"]
+
+    def test_an_issue_about_signing_in_is_still_an_issue(self):
+        for subject in ("Why you should sign in to democracy", "The log-in to nowhere", "Confirm your priors"):
+            assert not service._TRANSACTIONAL.search(subject), subject
+        for subject in (
+            "Sign in to Baldwin",
+            "Please log in to Substack",
+            "Your secure sign-in link for Works in Progress",
+            "756893 is your Substack verification code",
+            "Please confirm your subscription to Money Stuff",
+        ):
+            assert service._TRANSACTIONAL.search(subject), subject
 
     async def test_a_stranger_still_waits(self, session, user, newsletters_enabled):
         await signed_up(session, user)
