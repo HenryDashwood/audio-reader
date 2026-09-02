@@ -274,14 +274,56 @@ nonisolated struct Show: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// moved or shut down. Optional so payloads from before the field existed
     /// (including anything already in the offline cache) still decode.
     var isFailing: Bool?
+    /// "rss" for anything fetched from the web; "email" for a newsletter that
+    /// arrives at her private address. Optional for older payloads and the
+    /// offline cache, which both mean an ordinary feed.
+    var source: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, description
+        case id, title, description, source
         case artworkURL = "image_url"
         case episodeCount = "episode_count"
         case isArticleFeed = "is_article_feed"
         case isFailing = "is_failing"
     }
+}
+
+/// The address she gives a newsletter so its issues reach the app.
+nonisolated struct NewsletterAddress: Decodable, Equatable, Sendable {
+    let address: String
+
+    /// The part before the @: random letters, which is what has to be typed
+    /// or read out correctly.
+    var localPart: String { String(address.prefix { $0 != "@" }) }
+    var domain: String { String(address.drop { $0 != "@" }.dropFirst()) }
+
+    /// The address as something a voice can say and a listener can write
+    /// down: the letters one at a time, then the domain as words.
+    var spoken: String {
+        let letters = localPart.map { String($0) }.joined(separator: ", ")
+        let domainWords = domain.replacingOccurrences(of: ".", with: " dot ")
+        return "\(letters), at \(domainWords)"
+    }
+}
+
+/// A sender that has written to her address and is waiting for a yes or no.
+nonisolated struct PendingNewsletter: Decodable, Identifiable, Equatable, Hashable, Sendable {
+    let id: Int
+    let title: String
+    let senderAddress: String
+    let messageCount: Int
+    var latestTitle: String?
+    var latestAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title
+        case senderAddress = "sender_address"
+        case messageCount = "message_count"
+        case latestTitle = "latest_title"
+        case latestAt = "latest_at"
+    }
+
+    var messageCountLabel: String { "\(messageCount) \(messageCount == 1 ? "message" : "messages")" }
 }
 
 /// One show from the public directory; it may not be in our catalog yet, so

@@ -41,6 +41,14 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func previewFeed(url: URL) async throws -> FeedPreview
     func subscribe(feedURL: URL) async throws -> Show
     func unsubscribe(showID: Int) async throws
+    /// Her private newsletter address, minted by the backend on first request.
+    func newsletterAddress() async throws -> NewsletterAddress
+    /// Senders that have written to that address and await her answer.
+    func pendingNewsletters() async throws -> [PendingNewsletter]
+    /// Follow a pending sender. Everything it has sent lands in Latest.
+    func approveNewsletter(id: Int) async throws -> Show
+    /// Refuse a pending sender for good; its mail is dropped from now on.
+    func blockNewsletter(id: Int) async throws
     /// `authorizationCode` is Apple's single-use code, forwarded so the
     /// backend can hold something revocable for account deletion. Optional:
     /// sign-in works without it.
@@ -101,6 +109,22 @@ extension HearfulAPIProtocol {
 
     func discoverFeeds(url: URL) async throws -> FeedDiscoveryResponse {
         throw APIError(underlying: "Feed discovery is not implemented by this API client")
+    }
+
+    // Newsletters are a later addition; test doubles that predate them keep
+    // compiling, and any test that exercises them supplies the real thing.
+    func newsletterAddress() async throws -> NewsletterAddress {
+        throw APIError(underlying: "Newsletters are not implemented by this API client")
+    }
+
+    func pendingNewsletters() async throws -> [PendingNewsletter] { [] }
+
+    func approveNewsletter(id: Int) async throws -> Show {
+        throw APIError(underlying: "Newsletters are not implemented by this API client")
+    }
+
+    func blockNewsletter(id: Int) async throws {
+        throw APIError(underlying: "Newsletters are not implemented by this API client")
     }
 }
 
@@ -397,6 +421,32 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         let url = baseURL.appendingPathComponent("feeds").appendingPathComponent("\(showID)")
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
+        try await perform(request)
+    }
+
+    func newsletterAddress() async throws -> NewsletterAddress {
+        try await send(URLRequest(url: baseURL.appendingPathComponent("newsletters/address")))
+    }
+
+    func pendingNewsletters() async throws -> [PendingNewsletter] {
+        try await send(URLRequest(url: baseURL.appendingPathComponent("newsletters/pending")))
+    }
+
+    func approveNewsletter(id: Int) async throws -> Show {
+        let url = baseURL.appendingPathComponent("newsletters")
+            .appendingPathComponent("\(id)")
+            .appendingPathComponent("approve")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        return try await send(request)
+    }
+
+    func blockNewsletter(id: Int) async throws {
+        let url = baseURL.appendingPathComponent("newsletters")
+            .appendingPathComponent("\(id)")
+            .appendingPathComponent("block")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
         try await perform(request)
     }
 

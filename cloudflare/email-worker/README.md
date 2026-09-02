@@ -46,8 +46,13 @@ appears under `GET /newsletters/pending`.
 
 ## Failure behaviour
 
-If the backend is down the Worker throws. Confirm on the deployed domain what
-Cloudflare then reports to the sending server — the documentation does not
-say — before relying on senders' retries; the backend stores every message it
-accepts before parsing it, so the window that matters is only between
-Cloudflare and the webhook.
+If the backend is unreachable the Worker throws, and Cloudflare answers the
+sending server with a temporary failure rather than a bounce. Tested on
+2026-09-02 by deploying the Worker with an unreachable `WEBHOOK_URL`: a
+message sent from Gmail produced no bounce, and Gmail redelivered it six
+minutes later, by which time the Worker had been restored and the backend
+accepted it as normal. So a backend outage delays newsletters; it does not
+lose them, as long as the outage is shorter than the sender's retry window
+(hours for the major providers). The backend stores every message it accepts
+before parsing it, so the only window that matters is between Cloudflare and
+the webhook.

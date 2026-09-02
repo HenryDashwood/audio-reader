@@ -6,6 +6,10 @@
   "name": "magpie-email-inbound",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-02",
+  // Email only. There is no fetch handler, so a public workers.dev URL and
+  // preview URLs would serve nothing but an error page.
+  "workers_dev": false,
+  "preview_urls": false,
   // No nodejs_compat: this Worker has no dependencies and uses only Web
   // Crypto and fetch, so the Node.js shims would be dead weight.
   "observability": {

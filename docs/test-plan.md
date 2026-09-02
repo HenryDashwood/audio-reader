@@ -213,6 +213,12 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 - [ ] **Mini player** appears when something is playing, tapping it opens the full player
 - [ ] Full player closes again — by swipe **and** by the close button
 - [ ] Pull to refresh on both lists
+- [ ] **Settings → Newsletters** shows an address; Copy Address puts it on the clipboard, Share Address opens the share sheet
+- [ ] Email that address from any account → the sender appears at the top of **Following** under **Waiting for your answer**, and nothing from it is in **Latest**
+- [ ] **Follow** → the sender becomes a show, its messages are in **Latest**, and opening one reads the writing without unsubscribe links, postal addresses or "view in browser"
+- [ ] **Block**, confirm → the sender goes; a later email from it does not bring it back
+- [ ] Unsubscribe from a followed newsletter → it leaves **Following**; its next email arrives as a fresh **Waiting for your answer** row
+- [ ] Newsletter rows and pages say "issues", not "episodes" or "posts"
 
 ---
 
@@ -249,6 +255,8 @@ Do this with the **screen curtain** on — three-finger triple-tap. If you can s
 - [ ] With VoiceOver off, opening the voice sheet starts listening **immediately** — that behaviour must survive
 - [ ] Sleep timer and speed controls announce their current value, not just their name
 - [ ] **Delete Account** → the consequence is read out before you reach the destructive button
+- [ ] **Settings → Newsletters** → the address is spelled out letter by letter, and **Read Address Aloud** does the same through the speaker
+- [ ] A **Waiting for your answer** row reads sender, message count and latest subject as one phrase; **Follow** and **Block** name the sender; following announces where the messages went
 - [ ] Nothing is announced twice; nothing important is silent
 
 ---

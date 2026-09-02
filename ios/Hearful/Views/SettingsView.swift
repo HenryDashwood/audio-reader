@@ -70,6 +70,8 @@ struct SettingsView: View {
                     }
                 }
 
+                NewsletterAddressSection()
+
                 Section {
                     Link("Privacy Policy", destination: AppConfiguration.privacyURL)
                     Link("Email Support", destination: AppConfiguration.supportURL)

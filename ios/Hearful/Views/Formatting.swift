@@ -79,13 +79,23 @@ extension Episode {
 }
 
 extension Show {
-    /// What one item in this feed is called. A blog carries posts; a podcast
-    /// carries episodes, and calling a written piece an episode is confusing
-    /// read out loud as much as it is on screen.
-    var itemNoun: String { isArticleFeed == true ? "post" : "episode" }
+    /// Arrives by email at her private address rather than being fetched.
+    var isNewsletter: Bool { source == "email" }
 
-    /// The list of them, as a section header: "Posts", "Episodes".
-    var itemsSectionTitle: String { isArticleFeed == true ? "Posts" : "Episodes" }
+    /// What one item in this feed is called. A blog carries posts, a
+    /// newsletter carries issues, a podcast carries episodes — and calling a
+    /// written piece an episode is confusing read out loud as much as it is
+    /// on screen.
+    var itemNoun: String {
+        if isNewsletter { return "issue" }
+        return isArticleFeed == true ? "post" : "episode"
+    }
+
+    /// The list of them, as a section header: "Issues", "Posts", "Episodes".
+    var itemsSectionTitle: String {
+        if isNewsletter { return "Issues" }
+        return isArticleFeed == true ? "Posts" : "Episodes"
+    }
 
     /// How many there are, said the way the feed's own items are named.
     var itemCountLabel: String {
