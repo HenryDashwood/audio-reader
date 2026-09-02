@@ -21,6 +21,8 @@ management, search, and the LLM-based voice action processing to the backend.
   storage, podcast search, and the voice-command endpoint.
 - `ios/` — SwiftUI app, targeting **iOS 26+**. Ships as **Magpie**; the Xcode
   project, target, and bundle identifier keep the original `Hearful` name.
+- `cloudflare/email-worker/` — the one piece that runs at Cloudflare: the
+  Email Worker that receives newsletter mail and hands it to the backend.
 
 Voice commands use iOS 26 `DictationTranscriber` as the primary recogniser. It
 uses the same on-device model family as keyboard Dictation and is tuned for
@@ -360,6 +362,18 @@ development needs no configuration.
 - `AUDIOREADER_ORPHAN_FEED_RETENTION_DAYS` — how long a feed nobody
   subscribes to and nobody has listened to stays in the shared catalog before
   being pruned (default 30)
+- `AUDIOREADER_INBOUND_EMAIL_DOMAIN` / `_SECRET` — the domain newsletter
+  email arrives at, and the HMAC secret shared with the Cloudflare Worker that
+  forwards it (see below). Both blank by default, which switches newsletters
+  off: no addresses are handed out and `/inbound/email` refuses everything.
+- `AUDIOREADER_INBOUND_EMAIL_MAX_BYTES` — largest email accepted (default
+  10 MiB)
+- `AUDIOREADER_INBOUND_RAW_RETENTION_DAYS` — how long a received email's raw
+  bytes are kept for reprocessing before being dropped (default 7). The
+  article made from it is kept regardless.
+- `AUDIOREADER_NEWSLETTER_PENDING_RETENTION_DAYS` — how long a sender she has
+  neither approved nor blocked is remembered after its last message
+  (default 30)
 
 `GET /health` is the platform healthcheck. It deliberately does not touch the
 database: a liveness probe that fails on a brief Postgres blip turns a
@@ -374,6 +388,24 @@ still names the third parties involved.
 `src/audioreader/static/support.html`. It keeps the contact path and the most
 useful first checks available without an account, and links back to the privacy
 policy.
+
+### Newsletters by email
+
+Some publications — Bloomberg's Money Stuff, most Mailchimp newsletters — have
+no feed and exist only as email. Each user has a private address,
+`<token>@<inbound domain>`, minted on first request of `GET
+/newsletters/address`. Mail to it is received by Cloudflare Email Routing and
+handed to the backend by the Worker in `cloudflare/email-worker/`, whose
+README has the one-time setup. The first message from a sender creates a
+*pending* feed that is invisible until approved (`GET /newsletters/pending`,
+`POST /newsletters/{id}/approve` or `/block`); once approved it is an ordinary
+article feed owned by that user alone, never polled, never surfaced by
+discovery or search to anyone else. Raw messages are kept briefly for
+reprocessing and then dropped; blocked senders' mail is dropped on arrival.
+
+The user is the subscriber and the app is her mail reader: nothing is
+re-sent from one subscription to many people, which is what keeps this on the
+right side of the publishers' terms as the app grows.
 
 ### Telemetry
 

@@ -24,6 +24,7 @@ from audioreader.models import (
     UserIdentity,
     utcnow,
 )
+from audioreader.newsletters import service as newsletters
 
 # The pre-auth deployment had exactly one implicit user; the migration created
 # this user (same literal) and attached the then-existing feeds to it. Nothing
@@ -174,5 +175,8 @@ async def delete_user(session: AsyncSession, user: User) -> None:
     """
     for table in (PlaybackPosition, Subscription, AuthSession, UserIdentity):
         await session.execute(delete(table).where(table.user_id == user.id))
+    # Her newsletter feeds and every issue in them are hers alone, unlike the
+    # shared catalog, and go with her.
+    await newsletters.delete_all_for_user(session, user)
     await session.execute(delete(User).where(User.id == user.id))
     await session.commit()

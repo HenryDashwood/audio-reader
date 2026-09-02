@@ -122,6 +122,29 @@ class Settings(BaseSettings):
     # series of small deletes rather than one long table lock.
     orphan_prune_batch_size: int = 200
 
+    # Newsletters arrive by email at <token>@<inbound_email_domain>. Blank
+    # means the feature is off: no addresses are handed out and the inbound
+    # endpoint refuses everything, so a deployment without mail set up is
+    # simply an app without newsletters rather than one with a silent hole.
+    inbound_email_domain: str = ""
+    # Shared with the mail-receiving Worker, which signs each message it
+    # forwards (HMAC-SHA256 over the raw bytes). Blank disables the endpoint
+    # even when a domain is configured.
+    inbound_email_secret: str = ""
+    # Newsletters are text; a message bigger than this is not one. Cloudflare
+    # itself stops at 25 MiB.
+    inbound_email_max_bytes: int = 10 * 1024 * 1024
+    # How long the raw bytes of a received email are kept for reprocessing
+    # before being dropped. The episode made from it is kept regardless.
+    inbound_raw_retention_days: int = 7
+    # A sender she has neither approved nor blocked is forgotten, along with
+    # its messages, once it has been quiet this long.
+    newsletter_pending_retention_days: int = 30
+
+    @property
+    def inbound_email_enabled(self) -> bool:
+        return bool(self.inbound_email_domain and self.inbound_email_secret)
+
     # Sign in with Apple: identity tokens are verified against Apple's public
     # keys, with the app's bundle id as the required audience. No secret needed.
     apple_bundle_id: str = "com.henrydashwood.hearful"

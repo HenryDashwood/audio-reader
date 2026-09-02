@@ -79,7 +79,7 @@ def check_podcast_search_limit(user: CurrentUser) -> None:
     )
 
 
-def _to_feed_read(feed: Feed, episode_count: int, audio_count: int) -> FeedRead:
+def to_feed_read(feed: Feed, episode_count: int, audio_count: int) -> FeedRead:
     return FeedRead(
         id=feed.id,
         url=feed.url,
@@ -87,6 +87,7 @@ def _to_feed_read(feed: Feed, episode_count: int, audio_count: int) -> FeedRead:
         description=feed.description,
         image_url=feed.image_url or feed.site_image_url,
         episode_count=episode_count,
+        source=feed.source,
         # An empty feed is left as a podcast: "0 posts" for a show whose
         # episodes simply have not loaded yet would be a worse guess than the
         # default, and the label corrects itself on the next refresh.
@@ -95,7 +96,7 @@ def _to_feed_read(feed: Feed, episode_count: int, audio_count: int) -> FeedRead:
     )
 
 
-async def _counts_for(session: AsyncSession, feed_id: int) -> tuple[int, int]:
+async def counts_for(session: AsyncSession, feed_id: int) -> tuple[int, int]:
     """How many items the feed has, and how many of them carry audio.
 
     Counted with a query, never len(feed.episodes): the collection is only
@@ -189,8 +190,8 @@ async def subscribe(body: FeedCreate, session: Session, user: CurrentUser) -> Fe
         raise HTTPException(status_code=409, detail="already subscribed to this feed") from exc
     except (FeedFetchError, FeedParseError) as exc:
         _raise_discovery_error(exc)
-    count, audio_count = await _counts_for(session, feed.id)
-    return _to_feed_read(feed, episode_count=count, audio_count=audio_count)
+    count, audio_count = await counts_for(session, feed.id)
+    return to_feed_read(feed, episode_count=count, audio_count=audio_count)
 
 
 @router.post("/discover", dependencies=[Depends(check_feed_operation_limit)])
@@ -231,7 +232,7 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
     except (FeedFetchError, FeedParseError) as exc:
         _raise_discovery_error(exc)
 
-    episode_count, audio_count = await _counts_for(session, feed.id)
+    episode_count, audio_count = await counts_for(session, feed.id)
     episodes = (
         await session.scalars(
             select(Episode)
@@ -242,7 +243,7 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
         )
     ).all()
     return FeedPreview(
-        feed=_to_feed_read(feed, episode_count=episode_count, audio_count=audio_count),
+        feed=to_feed_read(feed, episode_count=episode_count, audio_count=audio_count),
         episodes=await episodes_read(session, user, episodes),
         subscribed=await service.is_subscribed(session, feed.id, user),
     )
@@ -266,7 +267,7 @@ async def list_feeds(session: Session, user: CurrentUser) -> list[FeedRead]:
         .outerjoin(counts, counts.c.feed_id == Feed.id)
         .order_by(Feed.title)
     )
-    return [_to_feed_read(feed, count, audio_count) for feed, count, audio_count in rows.all()]
+    return [to_feed_read(feed, count, audio_count) for feed, count, audio_count in rows.all()]
 
 
 @router.delete("/{feed_id}", status_code=204)

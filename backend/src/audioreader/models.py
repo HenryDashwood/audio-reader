@@ -1,7 +1,19 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, MetaData, Text, UniqueConstraint, Uuid, event, false, func, or_
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    LargeBinary,
+    MetaData,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    event,
+    false,
+    func,
+    or_,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from audioreader.text import search_key
@@ -21,12 +33,32 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
+FEED_SOURCE_RSS = "rss"
+FEED_SOURCE_EMAIL = "email"
+
+APPROVAL_PENDING = "pending"
+APPROVAL_APPROVED = "approved"
+APPROVAL_BLOCKED = "blocked"
+
+
 class Feed(Base):
     __tablename__ = "feeds"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     url: Mapped[str] = mapped_column(unique=True)
     title: Mapped[str]
+    #: Where items come from. "rss" feeds are fetched from `url` by the
+    #: poller and shared by everyone who follows them. "email" feeds are one
+    #: listener's newsletter, delivered to her inbound address; `url` is then
+    #: only an identifier, never fetched, and the feed is hers alone.
+    source: Mapped[str] = mapped_column(default=FEED_SOURCE_RSS, server_default=FEED_SOURCE_RSS)
+    #: Set for email feeds: whose inbox this newsletter arrived in. Nobody
+    #: else can see, subscribe to, or search it.
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    #: Email feeds only. A sender's first message makes a "pending" feed that
+    #: waits for her to say yes; "approved" once she has followed it;
+    #: "blocked" when she said no, after which its mail is dropped unread.
+    approval: Mapped[str | None]
     description: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None]
     site_url: Mapped[str | None]
@@ -117,6 +149,9 @@ class User(Base):
     telemetry_id: Mapped[uuid.UUID] = mapped_column(Uuid, unique=True, default=uuid.uuid4)
     display_name: Mapped[str | None]
     email: Mapped[str | None]
+    #: The local part of her private newsletter address. Null until she first
+    #: asks for it.
+    inbound_token: Mapped[str | None] = mapped_column(unique=True)
     # Versioned because a material change to what is shared needs a fresh
     # affirmative choice, not a reinterpretation of an old one.
     ai_consent_version: Mapped[int | None]
@@ -206,6 +241,29 @@ class PlaybackPosition(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class InboundMessage(Base):
+    """One email as it arrived, kept briefly.
+
+    The issue itself lives on as an episode. The raw bytes are kept for a
+    short window so that a message the parser failed on, or one the cleaner
+    mishandled, can be processed again once the code is fixed — and then
+    dropped, because they are her mail and not the app's to keep.
+    """
+
+    __tablename__ = "inbound_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id", ondelete="SET NULL"))
+    episode_id: Mapped[int | None] = mapped_column(ForeignKey("episodes.id", ondelete="SET NULL"))
+    message_id: Mapped[str]
+    raw: Mapped[bytes | None] = mapped_column(LargeBinary)
+    raw_size: Mapped[int]
+    #: Why no episode came of it, when none did.
+    error: Mapped[str | None] = mapped_column(Text)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 def utcnow() -> datetime:

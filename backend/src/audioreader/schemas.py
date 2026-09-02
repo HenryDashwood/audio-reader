@@ -42,6 +42,9 @@ class FeedRead(BaseModel):
     #: down. Surfaced so the app can say so, rather than leaving her to wonder
     #: why a show she follows has gone quiet.
     is_failing: bool = False
+    #: "rss" for anything fetched from the web; "email" for a newsletter that
+    #: arrives at her private address. Defaulted so older payloads still read.
+    source: str = "rss"
 
     @field_validator("description")
     @classmethod
@@ -182,6 +185,31 @@ class FeedPreview(BaseModel):
     feed: FeedRead
     episodes: list[EpisodeRead]
     subscribed: bool
+
+
+class NewsletterAddressRead(BaseModel):
+    """The address she gives a newsletter so it reaches the app."""
+
+    address: str
+
+
+class PendingNewsletterRead(BaseModel):
+    """A sender that has written to her address and awaits a yes or no."""
+
+    id: int
+    title: str
+    sender_address: str
+    message_count: int
+    latest_title: str | None = None
+    latest_at: datetime | None = None
+
+
+class InboundReceipt(BaseModel):
+    """What became of one email the Worker handed over."""
+
+    status: str
+    feed_id: int | None = None
+    episode_id: int | None = None
 
 
 class AppleLoginRequest(BaseModel):

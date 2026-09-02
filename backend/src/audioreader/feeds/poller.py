@@ -14,7 +14,7 @@ from audioreader.feeds.artwork import site_artwork_is_due, supplement_feed_artwo
 from audioreader.feeds.fetcher import FeedFetchError, fetch_feed_update
 from audioreader.feeds.parser import FeedParseError, parse_feed
 from audioreader.feeds.service import apply_feed_metadata, new_episodes
-from audioreader.models import Episode, Feed, PlaybackPosition, Subscription, utcnow
+from audioreader.models import FEED_SOURCE_RSS, Episode, Feed, PlaybackPosition, Subscription, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,12 @@ async def poll_all_feeds(session: AsyncSession) -> PollSummary:
     # feed fresh instead of trusting objects fetched before the loop.
     # Only feeds somebody still subscribes to: unsubscribing leaves the feed
     # in the catalog, and polling those orphans forever would be wasted work.
-    feed_ids = (await session.scalars(select(Feed.id).where(Feed.id.in_(select(Subscription.feed_id))))).all()
+    # Email feeds have nothing to fetch: their items arrive on their own.
+    feed_ids = (
+        await session.scalars(
+            select(Feed.id).where(Feed.id.in_(select(Subscription.feed_id)), Feed.source == FEED_SOURCE_RSS)
+        )
+    ).all()
     failing = []
     for feed_id in feed_ids:
         feed = await session.get(Feed, feed_id)
@@ -164,6 +169,8 @@ async def prune_orphaned_feeds(session: AsyncSession, now: datetime | None = Non
         await session.scalars(
             select(Feed.id)
             .where(
+                # Newsletter feeds have an owner and their own retention rules.
+                Feed.source == FEED_SOURCE_RSS,
                 Feed.id.not_in(select(Subscription.feed_id)),
                 Feed.id.not_in(
                     select(Episode.feed_id).join(PlaybackPosition, PlaybackPosition.episode_id == Episode.id)

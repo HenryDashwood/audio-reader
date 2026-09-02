@@ -13,7 +13,8 @@ from audioreader.auth import service as auth_service
 from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
 from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_feeds
-from audioreader.routers import auth, commands, events, feeds
+from audioreader.newsletters.service import prune_newsletters
+from audioreader.routers import auth, commands, events, feeds, inbound, newsletters
 from audioreader.settings_types import LLMProvider
 
 logging.basicConfig(level=logging.INFO)
@@ -43,6 +44,7 @@ async def _poll_forever(interval_seconds: int) -> None:
                 # Under the same lock, and after polling: cleanup is the least
                 # urgent thing here and must never delay new episodes.
                 await prune_orphaned_feeds(session)
+                await prune_newsletters(session)
             logger.info(
                 "poll pass: %d ok, %d failed, %d new episodes",
                 summary.polled,
@@ -128,6 +130,8 @@ def create_app() -> FastAPI:
     app.include_router(feeds.search_router)
     app.include_router(commands.router)
     app.include_router(events.router)
+    app.include_router(newsletters.router)
+    app.include_router(inbound.router)
     return app
 
 

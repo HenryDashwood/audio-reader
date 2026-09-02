@@ -1,0 +1,22 @@
+{
+  // The Worker that receives newsletter email for Magpie and hands each
+  // message to the backend. See README.md in this directory.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "magpie-email-inbound",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-02",
+  // No nodejs_compat: this Worker has no dependencies and uses only Web
+  // Crypto and fetch, so the Node.js shims would be dead weight.
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 }
+  },
+  "vars": {
+    // Where the backend listens. Not a secret; the signature is.
+    "WEBHOOK_URL": "https://audio-reader-production.up.railway.app/inbound/email",
+    // Must not exceed the backend's AUDIOREADER_INBOUND_EMAIL_MAX_BYTES.
+    "MAX_BYTES": "10485760"
+  }
+  // WEBHOOK_SECRET is set with `wrangler secret put WEBHOOK_SECRET` and must
+  // equal the backend's AUDIOREADER_INBOUND_EMAIL_SECRET.
+}

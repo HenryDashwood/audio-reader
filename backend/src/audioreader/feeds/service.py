@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from audioreader.feeds.artwork import site_artwork_is_due, website_artwork_url
 from audioreader.feeds.discovery import resolve_feed
 from audioreader.feeds.parser import ParsedFeed
-from audioreader.models import Episode, Feed, FeedAlias, Subscription, User, utcnow
+from audioreader.models import FEED_SOURCE_EMAIL, FEED_SOURCE_RSS, Episode, Feed, FeedAlias, Subscription, User, utcnow
+from audioreader.newsletters import service as newsletters
 
 
 class AlreadySubscribedError(Exception):
@@ -65,10 +66,14 @@ async def _backfill_site_artwork(feed: Feed) -> bool:
 
 
 async def _feed_for_url(session: AsyncSession, url: str) -> Feed | None:
-    feed = await session.scalar(select(Feed).where(Feed.url == url))
+    # Only shared feeds. A newsletter feed's URL is a private identifier, and
+    # naming it must not let anyone else subscribe to her mail.
+    feed = await session.scalar(select(Feed).where(Feed.url == url, Feed.source == FEED_SOURCE_RSS))
     if feed is not None:
         return feed
-    return await session.scalar(select(Feed).join(FeedAlias).where(FeedAlias.url == url))
+    return await session.scalar(
+        select(Feed).join(FeedAlias).where(FeedAlias.url == url, Feed.source == FEED_SOURCE_RSS)
+    )
 
 
 async def _remember_aliases(session: AsyncSession, feed: Feed, urls: set[str]) -> bool:
@@ -159,6 +164,11 @@ async def unsubscribe(session: AsyncSession, feed_id: int, user: User) -> Feed |
     if subscription is None:
         return None
     feed = await session.get(Feed, feed_id)
+    if feed is not None and feed.source == FEED_SOURCE_EMAIL:
+        # Hers alone, so nothing survives her leaving it. The sender's next
+        # issue arrives as a fresh question rather than into an abandoned feed.
+        await newsletters.delete_feed(session, feed)
+        return feed
     await session.delete(subscription)
     await session.commit()
     return feed
