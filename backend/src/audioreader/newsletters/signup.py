@@ -14,6 +14,7 @@ link that completes the signup; `confirmation_link` finds it, and never an
 unsubscribe or preferences link, so following it can only ever say yes.
 """
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -257,6 +258,12 @@ async def submit_signup(plan: SignupPlan, address: str) -> None:
             )
             if 300 <= reply.status_code < 400:
                 raise SignupFailed(f"{plan.publication} answered with a redirect rather than accepting the signup")
+            if reply.status_code < 300 and not _substack_signed_up(reply.content):
+                # The address already has a Substack account, and Substack
+                # will only subscribe it from a logged-in session. Seen when
+                # an earlier attempt created the account: the subscription
+                # exists, but a second run must not claim to have made it.
+                raise SignupFailed(f"{plan.publication} already knows this address and asked it to sign in instead")
         elif plan.platform == GHOST:
             reply = await post_public(plan.submit_url, json={"email": address, "emailType": "subscribe"})
         else:
@@ -270,6 +277,19 @@ async def submit_signup(plan: SignupPlan, address: str) -> None:
     if reply.status_code >= 400:
         logger.info("signup to %s refused with HTTP %s: %s", plan.submit_url, reply.status_code, body[:300])
         raise SignupFailed(f"{plan.publication} did not accept the signup (HTTP {reply.status_code})")
+
+
+def _substack_signed_up(body: bytes) -> bool:
+    """Substack's JSON says whether it made a subscriber. A body it did not
+    write as JSON is taken as a yes: the field only exists to catch the
+    known no."""
+    try:
+        reply = json.loads(body.decode("utf-8", errors="replace") or "{}")
+    except ValueError:
+        return True
+    if not isinstance(reply, dict):
+        return True
+    return reply.get("didSignup", True) is not False
 
 
 def confirmation_link(html: str | None, text: str | None) -> str | None:

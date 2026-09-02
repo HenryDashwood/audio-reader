@@ -166,6 +166,20 @@ class TestSubmitting:
         assert sent.headers["origin"] == "https://www.understandingai.org"
         assert sent.headers["referer"] == "https://www.understandingai.org/"
 
+    async def test_substack_saying_it_did_not_sign_up_is_a_failure(self, respx_mock):
+        # What Substack answers for an address that already has an account:
+        # 200, but no subscriber made, and a request to sign in instead.
+        respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
+        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(
+            200, json={"email": ADDRESS, "prompt_to_login": True, "didSignup": False}
+        )
+        plan = await plan_signup("https://www.understandingai.org")
+
+        from audioreader.newsletters.signup import SignupFailed
+
+        with pytest.raises(SignupFailed, match="sign in"):
+            await submit_signup(plan, ADDRESS)
+
     async def test_a_substack_redirect_is_not_a_signup(self, respx_mock):
         # What a bare POST gets: a redirect to the page, and no subscriber.
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
