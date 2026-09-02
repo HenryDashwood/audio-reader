@@ -145,14 +145,25 @@ async def plan_signup(url: str) -> SignupPlan:
     raise SignupUnsupported("no_form", f"no signup form was found on {domain}")
 
 
+_TITLE_SEPARATOR = re.compile(r"\s+[|–—·]\s+|\s+-\s+")
+
+
 def _publication_title(document: lxml_html.HtmlElement, domain: str) -> str:
-    for selector in (".//meta[@property='og:site_name']", ".//meta[@property='og:title']"):
+    """The publication's name, as the page states it.
+
+    A page title runs on — "Understanding AI | Timothy B. Lee | Substack" —
+    and the name is the part before the first separator. The site name in
+    the page's metadata is already just the name, when a page carries one.
+    """
+    for selector in (".//meta[@property='og:site_name']", ".//meta[@property='og:title']", ".//title"):
         element = document.find(selector)
-        if element is not None and (element.get("content") or "").strip():
-            return _WHITESPACE.sub(" ", element.get("content")).strip()[:200]
-    title = document.find(".//title")
-    if title is not None and (title.text or "").strip():
-        return _WHITESPACE.sub(" ", title.text).strip()[:200]
+        value = (element.get("content") if element is not None and selector != ".//title" else None) or (
+            element.text if element is not None and selector == ".//title" else None
+        )
+        if value and value.strip():
+            name = _TITLE_SEPARATOR.split(_WHITESPACE.sub(" ", value).strip(), maxsplit=1)[0].strip()
+            if name:
+                return name[:200]
     return domain
 
 
@@ -170,7 +181,12 @@ def _form_plan(document: lxml_html.HtmlElement, page_url: str, publication: str,
             continue
         if _CAPTCHA.search(lxml_html.tostring(form, encoding="unicode")):
             raise SignupUnsupported("captcha", f"{domain} asks people to solve a CAPTCHA before signing up")
-        action = urljoin(page_url, (form.get("action") or "").strip() or page_url)
+        if not (form.get("action") or "").strip():
+            # No destination means a script submits it — Squarespace's
+            # newsletter block, for one. Posting to the page would achieve
+            # nothing and might look like success.
+            continue
+        action = urljoin(page_url, form.get("action").strip())
         if (form.get("method") or "post").lower() != "post":
             continue
         fields: list[tuple[str, str]] = []

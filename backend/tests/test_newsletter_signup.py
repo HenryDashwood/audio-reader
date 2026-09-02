@@ -49,6 +49,12 @@ CAPTCHA_PAGE = b"""<html><head><title>Guarded</title></head><body>
 
 PLAIN_PAGE = b"<html><head><title>Just a site</title></head><body><p>No newsletter here.</p></body></html>"
 
+SQUARESPACE_PAGE = b"""<html><head><title>Benedict Evans</title></head><body>
+<form class="newsletter-form" method="post"><input type="email" name="email"></form></body></html>"""
+
+TITLED_SUBSTACK_PAGE = b"""<html><head><title>Understanding AI | Timothy B. Lee | Substack</title>
+<link rel="preconnect" href="https://substackcdn.com"></head><body></body></html>"""
+
 CONFIRMATION_HTML = """<html><body><p>Almost finished... We need to confirm your email address.</p>
 <p><a href="https://anna.us6.list-manage.com/subscribe/confirm?u=abc123&id=def456&e=xyz">
 Yes, subscribe me to this list.</a></p>
@@ -113,6 +119,26 @@ class TestPlanning:
         with pytest.raises(SignupUnsupported) as excinfo:
             await plan_signup("https://www.bloomberg.com/account/newsletters/money-stuff")
         assert excinfo.value.reason == "account_required"
+
+    async def test_a_form_without_a_destination_is_not_a_form(self, respx_mock):
+        # Squarespace's newsletter block is submitted by a script; posting to
+        # the page itself would do nothing and could look like success.
+        respx_mock.get("https://www.ben-evans.test/newsletter").respond(
+            content=SQUARESPACE_PAGE, content_type="text/html"
+        )
+
+        with pytest.raises(SignupUnsupported) as excinfo:
+            await plan_signup("https://www.ben-evans.test/newsletter")
+        assert excinfo.value.reason == "no_form"
+
+    async def test_the_name_stops_at_the_title_separator(self, respx_mock):
+        respx_mock.get("https://www.understandingai.org/").respond(
+            content=TITLED_SUBSTACK_PAGE, content_type="text/html"
+        )
+
+        plan = await plan_signup("https://www.understandingai.org")
+
+        assert plan.publication == "Understanding AI"
 
     async def test_a_site_with_no_form(self, respx_mock):
         respx_mock.get("https://plain.test/").respond(content=PLAIN_PAGE, content_type="text/html")
