@@ -4,6 +4,10 @@ import SwiftUI
 /// answered visually.
 struct LatestView: View {
     @StateObject private var model = LatestModel()
+    /// Senders waiting for a yes or no. They live on this screen because
+    /// Latest is where new things arrive, and a newsletter asking to be let
+    /// in is the newest thing of all.
+    @StateObject private var pendingModel = PendingNewslettersModel()
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
     /// The episode whose page is open, if any.
@@ -21,7 +25,7 @@ struct LatestView: View {
                     ContentUnavailableView(
                         "Could not load episodes", systemImage: "wifi.exclamationmark",
                         description: Text(message))
-                case .loaded(let episodes) where episodes.isEmpty:
+                case .loaded(let episodes) where episodes.isEmpty && pendingModel.pending.isEmpty:
                     ContentUnavailableView(
                         "You're caught up", systemImage: "checkmark.circle",
                         description: Text("New episodes from your shows will appear here."))
@@ -82,7 +86,7 @@ struct LatestView: View {
                 Text(clearError ?? "Something went wrong.")
             }
         }
-        .task { await model.load() }
+        .task { await reload() }
         // Filing by voice has to move the list too: she may well be looking
         // at it — or have VoiceOver reading it — while she speaks.
         .onReceive(NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)) { note in
@@ -90,10 +94,22 @@ struct LatestView: View {
                 Task { await model.filed(change) }
             }
         }
+        // Following a waiting sender, here or by voice, puts its messages
+        // into this list; the list has to show them without a pull.
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
+            Task { await reload() }
+        }
+    }
+
+    private func reload() async {
+        async let episodes: Void = model.load()
+        async let pending: Void = pendingModel.load()
+        _ = await (episodes, pending)
     }
 
     private func episodeList(_ episodes: [Episode], offline: Bool) -> some View {
         List {
+            PendingNewslettersSection(model: pendingModel)
             if offline {
                 Label("Offline — showing the last episodes we saw", systemImage: "wifi.slash")
                     .font(.footnote)
@@ -121,7 +137,7 @@ struct LatestView: View {
             }
         }
         .listStyle(.plain)
-        .refreshable { await model.load() }
+        .refreshable { await reload() }
     }
 
     private func row(for episode: Episode) -> some View {

@@ -54,7 +54,7 @@ The heart of the app. Try each phrasing out loud, not typed.
 - [ ] Ask for a show you are **not** subscribed to → it plays without subscribing you
 - [ ] "Unsubscribe from In Our Time" → removes it, confirms aloud
 - [ ] Subscribe to two shows with similar names, then unsubscribe by that name → **asks which one** rather than guessing
-- [ ] With a newsletter sender waiting in **Following**, "yes, follow Matt Levine" → follows it, confirms aloud, its messages appear in **Latest**
+- [ ] With a newsletter sender waiting in **Latest**, "yes, follow Matt Levine" → follows it, confirms aloud, its messages appear in **Latest**
 - [ ] With a sender waiting, "block that one" → blocks it, confirms aloud, the row goes
 - [ ] With **two** senders waiting, "follow that newsletter" → **asks which one**, naming both, rather than guessing
 - [ ] "What's my newsletter address?" → reads it out word by word, with the hyphens mentioned
@@ -219,12 +219,13 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 - [ ] Full player closes again — by swipe **and** by the close button
 - [ ] Pull to refresh on both lists
 - [ ] **Settings → Newsletters** shows an address; Copy Address puts it on the clipboard, Share Address opens the share sheet
-- [ ] Email that address from any account → the sender appears at the top of **Following** under **Waiting for your answer**, and nothing from it is in **Latest**
+- [ ] Email that address from any account → the sender appears at the top of **Latest** under **Waiting for your answer**, and nothing from it is in the list below
 - [ ] **Follow** → the sender becomes a show, its messages are in **Latest**, and opening one reads the writing without unsubscribe links, postal addresses or "view in browser"
 - [ ] **Block**, confirm → the sender goes; a later email from it does not bring it back
 - [ ] Unsubscribe from a followed newsletter → it leaves **Following**; its next email arrives as a fresh **Waiting for your answer** row
 - [ ] Newsletter rows and pages say "issues", not "episodes" or "posts"
-- [ ] Paste a Substack's address with no feed → **Sign up by email** appears; tapping it says the newsletter has been asked for, and the newsletter turns up in **Following** on its own when its first email arrives, with nothing under **Waiting for your answer**
+- [ ] A followed Substack newsletter takes the publication's name and artwork within a poll pass, and its page shows the web archive beneath the emailed issues, one row per post
+- [ ] Paste a Substack's address with no feed → **Sign up by email** appears; tapping it says the newsletter has been asked for, and the newsletter turns up in **Following** on its own when its first email arrives, with nothing under **Waiting for your answer** in **Latest**
 - [ ] Paste a Bloomberg newsletter page → it explains an account is needed and offers **Copy Address**
 
 ---

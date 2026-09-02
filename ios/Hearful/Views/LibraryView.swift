@@ -5,7 +5,6 @@ import SwiftUI
 struct LibraryView: View {
     @EnvironmentObject private var auth: AuthController
     @StateObject private var model = LibraryModel()
-    @StateObject private var pendingModel = PendingNewslettersModel()
     @StateObject private var searchModel = PodcastSearchModel()
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
@@ -69,9 +68,9 @@ struct LibraryView: View {
                 }
             }
         }
-        .task { await reload() }
+        .task { await model.load() }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
-            Task { await reload() }
+            Task { await model.load() }
         }
         .sheet(isPresented: $showingAIConsent) {
             AIDataSharingConsentView(
@@ -95,32 +94,14 @@ struct LibraryView: View {
                 "Could not load what you follow", systemImage: "wifi.exclamationmark",
                 description: Text(message))
         case .empty:
-            if pendingModel.pending.isEmpty {
-                ContentUnavailableView {
-                    Label("Nothing followed yet", systemImage: "waveform")
-                } description: {
-                    Text(
-                        "Search for a podcast or publication above, or tap the microphone and say its name."
-                    )
-                } actions: {
-                    Button("Find something by voice") { openVoiceSheet($showingVoice) }
-                }
-            } else {
-                // A sender waiting for her answer is the one thing on an
-                // otherwise empty screen that needs her, so it is not hidden
-                // behind the empty-state message.
-                List {
-                    PendingNewslettersSection(model: pendingModel)
-                    Section {
-                        Text(
-                            "Nothing followed yet. Search for a podcast or publication above, "
-                                + "or tap the microphone and say its name."
-                        )
-                        .foregroundStyle(.secondary)
-                    }
-                }
-                .listStyle(.plain)
-                .refreshable { await reload() }
+            ContentUnavailableView {
+                Label("Nothing followed yet", systemImage: "waveform")
+            } description: {
+                Text(
+                    "Search for a podcast or publication above, or tap the microphone and say its name."
+                )
+            } actions: {
+                Button("Find something by voice") { openVoiceSheet($showingVoice) }
             }
         case .loaded(let shows):
             showList(shows, offline: false)
@@ -131,7 +112,6 @@ struct LibraryView: View {
 
     private func showList(_ shows: [Show], offline: Bool) -> some View {
         List {
-            PendingNewslettersSection(model: pendingModel)
             if offline {
                 Label("Offline — showing saved subscriptions", systemImage: "wifi.slash")
                     .font(.footnote)
@@ -142,13 +122,7 @@ struct LibraryView: View {
             }
         }
         .listStyle(.plain)
-        .refreshable { await reload() }
-    }
-
-    private func reload() async {
-        async let shows: Void = model.load()
-        async let pending: Void = pendingModel.load()
-        _ = await (shows, pending)
+        .refreshable { await model.load() }
     }
 
     @ViewBuilder

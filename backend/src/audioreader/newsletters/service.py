@@ -593,6 +593,15 @@ async def approve(session: AsyncSession, user: User, feed_id: int) -> Feed | Non
     if subscribed is None:
         session.add(Subscription(user_id=user.id, feed_id=feed.id, latest_after_episode_id=None))
     await session.commit()
+    # Its feed on the web, for the archive and the artwork. Best effort: the
+    # sites involved are other people's, and following her is what matters.
+    from audioreader.newsletters.companions import attach_companion
+
+    try:
+        await attach_companion(session, feed)
+    except Exception:  # noqa: BLE001
+        logger.exception("could not look for %s's feed on the web", feed.title)
+        await session.rollback()
     return feed
 
 
@@ -613,7 +622,11 @@ async def delete_feed(session: AsyncSession, feed: Feed) -> None:
     following a newsletter: nobody else has any use for it, and its next
     issue should arrive as a fresh question rather than into a feed she left."""
     await _delete_contents(session, feed)
-    await session.delete(feed)
+    # A plain DELETE rather than session.delete: the episodes are already
+    # gone by the statement above, and the ORM cascade would try to delete
+    # them a second time from whatever it still has in memory.
+    await session.execute(delete(Feed).where(Feed.id == feed.id))
+    session.expunge(feed)
     await session.commit()
 
 

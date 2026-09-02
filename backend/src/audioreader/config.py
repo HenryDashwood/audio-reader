@@ -144,6 +144,9 @@ class Settings(BaseSettings):
     # many days is recognised as the reply: its confirmation link is followed
     # and its first issue goes straight into Following.
     newsletter_signup_window_days: int = 7
+    # A newsletter with no feed found on the web is looked for again after
+    # this long; one whose feed was found is never looked for again.
+    newsletter_companion_retry_days: int = 7
 
     @property
     def inbound_email_enabled(self) -> bool:

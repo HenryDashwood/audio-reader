@@ -23,6 +23,7 @@ from audioreader.feeds.search import PodcastSearchError, search_podcasts
 from audioreader.llm.client import LLMClient
 from audioreader.llm.provider import get_discovery_llm_client
 from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User
+from audioreader.newsletters import companions
 from audioreader.ratelimit import SlidingWindow
 from audioreader.routers.auth import has_current_ai_data_sharing_consent
 from audioreader.schemas import (
@@ -298,16 +299,26 @@ async def list_episodes(
     )
     if subscribed is None:
         raise HTTPException(status_code=404, detail="feed not found")
+    # A newsletter's page shows its feed on the web as well: the archive from
+    # before she signed up, and posts that never went out by email. One row
+    # per post — an issue she received and the feed's copy of it are the same
+    # thing, and hers is the one kept.
+    feed = await session.get(Feed, feed_id)
+    feed_ids = [feed_id]
+    if feed is not None and feed.companion_feed_id is not None:
+        feed_ids.append(feed.companion_feed_id)
     statement = (
         select(Episode)
         .options(joinedload(Episode.feed))
-        .where(Episode.feed_id == feed_id)
+        .where(Episode.feed_id.in_(feed_ids))
         .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
-        .limit(limit)
+        .limit(limit if len(feed_ids) == 1 else limit * 2)
     )
     if q and q.strip():
         statement = episode_search.matching(q, statement)
-    episodes = (await session.scalars(statement)).all()
+    episodes = list((await session.scalars(statement)).all())
+    if len(feed_ids) > 1:
+        episodes = companions.without_duplicates(episodes, own_feed_id=feed_id)[:limit]
     return await episodes_read(session, user, episodes)
 
 

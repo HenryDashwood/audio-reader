@@ -84,8 +84,8 @@ final class NewsletterAddressModel: ObservableObject {
 // MARK: - Senders waiting for an answer
 
 /// The senders that have written to her address and are waiting to be
-/// followed or blocked. Shown at the top of Following, because it is the one
-/// thing on that screen that needs something from her.
+/// followed or blocked. Shown at the top of Latest: that is where new things
+/// arrive, and following one puts its messages into the very list below.
 struct PendingNewslettersSection: View {
     @ObservedObject var model: PendingNewslettersModel
     @State private var blocking: PendingNewsletter?

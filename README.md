@@ -425,6 +425,17 @@ for an approval she gave by asking. By voice, "subscribe to anna dot test" does
 the same when the site has no feed, and the streamed conversation has a
 `sign_up_for_newsletter` tool for a site the model found itself.
 
+A newsletter that also has a feed on the web gets it as a companion: the
+shared RSS feed of the same publication, found on the site the app signed her
+up on, at a Substack sender's own substack.com address, or on the sender's
+domain when the feed there is named like the newsletter. The email feed
+takes the companion's name, artwork, blurb and site link, its page shows the
+companion's archive with one row per post (her emailed copy wins over the
+feed's), the companion is polled and never pruned, and Latest still shows
+only what was emailed. Linked on approval and by a sweep after each poll
+pass; a newsletter with no feed is looked for again after
+`AUDIOREADER_NEWSLETTER_COMPANION_RETRY_DAYS` (default 7).
+
 Substack has one extra step. It delivers nothing to an address it has not
 verified, and it verifies one through a sign-in email whose link signs the
 address in. So the first Substack a user is signed up to also requests that

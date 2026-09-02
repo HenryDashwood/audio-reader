@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
@@ -15,6 +15,7 @@ from audioreader.feeds.fetcher import FeedFetchError, fetch_feed_update
 from audioreader.feeds.parser import FeedParseError, parse_feed
 from audioreader.feeds.service import apply_feed_metadata, new_episodes
 from audioreader.models import FEED_SOURCE_RSS, Episode, Feed, PlaybackPosition, Subscription, utcnow
+from audioreader.newsletters.companions import refresh_dependents
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ async def poll_feed(session: AsyncSession, feed: Feed) -> int:
         episode.feed_id = feed.id
     session.add_all(episodes)
     apply_feed_metadata(feed, parsed)
+    await refresh_dependents(session, feed)
     feed.etag = fetched.etag
     feed.last_modified = fetched.last_modified
     feed.consecutive_failures = 0
@@ -107,10 +109,16 @@ async def poll_all_feeds(session: AsyncSession) -> PollSummary:
     # feed fresh instead of trusting objects fetched before the loop.
     # Only feeds somebody still subscribes to: unsubscribing leaves the feed
     # in the catalog, and polling those orphans forever would be wasted work.
-    # Email feeds have nothing to fetch: their items arrive on their own.
+    # Email feeds have nothing to fetch: their items arrive on their own. The
+    # feeds they borrow from on the web are polled whether or not anyone
+    # subscribes to them directly.
+    companions = select(Feed.companion_feed_id).where(Feed.companion_feed_id.is_not(None))
     feed_ids = (
         await session.scalars(
-            select(Feed.id).where(Feed.id.in_(select(Subscription.feed_id)), Feed.source == FEED_SOURCE_RSS)
+            select(Feed.id).where(
+                or_(Feed.id.in_(select(Subscription.feed_id)), Feed.id.in_(companions)),
+                Feed.source == FEED_SOURCE_RSS,
+            )
         )
     ).all()
     failing = []
@@ -172,6 +180,8 @@ async def prune_orphaned_feeds(session: AsyncSession, now: datetime | None = Non
                 # Newsletter feeds have an owner and their own retention rules.
                 Feed.source == FEED_SOURCE_RSS,
                 Feed.id.not_in(select(Subscription.feed_id)),
+                # A feed a newsletter borrows from is in use, subscribed or not.
+                Feed.id.not_in(select(Feed.companion_feed_id).where(Feed.companion_feed_id.is_not(None))),
                 Feed.id.not_in(
                     select(Episode.feed_id).join(PlaybackPosition, PlaybackPosition.episode_id == Episode.id)
                 ),

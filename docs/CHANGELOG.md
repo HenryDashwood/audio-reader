@@ -20,9 +20,9 @@ Stuff or Benedict's Newsletter. Worth trying:
   put it on the clipboard, and Share Address should offer to send it to
   someone who can sign you up.
 - Give that address to a newsletter, or simply send it an email yourself. The
-  sender should appear at the top of Following under **Waiting for your
+  sender should appear at the top of Latest under **Waiting for your
   answer**, with how many messages it has sent and the latest subject, and
-  nothing from it should be in Latest yet.
+  nothing from it should be in the list below yet.
 - Tap **Follow**. The sender should become a show in Following, its messages
   should appear in Latest, and opening one should read the writing without
   the unsubscribe links, addresses and "view in browser" lines that emails
@@ -48,6 +48,11 @@ Stuff or Benedict's Newsletter. Worth trying:
   read you the address to give it instead.
 - By voice, "subscribe to" followed by a site's address that has no feed
   should do the same signing up, and say what happened.
+- Open a followed newsletter that also publishes on the web, such as a
+  Substack. Within a poll or two it should take the publication's name and
+  artwork, and its page should list the archive from before you followed it
+  as well as the issues you were sent, with nothing listed twice. Latest
+  should still show only what arrived by email.
 
 Please say which newsletter you tried and whether anything in the email
 chrome was still read aloud, or anything from the writing was missing.

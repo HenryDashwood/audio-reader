@@ -59,6 +59,12 @@ class Feed(Base):
     #: waits for her to say yes; "approved" once she has followed it;
     #: "blocked" when she said no, after which its mail is dropped unread.
     approval: Mapped[str | None]
+    #: For a newsletter: the shared RSS feed of the same publication, which
+    #: lends it artwork, a blurb and an archive. Never set on a fetched feed.
+    companion_feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id", ondelete="SET NULL"))
+    #: When a companion was last looked for, so a newsletter without a feed
+    #: is not searched for on every pass.
+    companion_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     description: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None]
     site_url: Mapped[str | None]
