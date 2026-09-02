@@ -59,7 +59,11 @@ struct PodcastPreviewView: View {
             ToolbarItem(placement: .topBarTrailing) { MicToolbarButton() }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
+        .navigationDestination(item: $openEpisode) { episode in
+            ArticleView(episode: episode) { wordCount in
+                model.learnedWordCount(wordCount, for: episode.id)
+            }
+        }
         .task { await model.load(url: podcast.feedURL) }
     }
 
@@ -124,6 +128,18 @@ final class PodcastPreviewModel: ObservableObject {
         } catch {
             state = .failed("Something went wrong.")
         }
+    }
+
+    /// Preview rows use the same pre-extraction snapshots as subscribed
+    /// shows, even though they have no offline list cache to update.
+    func learnedWordCount(_ wordCount: Int, for episodeID: Int) {
+        guard case .loaded(let preview) = state else { return }
+        state = .loaded(
+            FeedPreview(
+                show: preview.show,
+                episodes: episodesByUpdatingWordCount(
+                    preview.episodes, episodeID: episodeID, wordCount: wordCount),
+                subscribed: preview.subscribed))
     }
 
     func subscribe(url: URL, title: String) async {

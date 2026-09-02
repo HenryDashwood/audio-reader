@@ -39,7 +39,11 @@ struct LatestView: View {
             // Keep the title in one place rather than changing its size and
             // alignment when the list scrolls.
             .toolbarTitleDisplayMode(.inline)
-            .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
+            .navigationDestination(item: $openEpisode) { episode in
+                ArticleView(episode: episode) { wordCount in
+                    model.learnedWordCount(wordCount, for: episode.id)
+                }
+            }
             .toolbar {
                 if model.canClear {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -216,6 +220,26 @@ final class LatestModel: ObservableObject {
             remove(change.episodeID)
         } else {
             await load()
+        }
+    }
+
+    /// Opening an article resolves the length that a teaser-only feed could
+    /// not know when this list was fetched. Keep both the visible and offline
+    /// copies in step with the text the reader has just absorbed.
+    func learnedWordCount(_ wordCount: Int, for episodeID: Int) {
+        switch state {
+        case .loaded(let episodes):
+            let updated = episodesByUpdatingWordCount(
+                episodes, episodeID: episodeID, wordCount: wordCount)
+            cache.save(updated, for: .recentEpisodes)
+            state = .loaded(updated)
+        case .stale(let episodes):
+            let updated = episodesByUpdatingWordCount(
+                episodes, episodeID: episodeID, wordCount: wordCount)
+            cache.save(updated, for: .recentEpisodes)
+            state = .stale(updated)
+        case .loading, .failed:
+            break
         }
     }
 

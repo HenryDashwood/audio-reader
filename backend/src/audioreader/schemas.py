@@ -144,6 +144,10 @@ class EpisodeTextRead(BaseModel):
     title: str
     # Paragraphs separated by blank lines; the app chunks on these.
     text: str
+    # Present only when `text` is the full article. A linked feed teaser may
+    # still be useful to read when extraction fails, but its handful of words
+    # must not be presented as the article's length.
+    word_count: int | None = None
     # The same article as sanitised HTML, for showing rather than speaking.
     # Null when only plain text could be recovered — the reader falls back to
     # `text`, so an article is never unreadable for want of markup.

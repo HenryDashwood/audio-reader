@@ -487,7 +487,13 @@ async def get_episode_text(episode_id: int, session: Session, user: CurrentUser)
             status_code=422,
             detail={"spoken_response": "Sorry, I could not get the text of that article."},
         )
-    return EpisodeTextRead(episode_id=episode.id, title=episode.title, text=text, html=html)
+    return EpisodeTextRead(
+        episode_id=episode.id,
+        title=episode.title,
+        text=text,
+        word_count=articles.known_word_count(episode),
+        html=html,
+    )
 
 
 @episodes_router.put("/{episode_id}/state", status_code=204)

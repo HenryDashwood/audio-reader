@@ -270,13 +270,16 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     /// Set to give the reader markup to render; nil is an article only plain
     /// text could be recovered from.
     var articleHTML: String?
+    /// Set when the backend knows the returned text is the full article.
+    var articleWordCount: Int?
     /// Set to make fetching the text fail, for the reader's offline tests.
     var articleTextError: Error?
     func articleText(episodeID: Int) async throws -> EpisodeText {
         if let articleTextError { throw articleTextError }
         guard let articleText else { throw APIError(underlying: "unused") }
         return EpisodeText(
-            episodeID: episodeID, title: "An article", text: articleText, html: articleHTML)
+            episodeID: episodeID, title: "An article", text: articleText,
+            wordCount: articleWordCount, html: articleHTML)
     }
     func searchPodcasts(query: String) async throws -> [PodcastResult] { [] }
     func previewFeed(url: URL) async throws -> FeedPreview { throw APIError(underlying: "unused") }

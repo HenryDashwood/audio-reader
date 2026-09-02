@@ -246,6 +246,24 @@ struct LatestFilingTests {
         #expect(error != nil)
         #expect(titles(model) == [7111, 7112])
     }
+
+    @Test func openingAnArticleFillsInItsWordCountAndSavedRow() async {
+        let cache = makeCache()
+        let api = FilingAPI()
+        api.episodes = [article(id: 7113)]
+        let model = LatestModel(api: api, cache: cache)
+        await model.load()
+
+        model.learnedWordCount(842, for: 7113)
+
+        guard case .loaded(let episodes) = model.state else {
+            Issue.record("expected loaded episodes")
+            return
+        }
+        #expect(episodes.first?.wordCount == 842)
+        #expect(
+            cache.load([Episode].self, for: .recentEpisodes)?.first?.wordCount == 842)
+    }
 }
 
 @MainActor
@@ -299,5 +317,19 @@ struct ShowPageFilingTests {
         #expect(first(model)?.completed == false)
         #expect(first(model)?.positionSeconds == 0)
         #expect(first(model)?.listeningProgress == .unplayed)
+    }
+
+    @Test func openingAnArticleFillsInItsWordCountAndSavedRow() async {
+        let cache = makeCache()
+        let api = FilingAPI()
+        api.episodes = [article(id: 7204)]
+        let model = EpisodeListModel(api: api, cache: cache)
+        await model.load(showID: 1)
+
+        model.learnedWordCount(913, for: 7204, showID: 1)
+
+        #expect(first(model)?.wordCount == 913)
+        #expect(
+            cache.load([Episode].self, for: .episodes(showID: 1))?.first?.wordCount == 913)
     }
 }

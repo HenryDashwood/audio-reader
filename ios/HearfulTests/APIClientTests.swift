@@ -586,6 +586,15 @@ struct AuthAndPositionTests {
         #expect(episode.wordCount == 1842)
     }
 
+    @Test func articleTextDecodesItsAuthoritativeWordCount() async throws {
+        let json = """
+            {"episode_id":104,"title":"t","text":"The full article.",
+             "word_count":3,"html":null}
+            """
+        let article = try await makeClient(FakeTransport(json: json)).articleText(episodeID: 104)
+        #expect(article.wordCount == 3)
+    }
+
     @Test func commandDecodesSetSpeed() async throws {
         let json = """
             {"action":"set_speed","spoken_response":"1.5 times speed.",

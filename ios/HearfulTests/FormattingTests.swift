@@ -56,6 +56,22 @@ struct ArticleWordCountTests {
         #expect(formatWordCount(nil) == nil)
         #expect(formatWordCount(0) == nil)
     }
+
+    @Test func updatesOnlyTheArticleWhoseTextArrived() {
+        var article = Episode(
+            id: 1, title: "Article", description: nil, audioURL: nil,
+            durationSeconds: nil, publishedAt: nil, link: nil, hasText: true)
+        article.wordCount = nil
+        let other = Episode(
+            id: 2, title: "Other", description: nil, audioURL: nil,
+            durationSeconds: nil, publishedAt: nil, link: nil, hasText: true)
+
+        let updated = episodesByUpdatingWordCount(
+            [article, other], episodeID: 1, wordCount: 850)
+
+        #expect(updated[0].wordCount == 850)
+        #expect(updated[1] == other)
+    }
 }
 
 @Suite("Listening progress")

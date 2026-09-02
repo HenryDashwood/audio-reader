@@ -72,6 +72,17 @@ struct ArticleReaderTests {
         #expect(model.isOffline == false)
     }
 
+    @Test func aSuccessfulLoadReturnsTheCountForItsRow() async {
+        let api = FakeAPI()
+        api.articleText = "One, two... three! -- four?"
+        api.articleWordCount = 4
+        let model = ArticleTextModel(api: api, cache: makeCache())
+
+        let wordCount = await model.load(episodeID: 7)
+
+        #expect(wordCount == 4)
+    }
+
     @Test func aFailureShowsTheSavedCopy() async {
         let cache = makeCache()
         cache.save(
@@ -92,6 +103,33 @@ struct ArticleReaderTests {
         // Said out loud, because the article on screen is otherwise
         // indistinguishable from a fresh copy.
         #expect(model.isOffline)
+    }
+
+    @Test func aSavedCopyCanRestoreTheCountWhileOffline() async {
+        let cache = makeCache()
+        cache.save(
+            EpisodeText(
+                episodeID: 7, title: "An article", text: article,
+                wordCount: 13),
+            for: .articleText(episodeID: 7))
+        let api = FakeAPI()
+        api.articleTextError = APIError(underlying: "offline")
+        let model = ArticleTextModel(api: api, cache: cache)
+
+        let wordCount = await model.load(episodeID: 7)
+
+        #expect(wordCount == 13)
+    }
+
+    @Test func aTeaserDoesNotBecomeTheArticleLength() async {
+        let api = FakeAPI()
+        api.articleText = "A short introduction. Continue reading"
+        api.articleWordCount = nil
+        let model = ArticleTextModel(api: api, cache: makeCache())
+
+        let wordCount = await model.load(episodeID: 7)
+
+        #expect(wordCount == nil)
     }
 
     @Test func eachArticleIsSavedSeparately() async {
@@ -323,6 +361,7 @@ struct ArticleDocumentTests {
         let decoded = try? JSONDecoder().decode(EpisodeText.self, from: json)
 
         #expect(decoded?.html == nil)
+        #expect(decoded?.wordCount == nil)
         #expect(decoded?.text == "One.\n\nTwo.")
     }
 

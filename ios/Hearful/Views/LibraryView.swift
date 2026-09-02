@@ -29,7 +29,11 @@ struct LibraryView: View {
             .toolbarTitleDisplayMode(.inline)
             .navigationDestination(for: Show.self) { ShowDetailView(show: $0) }
             .navigationDestination(for: PodcastResult.self) { PodcastPreviewView(podcast: $0) }
-            .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
+            .navigationDestination(item: $openEpisode) { episode in
+                ArticleView(episode: episode) { wordCount in
+                    searchModel.learnedWordCount(wordCount, for: episode.id)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     SearchToolbarButton(
@@ -580,6 +584,13 @@ final class PodcastSearchModel: ObservableObject {
         webMessage = nil
         isSearchingWeb = false
         state = .idle
+    }
+
+    /// Search results are episode snapshots too; keep a result row current
+    /// when it was the route by which the reader was opened.
+    func learnedWordCount(_ wordCount: Int, for episodeID: Int) {
+        episodes = episodesByUpdatingWordCount(
+            episodes, episodeID: episodeID, wordCount: wordCount)
     }
 
     private func schedule(_ query: String, after delay: Duration) {

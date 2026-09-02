@@ -100,6 +100,10 @@ nonisolated struct EpisodeText: Codable, Equatable {
     let title: String
     /// Paragraphs separated by blank lines; the reader chunks on these.
     let text: String
+    /// Set only when `text` is the full article. A teaser may still be
+    /// returned when page extraction fails, but it is not the article length.
+    /// Optional for responses and saved copies from older backends.
+    var wordCount: Int? = nil
     /// The same article as sanitised HTML, for showing rather than speaking.
     /// Optional twice over: the backend sends null when only plain text could
     /// be recovered, and payloads cached before this field existed have no
@@ -109,6 +113,7 @@ nonisolated struct EpisodeText: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case title, text, html
         case episodeID = "episode_id"
+        case wordCount = "word_count"
     }
 }
 

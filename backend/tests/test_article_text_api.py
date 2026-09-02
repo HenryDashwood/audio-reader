@@ -76,6 +76,7 @@ class TestEpisodeText:
         body = response.json()
         assert body["title"] == "Why sewers made cities possible"
         assert "For most of history, cities were death traps" in body["text"]
+        assert body["word_count"] == len(body["text"].split())
 
     async def test_teaser_feeds_fall_back_to_the_article_page(self, client, respx_mock, article_xml):
         feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
@@ -113,10 +114,11 @@ class TestEpisodeText:
             content=ARTICLE_PAGE, content_type="text/html"
         )
 
-        text = (await client.get(f"/episodes/{episode['id']}/text")).json()["text"]
+        article = (await client.get(f"/episodes/{episode['id']}/text")).json()
         refreshed = (await client.get(f"/episodes/{episode['id']}")).json()
 
-        assert refreshed["word_count"] == len(text.split())
+        assert article["word_count"] == len(article["text"].split())
+        assert refreshed["word_count"] == article["word_count"]
 
     async def test_unreachable_page_reads_but_does_not_cache_the_feed_content(
         self, client, session, respx_mock, article_xml
@@ -131,6 +133,7 @@ class TestEpisodeText:
 
         assert first.status_code == second.status_code == 200
         assert "For most of history" in first.json()["text"]
+        assert first.json()["word_count"] is None
         assert page.call_count == 2
         assert stored.article_text is None
         assert stored.article_html is None

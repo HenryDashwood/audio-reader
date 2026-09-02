@@ -21,6 +21,10 @@ import WebKit
 /// job is to show as much prose as it can.
 struct ArticleView: View {
     let episode: Episode
+    /// Hands the newly available length back to whichever list opened the
+    /// article. Its row otherwise keeps the older episode snapshot whose
+    /// count was unknown before extraction.
+    let learnedWordCount: (Int) -> Void
     @StateObject private var model = ArticleTextModel()
     /// The article's own scrolling, handed to the bars so they know what to
     /// get out of the way of. UIKit will hunt for a scroll view to track when
@@ -33,6 +37,11 @@ struct ArticleView: View {
     /// page, since the web view is sized in points we hand it rather than by
     /// anything that scales on its own.
     @Environment(\.dynamicTypeSize) private var typeSize
+
+    init(episode: Episode, learnedWordCount: @escaping (Int) -> Void = { _ in }) {
+        self.episode = episode
+        self.learnedWordCount = learnedWordCount
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -92,7 +101,11 @@ struct ArticleView: View {
         // a drag is visible as a jump in the article.
         .background(ArticleChrome(tracking: articleWebView?.scrollView))
         .navigationDestination(item: $openFeed) { PodcastPreviewView(podcast: $0) }
-        .task { await model.load(episodeID: episode.id) }
+        .task {
+            if let wordCount = await model.load(episodeID: episode.id) {
+                learnedWordCount(wordCount)
+            }
+        }
     }
 
     /// The gap between one piece of floating furniture and the next.
@@ -1139,12 +1152,14 @@ final class ArticleTextModel: ObservableObject {
         self.cache = cache
     }
 
-    func load(episodeID: Int) async {
+    @discardableResult
+    func load(episodeID: Int) async -> Int? {
         do {
             let article = try await api.articleText(episodeID: episodeID)
             cache.save(article, for: .articleText(episodeID: episodeID))
             isOffline = false
             state = .loaded(Article(text: article.text, html: article.html))
+            return article.wordCount
         } catch {
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             // Same rule as everywhere else: an expired session is the one
@@ -1155,9 +1170,11 @@ final class ArticleTextModel: ObservableObject {
             {
                 isOffline = true
                 state = .loaded(Article(text: cached.text, html: cached.html))
+                return cached.wordCount
             } else {
                 isOffline = false
                 state = .failed(message)
+                return nil
             }
         }
     }

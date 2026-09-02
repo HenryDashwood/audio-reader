@@ -22,6 +22,21 @@ func formatWordCount(_ count: Int?) -> String? {
     return "\(count) \(count == 1 ? "word" : "words")"
 }
 
+/// Episode payloads are value snapshots. When opening an article teaches the
+/// app its length, replace that one snapshot without disturbing filing or
+/// playback state that may also have changed in the list.
+nonisolated func episodesByUpdatingWordCount(
+    _ episodes: [Episode], episodeID: Int, wordCount: Int
+) -> [Episode] {
+    guard wordCount > 0 else { return episodes }
+    return episodes.map { episode in
+        guard episode.id == episodeID else { return episode }
+        var updated = episode
+        updated.wordCount = wordCount
+        return updated
+    }
+}
+
 /// How far through an episode she is, as a list row should describe it.
 ///
 /// The backend stores a position for anything she has played, including the
