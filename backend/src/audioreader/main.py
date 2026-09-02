@@ -14,7 +14,7 @@ from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
 from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_feeds
 from audioreader.newsletters.companions import attach_missing_companions
-from audioreader.newsletters.service import prune_newsletters
+from audioreader.newsletters.service import prune_newsletters, tell_left_senders
 from audioreader.routers import auth, commands, events, feeds, inbound, newsletters
 from audioreader.settings_types import LLMProvider
 
@@ -50,6 +50,8 @@ async def _poll_forever(interval_seconds: int) -> None:
                 # After the poll, like the cleanups: it fetches other people's
                 # sites and must never delay new episodes.
                 await attach_missing_companions(session)
+                # Senders she left or blocked that have not yet accepted.
+                await tell_left_senders(session)
             logger.info(
                 "poll pass: %d ok, %d failed, %d new episodes",
                 summary.polled,

@@ -20,7 +20,7 @@ from email.parser import BytesHeaderParser
 from hashlib import sha256
 from pathlib import Path
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
@@ -49,6 +49,7 @@ from audioreader.newsletters.parser import (
     parse_newsletter,
     recipient_of,
     text_as_html,
+    unsubscribe_of,
 )
 from audioreader.newsletters.signup import (
     SUBSTACK,
@@ -634,6 +635,9 @@ async def block(session: AsyncSession, user: User, feed_id: int) -> bool:
     feed = await owned_email_feed(session, user, feed_id)
     if feed is None:
         return False
+    # No means no to the sender as well, while its mail is still here to
+    # say how.
+    await tell_sender_to_stop(session, feed)
     await _delete_contents(session, feed)
     feed.approval = APPROVAL_BLOCKED
     await session.commit()
@@ -649,7 +653,7 @@ async def leave(session: AsyncSession, feed: Feed) -> bool:
     writing anyway comes back as a question rather than as silence.
     Returns whether the sender was told.
     """
-    told = await tell_sender_to_stop(feed)
+    told = await tell_sender_to_stop(session, feed)
     await session.execute(delete(Subscription).where(Subscription.feed_id == feed.id))
     feed.approval = APPROVAL_LEFT
     # The quiet clock the prune reads starts now, not at its last issue.
@@ -658,7 +662,7 @@ async def leave(session: AsyncSession, feed: Feed) -> bool:
     return told
 
 
-async def tell_sender_to_stop(feed: Feed) -> bool:
+async def tell_sender_to_stop(session: AsyncSession, feed: Feed) -> bool:
     """Ask the sender to stop, with its own List-Unsubscribe address.
 
     A one-click sender (RFC 8058) takes a POST saying `List-Unsubscribe=
@@ -666,8 +670,14 @@ async def tell_sender_to_stop(feed: Feed) -> bool:
     would open it from an email: most senders stop on the visit, some show
     a page with a button nothing here can press. Best effort either way —
     the sender's site is somebody else's, and leaving is what matters.
+    The outcome is dated on the feed, so a sender that did not accept can
+    be asked again.
     """
+    feed.stop_tried_at = utcnow()
     if not feed.unsubscribe_url:
+        await _recover_unsubscribe(session, feed)
+    if not feed.unsubscribe_url:
+        logger.info("no way to tell %s to stop: its mail gave no unsubscribe address", feed.title)
         return False
     try:
         if feed.unsubscribe_post:
@@ -679,7 +689,60 @@ async def tell_sender_to_stop(feed: Feed) -> bool:
     except FeedFetchError as exc:
         logger.warning("could not tell %s to stop at %s: %s", feed.title, site_domain(feed.unsubscribe_url), exc)
         return False
+    if told:
+        feed.stop_told_at = utcnow()
     logger.info("told %s to stop (%s): %s", feed.title, "one-click" if feed.unsubscribe_post else "link", told)
+    return told
+
+
+async def _recover_unsubscribe(session: AsyncSession, feed: Feed) -> None:
+    """Take the unsubscribe address from the newest raw mail still kept.
+
+    For a newsletter that arrived before addresses were noted on the feed,
+    or whose issues never carried one until now.
+    """
+    raws = await session.scalars(
+        select(InboundMessage.raw)
+        .where(InboundMessage.feed_id == feed.id, InboundMessage.raw.is_not(None))
+        .order_by(InboundMessage.received_at.desc(), InboundMessage.id.desc())
+        .limit(10)
+    )
+    for raw in raws:
+        try:
+            headers = BytesHeaderParser(policy=email.policy.default).parsebytes(raw or b"")
+        except Exception:  # noqa: BLE001 - the email package raises a long tail of its own types
+            continue
+        url, post = unsubscribe_of(headers)
+        if url:
+            feed.unsubscribe_url, feed.unsubscribe_post = url, post
+            return
+
+
+async def tell_left_senders(session: AsyncSession, now: datetime | None = None) -> int:
+    """Ask again, for senders she left or blocked that have not yet accepted.
+
+    Once a day, and only while there is an address to ask at: a sender
+    whose mail never gave one is tried once and then left alone until a
+    later message brings one.
+    """
+    now = now or utcnow()
+    due = (
+        await session.scalars(
+            select(Feed).where(
+                Feed.source == FEED_SOURCE_EMAIL,
+                Feed.approval.in_((APPROVAL_LEFT, APPROVAL_BLOCKED)),
+                Feed.stop_told_at.is_(None),
+                or_(
+                    Feed.stop_tried_at.is_(None),
+                    and_(Feed.unsubscribe_url.is_not(None), Feed.stop_tried_at < now - timedelta(days=1)),
+                ),
+            )
+        )
+    ).all()
+    told = 0
+    for feed in due:
+        told += await tell_sender_to_stop(session, feed)
+        await session.commit()
     return told
 
 

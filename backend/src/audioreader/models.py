@@ -69,6 +69,11 @@ class Feed(Base):
     #: List-Unsubscribe-Post value when it takes a one-click POST (RFC 8058).
     unsubscribe_url: Mapped[str | None] = mapped_column(Text)
     unsubscribe_post: Mapped[str | None]
+    #: When the sender was last asked to stop, and when it last accepted the
+    #: request. A left or blocked sender not yet told is asked again by the
+    #: poll loop's sweep, once a day, until it accepts.
+    stop_tried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    stop_told_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     #: For a newsletter: the shared RSS feed of the same publication, which
     #: lends it artwork, a blurb and an archive. Never set on a fetched feed.
     companion_feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id", ondelete="SET NULL"))

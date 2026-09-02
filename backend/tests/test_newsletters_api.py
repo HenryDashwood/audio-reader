@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+import httpx
 import pytest
 from sqlalchemy import select
 from tests.newsletter_fixtures import ISSUE_TEXT, build_email
@@ -449,6 +450,69 @@ class TestUnfollow:
 
         latest = (await client.get("/episodes")).json()
         assert sorted(row["title"] for row in latest) == ["Issue two", "Money Stuff: Things Happen"]
+
+    async def test_leaving_notes_that_the_sender_accepted(self, client, inbound_enabled, respx_mock, session):
+        respx_mock.post(STOP_LINK).respond(200)
+        address = await address_of(client)
+        feed_id = await followed(client, address, unsubscribe=f"<{STOP_LINK}>", one_click=True)
+
+        await client.delete(f"/feeds/{feed_id}")
+
+        feed = await session.get(Feed, feed_id)
+        assert feed is not None and feed.stop_told_at is not None and feed.stop_tried_at is not None
+
+    async def test_the_address_is_recovered_from_mail_kept_before_it_was_noted(
+        self, client, inbound_enabled, respx_mock, session
+    ):
+        stop = respx_mock.post(STOP_LINK).respond(200)
+        address = await address_of(client)
+        feed_id = await followed(client, address, unsubscribe=f"<{STOP_LINK}>", one_click=True)
+        # As if the issue had arrived before the feed noted addresses.
+        feed = await session.get(Feed, feed_id)
+        assert feed is not None
+        feed.unsubscribe_url = feed.unsubscribe_post = None
+        await session.commit()
+
+        await client.delete(f"/feeds/{feed_id}")
+
+        assert stop.call_count == 1
+        assert feed.unsubscribe_url == STOP_LINK
+
+    async def test_blocking_tells_the_sender_too(self, client, inbound_enabled, respx_mock):
+        stop = respx_mock.post(STOP_LINK).respond(200)
+        address = await address_of(client)
+        raw = build_email(to=address, sender=SENDER, unsubscribe=f"<{STOP_LINK}>", one_click=True)
+        feed_id = (await deliver(client, raw, to=address)).json()["feed_id"]
+
+        await client.post(f"/newsletters/{feed_id}/block")
+
+        assert stop.call_count == 1
+
+    async def test_a_sender_that_did_not_accept_is_asked_again_daily(
+        self, client, inbound_enabled, respx_mock, session
+    ):
+        stop = respx_mock.post(STOP_LINK).mock(side_effect=[httpx.Response(503), httpx.Response(200)])
+        address = await address_of(client)
+        feed_id = await followed(client, address, unsubscribe=f"<{STOP_LINK}>", one_click=True)
+        await client.delete(f"/feeds/{feed_id}")
+        assert stop.call_count == 1
+
+        # Too soon: nothing is asked twice within a day.
+        assert await service.tell_left_senders(session, now=utcnow() + timedelta(hours=1)) == 0
+        assert stop.call_count == 1
+        # A day on, it is asked again and this time accepts.
+        assert await service.tell_left_senders(session, now=utcnow() + timedelta(days=1, minutes=1)) == 1
+        assert stop.call_count == 2
+        assert await service.tell_left_senders(session, now=utcnow() + timedelta(days=3)) == 0
+
+    async def test_a_sender_with_no_address_is_tried_once_and_left_alone(self, client, inbound_enabled, session):
+        address = await address_of(client)
+        feed_id = await followed(client, address)
+        await client.delete(f"/feeds/{feed_id}")
+        feed = await session.get(Feed, feed_id)
+        assert feed is not None and feed.stop_tried_at is not None and feed.stop_told_at is None
+
+        assert await service.tell_left_senders(session, now=utcnow() + timedelta(days=5)) == 0
 
     async def test_a_left_newsletter_is_forgotten_after_the_retention_window(self, client, inbound_enabled, session):
         address = await address_of(client)
