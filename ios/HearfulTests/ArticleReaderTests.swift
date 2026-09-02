@@ -409,6 +409,46 @@ struct ArticleDocumentTests {
         #expect(withoutPlayer == -12)
     }
 
+    @Test func thePageNeverScrollsSidewaysHoweverWideItsContent() async throws {
+        // WebKit will neither wrap nor scroll MathML, and a sentence wrongly
+        // taken for a formula once pushed a whole article sideways under the
+        // thumb. The page must hold its width whatever the article holds.
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 700),
+            configuration: configuration)
+        let formula = String(repeating: "<mi>word</mi><mo>+</mo>", count: 80)
+        let document = ArticleDocument.page(
+            body: ArticleDocument.articleBody(
+                "<p>Before <math>\(formula)</math> after.</p>"
+                    + "<div style=\"width: 3000px\">wide</div>"),
+            pointSize: 17)
+
+        let waiter = ArticleWebViewLoadWaiter()
+        await waiter.load(document, in: webView)
+        let result = try await webView.callAsyncJavaScript(
+            """
+            return {
+              scrollWidth: document.documentElement.scrollWidth,
+              clientWidth: document.documentElement.clientWidth,
+              mathWidth: document.querySelector("math").getBoundingClientRect().width
+            };
+            """,
+            arguments: [:],
+            in: nil,
+            contentWorld: ArticleReadingMarkerScript.world)
+        let widths = result as? [String: Any]
+        let scrollWidth = (widths?["scrollWidth"] as? NSNumber)?.doubleValue
+        let clientWidth = (widths?["clientWidth"] as? NSNumber)?.doubleValue
+        let mathWidth = (widths?["mathWidth"] as? NSNumber)?.doubleValue
+
+        // The formula really is wider than the phone, so the guard did work.
+        #expect(mathWidth ?? 0 > 390)
+        #expect(scrollWidth != nil)
+        #expect(scrollWidth ?? .infinity <= clientWidth ?? 0)
+    }
+
     @Test func theIsolatedBridgeFindsAWordWhilePageJavaScriptIsDisabled() async throws {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false

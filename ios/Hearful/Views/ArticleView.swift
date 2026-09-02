@@ -1051,6 +1051,14 @@ enum ArticleDocument {
             margin-left: 0; padding-left: 1em;
             border-left: 3px solid var(--rule); color: var(--quiet);
           }
+          /* Whatever an article turns out to contain, the page itself never
+             scrolls sideways. Code, tables and formulas scroll inside their
+             own boxes below; anything else too wide for the phone is cut off
+             at the edge, which loses the end of one line rather than letting
+             every paragraph slide about under the thumb. A box of its own
+             rather than a rule on the body, because iOS WebKit pans the page
+             regardless of what the body says about its overflow. */
+          #hearful-page { overflow-x: clip; }
           /* Code, tables and formulas scroll inside themselves rather than
              making the whole article scroll sideways. */
           pre { overflow-x: auto; font-size: 0.9em; }
@@ -1074,7 +1082,7 @@ enum ArticleDocument {
           a { color: -apple-system-blue; }
         </style>
         </head>
-        <body>\(body)</body>
+        <body><div id="hearful-page">\(body)</div></body>
         </html>
         """
     }

@@ -66,6 +66,42 @@ class TestLeavingProseAlone:
 
         assert with_mathml(text) == text
 
+    def test_a_sentence_between_two_prices_is_not_an_equation(self):
+        # A real article: the closing `$` is preceded by a non-breaking
+        # space, which the pattern cannot see as a space, and the whole
+        # sentence was set as one MathML run too wide for the phone.
+        text = (
+            "<p>spent about $45M USD on data. Most of this was paid to Korean "
+            "companies. The government offered each company&nbsp;$2M to buy data.</p>"
+        )
+
+        assert with_mathml(text) == text
+
+    def test_a_sentence_between_two_prices_is_not_an_equation_without_the_entity(self):
+        text = "<p>a $20M a year lab must negotiate. Second, ~$2M to buy data.</p>"
+
+        assert with_mathml(text) == text
+
+    def test_a_range_of_prices_is_not_an_equation(self):
+        for text in [
+            "<p>somewhere between $300M-$500M a year.</p>",
+            "<p>somewhere between $300M–$500M a year.</p>",
+            "<p>either $5/$10 a month.</p>",
+            "<p>a $5$ note.</p>",
+        ]:
+            assert with_mathml(text) == text, text
+
+    def test_short_maths_beginning_with_a_number_still_counts(self):
+        assert "<math" in with_mathml(r"<p>for $2 \times 3$ cells</p>")
+        assert "<msup>" in with_mathml(r"<p>about $10^{-3}$ of them</p>")
+        assert "<math" in with_mathml("<p>the sum $1 + 1$ is</p>")
+
+    def test_words_inside_a_text_command_are_still_maths(self):
+        html = with_mathml(r"<p>so $\text{for all } x \in S$ holds</p>")
+
+        assert "<math" in html
+        assert "$" not in html
+
     def test_maths_the_converter_cannot_read_is_left_as_it_was(self):
         text = r"<p>$$ \begin{nonsense} \frac{ $$</p>"
 

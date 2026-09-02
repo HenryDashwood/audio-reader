@@ -1,6 +1,7 @@
 {
   // The Worker that receives newsletter email for Magpie and hands each
-  // message to the backend. See README.md in this directory.
+  // message to the backend. Bound to the magpieinbox.com zone by the
+  // catch-all routing rule, not by anything in this file. See README.md.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "magpie-email-inbound",
   "main": "src/index.ts",

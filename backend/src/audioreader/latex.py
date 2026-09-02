@@ -78,12 +78,34 @@ def with_mathml(html: str) -> str:
 #: so reading it as the row break it almost certainly was is the safer guess.
 _LOST_ROW_BREAK = re.compile(r"(?<!\\)\\(?=\s)")
 
+#: Two words of prose with nothing but a space between them, which no formula
+#: contains: `$45M USD on data … each company $2M` is a sentence with a price
+#: at each end, and setting it as maths makes one line as long as the sentence
+#: that cannot be wrapped and pushes the whole article sideways. Commands are
+#: not words, hence the backslash; the words a formula legitimately carries
+#: sit inside `\text{...}`, which is cut out before the test.
+_PROSE = re.compile(r"(?<![\\A-Za-z])[A-Za-z]{2,}\s+[A-Za-z]{2,}")
+_TEXT_GROUP = re.compile(r"\\(?:text|textrm|textbf|textit|mathrm|mbox|operatorname)\s*\{[^{}]*\}")
+
+#: A sum of money: a number, perhaps a unit, and then nothing that could be
+#: maths — the end (`$5$`), a dash on to the next figure (`$300M-$500M`), or a
+#: word (`$2M to buy`). `$2 \times 3$` and `$10^{-3}$` carry on with maths
+#: and are not this.
+_PRICE = re.compile(
+    r"^\d[\d,.]*\s*(?:[kKMBT]|bn|mn|tn|million|billion|trillion)?"
+    r"(?:$|\s*[-\u2013\u2014/](?!\s)|\s+(?![\\^_=+*/(<>|]))"
+)
+
 
 def _replaced(match: re.Match[str]) -> str:
     display = match["display"] or match["bracket"]
     # Text nodes arrive escaped, and TeX uses both `&` and `<` for its own
     # purposes — `&` aligns the rows of an `align*` block.
     source = unescape(display or match["paren"] or match["inline"])
+    # Only a pair of single dollars is a guess about what the writer meant;
+    # the other three forms are only ever written on purpose.
+    if match["inline"] is not None and _looks_like_prose(source):
+        return match[0]
     if "\\begin{" in source:
         source = _LOST_ROW_BREAK.sub(r"\\\\", source)
     mathml = _mathml(source, block=display is not None)
@@ -97,6 +119,20 @@ def _replaced(match: re.Match[str]) -> str:
     # under the thumb. A span because this sits inside the article's own
     # paragraph, where a div would end it early.
     return f'<span class="formula">{mathml}</span>'
+
+
+def _looks_like_prose(source: str) -> bool:
+    """Whether what sits between two single dollars is a sentence, not a sum.
+
+    A non-breaking space at either end is the giveaway the pattern itself
+    cannot see, because it reaches us as an entity and so does not look like
+    a space until the text is unescaped.
+    """
+    if source != source.strip():
+        return True
+    if _PRICE.match(source):
+        return True
+    return _PROSE.search(_TEXT_GROUP.sub(" ", source)) is not None
 
 
 def _mathml(source: str, block: bool) -> str | None:

@@ -393,7 +393,7 @@ policy.
 
 Some publications — Bloomberg's Money Stuff, most Mailchimp newsletters — have
 no feed and exist only as email. Each user has a private address,
-`<token>@<inbound domain>`, minted on first request of `GET
+`<token>@magpieinbox.com`, minted on first request of `GET
 /newsletters/address`. Mail to it is received by Cloudflare Email Routing and
 handed to the backend by the Worker in `cloudflare/email-worker/`, whose
 README has the one-time setup. The first message from a sender creates a
