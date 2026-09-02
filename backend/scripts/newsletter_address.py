@@ -13,7 +13,9 @@ laptop with the Railway connection string, the way the backup script is run:
 
 Without `--mint` it only reports. An account with no address yet gets one
 only when `--mint` is given, since an address is a standing invitation to
-send mail and should not appear as a side effect of looking.
+send mail and should not appear as a side effect of looking. `--renew`
+replaces an existing address with a fresh one; mail to the old address then
+bounces, so every newsletter subscribed with it has to be told the new one.
 """
 
 import argparse
@@ -51,7 +53,7 @@ class Outcome:
     minted: bool = False
 
 
-async def address_for(session: AsyncSession, email: str, domain: str, mint: bool) -> Outcome:
+async def address_for(session: AsyncSession, email: str, domain: str, mint: bool, renew: bool = False) -> Outcome:
     """The address on the account signed in with `email`, minting one if asked.
 
     Matched against the account's own email and its sign-in identities: an
@@ -67,7 +69,7 @@ async def address_for(session: AsyncSession, email: str, domain: str, mint: bool
     )
     if user is None:
         return Outcome(found=False)
-    if user.inbound_token:
+    if user.inbound_token and not renew:
         return Outcome(found=True, address=f"{user.inbound_token}@{domain}")
     if not mint:
         return Outcome(found=True)
@@ -76,12 +78,12 @@ async def address_for(session: AsyncSession, email: str, domain: str, mint: bool
     return Outcome(found=True, address=f"{user.inbound_token}@{domain}", minted=True)
 
 
-async def run(email: str, domain: str, mint: bool) -> int:
+async def run(email: str, domain: str, mint: bool, renew: bool) -> int:
     engine = engine_for(settings.database_url)
     try:
         maker = async_sessionmaker(engine, expire_on_commit=False)
         async with maker() as session:
-            outcome = await address_for(session, email, domain, mint)
+            outcome = await address_for(session, email, domain, mint, renew=renew)
     finally:
         await engine.dispose()
 
@@ -105,10 +107,13 @@ def main() -> int:
         help="the inbound domain to print the address under (default: AUDIOREADER_INBOUND_EMAIL_DOMAIN)",
     )
     parser.add_argument("--mint", action="store_true", help="create an address if the account has none")
+    parser.add_argument(
+        "--renew", action="store_true", help="replace the existing address with a new one (the old one stops working)"
+    )
     arguments = parser.parse_args()
     if not arguments.domain:
         parser.error("no inbound domain: pass --domain or set AUDIOREADER_INBOUND_EMAIL_DOMAIN")
-    return asyncio.run(run(arguments.email, arguments.domain, arguments.mint))
+    return asyncio.run(run(arguments.email, arguments.domain, arguments.mint or arguments.renew, arguments.renew))
 
 
 if __name__ == "__main__":

@@ -57,12 +57,22 @@ class TestAddress:
 
         local, _, domain = first.partition("@")
         assert domain == DOMAIN
-        assert len(local) == service.TOKEN_LENGTH
+        assert len(local.split("-")) == service.TOKEN_WORDS
         assert first == second
 
-    def test_tokens_avoid_characters_that_are_misheard(self):
-        for _ in range(200):
-            assert not set(service.new_inbound_token()) & set("ilo01")
+    def test_tokens_are_words_somebody_can_say(self):
+        tokens = {service.new_inbound_token() for _ in range(50)}
+
+        assert len(tokens) == 50
+        for token in tokens:
+            words = token.split("-")
+            assert len(words) == service.TOKEN_WORDS
+            assert all(word.isalpha() and word.islower() and word in service._WORDS for word in words)
+
+    def test_the_wordlist_is_the_eff_short_list(self):
+        assert len(service._WORDS) == 1295
+        assert all(word.isalpha() and word.islower() for word in service._WORDS)
+        assert len(set(service._WORDS)) == len(service._WORDS)
 
 
 class TestInboundEndpoint:

@@ -297,12 +297,37 @@ nonisolated struct NewsletterAddress: Decodable, Equatable, Sendable {
     var localPart: String { String(address.prefix { $0 != "@" }) }
     var domain: String { String(address.drop { $0 != "@" }.dropFirst()) }
 
+    /// The words the address is made of, when it is made of words. Addresses
+    /// are "quiet-heron-otter"; ones minted before that were random letters.
+    var words: [String]? {
+        let parts = localPart.split(separator: "-").map(String.init)
+        guard parts.count > 1, parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isLetter) }) else {
+            return nil
+        }
+        return parts
+    }
+
     /// The address as something a voice can say and a listener can write
-    /// down: the letters one at a time, then the domain as words.
+    /// down: the words one at a time with the hyphens mentioned, or for an
+    /// older address the letters one at a time; then the domain as words.
     var spoken: String {
-        let letters = localPart.map { String($0) }.joined(separator: ", ")
-        let domainWords = domain.replacingOccurrences(of: ".", with: " dot ")
-        return "\(letters), at \(domainWords)"
+        if let words {
+            return "\(words.joined(separator: ", ")), with hyphens between the words, at \(spokenDomain)"
+        }
+        return "\(spelled(localPart)), at \(spokenDomain)"
+    }
+
+    /// Every letter, for when a word was misheard or the listener is writing
+    /// it down: "q, u, i, e, t, hyphen, h, e, r, o, n".
+    var spelledOut: String {
+        let local = localPart.map { $0 == "-" ? "hyphen" : String($0) }.joined(separator: ", ")
+        return "\(local), at \(spokenDomain)"
+    }
+
+    private var spokenDomain: String { domain.replacingOccurrences(of: ".", with: " dot ") }
+
+    private func spelled(_ text: String) -> String {
+        text.map { String($0) }.joined(separator: ", ")
     }
 }
 

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.parser import BytesHeaderParser
 from hashlib import sha256
+from pathlib import Path
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,10 +49,19 @@ from audioreader.text import summarise
 
 logger = logging.getLogger(__name__)
 
-#: No i, l, o, 0 or 1: the address will be read aloud and typed by someone
-#: else, and those are the characters that get confused on the way.
-_TOKEN_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
-TOKEN_LENGTH = 10
+#: The address will be said down a phone and typed by somebody else, so it
+#: is made of words rather than letters: "quiet-heron-otter". The list is
+#: the EFF's short wordlist for dice passphrases, chosen because its words
+#: are short, are not homophones of each other, and have unique three-letter
+#: prefixes so a typo is still recognisable. Three of them is about 31 bits,
+#: which is plenty when the worst a guess can do is put a row in her pending
+#: list.
+TOKEN_WORDS = 3
+_WORDS = tuple(
+    line.strip()
+    for line in (Path(__file__).with_name("wordlist.txt")).read_text().splitlines()
+    if line.strip() and not line.startswith("#")
+)
 
 DELIVERED = "delivered"
 PENDING = "pending"
@@ -80,7 +90,7 @@ class PendingSender:
 
 
 def new_inbound_token() -> str:
-    return "".join(secrets.choice(_TOKEN_ALPHABET) for _ in range(TOKEN_LENGTH))
+    return "-".join(secrets.choice(_WORDS) for _ in range(TOKEN_WORDS))
 
 
 def address_for(user: User) -> str | None:

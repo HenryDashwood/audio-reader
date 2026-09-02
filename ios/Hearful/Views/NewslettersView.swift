@@ -29,7 +29,11 @@ struct NewsletterAddressSection: View {
                 Button("Read Address Aloud") {
                     Task { await speaker.speak("Your newsletter address is \(address.spoken)") }
                 }
-                .accessibilityHint("Spells the address out one letter at a time")
+                .accessibilityHint("Says the address one word at a time")
+                Button("Spell Address") {
+                    Task { await speaker.speak("Your newsletter address is spelled \(address.spelledOut)") }
+                }
+                .accessibilityHint("Says every letter, for writing it down")
                 Button("Copy Address") {
                     UIPasteboard.general.string = address.address
                     AccessibilityNotification.Announcement("Address copied.").post()

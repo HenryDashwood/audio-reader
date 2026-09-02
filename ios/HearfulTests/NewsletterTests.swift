@@ -18,11 +18,27 @@ struct NewsletterAddressTests {
         #expect(transport.lastRequest?.url?.path == "/newsletters/address")
     }
 
-    @Test func spellsTheLettersAndSaysTheDomainAsWords() {
+    @Test func saysTheWordsAndTheDomainAsWords() {
+        let address = NewsletterAddress(address: "quiet-heron-otter@magpieinbox.com")
+
+        #expect(address.localPart == "quiet-heron-otter")
+        #expect(address.domain == "magpieinbox.com")
+        #expect(address.words == ["quiet", "heron", "otter"])
+        #expect(
+            address.spoken
+                == "quiet, heron, otter, with hyphens between the words, at magpieinbox dot com")
+    }
+
+    @Test func spellsEveryLetterIncludingTheHyphens() {
+        let address = NewsletterAddress(address: "ox-elk@magpieinbox.com")
+
+        #expect(address.spelledOut == "o, x, hyphen, e, l, k, at magpieinbox dot com")
+    }
+
+    @Test func anOlderRandomAddressIsSpelledRatherThanSaid() {
         let address = NewsletterAddress(address: "nwxtemygmy@magpieinbox.com")
 
-        #expect(address.localPart == "nwxtemygmy")
-        #expect(address.domain == "magpieinbox.com")
+        #expect(address.words == nil)
         #expect(address.spoken == "n, w, x, t, e, m, y, g, m, y, at magpieinbox dot com")
     }
 }
