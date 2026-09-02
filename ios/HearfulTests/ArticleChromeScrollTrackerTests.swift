@@ -1,4 +1,5 @@
 import Testing
+import UIKit
 
 @testable import Hearful
 
@@ -48,5 +49,22 @@ struct ArticleChromeScrollTrackerTests {
         tracker.began(translationY: 0, hidden: true)
 
         #expect(tracker.changed(translationY: -10, contentOffsetY: 20) == false)
+    }
+
+    @Test @MainActor func hidingChromeNeverDisablesTheNavigationBar() {
+        let chrome = ArticleChromeController()
+        let navigation = UINavigationController(rootViewController: chrome)
+        navigation.loadViewIfNeeded()
+        chrome.viewWillAppear(false)
+
+        chrome.setBarsHidden(true, animated: false)
+
+        #expect(navigation.navigationBar.alpha == 0)
+        #expect(navigation.navigationBar.isUserInteractionEnabled)
+
+        chrome.setBarsHidden(false, animated: false)
+
+        #expect(navigation.navigationBar.alpha == 1)
+        #expect(navigation.navigationBar.isUserInteractionEnabled)
     }
 }

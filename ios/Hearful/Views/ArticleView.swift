@@ -386,14 +386,16 @@ private struct ArticleChrome: UIViewControllerRepresentable {
     /// the web view has to exist first.
     let tracking: UIScrollView?
 
-    func makeUIViewController(context: Context) -> Chrome { Chrome() }
+    func makeUIViewController(context: Context) -> ArticleChromeController {
+        ArticleChromeController()
+    }
 
-    func updateUIViewController(_ chrome: Chrome, context: Context) {
+    func updateUIViewController(_ chrome: ArticleChromeController, context: Context) {
         chrome.track(tracking)
     }
 }
 
-private final class Chrome: UIViewController {
+final class ArticleChromeController: UIViewController {
     private weak var tabs: UITabBarController?
     private weak var navigation: UINavigationController?
     private weak var tracked: UIScrollView?
@@ -503,10 +505,14 @@ private final class Chrome: UIViewController {
     /// Fade the system bars without removing them from the hierarchy. Their
     /// safe-area contribution and the web view's adjusted content inset stay
     /// constant, so the words remain under the finger throughout the drag.
-    private func setBarsHidden(_ hidden: Bool, animated: Bool) {
+    func setBarsHidden(_ hidden: Bool, animated: Bool) {
         let bars: [UIView] = [navigation?.navigationBar, tabs?.tabBar].compactMap { $0 }
         for bar in bars {
-            bar.isUserInteractionEnabled = !hidden
+            // Do not carry a second, independent hidden state in hit testing.
+            // UIKit already excludes a view once its alpha is effectively
+            // zero. Leaving interaction enabled means a control remains
+            // tappable for as long as it remains visible during the fade —
+            // and, crucially, cannot be redrawn visible while still disabled.
             bar.accessibilityElementsHidden = hidden
         }
         let changes = {
