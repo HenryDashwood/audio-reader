@@ -31,7 +31,8 @@ Stuff or Benedict's Newsletter. Worth trying:
   later email from it should not come back.
 - Unsubscribe from a followed newsletter. It should leave Following, and the
   sender should be told to stop (a Substack should confirm by email or stop
-  sending). If it writes again anyway, the issue should arrive as a fresh
+  sending). A newsletter forwarded from another inbox is the exception: its
+  page says so, and unsubscribing says to remove the forwarding rule there. If it writes again anyway, the issue should arrive as a fresh
   question with the earlier issues still counted, and following it again
   should bring them all back.
 - With VoiceOver on, do all of the above with the screen curtain down. The

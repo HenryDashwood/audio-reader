@@ -44,7 +44,7 @@ from audioreader.feeds.search import (
     select_unambiguous_match,
 )
 from audioreader.feeds.service import AlreadySubscribedError
-from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User, utcnow
+from audioreader.models import FEED_SOURCE_EMAIL, PLAYABLE_EPISODE, Episode, Feed, Subscription, User, utcnow
 from audioreader.newsletters import service as newsletters
 from audioreader.newsletters.service import PendingSender, spoken_address
 from audioreader.text import search_key, summarise
@@ -965,13 +965,16 @@ async def _unsubscribe(session: AsyncSession, query: str | None, user: User) -> 
 
     feed = matches[0]
     title = feed.title
+    forwarded = feed.source == FEED_SOURCE_EMAIL and feed.forwarded
     # Only this user's subscription goes; the feed and its episodes stay in
     # the shared catalog for other subscribers.
     await feed_service.unsubscribe(session, feed.id, user)
-    return InterpretResult(
-        action=Action.UNSUBSCRIBED,
-        spoken_response=f"Unsubscribed from {title}.",
-    )
+    spoken = f"Unsubscribed from {title}."
+    if forwarded:
+        # Its emails come from a rule in her own inbox, which Magpie cannot
+        # touch; without this she would expect them to stop.
+        spoken += " It is forwarded from your own email, so to stop the emails, remove the forwarding rule there."
+    return InterpretResult(action=Action.UNSUBSCRIBED, spoken_response=spoken)
 
 
 async def _answer_newsletter(

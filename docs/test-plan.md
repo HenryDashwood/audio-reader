@@ -223,6 +223,7 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 - [ ] **Follow** → the sender becomes a show, its messages are in **Latest**, and opening one reads the writing without unsubscribe links, postal addresses or "view in browser"
 - [ ] **Block**, confirm → the sender goes; a later email from it does not bring it back
 - [ ] Unsubscribe from a followed newsletter → it leaves **Following** and the sender is asked to stop; if it writes again anyway, a fresh **Waiting for your answer** row appears with the earlier issues still counted, and **Follow** brings them all back
+- [ ] Set up a Gmail forwarding rule to the address → Gmail's confirmation is answered without a code appearing in **Waiting for your answer**; a forwarded issue arrives under its real sender; its show page says the newsletter is forwarded and Unsubscribe tells her to remove the rule rather than asking the sender to stop
 - [ ] Newsletter rows and pages say "issues", not "episodes" or "posts"
 - [ ] A followed Substack newsletter takes the publication's name and artwork within a poll pass, and its page shows the web archive beneath the emailed issues, one row per post
 - [ ] Paste a Substack's address with no feed → **Sign up by email** appears; tapping it says the newsletter has been asked for, and the newsletter turns up in **Following** on its own when its first email arrives, with nothing under **Waiting for your answer** in **Latest**

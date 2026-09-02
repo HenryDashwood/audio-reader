@@ -89,6 +89,7 @@ def to_feed_read(feed: Feed, episode_count: int, audio_count: int) -> FeedRead:
         image_url=feed.image_url or feed.site_image_url,
         episode_count=episode_count,
         source=feed.source,
+        forwarded=feed.forwarded,
         # An empty feed is left as a podcast: "0 posts" for a show whose
         # episodes simply have not loaded yet would be a worse guess than the
         # default, and the label corrects itself on the next refresh.

@@ -45,6 +45,9 @@ class FeedRead(BaseModel):
     #: "rss" for anything fetched from the web; "email" for a newsletter that
     #: arrives at her private address. Defaulted so older payloads still read.
     source: str = "rss"
+    #: A newsletter that reaches her by way of another inbox's forwarding.
+    #: Leaving it in Magpie cannot stop the emails; the rule there can.
+    forwarded: bool = False
 
     @field_validator("description")
     @classmethod

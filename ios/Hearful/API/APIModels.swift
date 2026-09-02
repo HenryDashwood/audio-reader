@@ -278,9 +278,13 @@ nonisolated struct Show: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// arrives at her private address. Optional for older payloads and the
     /// offline cache, which both mean an ordinary feed.
     var source: String?
+    /// A newsletter that reaches her by way of a forwarding rule in another
+    /// inbox. Unsubscribing here cannot stop the emails; the rule can.
+    /// Optional for older payloads and the offline cache.
+    var forwarded: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, description, source
+        case id, title, description, source, forwarded
         case artworkURL = "image_url"
         case episodeCount = "episode_count"
         case isArticleFeed = "is_article_feed"

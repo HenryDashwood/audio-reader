@@ -74,6 +74,10 @@ class Feed(Base):
     #: poll loop's sweep, once a day, until it accepts.
     stop_tried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stop_told_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: Email feeds only: its latest issue came by way of another inbox, so
+    #: the subscription is that inbox's, and the sender is never asked to
+    #: stop on her behalf — she would lose the subscription there.
+    forwarded: Mapped[bool] = mapped_column(default=False, server_default=false())
     #: For a newsletter: the shared RSS feed of the same publication, which
     #: lends it artwork, a blurb and an archive. Never set on a fetched feed.
     companion_feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id", ondelete="SET NULL"))

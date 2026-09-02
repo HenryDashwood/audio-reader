@@ -78,7 +78,11 @@ struct ShowDetailView: View {
         // No title in the bar: the show's name is the first thing on the page
         // already, in the header a few points below it.
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
+        .navigationDestination(item: $openEpisode) { episode in
+            ArticleView(episode: episode) { wordCount in
+                model.learnedWordCount(wordCount, for: episode.id, showID: show.id)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 MicToolbarButton()
@@ -116,7 +120,7 @@ struct ShowDetailView: View {
     private var unsubscribeRow: some View {
         Button(role: .destructive) {
             Task {
-                if await model.unsubscribe(showID: show.id, title: show.title) {
+                if await model.unsubscribe(showID: show.id, title: show.title, forwarded: show.forwarded == true) {
                     dismiss()
                 }
             }
@@ -130,6 +134,13 @@ struct ShowDetailView: View {
         .buttonStyle(.bordered)
         .disabled(model.unsubscribing)
         .accessibilityLabel("Unsubscribe from \(show.title)")
+        if show.forwarded == true {
+            // Magpie cannot reach the rule in her other inbox; without this
+            // she would expect the emails to stop.
+            Text("This newsletter is forwarded from your own email. Unsubscribing here hides it in Magpie; to stop the emails, remove the forwarding rule there.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
         if let message = model.unsubscribeError {
             Text(message).font(.callout).foregroundStyle(.red)
         }
@@ -445,8 +456,29 @@ final class EpisodeListModel: ObservableObject {
             })
     }
 
+    /// The full text is fetched only after the row opens, so fold its newly
+    /// known length into the row and the saved copy of this show.
+    func learnedWordCount(_ wordCount: Int, for episodeID: Int, showID: Int) {
+        guard case .loaded(let episodes) = state else { return }
+        let updated = episodesByUpdatingWordCount(
+            episodes, episodeID: episodeID, wordCount: wordCount)
+        state = .loaded(updated)
+
+        if isSearching {
+            guard let cached = cache.load(
+                [Episode].self, for: .episodes(showID: showID))
+            else { return }
+            cache.save(
+                episodesByUpdatingWordCount(
+                    cached, episodeID: episodeID, wordCount: wordCount),
+                for: .episodes(showID: showID))
+        } else {
+            cache.save(updated, for: .episodes(showID: showID))
+        }
+    }
+
     /// True on success, so the view can pop back to the library.
-    func unsubscribe(showID: Int, title: String) async -> Bool {
+    func unsubscribe(showID: Int, title: String, forwarded: Bool = false) async -> Bool {
         guard !unsubscribing else { return false }
         unsubscribing = true
         unsubscribeError = nil
@@ -454,7 +486,11 @@ final class EpisodeListModel: ObservableObject {
         do {
             try await api.unsubscribe(showID: showID)
             NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
-            AccessibilityNotification.Announcement("Unsubscribed from \(title)").post()
+            var announcement = "Unsubscribed from \(title)."
+            if forwarded {
+                announcement += " To stop the emails, remove the forwarding rule in your own email."
+            }
+            AccessibilityNotification.Announcement(announcement).post()
             return true
         } catch let error as APIError {
             unsubscribeError = error.spokenResponse

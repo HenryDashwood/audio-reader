@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from tests.newsletter_fixtures import ISSUE_HTML, ISSUE_TEXT, build_email
 
-from audioreader.newsletters.parser import NewsletterParseError, parse_newsletter, text_as_html
+from audioreader.newsletters.parser import NewsletterParseError, Sender, parse_newsletter, text_as_html
 
 
 class TestParseNewsletter:
@@ -120,3 +120,62 @@ class TestHowToStop:
     def test_mail_only_or_nothing_gives_nothing(self):
         assert parse_newsletter(build_email(unsubscribe="<mailto:stop@news.test>")).unsubscribe_url is None
         assert parse_newsletter(build_email()).unsubscribe_url is None
+
+
+class TestForwardedMail:
+    def test_a_rules_headers_mark_it_forwarded_and_keep_the_sender(self):
+        raw = build_email(sender="Matt Levine <noreply@mail.bloombergbusiness.com>", to="henry@gmail.com")
+        raw = raw.replace(b"Subject:", b"X-Forwarded-To: hefty-prism-bolt@magpieinbox.com\r\nSubject:", 1)
+
+        message = parse_newsletter(raw)
+
+        assert message.forwarded is True
+        assert message.sender.address == "noreply@mail.bloombergbusiness.com"
+        assert message.addressed_to == ("henry@gmail.com",)
+
+    def test_a_message_she_forwarded_by_hand_is_from_the_original_sender(self):
+        text = (
+            "\n\n---------- Forwarded message ---------\nFrom: Matt Levine <noreply@mail.bloombergbusiness.com>\n"
+            "Date: Tue, 1 Sep 2026 at 12:00\nSubject: Money Stuff: Things Happen\nTo: <henry@gmail.com>\n\n\n"
+            "Things happened today.\n"
+        )
+        raw = build_email(
+            sender="Henry <henry@gmail.com>", subject="Fwd: Money Stuff: Things Happen", html=None, text=text
+        )
+
+        message = parse_newsletter(raw)
+
+        assert message.forwarded is True
+        assert message.subject == "Money Stuff: Things Happen"
+        assert message.sender == Sender(
+            key="noreply@mail.bloombergbusiness.com/matt-levine",
+            address="noreply@mail.bloombergbusiness.com",
+            name="Matt Levine",
+        )
+
+    def test_apple_mails_forward_in_html_is_read_too(self):
+        html = (
+            "<div><br></div><div>Begin forwarded message:</div><blockquote><div><b>From: </b>"
+            "Ben Southwood from Baldwin &lt;bensouthwood@substack.com&gt;</div><div><b>Subject: </b>On growth</div>"
+            "<div><b>Date: </b>1 September 2026</div></blockquote><div><p>An issue.</p></div>"
+        )
+        message = parse_newsletter(build_email(sender="Henry <henry@icloud.com>", subject="FW: On growth", html=html))
+
+        assert message.sender.address == "bensouthwood@substack.com"
+        assert message.sender.name == "Ben Southwood from Baldwin"
+        assert message.subject == "On growth"
+
+    def test_a_quoted_forward_inside_an_issue_is_not_a_forward(self):
+        text = (
+            "Reader mail:\n---------- Forwarded message ---------\nFrom: A Reader <reader@example.test>\n\nDear Matt"
+        )
+        message = parse_newsletter(build_email(subject="Money Stuff: Reader Mail", html=None, text=text))
+
+        assert message.forwarded is False
+        assert message.sender.address == "noreply@mail.bloombergbusiness.com"
+
+    def test_plain_mail_to_her_address_names_only_her(self):
+        message = parse_newsletter(build_email(to="hefty-prism-bolt@magpieinbox.com"))
+
+        assert message.forwarded is False
+        assert message.addressed_to == ("hefty-prism-bolt@magpieinbox.com",)

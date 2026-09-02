@@ -49,6 +49,14 @@ _BOILERPLATE = re.compile(
     re.IGNORECASE,
 )
 
+#: What a mail app writes above a message forwarded by hand, and the header
+#: lines it copies under that. Chrome of the forwarding, not of the issue.
+_FORWARDING_CHROME = re.compile(
+    r"^(?:-{2,}\s*Forwarded message\s*-{2,}|Begin forwarded message:|-{2,}\s*Original Message\s*-{2,})"
+    r"|^(?:From|Date|Sent|Subject|To|Cc|Reply-To):\s",
+    re.IGNORECASE,
+)
+
 #: Whole blocks that are a button or a nav label rather than a sentence.
 _LABEL = re.compile(
     r"share|like|comment|restack|reply|forward|tweet|read in app|read online|view online"
@@ -238,6 +246,8 @@ def _is_boilerplate(element: lxml_html.HtmlElement) -> bool:
     if not text:
         return False
     if _LABEL.fullmatch(text):
+        return True
+    if len(text) <= _MAX_BOILERPLATE_CHARS and _FORWARDING_CHROME.match(text):
         return True
     if not any(character.isalnum() for character in text) and element.find(".//img") is None:
         # A lone "|" between two footer links.

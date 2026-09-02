@@ -145,3 +145,24 @@ class TestCleanNewsletterHtml:
         )
 
         assert spoken(cleaned.html) == ["Before after."]
+
+
+class TestForwardingChrome:
+    def test_the_lines_a_mail_app_adds_above_a_forward_go(self):
+        html = (
+            "<div>---------- Forwarded message ---------</div>"
+            "<div>From: <b>Matt Levine</b> &lt;noreply@mail.bloombergbusiness.com&gt;</div>"
+            "<div>Date: Tue, 1 Sep 2026 at 12:00</div><div>Subject: Money Stuff</div>"
+            "<div>To: &lt;henry@gmail.com&gt;</div>"
+            "<p>Things happened today, and from the look of it they will again.</p>"
+        )
+
+        cleaned = clean_newsletter_html(html)
+
+        assert "Forwarded message" not in cleaned.html and "henry@gmail.com" not in cleaned.html
+        assert "Things happened today" in cleaned.html
+
+    def test_a_sentence_that_starts_with_to_is_writing(self):
+        html = "<p>To be fair to the regulators, this was never going to be simple, and the filing shows why.</p>"
+
+        assert "To be fair" in clean_newsletter_html(html).html

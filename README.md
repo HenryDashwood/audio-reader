@@ -457,6 +457,15 @@ sight, so following it again within that time finds everything still there,
 and a sender that keeps writing anyway comes back as a fresh question rather
 than as silence.
 
+A newsletter can also reach her address by way of another inbox — a paid
+subscription under her main email, with a forwarding rule there. Mail that
+arrives with a rule's headers, addressed to another inbox, or forwarded by
+hand under a "Fwd:" subject is filed under the original sender and marked
+forwarded. Such a sender is never asked to stop, since the unsubscribe link
+in its mail is the other inbox's subscription; the app and the voice reply
+say to remove the rule there instead. Gmail's question whether the address
+will take forwarded mail is answered yes on arrival, by following its link.
+
 ### Telemetry
 
 Traces, logs and metrics go to [Logfire](https://logfire-eu.pydantic.dev)

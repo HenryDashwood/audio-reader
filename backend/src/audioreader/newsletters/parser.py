@@ -13,8 +13,8 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.message import EmailMessage, Message
-from email.utils import parseaddr, parsedate_to_datetime
-from html import escape
+from email.utils import getaddresses, parseaddr, parsedate_to_datetime
+from html import escape, unescape
 
 MAX_SUBJECT_CHARS = 1_000
 
@@ -59,6 +59,12 @@ class NewsletterMessage:
     #: and the List-Unsubscribe-Post value when it takes a one-click POST.
     unsubscribe_url: str | None = None
     unsubscribe_post: str | None = None
+    #: Came by way of another inbox: a forwarding rule's headers, or a
+    #: message she forwarded by hand (then `sender` is the original one).
+    forwarded: bool = False
+    #: Everyone in To and Cc, lower-cased. A newsletter addressed to an
+    #: inbox other than hers was forwarded from it.
+    addressed_to: tuple[str, ...] = ()
 
 
 def parse_newsletter(raw: bytes) -> NewsletterMessage:
@@ -80,20 +86,89 @@ def _from_message(message: Message, raw: bytes) -> NewsletterMessage:
     html = _body(message, "html")
     text = _body(message, "plain")
     unsubscribe_url, unsubscribe_post = unsubscribe_of(message)
+    subject = _subject(message)
+    sender = _sender(message, from_name, from_address)
+    forwarded = any(_header(message, name).strip() for name in _FORWARDING_HEADERS)
+    if original := forwarded_original(subject, html, text):
+        # She forwarded it herself: the mail is from her, the issue is not.
+        sender = original
+        subject = _FORWARDED_SUBJECT.sub("", subject).strip() or subject
+        forwarded = True
     if not (html and html.strip()) and not (text and text.strip()):
         raise NewsletterParseError("email has no readable body")
 
     return NewsletterMessage(
         message_id=_message_id(message, raw),
-        subject=_subject(message),
-        sender=_sender(message, from_name, from_address),
+        subject=subject,
+        sender=sender,
         recipient=recipient_of(message),
         sent_at=_sent_at(message),
         html=html if html and html.strip() else None,
         text=text if text and text.strip() else None,
         unsubscribe_url=unsubscribe_url,
         unsubscribe_post=unsubscribe_post,
+        forwarded=forwarded,
+        addressed_to=addressed_to(message),
     )
+
+
+#: What a forwarding rule adds: Gmail's automatic forwarding marks the
+#: message with X-Forwarded-*, and a resent message (RFC 5322 section
+#: 3.6.6, which Apple Mail's Redirect and some rules use) with Resent-*.
+_FORWARDING_HEADERS = ("X-Forwarded-For", "X-Forwarded-To", "Resent-From", "Resent-To")
+_FORWARDED_SUBJECT = re.compile(r"^\s*(?:(?:fwd?|fw|tr|wg)\s*:\s*)+", re.IGNORECASE)
+#: The line a mail app puts above a message forwarded by hand, and the
+#: header lines it copies underneath.
+_FORWARDED_BLOCK = re.compile(
+    r"(?:-{2,}\s*Forwarded message\s*-{2,}|Begin forwarded message:|-{2,}\s*Original Message\s*-{2,})"
+    r"(?P<head>.{0,1200})",
+    re.IGNORECASE | re.DOTALL,
+)
+_FORWARDED_FROM = re.compile(r"\bFrom:\s*(?P<from>[^\r\n]+)", re.IGNORECASE)
+_BRACKETED_ADDRESS = re.compile(r"<\s*(?P<address>[^<>\s@]+@[^<>\s]+)\s*>")
+_BARE_ADDRESS = re.compile(r"(?P<address>[^\s<>@\"]+@[^\s<>\"]+)")
+#: Tags that end a line in a mail app's rendering; the rest are inline.
+_LINE_BREAK = re.compile(r"<(?:br|/p|/div|/tr|/li|/h[1-6]|/blockquote|/td)\b[^>]*>", re.IGNORECASE)
+_TAG = re.compile(r"<[^>]+>")
+
+
+def forwarded_original(subject: str, html: str | None, text: str | None) -> Sender | None:
+    """Who really wrote a message she forwarded by hand.
+
+    Only looked for under a "Fwd:" subject — an issue may quote a forwarded
+    message of its own — and taken from the From line the mail app copied
+    above the original. There is no List-ID by then; the address and name
+    tell the newsletter apart, as they do for any sender without one.
+    """
+    if not _FORWARDED_SUBJECT.match(subject):
+        return None
+    if text and text.strip():
+        source = text
+    else:
+        # Line ends first, then the other tags, then entities: the copied
+        # "&lt;address&gt;" must come out as brackets, not go as a tag.
+        source = unescape(_TAG.sub(" ", _LINE_BREAK.sub("\n", html or "")))
+    block = _FORWARDED_BLOCK.search(source)
+    if not block:
+        return None
+    line = _FORWARDED_FROM.search(block.group("head"))
+    if not line:
+        return None
+    written = _WHITESPACE.sub(" ", line.group("from")).strip()
+    bracketed = _BRACKETED_ADDRESS.search(written)
+    found = bracketed or _BARE_ADDRESS.search(written)
+    if not found:
+        return None
+    address = found.group("address").lower().strip(".,;")
+    name = written[: found.start()].strip().strip('"').rstrip(",").strip() if bracketed else ""
+    key = f"{address}/{_slug(name)}" if name else address
+    return Sender(key=key, address=address, name=(name or address.partition("@")[0])[:200])
+
+
+def addressed_to(message: Message) -> tuple[str, ...]:
+    """Everyone the message names in To and Cc."""
+    pairs = getaddresses([_header(message, "To"), _header(message, "Cc")])
+    return tuple(address.strip().lower() for _, address in pairs if "@" in address)
 
 
 #: `List-Unsubscribe: <mailto:...>, <https://...>` — any number of addresses

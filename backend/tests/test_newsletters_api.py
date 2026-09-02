@@ -1,6 +1,7 @@
 """Newsletters by email: the inbound endpoint and what she sees afterwards."""
 
 from datetime import timedelta
+from typing import Any
 
 import httpx
 import pytest
@@ -354,8 +355,8 @@ STOP_LINK = "https://news.test/unsubscribe?token=abc"
 SENDER = "Matt Levine <moneystuff@gmail.com>"
 
 
-async def followed(client, address: str, **email) -> int:
-    raw = build_email(to=address, sender=SENDER, **email)
+async def followed(client, address: str, raw: bytes | None = None, **email) -> int:
+    raw = raw or build_email(to=address, sender=SENDER, **email)
     feed_id = (await deliver(client, raw, to=address)).json()["feed_id"]
     await client.post(f"/newsletters/{feed_id}/approve")
     return feed_id
@@ -379,8 +380,10 @@ class TestUnfollow:
     async def test_a_one_click_sender_is_told_with_a_post(self, client, inbound_enabled, respx_mock):
         stop = respx_mock.post(STOP_LINK).respond(200)
         address = await address_of(client)
-        stop_headers = {"unsubscribe": f"<mailto:stop@news.test>, <{STOP_LINK}>", "one_click": True}
-        feed_id = await followed(client, address, **stop_headers)
+        raw = build_email(
+            to=address, sender=SENDER, unsubscribe=f"<mailto:stop@news.test>, <{STOP_LINK}>", one_click=True
+        )
+        feed_id = await followed(client, address, raw=raw)
 
         await client.delete(f"/feeds/{feed_id}")
 
@@ -599,3 +602,104 @@ class TestBackgroundWork:
         await prune_orphaned_feeds(session, now=later)
 
         assert await session.get(Feed, feed_id) is not None
+
+
+def forwarded_issue(**overrides) -> bytes:
+    """An issue addressed to her main inbox, as a rule there would pass on."""
+    fields: dict[str, Any] = {"sender": SENDER, "to": "henry@gmail.com", "unsubscribe": f"<{STOP_LINK}>"}
+    fields.update(one_click=True, **overrides)
+    return build_email(**fields)
+
+
+class TestForwardedMail:
+    async def test_a_forwarded_newsletter_is_never_told_to_stop(self, client, inbound_enabled, respx_mock, session):
+        stop = respx_mock.post(STOP_LINK).respond(200)
+        address = await address_of(client)
+        feed_id = await followed(client, address, raw=forwarded_issue())
+        assert (await client.get("/feeds")).json()[0]["forwarded"] is True
+
+        await client.delete(f"/feeds/{feed_id}")
+        await service.tell_left_senders(session, now=utcnow() + timedelta(days=3))
+
+        assert stop.call_count == 0
+        feed = await session.get(Feed, feed_id)
+        assert feed is not None and feed.approval == APPROVAL_LEFT and feed.stop_told_at is None
+
+    async def test_blocking_a_forwarded_sender_does_not_tell_it_either(self, client, inbound_enabled, respx_mock):
+        stop = respx_mock.post(STOP_LINK).respond(200)
+        address = await address_of(client)
+        feed_id = (await deliver(client, forwarded_issue(), to=address)).json()["feed_id"]
+
+        await client.post(f"/newsletters/{feed_id}/block")
+
+        assert stop.call_count == 0
+
+    async def test_the_newest_issue_decides(self, client, inbound_enabled):
+        address = await address_of(client)
+        feed_id = await followed(client, address, raw=forwarded_issue())
+        # The subscription moved to her address: mail comes straight now.
+        await deliver(client, build_email(sender=SENDER, to=address, message_id="<direct@x>"), to=address)
+
+        shows = (await client.get("/feeds")).json()
+
+        assert [(show["id"], show["forwarded"]) for show in shows] == [(feed_id, False)]
+
+    async def test_a_message_she_forwarded_by_hand_files_under_the_writer(self, client, inbound_enabled):
+        address = await address_of(client)
+        text = (
+            "---------- Forwarded message ---------\nFrom: Matt Levine <noreply@mail.bloombergbusiness.com>\n"
+            "Subject: Money Stuff: Things Happen\n\nThings happened today.\n"
+        )
+        raw = build_email(
+            sender="Henry <henry@gmail.com>",
+            to=address,
+            subject="Fwd: Money Stuff: Things Happen",
+            html=None,
+            text=text,
+        )
+
+        await deliver(client, raw, to=address)
+
+        waiting = (await client.get("/newsletters/pending")).json()
+        assert [(item["title"], item["latest_title"]) for item in waiting] == [
+            ("Matt Levine", "Money Stuff: Things Happen")
+        ]
+
+    async def test_gmails_forwarding_question_is_answered_yes(self, client, inbound_enabled, respx_mock, session):
+        confirm = respx_mock.get("https://mail-settings.google.com/mail/vf-abc123-def").respond(200, content=b"ok")
+        address = await address_of(client)
+        raw = build_email(
+            sender="Gmail Team <forwarding-noreply@google.com>",
+            to=address,
+            subject="(#123456789) Gmail Forwarding Confirmation - Receive Mail from henry@gmail.com",
+            text="henry@gmail.com has requested to automatically forward mail to your email address.\n"
+            "Confirmation code: 123456789\n\nhttps://mail-settings.google.com/mail/vf-abc123-def\n",
+            html=None,
+        )
+
+        response = await deliver(client, raw, to=address)
+
+        assert response.json()["status"] == "confirmed"
+        assert confirm.call_count == 1
+        assert await pending_ids(client) == []
+        record = (await session.scalars(select(InboundMessage))).one()
+        assert record.error == "forwarding confirmation followed; not an issue"
+
+    async def test_a_forwarding_question_that_cannot_be_answered_waits_for_her(
+        self, client, inbound_enabled, respx_mock
+    ):
+        respx_mock.get("https://mail-settings.google.com/mail/vf-abc123-def").respond(500)
+        address = await address_of(client)
+        raw = build_email(
+            sender="Gmail Team <forwarding-noreply@google.com>",
+            to=address,
+            subject="(#123456789) Gmail Forwarding Confirmation - Receive Mail from henry@gmail.com",
+            text="https://mail-settings.google.com/mail/vf-abc123-def\n",
+            html=None,
+        )
+
+        response = await deliver(client, raw, to=address)
+
+        assert response.json()["status"] == "pending"
+        waiting = (await client.get("/newsletters/pending")).json()
+        assert "123456789" in waiting[0]["latest_title"]

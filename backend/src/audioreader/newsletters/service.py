@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.parser import BytesHeaderParser
 from hashlib import sha256
+from html import unescape
 from pathlib import Path
 
 from sqlalchemy import and_, delete, func, or_, select
@@ -446,6 +447,18 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
         return Delivery(FAILED)
     record.message_id = message.message_id
 
+    # Gmail asking whether her address will take a forwarding rule's mail.
+    # Whoever set the rule up already knows the address, and the worst a yes
+    # can do is put a sender in her waiting list; so yes, and not an issue.
+    if message.sender.address == GMAIL_FORWARDING_SENDER and (link := forwarding_confirmation_link(message)):
+        if await _follow_confirmation(link):
+            record.error = "forwarding confirmation followed; not an issue"
+            session.add(record)
+            await session.commit()
+            logger.info("confirmed a forwarding rule to user %s's address", user.id)
+            return Delivery(CONFIRMED)
+        # Left for her, code in the subject, as it would be in any inbox.
+
     # Mail answering a signup the app made for her: the confirmation link is
     # followed, and whatever comes after it is already approved — she said
     # yes when she asked.
@@ -521,6 +534,9 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
         # per-subscriber token, and an old one may have expired.
         feed.unsubscribe_url = message.unsubscribe_url
         feed.unsubscribe_post = message.unsubscribe_post
+    # The newest message decides this too: a rule set up later makes the
+    # newsletter forwarded, and a subscription moved here makes it hers.
+    feed.forwarded = message.forwarded or _addressed_elsewhere(message)
     # Doubles as "last message received" for an email feed; the pending prune
     # reads it to tell a sender that has gone quiet from one still writing.
     feed.last_polled_at = utcnow()
@@ -674,6 +690,11 @@ async def tell_sender_to_stop(session: AsyncSession, feed: Feed) -> bool:
     be asked again.
     """
     feed.stop_tried_at = utcnow()
+    if feed.forwarded:
+        # The unsubscribe address in forwarded mail is the other inbox's
+        # subscription — a paid one, likely. Not ours to end.
+        logger.info("%s is forwarded from her own inbox; not telling the sender", feed.title)
+        return False
     if not feed.unsubscribe_url:
         await _recover_unsubscribe(session, feed)
     if not feed.unsubscribe_url:
@@ -693,6 +714,31 @@ async def tell_sender_to_stop(session: AsyncSession, feed: Feed) -> bool:
         feed.stop_told_at = utcnow()
     logger.info("told %s to stop (%s): %s", feed.title, "one-click" if feed.unsubscribe_post else "link", told)
     return told
+
+
+def _addressed_elsewhere(message: NewsletterMessage) -> bool:
+    """Named for an inbox other than one of ours, so forwarded from it.
+
+    Only when the message names anyone: a newsletter sent to undisclosed
+    recipients names nobody, and says nothing either way.
+    """
+    domain = (settings.inbound_email_domain or "").lower()
+    if not domain or not message.addressed_to:
+        return False
+    return not any(address.endswith("@" + domain) for address in message.addressed_to)
+
+
+#: Gmail's forwarding verification: sent to the address a rule would forward
+#: to, with a link that says yes.
+GMAIL_FORWARDING_SENDER = "forwarding-noreply@google.com"
+_GMAIL_FORWARDING_LINK = re.compile(r"https://mail-settings\.google\.com/mail/[^\s\"'<>]+")
+
+
+def forwarding_confirmation_link(message: NewsletterMessage) -> str | None:
+    for body in (message.text, message.html):
+        if body and (match := _GMAIL_FORWARDING_LINK.search(unescape(body))):
+            return match.group(0)
+    return None
 
 
 async def _recover_unsubscribe(session: AsyncSession, feed: Feed) -> None:
@@ -731,6 +777,7 @@ async def tell_left_senders(session: AsyncSession, now: datetime | None = None) 
             select(Feed).where(
                 Feed.source == FEED_SOURCE_EMAIL,
                 Feed.approval.in_((APPROVAL_LEFT, APPROVAL_BLOCKED)),
+                Feed.forwarded.is_(False),
                 Feed.stop_told_at.is_(None),
                 or_(
                     Feed.stop_tried_at.is_(None),
