@@ -34,6 +34,11 @@ Stuff or Benedict's Newsletter. Worth trying:
 - With VoiceOver on, do all of the above with the screen curtain down. The
   Follow and Block buttons should name the sender, and the address should be
   spelled out rather than read as one word.
+- Do it by voice instead. With a sender waiting, tap the microphone and say
+  "yes, follow Matt Levine" or "block that one". It should confirm what it
+  did and the lists should update. With two senders waiting and neither
+  named, it should ask which you meant rather than guess. "What's my
+  newsletter address?" should read the address out word by word.
 
 Please say which newsletter you tried and whether anything in the email
 chrome was still read aloud, or anything from the writing was missing.

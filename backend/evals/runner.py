@@ -180,11 +180,22 @@ async def run(
             on_result(result)
         return result
 
+    # The address case needs newsletters switched on; a laptop with no inbound
+    # domain configured should still be able to run the corpus. Set once for
+    # the whole run and restored after it: cases run concurrently, and the
+    # settings object is shared with everything else in this process.
+    configured = (settings.inbound_email_domain, settings.inbound_email_secret)
+    settings.inbound_email_domain = settings.inbound_email_domain or "magpieinbox.com"
+    settings.inbound_email_secret = settings.inbound_email_secret or "eval"
+
     started = time.monotonic()
     # One flat list of (case, attempt) pairs, so repeats of a slow case
     # overlap with other cases rather than queueing behind each other.
-    with stub_world(world):
-        report.runs = list(await asyncio.gather(*(one(case) for _ in range(repeat) for case in cases)))
+    try:
+        with stub_world(world):
+            report.runs = list(await asyncio.gather(*(one(case) for _ in range(repeat) for case in cases)))
+    finally:
+        settings.inbound_email_domain, settings.inbound_email_secret = configured
     report.wall_seconds = time.monotonic() - started
     order = {case.id: index for index, case in enumerate(cases)}
     report.runs.sort(key=lambda run: order[run.case.id])

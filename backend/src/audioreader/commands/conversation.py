@@ -35,6 +35,8 @@ from audioreader.llm.openai_responses import (
     ResponseTextDelta,
 )
 from audioreader.models import Episode, Feed, Subscription, User
+from audioreader.newsletters import service as newsletters
+from audioreader.newsletters.service import PendingSender
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,14 @@ through every word.
 
 For playback and filing, use only episode IDs in the supplied library or
 returned by load_show_episodes. For unsubscribe, use only a supplied feed ID.
+
+Newsletters arrive by email at the user's private newsletter address. A sender
+the user has not yet answered is listed as waiting. approve_newsletter follows
+it and block_newsletter refuses it for good, each using only a listed
+newsletter ID; when one sender is waiting, "it", "that one" or "the
+newsletter" means that sender. read_newsletter_address says the address: call
+it when the user asks what address to give a newsletter or where newsletters
+should be sent.
 """
 
 
@@ -130,6 +140,42 @@ TOOLS: list[dict[str, Any]] = [
             "required": ["feed_id"],
             "additionalProperties": False,
         },
+    },
+    {
+        "type": "function",
+        "name": "approve_newsletter",
+        "description": (
+            "Follow a newsletter sender that is waiting for the user's answer, by its listed newsletter ID."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"newsletter_id": {"type": "integer"}},
+            "required": ["newsletter_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "type": "function",
+        "name": "block_newsletter",
+        "description": (
+            "Refuse a newsletter sender that is waiting for the user's answer, by its listed newsletter ID. "
+            "Its messages are deleted and anything it sends later is dropped."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"newsletter_id": {"type": "integer"}},
+            "required": ["newsletter_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "type": "function",
+        "name": "read_newsletter_address",
+        "description": "Say the user's private newsletter address, the one to give a newsletter when signing up.",
+        "strict": True,
+        "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
     },
     {
         "type": "function",
@@ -233,12 +279,15 @@ async def converse(
         )
     )
 
+    pending = await newsletters.pending_senders(session, user)
+
     input_items = _conversation_input(
         transcript=transcript,
         turns=turns,
         candidates=candidates,
         subscriptions=subscriptions,
         now_playing=now_playing,
+        pending=pending,
     )
     terminal: InterpretResult | None = None
     assistant_text = ""
@@ -323,7 +372,17 @@ def _annotate_tool_arguments(span: Any, arguments: str) -> None:
         span.set_attribute("arguments_valid", False)
         return
     span.set_attribute("arguments_valid", True)
-    for key in ("query", "url", "feed_url", "feed_id", "episode_id", "episode_query", "action", "speed"):
+    for key in (
+        "query",
+        "url",
+        "feed_url",
+        "feed_id",
+        "episode_id",
+        "episode_query",
+        "action",
+        "speed",
+        "newsletter_id",
+    ):
         value = values.get(key)
         if value is not None:
             span.set_attribute(f"tool_{key}", value)
@@ -346,6 +405,7 @@ def _conversation_input(
     candidates: list[Candidate],
     subscriptions: list[Feed],
     now_playing: Candidate | None,
+    pending: Sequence[PendingSender] = (),
 ) -> list[dict[str, Any]]:
     items = [
         {
@@ -360,6 +420,14 @@ def _conversation_input(
     lines.append("Subscriptions (valid IDs for unsubscribe):")
     lines.extend(f"[{feed.id}] {feed.title} — {feed.url}" for feed in subscriptions)
     lines.append("")
+    if pending:
+        lines.append("Newsletter senders waiting for an answer (valid IDs for approve_newsletter/block_newsletter):")
+        for item in pending:
+            line = f"[{item.feed.id}] {item.feed.title} — {item.feed.description} — {item.message_count} message(s)"
+            if item.latest_title:
+                line += f" — latest: {item.latest_title}"
+            lines.append(line)
+        lines.append("")
     lines.append("Available episodes/articles (valid IDs for playback or filing):")
     for candidate in candidates:
         published = candidate.published_at.date().isoformat() if candidate.published_at else "undated"
@@ -433,6 +501,34 @@ async def _call_tool(
             await feed_service.unsubscribe(session, feed.id, user)
             result = InterpretResult(Action.UNSUBSCRIBED, f"Unsubscribed from {feed.title}.")
             return _ToolResult({"ok": True, "title": feed.title, "status": "unsubscribed"}, result)
+
+        if name == "approve_newsletter":
+            result = await service.approve_newsletter(session, user, int(args["newsletter_id"]))
+            ok = result.action is Action.SUBSCRIBED
+            return _ToolResult(
+                {
+                    "ok": ok,
+                    "status": "following" if ok else "not_waiting",
+                    "error": None if ok else result.spoken_response,
+                },
+                result if ok else None,
+            )
+
+        if name == "block_newsletter":
+            result = await service.block_newsletter(session, user, int(args["newsletter_id"]))
+            ok = result.action is Action.UNSUBSCRIBED
+            return _ToolResult(
+                {
+                    "ok": ok,
+                    "status": "blocked" if ok else "not_waiting",
+                    "error": None if ok else result.spoken_response,
+                },
+                result if ok else None,
+            )
+
+        if name == "read_newsletter_address":
+            result = await service.newsletter_address(session, user)
+            return _ToolResult({"ok": True, "status": "address_read"}, result)
 
         if name == "load_show_episodes":
             feed = await feed_service.ensure_feed(session, str(args["feed_url"]))

@@ -45,6 +45,8 @@ from audioreader.feeds.search import (
 )
 from audioreader.feeds.service import AlreadySubscribedError
 from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User, utcnow
+from audioreader.newsletters import service as newsletters
+from audioreader.newsletters.service import PendingSender
 from audioreader.text import search_key, summarise
 
 logger = logging.getLogger(__name__)
@@ -91,6 +93,25 @@ there because it answers to her words, and is very likely the one she means.
 - Choose unsubscribe when she wants to stop following a show she already has
   ("unsubscribe from", "remove", "stop following", "get rid of"). Put just the
   show's name in search_query, and leave spoken_response empty.
+- She may be shown newsletter senders waiting for her answer: emails that
+  arrived at her newsletter address from someone she has not yet said yes or
+  no to. Choose approve_newsletter when she wants to follow, accept, allow or
+  keep one ("yes, follow Matt Levine", "accept the Bloomberg newsletter",
+  "follow that newsletter"), and block_newsletter when she wants to refuse,
+  block or never hear from one ("block it", "no, I don't want that one").
+  Put the sender's number in newsletter_id, copied exactly from that list.
+  When only one sender is waiting, "it", "that one" and "the newsletter" mean
+  that sender. When several are waiting and she has not said which — "follow
+  that newsletter", "block it" — never pick one: choose unknown and ask which
+  she means, naming them. Following the wrong one puts a stranger's mail in
+  her list, and blocking the wrong one is permanent. Only senders in that
+  list can be approved or blocked; if she names one that is not waiting,
+  choose unknown and say so. Leave spoken_response empty for
+  approve_newsletter and block_newsletter: the app confirms what it did.
+- Choose newsletter_address when she asks for her newsletter address, or for
+  the email address to give a newsletter ("what is my newsletter address",
+  "what email do I use to sign up for newsletters"). Leave spoken_response
+  empty: the app reads the address out.
 - Choose mark_played when she says she has already heard something ("mark
   this as played", "I have listened to that one", "I have already heard the
   Athelstan one"). Put the item's id in episode_id.
@@ -362,6 +383,7 @@ def build_prompt(
     today: date | None = None,
     now_playing: Candidate | None = None,
     turns: Sequence[Turn] = (),
+    pending: Sequence[PendingSender] = (),
 ) -> str:
     """The per-request half of the prompt.
 
@@ -393,6 +415,17 @@ def build_prompt(
             f"She is listening to [{now_playing.id}] {now_playing.title} — {now_playing.feed_title} right now.",
             "",
         ]
+    if pending:
+        # Numbered apart from the episodes, and labelled, so a sender's
+        # number is never mistaken for an episode's — the two lists are
+        # answered with different fields.
+        lines.append("Newsletter senders waiting for her answer (use newsletter_id):")
+        for item in pending:
+            line = f"[newsletter {item.feed.id}] {item.feed.title} — {_spoken_count(item.message_count)}"
+            if item.latest_title:
+                line += f" — latest: {item.latest_title}"
+            lines.append(line)
+        lines.append("")
     lines.append("Episodes and articles she subscribes to:")
     for candidate in candidates:
         published = candidate.published_at.strftime("%A %d %B %Y") if candidate.published_at else "undated"
@@ -467,6 +500,7 @@ async def interpret(
     now_playing = await _now_playing(session, now_playing_episode_id)
     if now_playing is not None and all(candidate.id != now_playing.id for candidate in candidates):
         candidates.append(now_playing)
+    pending = await newsletters.pending_senders(session, user)
     # What the model had to work with. An episode she asked for by name and did
     # not get is a different failure depending on whether it was in this list
     # at all: one is the model misreading her, the other is the candidate
@@ -480,7 +514,7 @@ async def interpret(
 
     raw = await llm.decide(
         system=SYSTEM_PROMPT,
-        user=build_prompt(transcript, candidates, now_playing=now_playing, turns=turns),
+        user=build_prompt(transcript, candidates, now_playing=now_playing, turns=turns, pending=pending),
         output_model=ModelDecision,
     )
 
@@ -520,6 +554,12 @@ async def interpret(
 
     if decision.action is Action.SET_SPEED:
         return _set_speed(decision.speed)
+
+    if decision.action in (Action.APPROVE_NEWSLETTER, Action.BLOCK_NEWSLETTER):
+        return await _answer_newsletter(session, decision, pending, user)
+
+    if decision.action is Action.NEWSLETTER_ADDRESS:
+        return await newsletter_address(session, user)
 
     if decision.action in _FILING:
         return await _file_episode(session, decision.action, decision.episode_id, candidates, user)
@@ -928,6 +968,115 @@ async def _unsubscribe(session: AsyncSession, query: str | None, user: User) -> 
         action=Action.UNSUBSCRIBED,
         spoken_response=f"Unsubscribed from {title}.",
     )
+
+
+async def _answer_newsletter(
+    session: AsyncSession,
+    decision: ModelDecision,
+    pending: Sequence[PendingSender],
+    user: User,
+) -> InterpretResult:
+    """Follow or refuse a sender waiting for her answer.
+
+    The model names the sender by the number it was shown, or failing that
+    by name. With one sender waiting, "follow it" needs neither. With
+    several and no clear pick, it asks: refusing the wrong newsletter is
+    permanent, and following the wrong one puts a stranger's mail in Latest.
+    """
+    if not pending:
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response="No newsletters are waiting for your answer.",
+        )
+    chosen = _pending_choice(decision, pending)
+    if chosen is None:
+        names = " or ".join(item.feed.title for item in pending[:3])
+        return _asking(f"Which sender did you mean: {names}?")
+    if decision.action is Action.APPROVE_NEWSLETTER:
+        return await approve_newsletter(session, user, chosen.feed.id)
+    return await block_newsletter(session, user, chosen.feed.id)
+
+
+def _pending_choice(decision: ModelDecision, pending: Sequence[PendingSender]) -> PendingSender | None:
+    by_id = {item.feed.id: item for item in pending}
+    if decision.newsletter_id in by_id:
+        return by_id[decision.newsletter_id]
+    if decision.newsletter_id is not None:
+        # A number that is not a waiting sender: never let it fall through to
+        # a guess, the model may have copied an episode's number.
+        logger.warning("model chose newsletter_id %r, which was not offered", decision.newsletter_id)
+        telemetry.annotate(failure="newsletter_not_offered")
+        return None
+    if decision.search_query and decision.search_query.strip():
+        matches = [item for item in pending if matches_name(decision.search_query, item.feed.title)]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+    return pending[0] if len(pending) == 1 else None
+
+
+async def approve_newsletter(session: AsyncSession, user: User, feed_id: int) -> InterpretResult:
+    """Follow a waiting sender. Shared with the streamed conversation."""
+    feed = await newsletters.approve(session, user, feed_id)
+    if feed is None:
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response="That newsletter is not waiting for your answer.",
+        )
+    count = await session.scalar(select(func.count(Episode.id)).where(Episode.feed_id == feed.id)) or 0
+    return InterpretResult(
+        action=Action.SUBSCRIBED,
+        spoken_response=f"Following {feed.title}. Its {_spoken_count(count)} are in Latest."
+        if count != 1
+        else f"Following {feed.title}. Its message is in Latest.",
+    )
+
+
+async def block_newsletter(session: AsyncSession, user: User, feed_id: int) -> InterpretResult:
+    """Refuse a waiting sender for good. Shared with the streamed conversation."""
+    feed = await newsletters.owned_email_feed(session, user, feed_id)
+    if feed is None or not await newsletters.block(session, user, feed_id):
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response="That newsletter is not waiting for your answer.",
+        )
+    return InterpretResult(
+        action=Action.UNSUBSCRIBED,
+        spoken_response=f"Blocked {feed.title}. Anything it sends from now on is dropped.",
+    )
+
+
+async def newsletter_address(session: AsyncSession, user: User) -> InterpretResult:
+    """Say the address she gives to newsletters, minting it if she has none."""
+    try:
+        address = await newsletters.inbound_address(session, user)
+    except newsletters.NewslettersDisabledError:
+        return InterpretResult(
+            action=Action.UNKNOWN,
+            spoken_response="Newsletters by email are not set up on this server yet.",
+        )
+    return InterpretResult(
+        action=Action.UNKNOWN,
+        spoken_response=f"Your newsletter address is {spoken_address(address)}. It is also in Settings.",
+    )
+
+
+def spoken_address(address: str) -> str:
+    """An email address as a voice can say it and a listener can write it down.
+
+    The same shape the app uses on screen: a word address is said word by
+    word with the hyphens mentioned once; an older letter address is spelled.
+    """
+    local, _, domain = address.partition("@")
+    domain_words = domain.replace(".", " dot ")
+    words = local.split("-")
+    if len(words) > 1 and all(word.isalpha() for word in words):
+        return f"{', '.join(words)}, with hyphens between the words, at {domain_words}"
+    return f"{', '.join(local)}, at {domain_words}"
+
+
+def _spoken_count(count: int) -> str:
+    return f"{count} message" if count == 1 else f"{count} messages"
 
 
 _CLARIFY = "Sorry, I did not catch which episode you meant. Could you say that again?"

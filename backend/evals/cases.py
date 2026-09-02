@@ -15,7 +15,7 @@ passed; one that says the right thing and plays the wrong episode has not.
 from dataclasses import dataclass, field
 
 from audioreader.commands.intents import Action, Speaker, Turn
-from evals.world import build_world
+from evals.world import NEWSLETTERS, build_world
 
 
 def _her(text: str) -> Turn:
@@ -43,12 +43,28 @@ def _latest(show_key: str) -> str:
     return _WORLD[show_key].items[0].guid
 
 
+def _newest_overall() -> str:
+    """The newest item across everything she subscribes to, today.
+
+    Computed rather than named: each show publishes on its own weekdays, so
+    which one is newest depends on the day the corpus runs. Naming a show
+    here made the case fail on the days after another show's release, with
+    the model correctly playing the newer item and being marked wrong for it.
+    """
+    newest = max(
+        (show.items[0] for show in _WORLD.values() if show.subscribed and show.items),
+        key=lambda item: item.published_at,
+    )
+    return newest.guid
+
+
 IN_OUR_TIME = "https://podcasts.files.bbci.co.uk/b006qykl.rss"
 REST_IS_HISTORY = "https://feeds.megaphone.fm/GLT4787413333"
 REST_IS_POLITICS = "https://feeds.megaphone.fm/GLT5347391293"
 ASTRAL_CODEX_TEN = "https://www.astralcodexten.com/feed"
 INFINITE_MONKEY_CAGE = "https://podcasts.files.bbci.co.uk/b00snr0w.rss"
 SLOW_BORING = "https://www.slowboring.com/feed"
+MONEY_STUFF = next(n.feed_url for n in NEWSLETTERS if n.key == "money-stuff")
 
 
 @dataclass(frozen=True)
@@ -171,7 +187,7 @@ CASES: tuple[Case, ...] = (
     Case(
         id="latest-of-everything",
         said="Play the latest",
-        expect=Expect(Action.PLAY_EPISODE, episode=_latest("astral_codex_ten")),
+        expect=Expect(Action.PLAY_EPISODE, episode=_newest_overall()),
         why="With no show named, the newest item across every subscription is the answer.",
         tags=("play", "latest"),
         question_is_acceptable=False,
@@ -321,6 +337,55 @@ CASES: tuple[Case, ...] = (
             "one more question, so the question naming both is the correct behaviour."
         ),
         tags=("unsubscribe", "test-plan"),
+    ),
+    # -- Newsletters waiting for her answer ---------------------------------
+    Case(
+        id="newsletter-approve-by-name",
+        said="Yes, follow Matt Levine",
+        expect=Expect(Action.SUBSCRIBED, feed=MONEY_STUFF),
+        why=(
+            "A sender waiting in her list is followed by the name it was listed under. "
+            "The outcome is a subscription, so the app reloads Following and Latest."
+        ),
+        tags=("newsletter", "test-plan"),
+        question_is_acceptable=False,
+    ),
+    Case(
+        id="newsletter-approve-by-publication",
+        said="Accept the Money Stuff newsletter",
+        expect=Expect(Action.SUBSCRIBED, feed=MONEY_STUFF),
+        why=(
+            "She knows the newsletter's name, not the sender's. Money Stuff is only in "
+            "the subjects listed under Matt Levine, and that has to be enough."
+        ),
+        tags=("newsletter",),
+        question_is_acceptable=False,
+    ),
+    Case(
+        id="newsletter-block",
+        said="Block Benedict Evans, I don't want that one",
+        expect=Expect(Action.UNSUBSCRIBED, says=("blocked benedict evans",)),
+        why="Refusing a sender is permanent, and the confirmation names who was refused.",
+        tags=("newsletter", "test-plan"),
+        question_is_acceptable=False,
+    ),
+    Case(
+        id="newsletter-ambiguous",
+        said="Follow that newsletter",
+        expect=Expect(Action.UNKNOWN, says=("matt levine", "benedict evans")),
+        why=(
+            "Two senders are waiting and she named neither. Following the wrong one puts "
+            "a stranger's mail in Latest, so the right answer is the question naming both."
+        ),
+        tags=("newsletter",),
+    ),
+    Case(
+        id="newsletter-address",
+        said="What's my newsletter address?",
+        expect=Expect(Action.UNKNOWN, says=("newsletter address is",)),
+        why="The address is the one thing she has to be able to ask for out loud.",
+        tags=("newsletter", "test-plan"),
+        question_is_acceptable=False,
     ),
     # -- Speed --------------------------------------------------------------
     Case(

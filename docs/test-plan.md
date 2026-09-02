@@ -54,6 +54,10 @@ The heart of the app. Try each phrasing out loud, not typed.
 - [ ] Ask for a show you are **not** subscribed to → it plays without subscribing you
 - [ ] "Unsubscribe from In Our Time" → removes it, confirms aloud
 - [ ] Subscribe to two shows with similar names, then unsubscribe by that name → **asks which one** rather than guessing
+- [ ] With a newsletter sender waiting in **Following**, "yes, follow Matt Levine" → follows it, confirms aloud, its messages appear in **Latest**
+- [ ] With a sender waiting, "block that one" → blocks it, confirms aloud, the row goes
+- [ ] With **two** senders waiting, "follow that newsletter" → **asks which one**, naming both, rather than guessing
+- [ ] "What's my newsletter address?" → reads it out word by word, with the hyphens mentioned
 - [ ] Say something meaningless → a short question back, not silence
 - [ ] Say nothing at all → "I did not hear anything", and the app is usable again
 - [ ] ⏱️ Ask something that takes a while → "One moment" fills the silence, then the real answer

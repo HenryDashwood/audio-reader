@@ -26,7 +26,7 @@ import httpx
 import respx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from audioreader.models import Episode, Feed, Subscription, User
+from audioreader.models import APPROVAL_PENDING, FEED_SOURCE_EMAIL, Episode, Feed, Subscription, User
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,42 @@ class Show:
             if item.guid == guid:
                 return item
         raise KeyError(f"{self.title} has no item {guid!r}")
+
+
+@dataclass(frozen=True)
+class Newsletter:
+    """A sender that has written to her newsletter address and awaits an answer.
+
+    Present in every case, the way a real pending sender would sit in her
+    list until she dealt with it: the model sees them whatever she asks, and
+    must neither act on them uninvited nor confuse them with episodes.
+    """
+
+    key: str
+    title: str
+    address: str
+    subjects: tuple[str, ...]
+
+    @property
+    def feed_url(self) -> str:
+        # A private identifier, never fetched; stable so cases can name it.
+        return f"email://eval/{self.key}"
+
+
+NEWSLETTERS: tuple[Newsletter, ...] = (
+    Newsletter(
+        key="money-stuff",
+        title="Matt Levine",
+        address="noreply@news.bloomberg.com",
+        subjects=("Money Stuff: Don't Hedge the KPIs", "Money Stuff: Amazon Charged the First Price"),
+    ),
+    Newsletter(
+        key="benedicts-newsletter",
+        title="Benedict Evans",
+        address="list@ben-evans.com",
+        subjects=("Benedict's Newsletter: No. 658",),
+    ),
+)
 
 
 def slug(title: str) -> str:
@@ -508,6 +544,26 @@ async def seed(session: AsyncSession, user: User, world: tuple[Show, ...]) -> No
         ]
         session.add(feed)
         session.add(Subscription(user_id=user.id, feed=feed))
+    for newsletter in NEWSLETTERS:
+        feed = Feed(
+            url=newsletter.feed_url,
+            title=newsletter.title,
+            description=newsletter.address,
+            source=FEED_SOURCE_EMAIL,
+            owner_user_id=user.id,
+            approval=APPROVAL_PENDING,
+        )
+        feed.episodes = [
+            Episode(
+                guid=f"{newsletter.key}-{index}",
+                title=subject,
+                description=subject,
+                content_html=f"<p>{escape(subject)}</p>",
+                published_at=datetime.now(UTC) - timedelta(days=index + 1),
+            )
+            for index, subject in enumerate(newsletter.subjects)
+        ]
+        session.add(feed)
     await session.commit()
 
 

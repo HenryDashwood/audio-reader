@@ -51,6 +51,13 @@ class Action(StrEnum):
     MARK_PLAYED = "mark_played"
     DISMISS = "dismiss"
     RESTORE = "restore"
+    #: A newsletter sender waiting for her answer: follow it, or refuse it.
+    #: Their outcomes are SUBSCRIBED and UNSUBSCRIBED, which is what the app
+    #: needs to know — a followed newsletter is a new show in Following.
+    APPROVE_NEWSLETTER = "approve_newsletter"
+    BLOCK_NEWSLETTER = "block_newsletter"
+    #: Say the address she gives to newsletters.
+    NEWSLETTER_ADDRESS = "newsletter_address"
     # Outcome actions, produced by us rather than chosen by the model.
     SUBSCRIBED = "subscribed"
     UNSUBSCRIBED = "unsubscribed"
@@ -67,6 +74,9 @@ MODEL_ACTIONS = (
     Action.MARK_PLAYED,
     Action.DISMISS,
     Action.RESTORE,
+    Action.APPROVE_NEWSLETTER,
+    Action.BLOCK_NEWSLETTER,
+    Action.NEWSLETTER_ADDRESS,
     Action.UNKNOWN,
 )
 
@@ -95,6 +105,10 @@ class ModelDecision(BaseModel):
     speed: float | None = Field(
         default=None,
         description="For set_speed: the playback rate multiplier, e.g. 1.5 for one and a half times normal speed.",
+    )
+    newsletter_id: int | None = Field(
+        default=None,
+        description="For approve_newsletter and block_newsletter: the waiting sender's number, copied from the list.",
     )
     spoken_response: str = Field(description="One short sentence to read aloud, naming the episode if one was chosen.")
 
