@@ -34,11 +34,7 @@ struct NewsletterAddressSection: View {
                     Task { await speaker.speak("Your newsletter address is spelled \(address.spelledOut)") }
                 }
                 .accessibilityHint("Says every letter, for writing it down")
-                Button("Copy Address") {
-                    UIPasteboard.general.string = address.address
-                    AccessibilityNotification.Announcement("Address copied.").post()
-                }
-                .accessibilityHint("Puts the address on the clipboard, ready to paste into a signup form")
+                CopyAddressButton(address: address.address)
                 ShareLink(item: address.address, subject: Text("My Magpie newsletter address")) {
                     Label("Share Address", systemImage: "square.and.arrow.up")
                 }
@@ -54,6 +50,46 @@ struct NewsletterAddressSection: View {
             )
         }
         .task { await model.load() }
+    }
+}
+
+/// Copies an address with feedback that is visible, felt and announced.
+///
+/// Kept as one control because the same action also appears when Magpie finds
+/// a newsletter that needs signing up by hand. Whichever route she took, it
+/// should answer the tap in the same way.
+struct CopyAddressButton: View {
+    let address: String
+    @State private var copied = false
+    @State private var feedbackTrigger = 0
+    @State private var resetTask: Task<Void, Never>?
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = address
+            feedbackTrigger += 1
+            resetTask?.cancel()
+            withAnimation(.easeInOut(duration: 0.15)) { copied = true }
+            AccessibilityNotification.Announcement("Address copied.").post()
+            resetTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeInOut(duration: 0.15)) { copied = false }
+            }
+        } label: {
+            Label(
+                copied ? "Copied" : "Copy Address",
+                systemImage: copied ? "checkmark" : "doc.on.doc")
+        }
+        .sensoryFeedback(.success, trigger: feedbackTrigger)
+        .accessibilityLabel(copied ? "Address copied" : "Copy Address")
+        .accessibilityHint(
+            "Puts the address on the clipboard, ready to paste into a signup form")
+        .onChange(of: address) {
+            resetTask?.cancel()
+            copied = false
+        }
+        .onDisappear { resetTask?.cancel() }
     }
 }
 

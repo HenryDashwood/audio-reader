@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// Finds every feed advertised by a web address before cataloguing anything.
 /// A single unambiguous feed opens immediately; several become an accessible
@@ -45,10 +44,7 @@ struct FeedDiscoveryView: View {
                     Text(signup.spokenResponse)
                 } actions: {
                     if !signup.submitted, let address = signup.address {
-                        Button("Copy Address") {
-                            UIPasteboard.general.string = address
-                            AccessibilityNotification.Announcement("Address copied.").post()
-                        }
+                        CopyAddressButton(address: address)
                         .buttonStyle(.borderedProminent)
                     }
                 }
