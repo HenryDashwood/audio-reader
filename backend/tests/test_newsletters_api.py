@@ -611,6 +611,15 @@ def forwarded_issue(**overrides) -> bytes:
     return build_email(**fields)
 
 
+GOOGLE_LINK = "https://mail-settings.google.com/mail/vf-abc123-def"
+GOOGLE_PAGE = "https://mail.google.com/mail/vf-abc123-def"
+GOOGLE_FORM = (
+    b"<html><body><h1>Confirmation</h1><p>Please confirm mail forwarding of henry@gmail.com to "
+    b'hefty-prism-bolt@magpieinbox.com.</p><form action="" method="post"><p><input type="submit" value="Confirm">'
+    b"</p></form></body></html>"
+)
+
+
 class TestForwardedMail:
     async def test_a_forwarded_newsletter_is_never_told_to_stop(self, client, inbound_enabled, respx_mock, session):
         stop = respx_mock.post(STOP_LINK).respond(200)
@@ -666,21 +675,24 @@ class TestForwardedMail:
         ]
 
     async def test_gmails_forwarding_question_is_answered_yes(self, client, inbound_enabled, respx_mock, session):
-        confirm = respx_mock.get("https://mail-settings.google.com/mail/vf-abc123-def").respond(200, content=b"ok")
+        # The link redirects to a page whose Confirm button is an empty POST.
+        respx_mock.get(GOOGLE_LINK).respond(302, headers={"Location": GOOGLE_PAGE})
+        respx_mock.get(GOOGLE_PAGE).respond(200, content=GOOGLE_FORM, content_type="text/html")
+        confirm = respx_mock.post(GOOGLE_PAGE).respond(200, content=b"Confirmation successful")
         address = await address_of(client)
         raw = build_email(
             sender="Gmail Team <forwarding-noreply@google.com>",
             to=address,
             subject="(#123456789) Gmail Forwarding Confirmation - Receive Mail from henry@gmail.com",
             text="henry@gmail.com has requested to automatically forward mail to your email address.\n"
-            "Confirmation code: 123456789\n\nhttps://mail-settings.google.com/mail/vf-abc123-def\n",
+            f"Confirmation code: 123456789\n\n{GOOGLE_LINK}\n",
             html=None,
         )
 
         response = await deliver(client, raw, to=address)
 
         assert response.json()["status"] == "confirmed"
-        assert confirm.call_count == 1
+        assert confirm.call_count == 1 and confirm.calls[0].request.method == "POST"
         assert await pending_ids(client) == []
         record = (await session.scalars(select(InboundMessage))).one()
         assert record.error == "forwarding confirmation followed; not an issue"
@@ -688,13 +700,14 @@ class TestForwardedMail:
     async def test_a_forwarding_question_that_cannot_be_answered_waits_for_her(
         self, client, inbound_enabled, respx_mock
     ):
-        respx_mock.get("https://mail-settings.google.com/mail/vf-abc123-def").respond(500)
+        respx_mock.get(GOOGLE_LINK).respond(200, content=GOOGLE_FORM, content_type="text/html")
+        respx_mock.post(GOOGLE_LINK).respond(500)
         address = await address_of(client)
         raw = build_email(
             sender="Gmail Team <forwarding-noreply@google.com>",
             to=address,
             subject="(#123456789) Gmail Forwarding Confirmation - Receive Mail from henry@gmail.com",
-            text="https://mail-settings.google.com/mail/vf-abc123-def\n",
+            text=f"{GOOGLE_LINK}\n",
             html=None,
         )
 
@@ -703,3 +716,19 @@ class TestForwardedMail:
         assert response.json()["status"] == "pending"
         waiting = (await client.get("/newsletters/pending")).json()
         assert "123456789" in waiting[0]["latest_title"]
+
+    async def test_a_page_without_the_button_is_not_pressed(self, client, inbound_enabled, respx_mock):
+        respx_mock.get(GOOGLE_LINK).respond(200, content=b"<p>This link has expired.</p>", content_type="text/html")
+        pressed = respx_mock.post(GOOGLE_LINK).respond(200)
+        address = await address_of(client)
+        raw = build_email(
+            sender="Gmail Team <forwarding-noreply@google.com>",
+            to=address,
+            subject="(#123456789) Gmail Forwarding Confirmation - Receive Mail from henry@gmail.com",
+            text=f"{GOOGLE_LINK}\n",
+            html=None,
+        )
+
+        response = await deliver(client, raw, to=address)
+
+        assert response.json()["status"] == "pending" and pressed.call_count == 0

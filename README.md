@@ -464,7 +464,10 @@ hand under a "Fwd:" subject is filed under the original sender and marked
 forwarded. Such a sender is never asked to stop, since the unsubscribe link
 in its mail is the other inbox's subscription; the app and the voice reply
 say to remove the rule there instead. Gmail's question whether the address
-will take forwarded mail is answered yes on arrival, by following its link.
+will take forwarded mail is answered yes on arrival: its link opens a page
+whose Confirm button is an empty POST to that page, and the backend presses
+it. Anything other than that page leaves the message waiting for her, code
+in the subject.
 
 ### Telemetry
 

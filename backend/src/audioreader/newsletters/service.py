@@ -451,7 +451,7 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
     # Whoever set the rule up already knows the address, and the worst a yes
     # can do is put a sender in her waiting list; so yes, and not an issue.
     if message.sender.address == GMAIL_FORWARDING_SENDER and (link := forwarding_confirmation_link(message)):
-        if await _follow_confirmation(link):
+        if await _confirm_gmail_forwarding(link):
             record.error = "forwarding confirmation followed; not an issue"
             session.add(record)
             await session.commit()
@@ -739,6 +739,30 @@ def forwarding_confirmation_link(message: NewsletterMessage) -> str | None:
         if body and (match := _GMAIL_FORWARDING_LINK.search(unescape(body))):
             return match.group(0)
     return None
+
+
+_CONFIRM_FORM = re.compile(r"<form[^>]*method=[\"']?post", re.IGNORECASE)
+
+
+async def _confirm_gmail_forwarding(link: str) -> bool:
+    """Say yes to Google.
+
+    The link opens a page — "Please confirm mail forwarding of X to Y" —
+    whose one button is a form with nothing in it, posted to the page's
+    own address. Opening the link alone confirms nothing; pressing the
+    button does. Anything else on the page means the request is not
+    the one expected, and the message is left for her instead.
+    """
+    try:
+        page, page_url = await fetch_public_bytes(link, max_bytes=MAX_ARTICLE_BYTES)
+        if not _CONFIRM_FORM.search(page.decode("utf-8", errors="replace")):
+            logger.warning("Google's forwarding page at %s had no Confirm button", site_domain(page_url))
+            return False
+        reply = await post_public(page_url, data={})
+    except FeedFetchError as exc:
+        logger.warning("could not confirm a forwarding rule at %s: %s", site_domain(link), exc)
+        return False
+    return 200 <= reply.status_code < 400
 
 
 async def _recover_unsubscribe(session: AsyncSession, feed: Feed) -> None:
