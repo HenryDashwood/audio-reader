@@ -140,6 +140,10 @@ class Settings(BaseSettings):
     # A sender she has neither approved nor blocked is forgotten, along with
     # its messages, once it has been quiet this long.
     newsletter_pending_retention_days: int = 30
+    # After the app signs her up to a newsletter, mail from it within this
+    # many days is recognised as the reply: its confirmation link is followed
+    # and its first issue goes straight into Following.
+    newsletter_signup_window_days: int = 7
 
     @property
     def inbound_email_enabled(self) -> bool:

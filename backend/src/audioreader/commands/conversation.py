@@ -77,6 +77,13 @@ newsletter ID; when one sender is waiting, "it", "that one" or "the
 newsletter" means that sender. read_newsletter_address says the address: call
 it when the user asks what address to give a newsletter or where newsletters
 should be sent.
+
+When the user asks to follow a newsletter and inspect_publication finds no
+feed on its site — a Substack, Ghost, Mailchimp, Buttondown, Kit or beehiiv
+newsletter, or any site with an email signup box — call
+sign_up_for_newsletter with that site's URL. It submits the user's private
+newsletter address, and the newsletter then arrives by email. Never call it
+for a podcast, for a site whose feed was found, or with a URL you guessed.
 """
 
 
@@ -167,6 +174,21 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {"newsletter_id": {"type": "integer"}},
             "required": ["newsletter_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "type": "function",
+        "name": "sign_up_for_newsletter",
+        "description": (
+            "Sign the user's private newsletter address up to the newsletter on a website that has no feed. "
+            "Use a URL supplied by the user or returned by web search; never guess one."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
             "additionalProperties": False,
         },
     },
@@ -529,6 +551,22 @@ async def _call_tool(
         if name == "read_newsletter_address":
             result = await service.newsletter_address(session, user)
             return _ToolResult({"ok": True, "status": "address_read"}, result)
+
+        if name == "sign_up_for_newsletter":
+            try:
+                outcome = await newsletters.sign_up(session, user, str(args["url"]))
+            except newsletters.NewslettersDisabledError:
+                return _ToolResult({"ok": False, "error": "Newsletters by email are not set up on this server."})
+            result = InterpretResult(Action.UNKNOWN, outcome.spoken_response)
+            return _ToolResult(
+                {
+                    "ok": outcome.status == newsletters.SIGNUP_SUBMITTED,
+                    "status": outcome.status,
+                    "title": outcome.publication,
+                    "reason": outcome.reason,
+                },
+                result,
+            )
 
         if name == "load_show_episodes":
             feed = await feed_service.ensure_feed(session, str(args["feed_url"]))

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Finds every feed advertised by a web address before cataloguing anything.
 /// A single unambiguous feed opens immediately; several become an accessible
@@ -18,7 +19,38 @@ struct FeedDiscoveryView: View {
                 } description: {
                     Text(message)
                 } actions: {
+                    // A site with no feed may still send a newsletter. The
+                    // backend asks its signup form to send it to her private
+                    // address, and says what happened either way.
+                    Button {
+                        Task { await model.signUp(url: url) }
+                    } label: {
+                        if model.signingUp {
+                            ProgressView()
+                        } else {
+                            Label("Sign up by email", systemImage: "envelope")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.signingUp)
+                    .accessibilityHint("Asks the site to send its newsletter to your Magpie address")
                     Button("Try Again") { Task { await model.load(url: url) } }
+                }
+            case .signedUp(let signup):
+                ContentUnavailableView {
+                    Label(
+                        signup.submitted ? "Asked for the newsletter" : "Needs signing up by hand",
+                        systemImage: signup.submitted ? "envelope.badge" : "person.crop.circle.badge.exclamationmark")
+                } description: {
+                    Text(signup.spokenResponse)
+                } actions: {
+                    if !signup.submitted, let address = signup.address {
+                        Button("Copy Address") {
+                            UIPasteboard.general.string = address
+                            AccessibilityNotification.Announcement("Address copied.").post()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
                 }
             case .loaded(let candidates):
                 if let only = candidates.first, candidates.count == 1 {
@@ -126,9 +158,11 @@ final class FeedDiscoveryModel: ObservableObject {
         case loading
         case loaded([FeedDiscoveryCandidate])
         case failed(String)
+        case signedUp(NewsletterSignup)
     }
 
     @Published private(set) var state: State = .loading
+    @Published private(set) var signingUp = false
     private let api: HearfulAPIProtocol
 
     init(api: HearfulAPIProtocol = HearfulAPI()) {
@@ -154,6 +188,26 @@ final class FeedDiscoveryModel: ObservableObject {
         } catch {
             state = .failed("Something went wrong.")
             AccessibilityNotification.Announcement("Feed discovery failed").post()
+        }
+    }
+
+    /// Ask the site for its newsletter. The reply is a sentence whatever
+    /// happened, so it is shown and spoken as it is; a newsletter that was
+    /// signed up appears in Following on its own when its first email lands.
+    func signUp(url: URL) async {
+        guard !signingUp else { return }
+        signingUp = true
+        defer { signingUp = false }
+        do {
+            let signup = try await api.signUpForNewsletter(url: url)
+            state = .signedUp(signup)
+            AccessibilityNotification.Announcement(signup.spokenResponse).post()
+        } catch let error as APIError {
+            state = .failed(error.spokenResponse)
+            AccessibilityNotification.Announcement(error.spokenResponse).post()
+        } catch {
+            state = .failed("Something went wrong.")
+            AccessibilityNotification.Announcement("Signing up failed").post()
         }
     }
 }

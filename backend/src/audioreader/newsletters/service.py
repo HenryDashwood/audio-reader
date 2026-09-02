@@ -12,9 +12,10 @@ import email
 import email.policy
 import hmac
 import logging
+import re
 import secrets
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from email.parser import BytesHeaderParser
 from hashlib import sha256
 from pathlib import Path
@@ -23,7 +24,9 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
+from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes
 from audioreader.feeds.parser import MAX_CONTENT_CHARS
+from audioreader.feeds.search import matches_name
 from audioreader.models import (
     APPROVAL_APPROVED,
     APPROVAL_BLOCKED,
@@ -32,6 +35,7 @@ from audioreader.models import (
     Episode,
     Feed,
     InboundMessage,
+    NewsletterSignup,
     PlaybackPosition,
     Subscription,
     User,
@@ -44,6 +48,15 @@ from audioreader.newsletters.parser import (
     parse_newsletter,
     recipient_of,
     text_as_html,
+)
+from audioreader.newsletters.signup import (
+    SignupFailed,
+    SignupUnsupported,
+    confirmation_link,
+    normalised_site,
+    plan_signup,
+    site_domain,
+    submit_signup,
 )
 from audioreader.text import summarise
 
@@ -68,6 +81,16 @@ PENDING = "pending"
 BLOCKED = "blocked"
 DUPLICATE = "duplicate"
 FAILED = "failed"
+#: A confirmation email for a signup the app made: its link was followed and
+#: the message itself is not an issue.
+CONFIRMED = "confirmed"
+
+SIGNUP_SUBMITTED = "submitted"
+SIGNUP_UNSUPPORTED = "unsupported"
+SIGNUP_FAILED = "failed"
+
+#: Mailchimp's notice after the confirmation link is followed. Not an issue.
+_SUBSCRIPTION_NOTICE = re.compile(r"^\s*subscription confirmed\s*$", re.IGNORECASE)
 
 
 class NewslettersDisabledError(Exception):
@@ -150,6 +173,182 @@ def feed_url_for(user: User, sender_key: str) -> str:
     return f"email://{user.id}/{sender_key}"
 
 
+def spoken_address(address: str) -> str:
+    """An email address as a voice can say it and a listener can write it down.
+
+    The same shape the app uses on screen: a word address is said word by
+    word with the hyphens mentioned once; an older letter address is spelled.
+    """
+    local, _, domain = address.partition("@")
+    domain_words = domain.replace(".", " dot ")
+    words = local.split("-")
+    if len(words) > 1 and all(word.isalpha() for word in words):
+        return f"{', '.join(words)}, with hyphens between the words, at {domain_words}"
+    return f"{', '.join(local)}, at {domain_words}"
+
+
+# --- Signing up on her behalf ------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SignupOutcome:
+    status: str
+    spoken_response: str
+    publication: str | None = None
+    platform: str | None = None
+    address: str | None = None
+    #: For "unsupported": account_required, captcha or no_form.
+    reason: str | None = None
+
+
+async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
+    """Submit her address to a newsletter's signup, the way its button would.
+
+    Every outcome comes back as a sentence she can act on. When the site
+    cannot be signed up to automatically — it wants an account, or a
+    CAPTCHA — the sentence carries her address, since the next step is a
+    person entering it.
+    """
+    if not settings.inbound_email_enabled:
+        raise NewslettersDisabledError
+    address = await inbound_address(session, user)
+    manual = (
+        f"Your newsletter address is {spoken_address(address)}. "
+        "It is also in Settings, where it can be copied or shared."
+    )
+    try:
+        site = normalised_site(url)
+    except SignupUnsupported as exc:
+        return SignupOutcome(
+            SIGNUP_UNSUPPORTED, f"I did not catch a web address. {manual}", address=address, reason=exc.reason
+        )
+    domain = site_domain(site)
+
+    existing = await session.scalar(
+        select(NewsletterSignup).where(
+            NewsletterSignup.user_id == user.id,
+            NewsletterSignup.site_url == site,
+            NewsletterSignup.completed_at.is_(None),
+        )
+    )
+    if existing is not None and _within_signup_window(existing):
+        return SignupOutcome(
+            SIGNUP_SUBMITTED,
+            f"I have already asked {existing.publication} for its newsletter. It will appear in Following when "
+            "its first email arrives.",
+            publication=existing.publication,
+            platform=existing.platform,
+            address=address,
+        )
+
+    try:
+        plan = await plan_signup(site)
+    except SignupUnsupported as exc:
+        return SignupOutcome(
+            SIGNUP_UNSUPPORTED, _unsupported_sentence(exc, domain, manual), address=address, reason=exc.reason
+        )
+    except FeedFetchError as exc:
+        logger.info("could not fetch %s for signup: %s", site, exc)
+        return SignupOutcome(SIGNUP_FAILED, f"I could not reach {domain}. {manual}", address=address)
+
+    try:
+        await submit_signup(plan, address)
+    except SignupUnsupported as exc:
+        return SignupOutcome(
+            SIGNUP_UNSUPPORTED,
+            _unsupported_sentence(exc, domain, manual),
+            publication=plan.publication,
+            platform=plan.platform,
+            address=address,
+            reason=exc.reason,
+        )
+    except SignupFailed as exc:
+        logger.info("signup to %s failed: %s", plan.submit_url, exc)
+        return SignupOutcome(
+            SIGNUP_FAILED,
+            f"{plan.publication} did not accept the signup. {manual}",
+            publication=plan.publication,
+            platform=plan.platform,
+            address=address,
+        )
+
+    session.add(
+        NewsletterSignup(
+            user_id=user.id,
+            site_url=site,
+            publication=plan.publication,
+            platform=plan.platform,
+            expected_senders=",".join(plan.expected_senders),
+        )
+    )
+    await session.commit()
+    logger.info("signed user %s up to %s via %s", user.id, plan.publication, plan.platform)
+    return SignupOutcome(
+        SIGNUP_SUBMITTED,
+        f"I have asked {plan.publication} to send its newsletter to your address. "
+        "It will appear in Following when its first email arrives.",
+        publication=plan.publication,
+        platform=plan.platform,
+        address=address,
+    )
+
+
+def _unsupported_sentence(exc: SignupUnsupported, domain: str, manual: str) -> str:
+    if exc.reason == "account_required":
+        return (
+            f"{domain} needs an account before it will send its newsletter, "
+            f"so this one has to be signed up by hand. {manual}"
+        )
+    if exc.reason == "captcha":
+        return f"{domain} asks people to prove they are human before signing up, which I cannot do for you. {manual}"
+    return f"I could not find a signup form on {domain}. {manual}"
+
+
+def _as_aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _within_signup_window(signup: NewsletterSignup, now: datetime | None = None) -> bool:
+    now = now or utcnow()
+    return now - _as_aware(signup.created_at) <= timedelta(days=settings.newsletter_signup_window_days)
+
+
+async def _signup_awaiting(session: AsyncSession, user: User, message: NewsletterMessage) -> NewsletterSignup | None:
+    """The signup this message answers, if the app made one recently.
+
+    Matched on the sender's domain against what the signup expected, or on
+    the publication's name against the sender's, and only inside the window:
+    a newsletter that first writes months later is a stranger again.
+    """
+    open_signups = (
+        await session.scalars(
+            select(NewsletterSignup).where(
+                NewsletterSignup.user_id == user.id, NewsletterSignup.completed_at.is_(None)
+            )
+        )
+    ).all()
+    sender = message.sender
+    domain = sender.address.partition("@")[2]
+    for signup in open_signups:
+        if not _within_signup_window(signup):
+            continue
+        expected = [item.strip().lower() for item in signup.expected_senders.split(",") if item.strip()]
+        if any(sender.address == item or domain == item or domain.endswith("." + item) for item in expected):
+            return signup
+        if matches_name(signup.publication, sender.name) or matches_name(sender.name, signup.publication):
+            return signup
+    return None
+
+
+async def _follow_confirmation(link: str) -> bool:
+    try:
+        await fetch_public_bytes(link, max_bytes=MAX_ARTICLE_BYTES)
+    except FeedFetchError as exc:
+        logger.warning("could not follow a confirmation link at %s: %s", site_domain(link), exc)
+        return False
+    return True
+
+
 async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
     """File one email for its recipient.
 
@@ -169,6 +368,25 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
         return Delivery(FAILED)
     record.message_id = message.message_id
 
+    # Mail answering a signup the app made for her: the confirmation link is
+    # followed, and whatever comes after it is already approved — she said
+    # yes when she asked.
+    signup = await _signup_awaiting(session, user, message)
+    if signup is not None and signup.confirmed_at is None:
+        link = confirmation_link(message.html, message.text)
+        if link and await _follow_confirmation(link):
+            signup.confirmed_at = utcnow()
+            record.error = "confirmation link followed; not an issue"
+            session.add(record)
+            await session.commit()
+            logger.info("confirmed the %s signup for user %s", signup.publication, user.id)
+            return Delivery(CONFIRMED)
+    if signup is not None and _SUBSCRIPTION_NOTICE.match(message.subject):
+        record.error = "subscription notice; not an issue"
+        session.add(record)
+        await session.commit()
+        return Delivery(CONFIRMED)
+
     feed = await session.scalar(
         select(Feed).where(Feed.owner_user_id == user.id, Feed.url == feed_url_for(user, message.sender.key))
     )
@@ -178,7 +396,7 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
             title=message.sender.name,
             source=FEED_SOURCE_EMAIL,
             owner_user_id=user.id,
-            approval=APPROVAL_PENDING,
+            approval=APPROVAL_APPROVED if signup is not None else APPROVAL_PENDING,
             description=message.sender.address,
         )
         session.add(feed)
@@ -186,6 +404,15 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
     elif feed.approval == APPROVAL_BLOCKED:
         # Her answer was no. Not stored, not even the raw bytes.
         return Delivery(BLOCKED, feed_id=feed.id)
+    if signup is not None:
+        feed.approval = APPROVAL_APPROVED
+        subscribed = await session.scalar(
+            select(Subscription).where(Subscription.user_id == user.id, Subscription.feed_id == feed.id)
+        )
+        if subscribed is None:
+            session.add(Subscription(user_id=user.id, feed_id=feed.id, latest_after_episode_id=None))
+        signup.feed_id = feed.id
+        signup.completed_at = utcnow()
 
     existing_id = await session.scalar(
         select(Episode.id).where(Episode.feed_id == feed.id, Episode.guid == message.message_id)
@@ -328,6 +555,7 @@ async def delete_all_for_user(session: AsyncSession, user: User) -> None:
     episode_ids = select(Episode.id).where(Episode.feed_id.in_(owned))
     await session.execute(delete(PlaybackPosition).where(PlaybackPosition.episode_id.in_(episode_ids)))
     await session.execute(delete(InboundMessage).where(InboundMessage.user_id == user.id))
+    await session.execute(delete(NewsletterSignup).where(NewsletterSignup.user_id == user.id))
     await session.execute(delete(Episode).where(Episode.feed_id.in_(owned)))
     await session.execute(delete(Subscription).where(Subscription.feed_id.in_(owned)))
     await session.execute(delete(Feed).where(Feed.owner_user_id == user.id))
@@ -337,6 +565,7 @@ async def delete_all_for_user(session: AsyncSession, user: User) -> None:
 class PruneSummary:
     raw_messages: int = 0
     pending_feeds: int = 0
+    stale_signups: int = 0
 
 
 async def prune_newsletters(session: AsyncSession, now: datetime | None = None) -> PruneSummary:
@@ -368,6 +597,11 @@ async def prune_newsletters(session: AsyncSession, now: datetime | None = None) 
         await _delete_contents(session, feed)
         await session.delete(feed)
     summary.pending_feeds = len(stale)
+
+    # A signup nothing ever answered, or one long since completed, is only a
+    # record now; the feed it made carries on without it.
+    signups = await session.execute(delete(NewsletterSignup).where(NewsletterSignup.created_at < pending_cutoff))
+    summary.stale_signups = getattr(signups, "rowcount", 0) or 0
     await session.commit()
     if summary.raw_messages or summary.pending_feeds:
         logger.info(

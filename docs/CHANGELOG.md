@@ -39,6 +39,15 @@ Stuff or Benedict's Newsletter. Worth trying:
   did and the lists should update. With two senders waiting and neither
   named, it should ask which you meant rather than guess. "What's my
   newsletter address?" should read the address out word by word.
+- Let Magpie do the signing up. Paste a Substack's web address into search on
+  the Following screen. When it says no feed was found, tap **Sign up by
+  email**. It should say it has asked the newsletter to write to you, and the
+  newsletter should appear in Following by itself when its first email
+  arrives, with nothing left waiting for your answer. Try the same with a
+  Bloomberg newsletter page: it should explain that one needs an account and
+  read you the address to give it instead.
+- By voice, "subscribe to" followed by a site's address that has no feed
+  should do the same signing up, and say what happened.
 
 Please say which newsletter you tried and whether anything in the email
 chrome was still read aloud, or anything from the writing was missing.

@@ -222,3 +222,39 @@ struct PendingNewslettersModelTests {
         #expect(model.errorMessage == "That newsletter is no longer waiting.")
     }
 }
+
+@Suite("Newsletter signup")
+struct NewsletterSignupTests {
+    @Test func decodesASubmittedSignup() async throws {
+        let json = """
+            {"status": "submitted", "publication": "Understanding AI", "platform": "substack",
+             "address": "hefty-prism-bolt@magpieinbox.com", "reason": null,
+             "spoken_response": "I have asked Understanding AI to send its newsletter to your address."}
+            """
+        let transport = FakeTransport(json: json)
+
+        let signup = try await makeClient(transport).signUpForNewsletter(url: URL(string: "https://www.understandingai.org")!)
+
+        #expect(signup.submitted)
+        #expect(signup.publication == "Understanding AI")
+        #expect(transport.lastRequest?.httpMethod == "POST")
+        #expect(transport.lastRequest?.url?.path == "/newsletters/signups")
+        // Foundation escapes slashes when it encodes a URL, so compare the
+        // decoded value rather than the bytes.
+        let body = try JSONDecoder().decode([String: String].self, from: transport.lastRequest?.httpBody ?? Data())
+        #expect(body["url"] == "https://www.understandingai.org")
+    }
+
+    @Test func decodesTheManualPath() async throws {
+        let json = """
+            {"status": "unsupported", "reason": "account_required", "address": "hefty-prism-bolt@magpieinbox.com",
+             "spoken_response": "bloomberg.com needs an account before it will send its newsletter."}
+            """
+
+        let signup = try await makeClient(FakeTransport(json: json)).signUpForNewsletter(url: URL(string: "https://bloomberg.com")!)
+
+        #expect(!signup.submitted)
+        #expect(signup.reason == "account_required")
+        #expect(signup.address == "hefty-prism-bolt@magpieinbox.com")
+    }
+}

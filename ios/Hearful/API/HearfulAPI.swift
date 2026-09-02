@@ -49,6 +49,8 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func approveNewsletter(id: Int) async throws -> Show
     /// Refuse a pending sender for good; its mail is dropped from now on.
     func blockNewsletter(id: Int) async throws
+    /// Ask a website's newsletter to send itself to her private address.
+    func signUpForNewsletter(url: URL) async throws -> NewsletterSignup
     /// `authorizationCode` is Apple's single-use code, forwarded so the
     /// backend can hold something revocable for account deletion. Optional:
     /// sign-in works without it.
@@ -124,6 +126,10 @@ extension HearfulAPIProtocol {
     }
 
     func blockNewsletter(id: Int) async throws {
+        throw APIError(underlying: "Newsletters are not implemented by this API client")
+    }
+
+    func signUpForNewsletter(url: URL) async throws -> NewsletterSignup {
         throw APIError(underlying: "Newsletters are not implemented by this API client")
     }
 }
@@ -448,6 +454,17 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         try await perform(request)
+    }
+
+    func signUpForNewsletter(url: URL) async throws -> NewsletterSignup {
+        var request = URLRequest(url: baseURL.appendingPathComponent("newsletters/signups"))
+        request.httpMethod = "POST"
+        // The backend fetches the site and posts to its form; the default
+        // sixty seconds is fine, but not the thirty used for discovery.
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["url": url])
+        return try await send(request)
     }
 
     func login(appleIdentityToken: String, authorizationCode: String?) async throws -> AuthResponse

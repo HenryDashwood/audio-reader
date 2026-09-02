@@ -204,6 +204,25 @@ class PendingNewsletterRead(BaseModel):
     latest_at: datetime | None = None
 
 
+class NewsletterSignupRequest(BaseModel):
+    """A newsletter's web page, to sign her address up to."""
+
+    url: HttpUrl
+
+
+class NewsletterSignupRead(BaseModel):
+    """What came of asking a site for its newsletter."""
+
+    #: "submitted", "unsupported" or "failed".
+    status: str
+    publication: str | None = None
+    platform: str | None = None
+    address: str | None = None
+    #: For "unsupported": account_required, captcha or no_form.
+    reason: str | None = None
+    spoken_response: str
+
+
 class InboundReceipt(BaseModel):
     """What became of one email the Worker handed over."""
 

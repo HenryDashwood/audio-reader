@@ -9,8 +9,14 @@ from audioreader.auth.dependencies import get_current_user
 from audioreader.db import get_session
 from audioreader.models import User
 from audioreader.newsletters import service
-from audioreader.routers.feeds import counts_for, to_feed_read
-from audioreader.schemas import FeedRead, NewsletterAddressRead, PendingNewsletterRead
+from audioreader.routers.feeds import check_feed_operation_limit, counts_for, to_feed_read
+from audioreader.schemas import (
+    FeedRead,
+    NewsletterAddressRead,
+    NewsletterSignupRead,
+    NewsletterSignupRequest,
+    PendingNewsletterRead,
+)
 
 router = APIRouter(prefix="/newsletters", tags=["newsletters"])
 
@@ -29,6 +35,31 @@ async def address(session: Session, user: CurrentUser) -> NewsletterAddressRead:
             detail={"spoken_response": "Newsletters by email are not available on this server yet."},
         ) from exc
     return NewsletterAddressRead(address=value)
+
+
+@router.post("/signups", dependencies=[Depends(check_feed_operation_limit)])
+async def sign_up(body: NewsletterSignupRequest, session: Session, user: CurrentUser) -> NewsletterSignupRead:
+    """Ask a newsletter's site to send its newsletter to her address.
+
+    Whatever happens is a sentence: submitted, or why not and what to do
+    instead. A submitted signup shows up as a followed show by itself when
+    the newsletter's first email arrives.
+    """
+    try:
+        outcome = await service.sign_up(session, user, str(body.url))
+    except service.NewslettersDisabledError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"spoken_response": "Newsletters by email are not available on this server yet."},
+        ) from exc
+    return NewsletterSignupRead(
+        status=outcome.status,
+        publication=outcome.publication,
+        platform=outcome.platform,
+        address=outcome.address,
+        reason=outcome.reason,
+        spoken_response=outcome.spoken_response,
+    )
 
 
 @router.get("/pending")

@@ -331,6 +331,25 @@ nonisolated struct NewsletterAddress: Decodable, Equatable, Sendable {
     }
 }
 
+/// What came of asking a site for its newsletter.
+nonisolated struct NewsletterSignup: Decodable, Equatable, Sendable {
+    /// "submitted", "unsupported" or "failed".
+    let status: String
+    var publication: String?
+    var platform: String?
+    var address: String?
+    /// For "unsupported": account_required, captcha or no_form.
+    var reason: String?
+    let spokenResponse: String
+
+    var submitted: Bool { status == "submitted" }
+
+    enum CodingKeys: String, CodingKey {
+        case status, publication, platform, address, reason
+        case spokenResponse = "spoken_response"
+    }
+}
+
 /// A sender that has written to her address and is waiting for a yes or no.
 nonisolated struct PendingNewsletter: Decodable, Identifiable, Equatable, Hashable, Sendable {
     let id: Int

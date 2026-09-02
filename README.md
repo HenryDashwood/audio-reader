@@ -374,6 +374,9 @@ development needs no configuration.
 - `AUDIOREADER_NEWSLETTER_PENDING_RETENTION_DAYS` — how long a sender she has
   neither approved nor blocked is remembered after its last message
   (default 30)
+- `AUDIOREADER_NEWSLETTER_SIGNUP_WINDOW_DAYS` — after the app signs her up to
+  a newsletter, how long mail from it counts as the reply to that signup
+  (default 7)
 
 `GET /health` is the platform healthcheck. It deliberately does not touch the
 database: a liveness probe that fails on a brief Postgres blip turns a
@@ -406,6 +409,21 @@ reprocessing and then dropped; blocked senders' mail is dropped on arrival.
 The user is the subscriber and the app is her mail reader: nothing is
 re-sent from one subscription to many people, which is what keeps this on the
 right side of the publishers' terms as the app grows.
+
+Nobody should have to type that address. `POST /newsletters/signups` takes a
+publication's web page, works out how it takes signups, and submits her
+address the way its own button would: Substack and Ghost through their JSON
+endpoints, and Mailchimp, Buttondown, Kit and a site's own newsletter block as
+plain form posts. The reply is a sentence whatever happened. A site that wants
+an account first (Bloomberg) or puts a CAPTCHA in front is reported as such,
+with her address in the sentence for a person to enter; a CAPTCHA is never
+worked around. For `AUDIOREADER_NEWSLETTER_SIGNUP_WINDOW_DAYS` (default 7)
+after a signup, mail from that publication is recognised as the reply: a
+confirmation email's link is followed for her and the email itself is not
+filed, and the first real issue arrives already followed rather than waiting
+for an approval she gave by asking. By voice, "subscribe to anna dot test" does
+the same when the site has no feed, and the streamed conversation has a
+`sign_up_for_newsletter` tool for a site the model found itself.
 
 ### Telemetry
 

@@ -266,6 +266,32 @@ class InboundMessage(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class NewsletterSignup(Base):
+    """A newsletter the app signed her address up to, on her say-so.
+
+    Kept so that what the newsletter sends back can be recognised: its
+    confirmation email is answered for her, and its first issue goes
+    straight into Following rather than waiting for an approval she has
+    already given by asking.
+    """
+
+    __tablename__ = "newsletter_signups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    site_url: Mapped[str]
+    publication: Mapped[str]
+    platform: Mapped[str]
+    #: Domains and addresses its mail may come from, comma-separated.
+    expected_senders: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    #: When its confirmation link was followed, if it sent one.
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: When its first message arrived and became a followed feed.
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id", ondelete="SET NULL"))
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 

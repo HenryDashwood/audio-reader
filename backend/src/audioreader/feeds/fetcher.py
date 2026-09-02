@@ -138,6 +138,49 @@ async def validate_public_url(url: str) -> None:
         raise FeedResolutionError("the address could not be resolved") from exc
 
 
+@dataclass(frozen=True)
+class PostResult:
+    status_code: int
+    content: bytes
+    final_url: str
+
+
+async def post_public(
+    url: str,
+    *,
+    data: Mapping[str, str] | None = None,
+    json: Mapping[str, object] | None = None,
+    max_bytes: int = MAX_ARTICLE_BYTES,
+    user_agent: str = FEED_USER_AGENT,
+) -> PostResult:
+    """One POST to a public address, with the same guard as every fetch.
+
+    Redirects are not followed: a signup endpoint that answers with one has
+    accepted the submission, and the page it points at is for a browser.
+    Status codes are returned rather than raised, since a 4xx here is an
+    answer ("please complete the captcha") the caller wants to read.
+    """
+    await validate_public_url(url)
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(20),
+            follow_redirects=False,
+            trust_env=False,
+            headers={"User-Agent": user_agent},
+        ) as client:
+            async with client.stream("POST", url, data=dict(data) if data else None, json=json) as response:
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > max_bytes:
+                        raise FeedFetchError("the response is too large")
+                return PostResult(response.status_code, bytes(content), str(response.url))
+    except FeedFetchError:
+        raise
+    except httpx.HTTPError as exc:
+        raise FeedFetchError(f"could not reach the address: {exc}") from exc
+
+
 async def fetch_public_bytes(
     url: str,
     *,

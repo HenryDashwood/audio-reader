@@ -46,7 +46,7 @@ from audioreader.feeds.search import (
 from audioreader.feeds.service import AlreadySubscribedError
 from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User, utcnow
 from audioreader.newsletters import service as newsletters
-from audioreader.newsletters.service import PendingSender
+from audioreader.newsletters.service import PendingSender, spoken_address
 from audioreader.text import search_key, summarise
 
 logger = logging.getLogger(__name__)
@@ -802,6 +802,10 @@ async def _subscribe(
     except AmbiguousShowError as exc:
         return _asking(_ambiguous_show_question(exc.matches))
     if found is None:
+        # A site with no feed may still have a newsletter. Only when she named
+        # the site herself, so her address goes where she pointed.
+        if (signed_up := await sign_up_by_domain(session, user, transcript, query)) is not None:
+            return signed_up
         # Worth separating from the other dead ends: this one is usually the
         # directory and the web search both coming up empty on a name that was
         # heard correctly, which no amount of prompt work will fix.
@@ -1061,18 +1065,27 @@ async def newsletter_address(session: AsyncSession, user: User) -> InterpretResu
     )
 
 
-def spoken_address(address: str) -> str:
-    """An email address as a voice can say it and a listener can write it down.
+__all__ = ["spoken_address"]
 
-    The same shape the app uses on screen: a word address is said word by
-    word with the hyphens mentioned once; an older letter address is spelled.
+
+async def sign_up_by_domain(
+    session: AsyncSession, user: User, transcript: str, query: str | None
+) -> InterpretResult | None:
+    """When she named a site and it has no feed, ask it for its newsletter.
+
+    Only a site she actually spoke: a name alone is not enough to know where
+    to send her address, and guessing a domain from a name is how a stranger
+    ends up with it.
     """
-    local, _, domain = address.partition("@")
-    domain_words = domain.replace(".", " dot ")
-    words = local.split("-")
-    if len(words) > 1 and all(word.isalpha() for word in words):
-        return f"{', '.join(words)}, with hyphens between the words, at {domain_words}"
-    return f"{', '.join(local)}, at {domain_words}"
+    domains = spoken_domains(f"{transcript} {query or ''}")
+    if not domains:
+        return None
+    try:
+        outcome = await newsletters.sign_up(session, user, f"https://{domains[0]}")
+    except newsletters.NewslettersDisabledError:
+        return None
+    telemetry.annotate(newsletter_signup=outcome.status)
+    return InterpretResult(action=Action.UNKNOWN, spoken_response=outcome.spoken_response)
 
 
 def _spoken_count(count: int) -> str:

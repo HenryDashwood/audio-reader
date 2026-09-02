@@ -58,6 +58,7 @@ The heart of the app. Try each phrasing out loud, not typed.
 - [ ] With a sender waiting, "block that one" → blocks it, confirms aloud, the row goes
 - [ ] With **two** senders waiting, "follow that newsletter" → **asks which one**, naming both, rather than guessing
 - [ ] "What's my newsletter address?" → reads it out word by word, with the hyphens mentioned
+- [ ] "Subscribe to \<a newsletter site with no feed\> dot com" → signs the address up and says so; the newsletter arrives already followed
 - [ ] Say something meaningless → a short question back, not silence
 - [ ] Say nothing at all → "I did not hear anything", and the app is usable again
 - [ ] ⏱️ Ask something that takes a while → "One moment" fills the silence, then the real answer
@@ -223,6 +224,8 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 - [ ] **Block**, confirm → the sender goes; a later email from it does not bring it back
 - [ ] Unsubscribe from a followed newsletter → it leaves **Following**; its next email arrives as a fresh **Waiting for your answer** row
 - [ ] Newsletter rows and pages say "issues", not "episodes" or "posts"
+- [ ] Paste a Substack's address with no feed → **Sign up by email** appears; tapping it says the newsletter has been asked for, and the newsletter turns up in **Following** on its own when its first email arrives, with nothing under **Waiting for your answer**
+- [ ] Paste a Bloomberg newsletter page → it explains an account is needed and offers **Copy Address**
 
 ---
 
