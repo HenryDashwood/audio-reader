@@ -24,11 +24,10 @@ import sys
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
-from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+from audioreader.auth.service import user_for_email
 from audioreader.config import settings
-from audioreader.models import User, UserIdentity
 from audioreader.newsletters.service import new_inbound_token
 
 
@@ -54,19 +53,8 @@ class Outcome:
 
 
 async def address_for(session: AsyncSession, email: str, domain: str, mint: bool, renew: bool = False) -> Outcome:
-    """The address on the account signed in with `email`, minting one if asked.
-
-    Matched against the account's own email and its sign-in identities: an
-    Apple sign-in that hid the real address leaves a relay address on the
-    identity and nothing on the account.
-    """
-    wanted = email.strip().lower()
-    user = await session.scalar(
-        select(User)
-        .outerjoin(UserIdentity, UserIdentity.user_id == User.id)
-        .where(or_(func.lower(User.email) == wanted, func.lower(UserIdentity.email) == wanted))
-        .limit(1)
-    )
+    """The address on the account signed in with `email`, minting one if asked."""
+    user = await user_for_email(session, email)
     if user is None:
         return Outcome(found=False)
     if user.inbound_token and not renew:

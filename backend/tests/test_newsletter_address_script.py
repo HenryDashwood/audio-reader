@@ -60,3 +60,29 @@ async def test_unknown_email(session):
     outcome = await address_for(session, "nobody@example.com", DOMAIN, mint=True)
 
     assert not outcome.found
+
+
+async def test_the_signup_script_finds_the_account_and_signs_it_up(session, user, respx_mock, monkeypatch):
+    from scripts.newsletter_signup import run  # importable, which is what running it needs
+
+    from audioreader.auth.service import user_for_email
+    from audioreader.config import settings
+    from audioreader.newsletters import service
+
+    monkeypatch.setattr(settings, "inbound_email_domain", DOMAIN)
+    monkeypatch.setattr(settings, "inbound_email_secret", "operator")
+    user.email = "her@example.com"
+    await session.commit()
+    respx_mock.get("https://letters.test/").respond(
+        content=b'<html><head><title>Letters</title><link href="https://substackcdn.com/x"></head></html>',
+        content_type="text/html",
+    )
+    submitted = respx_mock.post("https://letters.test/api/v1/free").respond(200, json={})
+
+    found = await user_for_email(session, "HER@example.com")
+    assert found is not None and found.id == user.id
+    outcome = await service.sign_up(session, found, "https://letters.test")
+
+    assert outcome.status == "submitted"
+    assert submitted.call_count == 1
+    assert callable(run)

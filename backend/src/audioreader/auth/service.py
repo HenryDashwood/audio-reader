@@ -10,7 +10,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader import secrets_store
@@ -36,6 +36,22 @@ LEGACY_USER_ID = uuid.UUID("e1423896-70e0-4270-b809-982fc7730e21")
 # backend restarts. It is never reachable unless development authentication is
 # explicitly enabled in the backend settings.
 DEVELOPMENT_USER_ID = uuid.UUID("8e1e2490-364b-4c34-9d02-8f04a3d84fd1")
+
+
+async def user_for_email(session: AsyncSession, email: str) -> User | None:
+    """The account signed in with `email`, for operator tools.
+
+    Matched against the account's own email and its sign-in identities: an
+    Apple sign-in that hid the real address leaves a relay address on the
+    identity and nothing on the account.
+    """
+    wanted = email.strip().lower()
+    return await session.scalar(
+        select(User)
+        .outerjoin(UserIdentity, UserIdentity.user_id == User.id)
+        .where(or_(func.lower(User.email) == wanted, func.lower(UserIdentity.email) == wanted))
+        .limit(1)
+    )
 
 
 async def development_user(session: AsyncSession) -> User:
