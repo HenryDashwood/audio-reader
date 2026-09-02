@@ -102,11 +102,16 @@ struct PendingNewslettersSection: View {
             } header: {
                 Text("Waiting for your answer")
             } footer: {
+                // The plain list style used by Following renders footers at
+                // body size, larger than the rows they explain; Settings'
+                // grouped style makes them footnotes. Match that here.
                 Text(
                     "These senders have written to your newsletter address. "
                         + "Follow one to have what it sends read to you. "
                         + "Block one and its messages are dropped from now on."
                 )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             }
             .confirmationDialog(
                 "Block this sender?",
