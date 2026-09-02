@@ -101,3 +101,22 @@ class TestTextAsHtml:
 
     def test_windows_line_endings(self):
         assert text_as_html("a\r\n\r\nb") == "<p>a</p>\n<p>b</p>"
+
+
+class TestHowToStop:
+    def test_the_web_address_is_taken_and_one_click_noted(self):
+        message = parse_newsletter(
+            build_email(unsubscribe="<mailto:stop@news.test?subject=x>, <https://news.test/stop?t=1>", one_click=True)
+        )
+
+        assert message.unsubscribe_url == "https://news.test/stop?t=1"
+        assert message.unsubscribe_post == "List-Unsubscribe=One-Click"
+
+    def test_a_link_without_the_post_header_is_a_page_to_open(self):
+        message = parse_newsletter(build_email(unsubscribe="<https://news.test/stop?t=1>"))
+
+        assert (message.unsubscribe_url, message.unsubscribe_post) == ("https://news.test/stop?t=1", None)
+
+    def test_mail_only_or_nothing_gives_nothing(self):
+        assert parse_newsletter(build_email(unsubscribe="<mailto:stop@news.test>")).unsubscribe_url is None
+        assert parse_newsletter(build_email()).unsubscribe_url is None

@@ -165,9 +165,9 @@ async def unsubscribe(session: AsyncSession, feed_id: int, user: User) -> Feed |
         return None
     feed = await session.get(Feed, feed_id)
     if feed is not None and feed.source == FEED_SOURCE_EMAIL:
-        # Hers alone, so nothing survives her leaving it. The sender's next
-        # issue arrives as a fresh question rather than into an abandoned feed.
-        await newsletters.delete_feed(session, feed)
+        # Hers alone. The sender is asked to stop, and what it sent is kept
+        # for a while in case she comes back or it keeps writing anyway.
+        await newsletters.leave(session, feed)
         return feed
     await session.delete(subscription)
     await session.commit()

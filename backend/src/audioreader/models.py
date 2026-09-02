@@ -39,6 +39,9 @@ FEED_SOURCE_EMAIL = "email"
 APPROVAL_PENDING = "pending"
 APPROVAL_APPROVED = "approved"
 APPROVAL_BLOCKED = "blocked"
+#: She followed it and then left. Kept, issues and all, for a while: she may
+#: come back, and the sender may not have listened.
+APPROVAL_LEFT = "left"
 
 
 class Feed(Base):
@@ -57,8 +60,15 @@ class Feed(Base):
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     #: Email feeds only. A sender's first message makes a "pending" feed that
     #: waits for her to say yes; "approved" once she has followed it;
-    #: "blocked" when she said no, after which its mail is dropped unread.
+    #: "blocked" when she said no, after which its mail is dropped unread;
+    #: "left" when she stopped following it, which keeps what it sent for a
+    #: while and makes its next message a fresh question.
     approval: Mapped[str | None]
+    #: Email feeds only: how the sender says to stop, from its latest
+    #: message's List-Unsubscribe headers. The https address, and the
+    #: List-Unsubscribe-Post value when it takes a one-click POST (RFC 8058).
+    unsubscribe_url: Mapped[str | None] = mapped_column(Text)
+    unsubscribe_post: Mapped[str | None]
     #: For a newsletter: the shared RSS feed of the same publication, which
     #: lends it artwork, a blurb and an archive. Never set on a fetched feed.
     companion_feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id", ondelete="SET NULL"))

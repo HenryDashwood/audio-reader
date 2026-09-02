@@ -222,7 +222,7 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 - [ ] Email that address from any account → the sender appears at the top of **Latest** under **Waiting for your answer**, and nothing from it is in the list below
 - [ ] **Follow** → the sender becomes a show, its messages are in **Latest**, and opening one reads the writing without unsubscribe links, postal addresses or "view in browser"
 - [ ] **Block**, confirm → the sender goes; a later email from it does not bring it back
-- [ ] Unsubscribe from a followed newsletter → it leaves **Following**; its next email arrives as a fresh **Waiting for your answer** row
+- [ ] Unsubscribe from a followed newsletter → it leaves **Following** and the sender is asked to stop; if it writes again anyway, a fresh **Waiting for your answer** row appears with the earlier issues still counted, and **Follow** brings them all back
 - [ ] Newsletter rows and pages say "issues", not "episodes" or "posts"
 - [ ] A followed Substack newsletter takes the publication's name and artwork within a poll pass, and its page shows the web archive beneath the emailed issues, one row per post
 - [ ] Paste a Substack's address with no feed → **Sign up by email** appears; tapping it says the newsletter has been asked for, and the newsletter turns up in **Following** on its own when its first email arrives, with nothing under **Waiting for your answer** in **Latest**

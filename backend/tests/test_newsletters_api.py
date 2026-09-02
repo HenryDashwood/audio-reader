@@ -11,7 +11,16 @@ from audioreader.config import settings
 from audioreader.feeds import service as feed_service
 from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.poller import poll_all_feeds, prune_orphaned_feeds
-from audioreader.models import APPROVAL_PENDING, Episode, Feed, InboundMessage, Subscription, User, utcnow
+from audioreader.models import (
+    APPROVAL_LEFT,
+    APPROVAL_PENDING,
+    Episode,
+    Feed,
+    InboundMessage,
+    Subscription,
+    User,
+    utcnow,
+)
 from audioreader.newsletters import service
 
 DOMAIN = "in.test"
@@ -339,19 +348,119 @@ class TestBlock:
         assert (await client.get("/episodes")).json() == []
 
 
+STOP_LINK = "https://news.test/unsubscribe?token=abc"
+#: At a shared mail domain, so following it looks for no feed on the web.
+SENDER = "Matt Levine <moneystuff@gmail.com>"
+
+
+async def followed(client, address: str, **email) -> int:
+    raw = build_email(to=address, sender=SENDER, **email)
+    feed_id = (await deliver(client, raw, to=address)).json()["feed_id"]
+    await client.post(f"/newsletters/{feed_id}/approve")
+    return feed_id
+
+
 class TestUnfollow:
-    async def test_leaving_forgets_the_feed_and_the_next_issue_asks_again(self, client, inbound_enabled, session):
+    async def test_leaving_keeps_what_it_sent_out_of_sight(self, client, inbound_enabled, session):
         address = await address_of(client)
-        feed_id = (await deliver(client, build_email(to=address), to=address)).json()["feed_id"]
-        await client.post(f"/newsletters/{feed_id}/approve")
+        feed_id = await followed(client, address)
 
         assert (await client.delete(f"/feeds/{feed_id}")).status_code == 204
 
-        assert await session.get(Feed, feed_id) is None
-        assert (await session.scalars(select(Episode))).all() == []
-        response = await deliver(client, build_email(to=address, message_id="<again@x>"), to=address)
-        assert response.json()["status"] == "pending"
-        assert await pending_ids(client) == [response.json()["feed_id"]]
+        feed = await session.get(Feed, feed_id)
+        assert feed is not None and feed.approval == APPROVAL_LEFT
+        assert len((await session.scalars(select(Episode))).all()) == 1
+        assert (await client.get("/feeds")).json() == []
+        assert (await client.get("/episodes")).json() == []
+        assert await pending_ids(client) == []
+        assert (await client.get(f"/feeds/{feed_id}/episodes")).status_code == 404
+
+    async def test_a_one_click_sender_is_told_with_a_post(self, client, inbound_enabled, respx_mock):
+        stop = respx_mock.post(STOP_LINK).respond(200)
+        address = await address_of(client)
+        stop_headers = {"unsubscribe": f"<mailto:stop@news.test>, <{STOP_LINK}>", "one_click": True}
+        feed_id = await followed(client, address, **stop_headers)
+
+        await client.delete(f"/feeds/{feed_id}")
+
+        assert stop.call_count == 1
+        assert stop.calls[0].request.content == b"List-Unsubscribe=One-Click"
+
+    async def test_a_plain_link_is_opened_as_she_would(self, client, inbound_enabled, respx_mock):
+        stop = respx_mock.get(STOP_LINK).respond(200, content=b"<p>You have been unsubscribed.</p>")
+        address = await address_of(client)
+        feed_id = await followed(client, address, unsubscribe=f"<{STOP_LINK}>")
+
+        await client.delete(f"/feeds/{feed_id}")
+
+        assert stop.call_count == 1
+
+    async def test_a_sender_that_cannot_be_reached_is_still_left(self, client, inbound_enabled, respx_mock):
+        respx_mock.post(STOP_LINK).respond(500)
+        address = await address_of(client)
+        feed_id = await followed(client, address, unsubscribe=f"<{STOP_LINK}>", one_click=True)
+
+        assert (await client.delete(f"/feeds/{feed_id}")).status_code == 204
+        assert (await client.get("/feeds")).json() == []
+
+    async def test_the_newest_issues_way_of_stopping_is_the_one_used(self, client, inbound_enabled, respx_mock):
+        old = respx_mock.post("https://news.test/unsubscribe?token=old").respond(200)
+        new = respx_mock.post("https://news.test/unsubscribe?token=new").respond(200)
+        address = await address_of(client)
+        feed_id = await followed(
+            client, address, unsubscribe="<https://news.test/unsubscribe?token=old>", one_click=True
+        )
+        await deliver(
+            client,
+            build_email(
+                to=address,
+                sender=SENDER,
+                message_id="<2@x>",
+                unsubscribe="<https://news.test/unsubscribe?token=new>",
+                one_click=True,
+            ),
+            to=address,
+        )
+
+        await client.delete(f"/feeds/{feed_id}")
+
+        assert (old.call_count, new.call_count) == (0, 1)
+
+    async def test_a_sender_that_keeps_writing_asks_again_with_its_history(self, client, inbound_enabled):
+        address = await address_of(client)
+        feed_id = await followed(client, address)
+        await client.delete(f"/feeds/{feed_id}")
+
+        response = await deliver(client, build_email(to=address, sender=SENDER, message_id="<again@x>"), to=address)
+
+        receipt = response.json()
+        assert (receipt["status"], receipt["feed_id"]) == ("pending", feed_id)
+        waiting = (await client.get("/newsletters/pending")).json()
+        assert [(item["id"], item["message_count"]) for item in waiting] == [(feed_id, 2)]
+
+    async def test_coming_back_finds_everything_still_there(self, client, inbound_enabled):
+        address = await address_of(client)
+        feed_id = await followed(client, address)
+        await client.delete(f"/feeds/{feed_id}")
+        issue_two = build_email(to=address, sender=SENDER, message_id="<again@x>", subject="Issue two")
+        await deliver(client, issue_two, to=address)
+
+        await client.post(f"/newsletters/{feed_id}/approve")
+
+        latest = (await client.get("/episodes")).json()
+        assert sorted(row["title"] for row in latest) == ["Issue two", "Money Stuff: Things Happen"]
+
+    async def test_a_left_newsletter_is_forgotten_after_the_retention_window(self, client, inbound_enabled, session):
+        address = await address_of(client)
+        feed_id = await followed(client, address)
+        await client.delete(f"/feeds/{feed_id}")
+        days = settings.newsletter_pending_retention_days
+
+        kept = await service.prune_newsletters(session, now=utcnow() + timedelta(days=days - 1))
+        assert kept.pending_feeds == 0 and await session.get(Feed, feed_id) is not None
+
+        gone = await service.prune_newsletters(session, now=utcnow() + timedelta(days=days + 1))
+        assert gone.pending_feeds == 1 and await session.get(Feed, feed_id) is None
 
 
 class TestAccountDeletion:

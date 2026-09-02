@@ -58,9 +58,15 @@ def build_email(
     list_id: str | None = None,
     date: str | None = "Tue, 01 Sep 2026 12:00:00 +0000",
     delivered_to: str | None = None,
+    unsubscribe: str | None = None,
+    one_click: bool = False,
 ) -> bytes:
     message = EmailMessage()
     message["Subject"] = subject
+    if unsubscribe:
+        message["List-Unsubscribe"] = unsubscribe
+    if one_click:
+        message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     message["From"] = sender
     message["To"] = to
     if message_id:

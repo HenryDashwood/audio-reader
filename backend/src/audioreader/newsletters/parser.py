@@ -55,6 +55,10 @@ class NewsletterMessage:
     sent_at: datetime | None
     html: str | None
     text: str | None
+    #: How the sender says to stop: the https address in List-Unsubscribe,
+    #: and the List-Unsubscribe-Post value when it takes a one-click POST.
+    unsubscribe_url: str | None = None
+    unsubscribe_post: str | None = None
 
 
 def parse_newsletter(raw: bytes) -> NewsletterMessage:
@@ -75,6 +79,7 @@ def _from_message(message: Message, raw: bytes) -> NewsletterMessage:
 
     html = _body(message, "html")
     text = _body(message, "plain")
+    unsubscribe_url, unsubscribe_post = unsubscribe_of(message)
     if not (html and html.strip()) and not (text and text.strip()):
         raise NewsletterParseError("email has no readable body")
 
@@ -86,7 +91,29 @@ def _from_message(message: Message, raw: bytes) -> NewsletterMessage:
         sent_at=_sent_at(message),
         html=html if html and html.strip() else None,
         text=text if text and text.strip() else None,
+        unsubscribe_url=unsubscribe_url,
+        unsubscribe_post=unsubscribe_post,
     )
+
+
+#: `List-Unsubscribe: <mailto:...>, <https://...>` — any number of addresses
+#: in angle brackets; only a web one is any use here.
+_UNSUBSCRIBE_LINK = re.compile(r"<\s*(https?://[^>\s]+)\s*>", re.IGNORECASE)
+_ONE_CLICK = re.compile(r"^\s*List-Unsubscribe=One-Click\s*$", re.IGNORECASE)
+
+
+def unsubscribe_of(message: Message) -> tuple[str | None, str | None]:
+    """How the sender says to stop, from its List-Unsubscribe headers.
+
+    The web address, and the List-Unsubscribe-Post value when the sender
+    takes RFC 8058's one-click POST — which is what a mail client's
+    Unsubscribe button sends, and the only form that needs no page.
+    """
+    match = _UNSUBSCRIBE_LINK.search(_header(message, "List-Unsubscribe"))
+    if not match:
+        return None, None
+    post = _header(message, "List-Unsubscribe-Post").strip()
+    return match.group(1)[:2_000], post if _ONE_CLICK.match(post) else None
 
 
 def _header(message: Message, name: str) -> str:

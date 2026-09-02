@@ -24,12 +24,13 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
-from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes
+from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes, post_public
 from audioreader.feeds.parser import MAX_CONTENT_CHARS
 from audioreader.feeds.search import matches_name
 from audioreader.models import (
     APPROVAL_APPROVED,
     APPROVAL_BLOCKED,
+    APPROVAL_LEFT,
     APPROVAL_PENDING,
     FEED_SOURCE_EMAIL,
     Episode,
@@ -490,6 +491,11 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
     elif feed.approval == APPROVAL_BLOCKED:
         # Her answer was no. Not stored, not even the raw bytes.
         return Delivery(BLOCKED, feed_id=feed.id)
+    elif feed.approval == APPROVAL_LEFT:
+        # She stopped following it and it is still writing: the sender was
+        # not told, or did not listen. A fresh question, with what it sent
+        # before still there behind it.
+        feed.approval = APPROVAL_PENDING
     if signup is not None:
         feed.approval = APPROVAL_APPROVED
         subscribed = await session.scalar(
@@ -509,6 +515,11 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
     episode = episode_for(message)
     episode.feed_id = feed.id
     session.add(episode)
+    if message.unsubscribe_url:
+        # The newest message's, always: the address usually carries a
+        # per-subscriber token, and an old one may have expired.
+        feed.unsubscribe_url = message.unsubscribe_url
+        feed.unsubscribe_post = message.unsubscribe_post
     # Doubles as "last message received" for an email feed; the pending prune
     # reads it to tell a sender that has gone quiet from one still writing.
     feed.last_polled_at = utcnow()
@@ -609,8 +620,11 @@ async def approve(session: AsyncSession, user: User, feed_id: int) -> Feed | Non
     try:
         await attach_companion(session, feed)
     except Exception:  # noqa: BLE001
-        logger.exception("could not look for %s's feed on the web", feed.title)
+        logger.exception("could not look for a feed on the web for newsletter %s", feed_id)
+        # The rollback expired everything loaded; the caller still reads the
+        # feed, and following her was committed before the search began.
         await session.rollback()
+        await session.refresh(feed)
     return feed
 
 
@@ -626,17 +640,47 @@ async def block(session: AsyncSession, user: User, feed_id: int) -> bool:
     return True
 
 
-async def delete_feed(session: AsyncSession, feed: Feed) -> None:
-    """Remove a private feed and everything in it. Used when she stops
-    following a newsletter: nobody else has any use for it, and its next
-    issue should arrive as a fresh question rather than into a feed she left."""
-    await _delete_contents(session, feed)
-    # A plain DELETE rather than session.delete: the episodes are already
-    # gone by the statement above, and the ORM cascade would try to delete
-    # them a second time from whatever it still has in memory.
-    await session.execute(delete(Feed).where(Feed.id == feed.id))
-    session.expunge(feed)
+async def leave(session: AsyncSession, feed: Feed) -> bool:
+    """Stop following a newsletter.
+
+    The sender is asked to stop, the way a mail client's Unsubscribe button
+    asks. What it sent is kept for `newsletter_pending_retention_days`, so
+    coming back within that time loses nothing, and so a sender that keeps
+    writing anyway comes back as a question rather than as silence.
+    Returns whether the sender was told.
+    """
+    told = await tell_sender_to_stop(feed)
+    await session.execute(delete(Subscription).where(Subscription.feed_id == feed.id))
+    feed.approval = APPROVAL_LEFT
+    # The quiet clock the prune reads starts now, not at its last issue.
+    feed.last_polled_at = utcnow()
     await session.commit()
+    return told
+
+
+async def tell_sender_to_stop(feed: Feed) -> bool:
+    """Ask the sender to stop, with its own List-Unsubscribe address.
+
+    A one-click sender (RFC 8058) takes a POST saying `List-Unsubscribe=
+    One-Click` and needs no page. Any other web address is opened as she
+    would open it from an email: most senders stop on the visit, some show
+    a page with a button nothing here can press. Best effort either way —
+    the sender's site is somebody else's, and leaving is what matters.
+    """
+    if not feed.unsubscribe_url:
+        return False
+    try:
+        if feed.unsubscribe_post:
+            reply = await post_public(feed.unsubscribe_url, data={"List-Unsubscribe": "One-Click"})
+            told = 200 <= reply.status_code < 300
+        else:
+            await fetch_public_bytes(feed.unsubscribe_url, max_bytes=MAX_ARTICLE_BYTES)
+            told = True
+    except FeedFetchError as exc:
+        logger.warning("could not tell %s to stop at %s: %s", feed.title, site_domain(feed.unsubscribe_url), exc)
+        return False
+    logger.info("told %s to stop (%s): %s", feed.title, "one-click" if feed.unsubscribe_post else "link", told)
+    return told
 
 
 async def _delete_contents(session: AsyncSession, feed: Feed) -> None:
@@ -687,7 +731,8 @@ async def prune_newsletters(session: AsyncSession, now: datetime | None = None) 
         await session.scalars(
             select(Feed).where(
                 Feed.source == FEED_SOURCE_EMAIL,
-                Feed.approval == APPROVAL_PENDING,
+                # Unanswered, or left and not come back to, for long enough.
+                Feed.approval.in_((APPROVAL_PENDING, APPROVAL_LEFT)),
                 func.coalesce(Feed.last_polled_at, Feed.created_at) < pending_cutoff,
             )
         )

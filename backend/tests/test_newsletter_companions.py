@@ -10,6 +10,7 @@ from audioreader.feeds import service as feed_service
 from audioreader.feeds.poller import poll_all_feeds, prune_orphaned_feeds
 from audioreader.models import (
     APPROVAL_APPROVED,
+    APPROVAL_LEFT,
     FEED_SOURCE_EMAIL,
     Episode,
     Feed,
@@ -302,6 +303,6 @@ class TestBackgroundWork:
 
         await feed_service.unsubscribe(session, feed.id, user)
 
-        assert await session.get(Feed, feed.id) is None
+        assert (await session.get(Feed, feed.id)) is feed and feed.approval == APPROVAL_LEFT
         assert await session.get(Feed, companion.id) is not None
         assert (await session.scalars(select(Episode).where(Episode.feed_id == companion.id))).all() != []

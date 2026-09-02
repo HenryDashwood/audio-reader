@@ -30,7 +30,10 @@ Stuff or Benedict's Newsletter. Worth trying:
 - Tap **Block** on another sender and confirm. It should disappear, and a
   later email from it should not come back.
 - Unsubscribe from a followed newsletter. It should leave Following, and the
-  next issue it sends should arrive as a fresh question rather than silently.
+  sender should be told to stop (a Substack should confirm by email or stop
+  sending). If it writes again anyway, the issue should arrive as a fresh
+  question with the earlier issues still counted, and following it again
+  should bring them all back.
 - With VoiceOver on, do all of the above with the screen curtain down. The
   Follow and Block buttons should name the sender, and the address should be
   spelled out rather than read as one word.

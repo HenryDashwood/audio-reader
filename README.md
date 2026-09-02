@@ -447,6 +447,15 @@ recognised by its subject rather than its sender. A code or sign-in email
 is a step of signing up, never an issue: it is kept as raw mail for the
 retention window and filed nowhere, whoever it came from.
 
+Unfollowing a newsletter asks the sender to stop, using the List-Unsubscribe
+address in its latest issue: a one-click POST (RFC 8058) when the sender
+takes one, otherwise a visit to the link as she would make from an email.
+The newsletter and its issues are kept for
+`AUDIOREADER_NEWSLETTER_PENDING_RETENTION_DAYS` (default 30) but out of
+sight, so following it again within that time finds everything still there,
+and a sender that keeps writing anyway comes back as a fresh question rather
+than as silence.
+
 ### Telemetry
 
 Traces, logs and metrics go to [Logfire](https://logfire-eu.pydantic.dev)
