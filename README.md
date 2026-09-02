@@ -425,6 +425,14 @@ for an approval she gave by asking. By voice, "subscribe to anna dot test" does
 the same when the site has no feed, and the streamed conversation has a
 `sign_up_for_newsletter` tool for a site the model found itself.
 
+Substack has one extra step. It delivers nothing to an address it has not
+verified, and it verifies one through a sign-in email whose link signs the
+address in. So the first Substack a user is signed up to also requests that
+email (`POST https://substack.com/api/v1/email-login`), the backend follows
+its link when it arrives, and every Substack after that is a plain signup.
+That email comes from whichever publication Substack likes, so it is
+recognised by its subject rather than its sender.
+
 ### Telemetry
 
 Traces, logs and metrics go to [Logfire](https://logfire-eu.pydantic.dev)

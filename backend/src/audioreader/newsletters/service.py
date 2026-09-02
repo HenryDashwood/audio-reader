@@ -20,7 +20,7 @@ from email.parser import BytesHeaderParser
 from hashlib import sha256
 from pathlib import Path
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
@@ -50,6 +50,8 @@ from audioreader.newsletters.parser import (
     text_as_html,
 )
 from audioreader.newsletters.signup import (
+    SUBSTACK,
+    SUBSTACK_SIGN_IN_SUBJECT,
     SignupFailed,
     SignupUnsupported,
     confirmation_link,
@@ -259,7 +261,11 @@ async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
         return SignupOutcome(SIGNUP_FAILED, f"I could not reach {domain}. {manual}", address=address)
 
     try:
-        await submit_signup(plan, address)
+        # Substack delivers nothing to an address it has not verified, and
+        # verifies it through a sign-in email: asked for on her first
+        # Substack, then never again.
+        first_substack = plan.platform == SUBSTACK and not await _substack_verified(session, user)
+        sign_in_requested = await submit_signup(plan, address, request_sign_in=first_substack)
     except SignupUnsupported as exc:
         return SignupOutcome(
             SIGNUP_UNSUPPORTED,
@@ -289,7 +295,13 @@ async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
         )
     )
     await session.commit()
-    logger.info("signed user %s up to %s via %s", user.id, plan.publication, plan.platform)
+    logger.info(
+        "signed user %s up to %s via %s%s",
+        user.id,
+        plan.publication,
+        plan.platform,
+        " (sign-in email requested)" if sign_in_requested else "",
+    )
     return SignupOutcome(
         SIGNUP_SUBMITTED,
         f"I have asked {plan.publication} to send its newsletter to your address. "
@@ -298,6 +310,22 @@ async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
         platform=plan.platform,
         address=address,
     )
+
+
+async def _substack_verified(session: AsyncSession, user: User) -> bool:
+    """Has a Substack sign-in email of hers been followed before?
+
+    Once one has, her address is verified with Substack for good, and a
+    plain signup is enough for every Substack after it.
+    """
+    verified = await session.scalar(
+        select(NewsletterSignup.id).where(
+            NewsletterSignup.user_id == user.id,
+            NewsletterSignup.platform == SUBSTACK,
+            or_(NewsletterSignup.confirmed_at.is_not(None), NewsletterSignup.completed_at.is_not(None)),
+        )
+    )
+    return verified is not None
 
 
 async def forget_open_signup(session: AsyncSession, user: User, url: str) -> str | None:
@@ -363,6 +391,14 @@ async def _signup_awaiting(session: AsyncSession, user: User, message: Newslette
     ).all()
     sender = message.sender
     domain = sender.address.partition("@")[2]
+    if SUBSTACK_SIGN_IN_SUBJECT.search(message.subject) and domain.endswith("substack.com"):
+        # Substack's sign-in email comes from whichever publication it
+        # likes, so its sender says nothing. Its subject does: it answers
+        # her newest Substack signup still waiting to be verified.
+        for signup in sorted(open_signups, key=lambda item: item.id, reverse=True):
+            if signup.platform == SUBSTACK and signup.confirmed_at is None and _within_signup_window(signup):
+                return signup
+        return None
     for signup in open_signups:
         if not _within_signup_window(signup):
             continue
@@ -407,7 +443,7 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
     # yes when she asked.
     signup = await _signup_awaiting(session, user, message)
     if signup is not None and signup.confirmed_at is None:
-        link = confirmation_link(message.html, message.text)
+        link = confirmation_link(message.html, message.text, sign_in=bool(_TRANSACTIONAL.search(message.subject)))
         if link and await _follow_confirmation(link):
             signup.confirmed_at = utcnow()
             record.error = "confirmation link followed; not an issue"

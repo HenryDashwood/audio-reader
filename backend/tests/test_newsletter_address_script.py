@@ -74,10 +74,14 @@ async def test_the_signup_script_finds_the_account_and_signs_it_up(session, user
     user.email = "her@example.com"
     await session.commit()
     respx_mock.get("https://letters.test/").respond(
-        content=b'<html><head><title>Letters</title><link href="https://substackcdn.com/x"></head></html>',
+        content=(
+            b'<html><head><title>Letters</title><link href="https://substackcdn.com/x"></head>'
+            b'<body><script>"{\\"subdomain\\":\\"letters\\"}"</script></body></html>'
+        ),
         content_type="text/html",
     )
     submitted = respx_mock.post("https://letters.test/api/v1/free").respond(200, json={})
+    respx_mock.post("https://substack.com/api/v1/email-login").respond(200, json={})
 
     found = await user_for_email(session, "HER@example.com")
     assert found is not None and found.id == user.id

@@ -23,9 +23,19 @@ from audioreader.newsletters.signup import (
 
 ADDRESS = "hefty-prism-bolt@magpieinbox.com"
 
+# The page's JSON blob names its own subdomain twice and a recommended
+# publication's once, escaped the way Substack serves it.
 SUBSTACK_PAGE = b"""<html><head><title>Understanding AI</title>
 <meta property="og:site_name" content="Understanding AI"><link rel="preconnect" href="https://substackcdn.com">
-</head><body><script src="https://substackcdn.com/x.js"></script><p>By Timothy B Lee</p></body></html>"""
+</head><body><script src="https://substackcdn.com/x.js"></script><p>By Timothy B Lee</p>
+<script>window._preloads = "{\\"pub\\":{\\"subdomain\\":\\"understandingai\\"},
+\\"recs\\":[{\\"subdomain\\":\\"apricitas\\"}],
+\\"again\\":{\\"subdomain\\":\\"understandingai\\"}}"</script>
+</body></html>"""
+
+SIGN_IN_EMAIL = """<html><body><p>Here is your verification code: <b>274513</b></p>
+<p><a href="https://email.mg-tx1.substack.com/c/eJxck1FzqroX">Sign in to Substack</a></p>
+<p><a href="https://substack.com/unsubscribe?x=1">Unsubscribe</a></p></body></html>"""
 
 GHOST_PAGE = b"""<html><head><title>Slow Letters</title><meta name="generator" content="Ghost 6.62"></head>
 <body><form data-members-form="subscribe"><input data-members-email type="email"></form></body></html>"""
@@ -78,6 +88,14 @@ class TestPlanning:
         assert plan.publication == "Understanding AI"
         assert plan.submit_url == "https://www.understandingai.org/api/v1/free"
         assert plan.expected_senders == ("understandingai.org",)
+        assert plan.publication_key == "understandingai"
+
+    async def test_a_substack_dot_com_host_is_its_own_key(self, respx_mock):
+        respx_mock.get("https://letters.substack.com/").respond(content=SUBSTACK_PAGE, content_type="text/html")
+
+        plan = await plan_signup("https://letters.substack.com")
+
+        assert plan.publication_key == "letters"
 
     async def test_a_bare_domain_is_enough(self, respx_mock):
         respx_mock.get("https://slowletters.test/").respond(content=GHOST_PAGE, content_type="text/html")
@@ -166,19 +184,41 @@ class TestSubmitting:
         assert sent.headers["origin"] == "https://www.understandingai.org"
         assert sent.headers["referer"] == "https://www.understandingai.org/"
 
-    async def test_substack_saying_it_did_not_sign_up_is_a_failure(self, respx_mock):
-        # What Substack answers for an address that already has an account:
-        # 200, but no subscriber made, and a request to sign in instead.
+    async def test_substack_asking_for_a_sign_in_gets_the_sign_in_email_requested(self, respx_mock):
+        # What Substack answers for an address whose account is unverified:
+        # 200, no subscriber made, "sign in instead". The sign-in email is
+        # what verifies it, so ask for one.
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
         respx_mock.post("https://www.understandingai.org/api/v1/free").respond(
             200, json={"email": ADDRESS, "prompt_to_login": True, "didSignup": False}
         )
+        sign_in = respx_mock.post("https://substack.com/api/v1/email-login").respond(200, json={})
         plan = await plan_signup("https://www.understandingai.org")
 
-        from audioreader.newsletters.signup import SignupFailed
+        requested = await submit_signup(plan, ADDRESS)
 
-        with pytest.raises(SignupFailed, match="sign in"):
-            await submit_signup(plan, ADDRESS)
+        assert requested is True
+        sent = sign_in.calls[0].request
+        assert b'"for_pub": "understandingai"' in sent.content.replace(b'":"', b'": "')
+        assert sent.headers["origin"] == "https://substack.com"
+
+    async def test_a_first_substack_always_gets_the_sign_in_email(self, respx_mock):
+        respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
+        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
+        sign_in = respx_mock.post("https://substack.com/api/v1/email-login").respond(200, json={})
+        plan = await plan_signup("https://www.understandingai.org")
+
+        assert await submit_signup(plan, ADDRESS, request_sign_in=True) is True
+        assert sign_in.call_count == 1
+
+    async def test_a_verified_address_needs_no_sign_in_email(self, respx_mock):
+        respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
+        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
+        sign_in = respx_mock.post("https://substack.com/api/v1/email-login").respond(200, json={})
+        plan = await plan_signup("https://www.understandingai.org")
+
+        assert await submit_signup(plan, ADDRESS, request_sign_in=False) is False
+        assert sign_in.call_count == 0
 
     async def test_a_substack_redirect_is_not_a_signup(self, respx_mock):
         # What a bare POST gets: a redirect to the page, and no subscriber.
@@ -250,13 +290,24 @@ class TestConfirmationLink:
     def test_no_link(self):
         assert confirmation_link("<p>Welcome!</p>", "Welcome!") is None
 
+    def test_a_sign_in_link_counts_only_in_a_sign_in_email(self):
+        # A newsletter's footer says "sign in" too, and that is not a yes.
+        assert confirmation_link(SIGN_IN_EMAIL, None) is None
+        assert (
+            confirmation_link(SIGN_IN_EMAIL, None, sign_in=True) == "https://email.mg-tx1.substack.com/c/eJxck1FzqroX"
+        )
+
 
 class TestSignUp:
     async def test_submits_and_remembers(self, session, user, respx_mock, newsletters_enabled):
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
         respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
+        sign_in = respx_mock.post("https://substack.com/api/v1/email-login").respond(200, json={})
 
         outcome = await service.sign_up(session, user, "https://www.understandingai.org")
+
+        # Her first Substack: the sign-in email that verifies the address.
+        assert sign_in.call_count == 1
 
         assert outcome.status == "submitted"
         assert outcome.publication == "Understanding AI"
@@ -265,9 +316,33 @@ class TestSignUp:
         signup = (await session.scalars(select(NewsletterSignup))).one()
         assert signup.platform == "substack" and signup.completed_at is None
 
+    async def test_a_second_substack_skips_the_sign_in_once_verified(
+        self, session, user, respx_mock, newsletters_enabled
+    ):
+        session.add(
+            NewsletterSignup(
+                user_id=user.id,
+                site_url="https://first.substack.com",
+                publication="First",
+                platform="substack",
+                expected_senders="first.substack.com",
+                confirmed_at=service.utcnow(),
+            )
+        )
+        await session.commit()
+        respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
+        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
+        sign_in = respx_mock.post("https://substack.com/api/v1/email-login").respond(200, json={})
+
+        outcome = await service.sign_up(session, user, "https://www.understandingai.org")
+
+        assert outcome.status == "submitted"
+        assert sign_in.call_count == 0
+
     async def test_asking_twice_does_not_submit_twice(self, session, user, respx_mock, newsletters_enabled):
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
         route = respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
+        respx_mock.post("https://substack.com/api/v1/email-login").respond(200, json={})
         await service.sign_up(session, user, "https://www.understandingai.org")
 
         outcome = await service.sign_up(session, user, "https://www.understandingai.org")
@@ -379,11 +454,41 @@ class TestWhatComesBack:
         assert delivery.status == "confirmed"
         assert (await session.scalars(select(Episode))).all() == []
 
-    async def test_a_verification_code_is_left_for_her_and_completes_nothing(self, session, user, newsletters_enabled):
+    async def test_substacks_sign_in_email_is_followed_whoever_sent_it(
+        self, session, user, respx_mock, newsletters_enabled
+    ):
+        signup = NewsletterSignup(
+            user_id=user.id,
+            site_url="https://www.understandingai.org",
+            publication="Understanding AI",
+            platform="substack",
+            expected_senders="understandingai.org",
+        )
+        session.add(signup)
+        await session.commit()
+        followed = respx_mock.get("https://email.mg-tx1.substack.com/c/eJxck1FzqroX").respond(200, content=b"ok")
+        raw = build_email(
+            sender="Matthew Yglesias <matthewyglesias@substack.com>",
+            subject="274513 is your Substack verification code",
+            html=SIGN_IN_EMAIL,
+            message_id="<signin@substack.com>",
+        )
+
+        delivery = await service.receive(session, user, raw)
+
+        assert delivery.status == "confirmed"
+        assert followed.call_count == 1
+        assert signup.confirmed_at is not None and signup.completed_at is None
+        assert (await session.scalars(select(Feed))).all() == []
+
+    async def test_a_code_with_no_link_is_left_for_her_and_completes_nothing(self, session, user, newsletters_enabled):
         signup = await signed_up(session, user, publication="Understanding AI", expected="understandingai.org")
+        signup.platform = "substack"
+        await session.commit()
         raw = build_email(
             sender="Ben Southwood <bensouthwood@substack.com>",
             subject="756893 is your Substack verification code",
+            html="<p>Your code is 756893.</p>",
             message_id="<code@substack.com>",
         )
 
@@ -442,6 +547,7 @@ class TestEndpoint:
     async def test_sign_up(self, client, respx_mock, newsletters_enabled):
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
         respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
+        respx_mock.post("https://substack.com/api/v1/email-login").respond(200, json={})
 
         response = await client.post("/newsletters/signups", json={"url": "https://www.understandingai.org"})
 
@@ -501,6 +607,7 @@ class TestByVoice:
     async def test_the_streamed_conversation_has_the_tool(self, session, user, respx_mock, newsletters_enabled):
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
         respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
+        respx_mock.post("https://substack.com/api/v1/email-login").respond(200, json={})
 
         class Scripted:
             def __init__(self):

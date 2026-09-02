@@ -17,6 +17,7 @@ unsubscribe or preferences link, so following it can only ever say yes.
 import json
 import logging
 import re
+from collections import Counter
 from dataclasses import dataclass
 from html import unescape
 from urllib.parse import urljoin, urlsplit
@@ -42,6 +43,12 @@ _ACCOUNT_REQUIRED = ("bloomberg.com", "nytimes.com", "ft.com", "wsj.com", "econo
 _CAPTCHA = re.compile(r"g-recaptcha|h-captcha|cf-turnstile|data-sitekey|recaptcha/api|hcaptcha\.com", re.IGNORECASE)
 _CAPTCHA_REPLY = re.compile(r"captcha|turnstile", re.IGNORECASE)
 _EMAIL_FIELD = re.compile(r"e-?mail", re.IGNORECASE)
+
+#: Link text that signs in, accepted only in mail that is itself a sign-in
+#: step: a newsletter's footer has "sign in" links too, and those are not
+#: for following.
+_SIGN_IN_TEXT = re.compile(r"sign[- ]?in|log[- ]?in|open substack|verify", re.IGNORECASE)
+_SIGN_IN_HREF = re.compile(r"sign-in|login|email-login|otp", re.IGNORECASE)
 
 #: Link text that completes a signup.
 _CONFIRM_TEXT = re.compile(
@@ -86,6 +93,20 @@ class SignupPlan:
     email_field: str = "email"
     #: Domains and addresses its mail is expected from.
     expected_senders: tuple[str, ...] = ()
+    #: For Substack: the publication's own subdomain, which its sign-in
+    #: email endpoint knows it by. None when the page did not say.
+    publication_key: str | None = None
+
+
+#: Where Substack sends the email that verifies an address and signs it in.
+SUBSTACK_SIGN_IN_URL = "https://substack.com/api/v1/email-login"
+#: The subject Substack gives that email. Its sender is whichever
+#: publication Substack likes, so the subject is what identifies it.
+SUBSTACK_SIGN_IN_SUBJECT = re.compile(r"is your Substack verification code", re.IGNORECASE)
+
+#: A page's own subdomain sits in its JSON blob, escaped, beside the
+#: subdomains of the publications it recommends.
+_SUBSTACK_SUBDOMAIN = re.compile(r'subdomain\\?":\\?"([a-z0-9-]+)')
 
 
 def normalised_site(url: str) -> str:
@@ -131,6 +152,7 @@ async def plan_signup(url: str) -> SignupPlan:
             site_url=origin,
             submit_url=origin + "/api/v1/free",
             expected_senders=(domain,),
+            publication_key=_substack_subdomain(html, domain),
         )
 
     generator = document.head.find(".//meta[@name='generator']") if document.head is not None else None
@@ -151,6 +173,23 @@ async def plan_signup(url: str) -> SignupPlan:
 
 
 _TITLE_SEPARATOR = re.compile(r"\s+[|–—·]\s+|\s+-\s+")
+
+
+def _substack_subdomain(html: str, domain: str) -> str | None:
+    """The publication's Substack subdomain, from its page.
+
+    A page on substack.com names it in its host. A custom domain's page
+    carries it in the escaped JSON the page is built from, alongside the
+    subdomains of the publications it recommends — the publication's own is
+    the one that appears most, since the page is about it.
+    """
+    if domain.endswith(".substack.com"):
+        return domain.split(".")[0]
+    counts = Counter(match.group(1) for match in _SUBSTACK_SUBDOMAIN.finditer(html))
+    if not counts:
+        return None
+    ((subdomain, _),) = counts.most_common(1)
+    return subdomain
 
 
 def _publication_title(document: lxml_html.HtmlElement, domain: str) -> str:
@@ -233,8 +272,15 @@ def _form_platform(action: str) -> tuple[str, tuple[str, ...]]:
     return FORM, ()
 
 
-async def submit_signup(plan: SignupPlan, address: str) -> None:
-    """Send her address the way the site's own button would."""
+async def submit_signup(plan: SignupPlan, address: str, *, request_sign_in: bool = False) -> bool:
+    """Send her address the way the site's own button would.
+
+    Returns whether a sign-in email was requested as well. Substack does not
+    deliver to an address it has never verified, and verifies one by an
+    email whose link signs it in: asked for on her first Substack, and
+    whenever Substack answers a signup with "sign in instead". The link is
+    followed like any confirmation when the email arrives.
+    """
     try:
         if plan.platform == SUBSTACK:
             # Substack only acts on a request shaped like its own page's: the
@@ -262,12 +308,23 @@ async def submit_signup(plan: SignupPlan, address: str) -> None:
             )
             if 300 <= reply.status_code < 400:
                 raise SignupFailed(f"{plan.publication} answered with a redirect rather than accepting the signup")
-            if reply.status_code < 300 and not _substack_signed_up(reply.content):
-                # The address already has a Substack account, and Substack
-                # will only subscribe it from a logged-in session. Seen when
-                # an earlier attempt created the account: the subscription
-                # exists, but a second run must not claim to have made it.
-                raise SignupFailed(f"{plan.publication} already knows this address and asked it to sign in instead")
+            needs_sign_in = request_sign_in or not _substack_signed_up(reply.content)
+            if needs_sign_in:
+                if not plan.publication_key:
+                    raise SignupFailed(f"{plan.publication} needs a sign-in email and its Substack name is unknown")
+                sign_in = await post_public(
+                    SUBSTACK_SIGN_IN_URL,
+                    json={"email": address, "for_pub": plan.publication_key, "redirect": "/"},
+                    headers={
+                        "Accept": "application/json",
+                        "Origin": "https://substack.com",
+                        "Referer": "https://substack.com/sign-in",
+                    },
+                )
+                if sign_in.status_code >= 300:
+                    raise SignupFailed(f"Substack would not send {plan.publication}'s sign-in email")
+                return True
+            return False
         elif plan.platform == GHOST:
             reply = await post_public(plan.submit_url, json={"email": address, "emailType": "subscribe"})
         else:
@@ -281,6 +338,7 @@ async def submit_signup(plan: SignupPlan, address: str) -> None:
     if reply.status_code >= 400:
         logger.info("signup to %s refused with HTTP %s: %s", plan.submit_url, reply.status_code, body[:300])
         raise SignupFailed(f"{plan.publication} did not accept the signup (HTTP {reply.status_code})")
+    return False
 
 
 def _substack_signed_up(body: bytes) -> bool:
@@ -296,13 +354,16 @@ def _substack_signed_up(body: bytes) -> bool:
     return reply.get("didSignup", True) is not False
 
 
-def confirmation_link(html: str | None, text: str | None) -> str | None:
+def confirmation_link(html: str | None, text: str | None, *, sign_in: bool = False) -> str | None:
     """The one link in a confirmation email that says yes.
 
     Looked for by what the link says first, then by what its address says.
     Anything that could mean no — unsubscribe, preferences, remove — is
-    refused however it is labelled.
+    refused however it is labelled. With `sign_in`, for mail that is a
+    sign-in step, a link that says so counts too.
     """
+    text_rule = _CONFIRM_TEXT if not sign_in else re.compile(f"{_CONFIRM_TEXT.pattern}|{_SIGN_IN_TEXT.pattern}", re.I)
+    href_rule = _CONFIRM_HREF if not sign_in else re.compile(f"{_CONFIRM_HREF.pattern}|{_SIGN_IN_HREF.pattern}", re.I)
     if html:
         try:
             document = lxml_html.document_fromstring(html)
@@ -315,15 +376,15 @@ def confirmation_link(html: str | None, text: str | None) -> str | None:
             ]
             anchors = [(label, href) for label, href in anchors if href.lower().startswith(("http://", "https://"))]
             for label, href in anchors:
-                if _CONFIRM_TEXT.search(label) and not _says_no(href) and not _NEVER_FOLLOW.search(label):
+                if text_rule.search(label) and not _says_no(href) and not _NEVER_FOLLOW.search(label):
                     return href[:4_096]
             for _, href in anchors:
-                if _CONFIRM_HREF.search(_path_and_query(href)) and not _says_no(href):
+                if href_rule.search(_path_and_query(href)) and not _says_no(href):
                     return href[:4_096]
     if text:
         for match in re.finditer(r"https?://[^\s<>\"']+", unescape(text)):
             href = match.group(0).rstrip(".,;)")
-            if _CONFIRM_HREF.search(_path_and_query(href)) and not _says_no(href):
+            if href_rule.search(_path_and_query(href)) and not _says_no(href):
                 return href[:4_096]
     return None
 
