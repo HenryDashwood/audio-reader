@@ -731,13 +731,23 @@ def _addressed_elsewhere(message: NewsletterMessage) -> bool:
 #: Gmail's forwarding verification: sent to the address a rule would forward
 #: to, with a link that says yes.
 GMAIL_FORWARDING_SENDER = "forwarding-noreply@google.com"
-_GMAIL_FORWARDING_LINK = re.compile(r"https://mail-settings\.google\.com/mail/[^\s\"'<>]+")
+#: The link has been seen at mail-settings.google.com, redirecting to
+#: mail.google.com; its path carries "vf-" and the request's token either
+#: way. Templates differ, so both hosts and any path under /mail/ count.
+_GMAIL_FORWARDING_LINK = re.compile(r"https://(?:mail-settings|mail)\.google\.com/mail/[^\s\"'<>]*?vf-[^\s\"'<>]+")
+_ANY_LINK = re.compile(r"https?://([^\s\"'<>/]+)[^\s\"'<>]*")
 
 
 def forwarding_confirmation_link(message: NewsletterMessage) -> str | None:
     for body in (message.text, message.html):
         if body and (match := _GMAIL_FORWARDING_LINK.search(unescape(body))):
             return match.group(0)
+    seen = sorted(
+        {host for body in (message.text, message.html) if body for host in _ANY_LINK.findall(unescape(body))}
+    )
+    logger.warning(
+        "Google's forwarding mail %r carried no confirmation link; hosts linked: %s", message.subject[:80], seen
+    )
     return None
 
 

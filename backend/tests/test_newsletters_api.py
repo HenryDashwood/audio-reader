@@ -717,6 +717,22 @@ class TestForwardedMail:
         waiting = (await client.get("/newsletters/pending")).json()
         assert "123456789" in waiting[0]["latest_title"]
 
+    async def test_the_link_is_found_at_either_google_host(self, client, inbound_enabled, respx_mock):
+        page = "https://mail.google.com/mail/u/0/vf-xyz789"
+        respx_mock.get(page).respond(200, content=GOOGLE_FORM, content_type="text/html")
+        confirm = respx_mock.post(page).respond(200)
+        address = await address_of(client)
+        raw = build_email(
+            sender="Gmail Team <forwarding-noreply@google.com>",
+            to=address,
+            subject="(Gmail Forwarding confirmation – Receive mail from henry@gmail.com",
+            html=f'<p>To allow this, click <a href="{page}">this link</a>.</p>',
+        )
+
+        response = await deliver(client, raw, to=address)
+
+        assert response.json()["status"] == "confirmed" and confirm.call_count == 1
+
     async def test_a_page_without_the_button_is_not_pressed(self, client, inbound_enabled, respx_mock):
         respx_mock.get(GOOGLE_LINK).respond(200, content=b"<p>This link has expired.</p>", content_type="text/html")
         pressed = respx_mock.post(GOOGLE_LINK).respond(200)
