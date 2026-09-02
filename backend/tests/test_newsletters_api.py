@@ -69,10 +69,13 @@ class TestAddress:
             assert len(words) == service.TOKEN_WORDS
             assert all(word.isalpha() and word.islower() and word in service._WORDS for word in words)
 
-    def test_the_wordlist_is_the_eff_short_list(self):
-        assert len(service._WORDS) == 1295
-        assert all(word.isalpha() and word.islower() for word in service._WORDS)
+    def test_the_wordlist_is_short_plain_words(self):
+        # Enough for the address to be hard to stumble on: 400 words cubed
+        # is 64 million, and a guess only ever reaches the pending list.
+        assert len(service._WORDS) >= 400
         assert len(set(service._WORDS)) == len(service._WORDS)
+        for word in service._WORDS:
+            assert word.isalpha() and word.islower() and 3 <= len(word) <= 5, word
 
 
 class TestInboundEndpoint:
