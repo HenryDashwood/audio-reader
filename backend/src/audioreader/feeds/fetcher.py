@@ -150,6 +150,7 @@ async def post_public(
     *,
     data: Mapping[str, str] | None = None,
     json: Mapping[str, object] | None = None,
+    headers: Mapping[str, str] | None = None,
     max_bytes: int = MAX_ARTICLE_BYTES,
     user_agent: str = FEED_USER_AGENT,
 ) -> PostResult:
@@ -168,7 +169,9 @@ async def post_public(
             trust_env=False,
             headers={"User-Agent": user_agent},
         ) as client:
-            async with client.stream("POST", url, data=dict(data) if data else None, json=json) as response:
+            async with client.stream(
+                "POST", url, data=dict(data) if data else None, json=json, headers=headers
+            ) as response:
                 content = bytearray()
                 async for chunk in response.aiter_bytes():
                     content.extend(chunk)

@@ -293,6 +293,33 @@ async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
     )
 
 
+async def forget_open_signup(session: AsyncSession, user: User, url: str) -> str | None:
+    """Drop an unanswered signup for a site, so it can be asked again.
+
+    For the operator's use when a submission is known not to have gone
+    through: the record would otherwise make a second attempt say "already
+    asked" for a week. Returns the publication's name, or None if there was
+    nothing open.
+    """
+    try:
+        site = normalised_site(url)
+    except SignupUnsupported:
+        return None
+    open_signup = await session.scalar(
+        select(NewsletterSignup).where(
+            NewsletterSignup.user_id == user.id,
+            NewsletterSignup.site_url == site,
+            NewsletterSignup.completed_at.is_(None),
+        )
+    )
+    if open_signup is None:
+        return None
+    publication = open_signup.publication
+    await session.delete(open_signup)
+    await session.commit()
+    return publication
+
+
 def _unsupported_sentence(exc: SignupUnsupported, domain: str, manual: str) -> str:
     if exc.reason == "account_required":
         return (

@@ -149,10 +149,10 @@ class TestPlanning:
 
 
 class TestSubmitting:
-    async def test_substack_posts_json(self, respx_mock):
+    async def test_substack_posts_json_the_way_its_page_does(self, respx_mock):
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
         route = respx_mock.post("https://www.understandingai.org/api/v1/free").respond(
-            302, headers={"Location": "https://www.understandingai.org/?showWelcome=true"}
+            200, json={"email": ADDRESS, "prompt_to_login": False}
         )
         plan = await plan_signup("https://www.understandingai.org")
 
@@ -160,7 +160,24 @@ class TestSubmitting:
 
         sent = route.calls[0].request
         assert b'"email": "hefty-prism-bolt@magpieinbox.com"' in sent.content.replace(b'":"', b'": "')
+        assert b'"first_session_url"' in sent.content
         assert sent.headers["content-type"].startswith("application/json")
+        assert sent.headers["accept"] == "application/json"
+        assert sent.headers["origin"] == "https://www.understandingai.org"
+        assert sent.headers["referer"] == "https://www.understandingai.org/"
+
+    async def test_a_substack_redirect_is_not_a_signup(self, respx_mock):
+        # What a bare POST gets: a redirect to the page, and no subscriber.
+        respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
+        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(
+            302, headers={"Location": "https://www.understandingai.org/"}
+        )
+        plan = await plan_signup("https://www.understandingai.org")
+
+        from audioreader.newsletters.signup import SignupFailed
+
+        with pytest.raises(SignupFailed, match="redirect"):
+            await submit_signup(plan, ADDRESS)
 
     async def test_a_form_posts_its_fields(self, respx_mock):
         respx_mock.get("https://anna.test/").respond(content=MAILCHIMP_PAGE, content_type="text/html")
@@ -223,7 +240,7 @@ class TestConfirmationLink:
 class TestSignUp:
     async def test_submits_and_remembers(self, session, user, respx_mock, newsletters_enabled):
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
-        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"ok": True})
+        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
 
         outcome = await service.sign_up(session, user, "https://www.understandingai.org")
 
@@ -236,7 +253,7 @@ class TestSignUp:
 
     async def test_asking_twice_does_not_submit_twice(self, session, user, respx_mock, newsletters_enabled):
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
-        route = respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"ok": True})
+        route = respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
         await service.sign_up(session, user, "https://www.understandingai.org")
 
         outcome = await service.sign_up(session, user, "https://www.understandingai.org")
@@ -393,7 +410,7 @@ class TestWhatComesBack:
 class TestEndpoint:
     async def test_sign_up(self, client, respx_mock, newsletters_enabled):
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
-        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"ok": True})
+        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
 
         response = await client.post("/newsletters/signups", json={"url": "https://www.understandingai.org"})
 
@@ -452,7 +469,7 @@ class TestByVoice:
 
     async def test_the_streamed_conversation_has_the_tool(self, session, user, respx_mock, newsletters_enabled):
         respx_mock.get("https://www.understandingai.org/").respond(content=SUBSTACK_PAGE, content_type="text/html")
-        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"ok": True})
+        respx_mock.post("https://www.understandingai.org/api/v1/free").respond(200, json={"email": ADDRESS})
 
         class Scripted:
             def __init__(self):

@@ -232,18 +232,31 @@ async def submit_signup(plan: SignupPlan, address: str) -> None:
     """Send her address the way the site's own button would."""
     try:
         if plan.platform == SUBSTACK:
+            # Substack only acts on a request shaped like its own page's: the
+            # page's origin and referer, JSON asked for in return, and the
+            # full set of fields its form sends. Anything less gets a
+            # redirect and no subscription — which is what a bare POST got
+            # in testing, while looking for all the world like success.
+            page = plan.site_url.rstrip("/") + "/"
             reply = await post_public(
                 plan.submit_url,
                 json={
                     "email": address,
-                    "first_url": plan.site_url,
+                    "first_url": page,
                     "first_referrer": "",
-                    "current_url": plan.site_url,
+                    "current_url": page,
                     "current_referrer": "",
+                    "first_session_url": page,
+                    "first_session_referrer": "",
                     "referral_code": "",
                     "source": "subscribe_page",
+                    "referring_pub_id": "",
+                    "additional_referring_pub_ids": "",
                 },
+                headers={"Accept": "application/json", "Origin": plan.site_url, "Referer": page},
             )
+            if 300 <= reply.status_code < 400:
+                raise SignupFailed(f"{plan.publication} answered with a redirect rather than accepting the signup")
         elif plan.platform == GHOST:
             reply = await post_public(plan.submit_url, json={"email": address, "emailType": "subscribe"})
         else:

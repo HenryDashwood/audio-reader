@@ -37,7 +37,7 @@ def engine_for(url: str) -> AsyncEngine:
     return create_async_engine(stripped, connect_args={"ssl": modes[0] != "disable"})
 
 
-async def run(email: str, url: str, domain: str) -> int:
+async def run(email: str, url: str, domain: str, again: bool = False) -> int:
     engine = engine_for(settings.database_url)
     try:
         maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -46,6 +46,10 @@ async def run(email: str, url: str, domain: str) -> int:
             if user is None:
                 print(f"no account is signed in as {email}", file=sys.stderr)
                 return 1
+            if again:
+                dropped = await service.forget_open_signup(session, user, url)
+                if dropped:
+                    print(f"forgot the open signup for {dropped}; submitting again")
             outcome = await service.sign_up(session, user, url)
     finally:
         await engine.dispose()
@@ -65,6 +69,11 @@ def main() -> int:
         default=settings.inbound_email_domain,
         help="the inbound domain (default: AUDIOREADER_INBOUND_EMAIL_DOMAIN)",
     )
+    parser.add_argument(
+        "--again",
+        action="store_true",
+        help="submit even if a signup for this site is already open (the open one is forgotten first)",
+    )
     arguments = parser.parse_args()
     if not arguments.domain:
         parser.error("no inbound domain: pass --domain or set AUDIOREADER_INBOUND_EMAIL_DOMAIN")
@@ -72,7 +81,7 @@ def main() -> int:
     # secret is irrelevant, so any value turns it on for this process.
     settings.inbound_email_domain = arguments.domain
     settings.inbound_email_secret = settings.inbound_email_secret or "operator"
-    return asyncio.run(run(arguments.email, arguments.url, arguments.domain))
+    return asyncio.run(run(arguments.email, arguments.url, arguments.domain, again=arguments.again))
 
 
 if __name__ == "__main__":
