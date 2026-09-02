@@ -768,11 +768,20 @@ async def _confirm_gmail_forwarding(link: str) -> bool:
         if not _CONFIRM_FORM.search(page.decode("utf-8", errors="replace")):
             logger.warning("Google's forwarding page at %s had no Confirm button", site_domain(page_url))
             return False
-        reply = await post_public(page_url, data={})
+        # As a browser sends it: a form content type on the empty body, and
+        # the page as referer. Without those Google shows the page again.
+        headers = {"Content-Type": "application/x-www-form-urlencoded", "Referer": page_url}
+        reply = await post_public(page_url, headers=headers)
     except FeedFetchError as exc:
         logger.warning("could not confirm a forwarding rule at %s: %s", site_domain(link), exc)
         return False
-    return 200 <= reply.status_code < 400
+    # Success is a page without the button; the button again means no.
+    accepted = 200 <= reply.status_code < 400 and not _CONFIRM_FORM.search(
+        reply.content.decode("utf-8", errors="replace")
+    )
+    if not accepted:
+        logger.warning("Google did not accept the forwarding confirmation (HTTP %s)", reply.status_code)
+    return accepted
 
 
 async def _recover_unsubscribe(session: AsyncSession, feed: Feed) -> None:

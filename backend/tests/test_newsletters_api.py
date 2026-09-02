@@ -693,6 +693,9 @@ class TestForwardedMail:
 
         assert response.json()["status"] == "confirmed"
         assert confirm.call_count == 1 and confirm.calls[0].request.method == "POST"
+        pressed = confirm.calls[0].request
+        assert pressed.headers["content-type"] == "application/x-www-form-urlencoded"
+        assert pressed.headers["referer"] == GOOGLE_PAGE
         assert await pending_ids(client) == []
         record = (await session.scalars(select(InboundMessage))).one()
         assert record.error == "forwarding confirmation followed; not an issue"
@@ -732,6 +735,22 @@ class TestForwardedMail:
         response = await deliver(client, raw, to=address)
 
         assert response.json()["status"] == "confirmed" and confirm.call_count == 1
+
+    async def test_the_button_shown_again_means_no(self, client, inbound_enabled, respx_mock):
+        respx_mock.get(GOOGLE_LINK).respond(200, content=GOOGLE_FORM, content_type="text/html")
+        respx_mock.post(GOOGLE_LINK).respond(200, content=GOOGLE_FORM, content_type="text/html")
+        address = await address_of(client)
+        raw = build_email(
+            sender="Gmail Team <forwarding-noreply@google.com>",
+            to=address,
+            subject="(#123456789) Gmail Forwarding Confirmation - Receive Mail from henry@gmail.com",
+            text=f"{GOOGLE_LINK}\n",
+            html=None,
+        )
+
+        response = await deliver(client, raw, to=address)
+
+        assert response.json()["status"] == "pending"
 
     async def test_a_page_without_the_button_is_not_pressed(self, client, inbound_enabled, respx_mock):
         respx_mock.get(GOOGLE_LINK).respond(200, content=b"<p>This link has expired.</p>", content_type="text/html")
