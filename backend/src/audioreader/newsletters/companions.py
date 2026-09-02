@@ -38,7 +38,12 @@ from audioreader.models import (
 logger = logging.getLogger(__name__)
 
 _SUBSTACK_SENDER = re.compile(r"^([a-z0-9-]+)@substack\.com$")
+_SUBSTACK_LIST = re.compile(r"^([a-z0-9-]+)\.substack\.com$")
 _ADDRESS = re.compile(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", re.IGNORECASE)
+_HOSTNAME = re.compile(r"^(?:[a-z0-9-]+\.)+[a-z]{2,}$")
+#: List-ID hosts that name a mailing platform's list, not a website:
+#: `abc123.list-id.mcsv.net` is Mailchimp's, and there is no site there.
+_LIST_ONLY_HOSTS = ("list-id.", "mcsv.net", "lists.")
 #: Domains that send on behalf of many publications, and so say nothing
 #: about which site is the newsletter's.
 _SHARED_MAIL_DOMAINS = (
@@ -56,10 +61,30 @@ _SHARED_MAIL_DOMAINS = (
 )
 
 
+def sender_key(feed: Feed) -> str:
+    """What tells the newsletter apart, kept in the feed's private URL.
+
+    The List-ID's identifier when the sender sets one — Substack's is the
+    publication's `<name>.substack.com` — otherwise the From address with
+    the display name's slug after it.
+    """
+    return feed.url.partition("://")[2].partition("/")[2]
+
+
 def sender_address(feed: Feed) -> str | None:
-    """The address the newsletter writes from, kept in the feed's private URL."""
-    match = _ADDRESS.search(feed.url.partition("://")[2].partition("/")[2])
+    """The address the newsletter writes from, when the key is one."""
+    match = _ADDRESS.search(sender_key(feed))
     return match.group(0).lower() if match else None
+
+
+def list_host(feed: Feed) -> str | None:
+    """The List-ID identifier, when it is a hostname."""
+    key = sender_key(feed).partition("/")[0].lower()
+    return key if _HOSTNAME.match(key) and "@" not in key else None
+
+
+def _shared(domain: str) -> bool:
+    return any(domain == shared or domain.endswith("." + shared) for shared in _SHARED_MAIL_DOMAINS)
 
 
 def candidate_sites(feed: Feed, signup_site: str | None = None) -> list[tuple[str, bool]]:
@@ -68,12 +93,18 @@ def candidate_sites(feed: Feed, signup_site: str | None = None) -> list[tuple[st
     if signup_site:
         candidates.append((signup_site, False))
     address = sender_address(feed)
+    host = list_host(feed)
     if address:
         if match := _SUBSTACK_SENDER.match(address):
             candidates.append((f"https://{match.group(1)}.substack.com", False))
         domain = address.partition("@")[2]
-        if domain and not any(domain == shared or domain.endswith("." + shared) for shared in _SHARED_MAIL_DOMAINS):
+        if domain and not _shared(domain):
             candidates.append((f"https://{domain}", True))
+    elif host:
+        if _SUBSTACK_LIST.match(host):
+            candidates.append((f"https://{host}", False))
+        elif not _shared(host) and not any(marker in host for marker in _LIST_ONLY_HOSTS):
+            candidates.append((f"https://{host}", True))
     seen: set[str] = set()
     unique = []
     for site, must_match in candidates:
@@ -101,7 +132,10 @@ async def attach_companion(session: AsyncSession, feed: Feed, *, signup_site: st
     """
     if feed.source != FEED_SOURCE_EMAIL:
         return None
-    for site, must_match in candidate_sites(feed, signup_site):
+    candidates = candidate_sites(feed, signup_site)
+    if not candidates:
+        logger.info("nowhere to look for a companion feed for %s (%s)", feed.title, sender_key(feed))
+    for site, must_match in candidates:
         try:
             companion = await feed_service.ensure_feed(session, site)
         except (FeedFetchError, FeedParseError) as exc:

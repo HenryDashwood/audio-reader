@@ -427,8 +427,9 @@ the same when the site has no feed, and the streamed conversation has a
 
 A newsletter that also has a feed on the web gets it as a companion: the
 shared RSS feed of the same publication, found on the site the app signed her
-up on, at a Substack sender's own substack.com address, or on the sender's
-domain when the feed there is named like the newsletter. The email feed
+up on, at a Substack publication's own substack.com address (its List-ID
+names it), or on the sender's domain when the feed there is named like the
+newsletter. The email feed
 takes the companion's name, artwork, blurb and site link, its page shows the
 companion's archive with one row per post (her emailed copy wins over the
 feed's), the companion is polled and never pruned, and Latest still shows

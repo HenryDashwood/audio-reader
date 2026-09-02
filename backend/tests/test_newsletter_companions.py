@@ -141,6 +141,29 @@ class TestLinking:
         assert companions.sender_address(feed) == "matthewyglesias@substack.com"
         assert companions.candidate_sites(feed) == [("https://matthewyglesias.substack.com", False)]
 
+    async def test_a_substack_list_id_names_its_own_site(self, session, user, substack_site):
+        # What Substack really sends: a List-ID of <bensouthwood.substack.com>,
+        # which becomes the key on its own — no address in it at all.
+        feed = await newsletter(session, user, sender="bensouthwood.substack.com", title="Ben Southwood from Baldwin")
+
+        assert companions.sender_address(feed) is None
+        assert companions.list_host(feed) == "bensouthwood.substack.com"
+        assert companions.candidate_sites(feed) == [(SITE, False)]
+        companion = await companions.attach_companion(session, feed)
+        assert companion is not None and feed.companion_feed_id == companion.id
+        assert feed.title == "Baldwin"
+
+    async def test_a_list_id_host_is_a_site_only_when_named_like_the_newsletter(self, session, user):
+        feed = await newsletter(session, user, sender="news.anna.test", title="Words from Anna")
+
+        assert companions.candidate_sites(feed) == [("https://news.anna.test", True)]
+
+    async def test_a_mailing_platforms_list_id_is_not_a_site(self, session, user):
+        for key in ("abc123def.list-id.mcsv.net", "capital-gains.mail.beehiiv.com", "0123abcd"):
+            feed = await newsletter(session, user, sender=key, title=f"Newsletter {key}")
+
+            assert companions.candidate_sites(feed) == [], key
+
 
 class TestTheSweep:
     async def test_links_what_is_due_and_leaves_what_was_checked(self, session, user, substack_site):
