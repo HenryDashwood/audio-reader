@@ -121,12 +121,16 @@ async def plan_signup(url: str) -> SignupPlan:
     publication = _publication_title(document, domain)
 
     if "substackcdn.com" in html or domain.endswith("substack.com") or "/api/v1/free" in html:
+        # Only the site's own domain: Substack's transactional mail — a
+        # verification code, say — comes from whichever publication's
+        # address it likes, and "anything at substack.com" would have
+        # let one of those pass for the newsletter's first issue.
         return SignupPlan(
             platform=SUBSTACK,
             publication=publication,
             site_url=origin,
             submit_url=origin + "/api/v1/free",
-            expected_senders=(domain, "substack.com"),
+            expected_senders=(domain,),
         )
 
     generator = document.head.find(".//meta[@name='generator']") if document.head is not None else None

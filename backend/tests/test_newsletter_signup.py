@@ -77,7 +77,7 @@ class TestPlanning:
         assert plan.platform == "substack"
         assert plan.publication == "Understanding AI"
         assert plan.submit_url == "https://www.understandingai.org/api/v1/free"
-        assert plan.expected_senders == ("understandingai.org", "substack.com")
+        assert plan.expected_senders == ("understandingai.org",)
 
     async def test_a_bare_domain_is_enough(self, respx_mock):
         respx_mock.get("https://slowletters.test/").respond(content=GHOST_PAGE, content_type="text/html")
@@ -350,7 +350,9 @@ class TestWhatComesBack:
 
     async def test_a_newsletter_with_no_confirmation_step(self, session, user, newsletters_enabled):
         # Substack sends the first issue straight away; nothing to click.
-        await signed_up(session, user, publication="Understanding AI", expected="understandingai.org,substack.com")
+        # Matched by the publication's name: Substack's From address is on
+        # substack.com, not the site's domain.
+        await signed_up(session, user, publication="Understanding AI", expected="understandingai.org")
         raw = build_email(
             sender="Understanding AI <understandingai@substack.com>", subject="Welcome!", message_id="<w@substack.com>"
         )
@@ -376,6 +378,21 @@ class TestWhatComesBack:
 
         assert delivery.status == "confirmed"
         assert (await session.scalars(select(Episode))).all() == []
+
+    async def test_a_verification_code_is_left_for_her_and_completes_nothing(self, session, user, newsletters_enabled):
+        signup = await signed_up(session, user, publication="Understanding AI", expected="understandingai.org")
+        raw = build_email(
+            sender="Ben Southwood <bensouthwood@substack.com>",
+            subject="756893 is your Substack verification code",
+            message_id="<code@substack.com>",
+        )
+
+        delivery = await service.receive(session, user, raw)
+
+        assert delivery.status == "pending"
+        assert signup.completed_at is None and signup.confirmed_at is None
+        feed = (await session.scalars(select(Feed))).one()
+        assert feed.approval == APPROVAL_PENDING
 
     async def test_a_stranger_still_waits(self, session, user, newsletters_enabled):
         await signed_up(session, user)

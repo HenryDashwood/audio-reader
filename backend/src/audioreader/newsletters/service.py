@@ -91,6 +91,13 @@ SIGNUP_FAILED = "failed"
 
 #: Mailchimp's notice after the confirmation link is followed. Not an issue.
 _SUBSCRIPTION_NOTICE = re.compile(r"^\s*subscription confirmed\s*$", re.IGNORECASE)
+#: Mail that is part of signing up rather than the newsletter itself: a code
+#: to type in, a link to sign in with. A signup is not complete on the
+#: strength of one of these, and the newsletter is not yet writing.
+_TRANSACTIONAL = re.compile(
+    r"verification code|verify your email|confirm your email|sign[- ]in|log[- ]in|magic link|one[- ]time code",
+    re.IGNORECASE,
+)
 
 
 class NewslettersDisabledError(Exception):
@@ -413,6 +420,13 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
         session.add(record)
         await session.commit()
         return Delivery(CONFIRMED)
+    if signup is not None and _TRANSACTIONAL.search(message.subject):
+        # Substack answers a new address with a code to type in, from an
+        # address of its choosing. Nothing here can type it, so this is
+        # left for her as a sender waiting, code in the subject, and the
+        # signup stays open for the issue that follows once it is entered.
+        logger.info("a signup step for %s needs a person: %r", signup.publication, message.subject[:80])
+        signup = None
 
     feed = await session.scalar(
         select(Feed).where(Feed.owner_user_id == user.id, Feed.url == feed_url_for(user, message.sender.key))
