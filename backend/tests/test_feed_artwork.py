@@ -6,7 +6,9 @@ PAGE_URL = "https://publication.example.com/articles/"
 
 
 class TestArtworkURLInHTML:
-    def test_prefers_open_graph_over_twitter_and_icons(self):
+    def test_prefers_the_sites_own_square_mark_over_the_social_card(self):
+        # A touch icon is drawn for a tile; the social card is as often a
+        # photo that illustrated the front page as it is a logo.
         html = """
         <html><head>
         <meta name="twitter:image" content="/twitter.jpg">
@@ -16,7 +18,36 @@ class TestArtworkURLInHTML:
         </head></html>
         """
 
+        assert artwork_url_in_html(html, PAGE_URL) == "https://publication.example.com/touch.png"
+
+    def test_the_social_card_beats_small_icons(self):
+        html = """
+        <html><head>
+        <link rel="icon" href="/favicon.ico" sizes="48x48">
+        <link rel="apple-touch-icon" href="/touch-57.png" sizes="57x57">
+        <meta property="og:image" content="/social-card.jpg">
+        <meta name="twitter:image" content="/twitter.jpg">
+        </head></html>
+        """
+
         assert artwork_url_in_html(html, PAGE_URL) == "https://publication.example.com/social-card.jpg"
+
+    def test_the_largest_declared_mark_wins(self):
+        html = """
+        <html><head>
+        <link rel="icon" href="/favicon.ico" sizes="48x48">
+        <link rel="icon" href="/icon-192.png" sizes="192x192" type="image/png">
+        <link rel="apple-touch-icon" href="/apple-180.png" sizes="180x180">
+        <meta property="og:image" content="/hero-photo.webp">
+        </head></html>
+        """
+
+        assert artwork_url_in_html(html, PAGE_URL) == "https://publication.example.com/icon-192.png"
+
+    def test_without_a_mark_or_card_the_favicon_will_do(self):
+        html = '<html><head><link rel="icon" href="/favicon.ico" sizes="48x48"></head></html>'
+
+        assert artwork_url_in_html(html, PAGE_URL) == "https://publication.example.com/favicon.ico"
 
     def test_uses_a_raster_icon_and_respects_the_base_element(self):
         html = """

@@ -26,8 +26,9 @@ class _ArtworkFinder(HTMLParser):
         self.base_href: str | None = None
         self.open_graph: list[str] = []
         self.twitter: list[str] = []
-        self.touch_icons: list[tuple[str, str]] = []
-        self.icons: list[tuple[str, str]] = []
+        #: (href, mime type, largest declared side in pixels, or None)
+        self.touch_icons: list[tuple[str, str, int | None]] = []
+        self.icons: list[tuple[str, str, int | None]] = []
         self.in_body = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -57,15 +58,36 @@ class _ArtworkFinder(HTMLParser):
         if tag != "link" or not (href := by_name.get("href")):
             return
         rels = set(by_name.get("rel", "").casefold().split())
-        candidate = (href, by_name.get("type", "").split(";")[0].casefold())
+        candidate = (href, by_name.get("type", "").split(";")[0].casefold(), _largest_side(by_name.get("sizes", "")))
         if any(rel.startswith("apple-touch-icon") for rel in rels):
             self.touch_icons.append(candidate)
         elif "icon" in rels:
             self.icons.append(candidate)
 
 
+def _largest_side(sizes: str) -> int | None:
+    """The biggest pixel side a `sizes` attribute declares, if it says."""
+    sides = []
+    for token in sizes.casefold().split():
+        width, _, height = token.partition("x")
+        if width.isdigit() and height.isdigit():
+            sides.append(max(int(width), int(height)))
+    return max(sides) if sides else None
+
+
+#: A touch icon this large is a square identity mark, drawn for exactly the
+#: tile it is going into. Smaller icons are favicons: last resort.
+_TILE_SIDE = 120
+
+
 def artwork_url_in_html(html: str, page_url: str) -> str | None:
-    """The best raster artwork named by an HTML head, made absolute."""
+    """The best raster artwork named by an HTML head, made absolute.
+
+    A show's artwork is a square tile, so a large touch icon — the site's
+    own square mark — comes first. The social card is next: a photo that
+    happened to illustrate the front page as often as a logo. Small icons
+    are favicons and come last.
+    """
 
     finder = _ArtworkFinder()
     try:
@@ -75,11 +97,15 @@ def artwork_url_in_html(html: str, page_url: str) -> str | None:
         pass
 
     base_url = urljoin(page_url, finder.base_href) if finder.base_href else page_url
+    by_size = sorted(finder.touch_icons + finder.icons, key=lambda icon: icon[2] or 0, reverse=True)
+    marks = [icon for icon in finder.touch_icons if icon[2] is None or icon[2] >= _TILE_SIDE]
+    marks += [icon for icon in finder.icons if icon[2] is not None and icon[2] >= _TILE_SIDE]
+    marks.sort(key=lambda icon: icon[2] or _TILE_SIDE, reverse=True)
     candidates = [
+        *((icon[0], icon[1]) for icon in marks),
         *((url, "") for url in finder.open_graph),
         *((url, "") for url in finder.twitter),
-        *finder.touch_icons,
-        *finder.icons,
+        *((icon[0], icon[1]) for icon in by_size if icon not in marks),
     ]
     for candidate, mime_type in candidates:
         if mime_type == "image/svg+xml" or urlsplit(candidate).path.casefold().endswith(".svg"):
