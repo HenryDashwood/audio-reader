@@ -865,6 +865,78 @@ def sync_beta_review_details(client: Client, app: str, listing: Listing, dry_run
     )
 
 
+def status_report(client: Client, app: str, platform: str, *, recent_builds: int = 5) -> list[str]:
+    """What App Store Connect believes, as the API reports it: every version
+    and its state, the review submissions and theirs, and the newest builds
+    with where each stands in beta review. The web page shows the same
+    things with friendlier words, and now and then different ones."""
+    lines: list[str] = []
+
+    versions = client.get(f"/apps/{app}/appStoreVersions", params={"filter[platform]": platform, "limit": 200})["data"]
+    lines.append("App Store versions:")
+    if not versions:
+        lines.append("  none")
+    for version in versions:
+        attributes = version["attributes"]
+        state = attributes.get("appStoreState")
+        line = f"  {attributes.get('versionString')}: {state}"
+        if state not in SETTLED_STATES:
+            build = client.get(f"/appStoreVersions/{version['id']}/build", allow_not_found=True).get("data")
+            line += f", build {build['attributes'].get('version')}" if build else ", no build selected"
+        lines.append(line)
+
+    submissions = client.get(
+        "/reviewSubmissions", params={"filter[app]": app, "filter[platform]": platform, "limit": 10}
+    )["data"]
+    lines.append("Review submissions:")
+    if not submissions:
+        lines.append("  none")
+    for submission in submissions:
+        attributes = submission["attributes"]
+        lines.append(f"  {attributes.get('submittedDate') or 'not yet submitted'}: {attributes.get('state')}")
+
+    builds = client.get(
+        "/builds",
+        params={
+            "filter[app]": app,
+            "sort": "-uploadedDate",
+            "limit": recent_builds,
+            "include": "preReleaseVersion",
+        },
+    )
+    marketing = {
+        item["id"]: item["attributes"].get("version")
+        for item in builds.get("included", [])
+        if item.get("type") == "preReleaseVersions"
+    }
+    lines.append("Recent builds:")
+    if not builds["data"]:
+        lines.append("  none")
+    for build in builds["data"]:
+        attributes = build["attributes"]
+        release = build.get("relationships", {}).get("preReleaseVersion", {}).get("data") or {}
+        marketing_version = marketing.get(release.get("id"), "?")
+        line = f"  {marketing_version} ({attributes.get('version')}): {attributes.get('processingState')}"
+        if attributes.get("expired"):
+            line += ", expired"
+        review = client.get(f"/builds/{build['id']}/betaAppReviewSubmission", allow_not_found=True).get("data")
+        if review:
+            line += f", beta review {review['attributes'].get('betaReviewState')}"
+        else:
+            line += ", not sent for beta review"
+        lines.append(line)
+    return lines
+
+
+def status_command() -> int:
+    listing = load_listing()
+    client = Client()
+    app = app_id(client, listing.config["bundleId"])
+    for line in status_report(client, app, listing.config["platform"]):
+        print(line)
+    return 0
+
+
 def validate_command() -> int:
     listing = load_listing()
     warnings = validate_listing(listing)
@@ -925,6 +997,9 @@ def main() -> int:
         help="read remote state and print changes without writing",
     )
     sync_parser.add_argument("--review-notes", action="store_true", help="also sync private App Review details")
+    subparsers.add_parser(
+        "status", help="print every version, review submission and recent build as the API sees them"
+    )
     testflight_parser = subparsers.add_parser(
         "testflight", help="write the beta app description, and optionally Beta App Review details, to TestFlight"
     )
@@ -939,6 +1014,8 @@ def main() -> int:
     try:
         if args.command == "validate":
             return validate_command()
+        if args.command == "status":
+            return status_command()
         if args.command == "testflight":
             return testflight_command(args)
         return sync_command(args)

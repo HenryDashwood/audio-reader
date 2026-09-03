@@ -480,3 +480,49 @@ def test_beta_review_details_need_every_contact_field(monkeypatch):
 
     with pytest.raises(store.Failure, match="ASC_REVIEW_CONTACT_PHONE"):
         store.sync_beta_review_details(FakeTestFlightClient(), "app-id", listing(), dry_run=False)
+
+
+class FakeStatusClient:
+    def get(self, path: str, **kwargs) -> dict:
+        if path.endswith("/appStoreVersions"):
+            return {
+                "data": [
+                    {"id": "v13", "attributes": {"versionString": "1.3.0", "appStoreState": "WAITING_FOR_REVIEW"}},
+                    {
+                        "id": "v12",
+                        "attributes": {"versionString": "1.2.0", "appStoreState": "REPLACED_WITH_NEW_VERSION"},
+                    },
+                ]
+            }
+        if path == "/appStoreVersions/v13/build":
+            return {"data": {"attributes": {"version": "160"}}}
+        if path == "/reviewSubmissions":
+            return {"data": [{"attributes": {"submittedDate": "2026-08-30T10:14:00Z", "state": "CANCELING"}}]}
+        if path == "/builds":
+            return {
+                "data": [
+                    {
+                        "id": "b174",
+                        "attributes": {"version": "174", "processingState": "VALID", "expired": False},
+                        "relationships": {"preReleaseVersion": {"data": {"id": "pre14"}}},
+                    }
+                ],
+                "included": [{"id": "pre14", "type": "preReleaseVersions", "attributes": {"version": "1.4.0"}}],
+            }
+        if path == "/builds/b174/betaAppReviewSubmission":
+            return {"data": {"attributes": {"betaReviewState": "WAITING_FOR_REVIEW"}}}
+        raise AssertionError(path)
+
+
+def test_status_reports_versions_submissions_and_builds_as_the_api_sees_them():
+    lines = store.status_report(FakeStatusClient(), "app-id", "IOS")
+
+    assert lines == [
+        "App Store versions:",
+        "  1.3.0: WAITING_FOR_REVIEW, build 160",
+        "  1.2.0: REPLACED_WITH_NEW_VERSION",
+        "Review submissions:",
+        "  2026-08-30T10:14:00Z: CANCELING",
+        "Recent builds:",
+        "  1.4.0 (174): VALID, beta review WAITING_FOR_REVIEW",
+    ]

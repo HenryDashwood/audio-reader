@@ -104,7 +104,16 @@ ASC_KEY_P8_BASE64=... \
 ```
 
 Use `--dry-run` with those credentials to inspect the remote plan without
-writing. Screenshot sets are only replaced when their ordered file names and
+writing. To see what App Store Connect itself believes, which the web page
+sometimes puts in friendlier words and occasionally different ones:
+
+```bash
+uv run scripts/app_store_sync.py status
+```
+
+It prints every App Store version with its API state and selected build,
+the review submissions and theirs (a withdrawal shows as `CANCELING` until
+it lands), and the newest builds with their beta review state. Screenshot sets are only replaced when their ordered file names and
 checksums differ. An API key with the App Manager role is required.
 
 Every distributed build, tagged or not, also syncs the TestFlight test
