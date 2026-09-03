@@ -113,7 +113,10 @@ uv run scripts/app_store_sync.py status
 
 It prints every App Store version with its API state and selected build,
 the review submissions and theirs (a withdrawal shows as `CANCELING` until
-it lands), and the newest builds with their beta review state. Screenshot sets are only replaced when their ordered file names and
+it lands), the newest builds with their beta review state, and each beta
+group with its tester count and the builds it can see. An external group
+sees a build only once beta review has approved it; an internal group set
+to receive every build sees it as soon as processing finishes. Screenshot sets are only replaced when their ordered file names and
 checksums differ. An API key with the App Manager role is required.
 
 Every distributed build, tagged or not, also syncs the TestFlight test

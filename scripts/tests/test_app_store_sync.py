@@ -511,6 +511,29 @@ class FakeStatusClient:
             }
         if path == "/builds/b174/betaAppReviewSubmission":
             return {"data": {"attributes": {"betaReviewState": "WAITING_FOR_REVIEW"}}}
+        if path == "/betaGroups":
+            return {
+                "data": [
+                    {
+                        "id": "g1",
+                        "attributes": {"name": "Team", "isInternalGroup": True, "hasAccessToAllBuilds": True},
+                    },
+                    {
+                        "id": "g2",
+                        "attributes": {
+                            "name": "Friends and Family",
+                            "isInternalGroup": False,
+                            "hasAccessToAllBuilds": False,
+                        },
+                    },
+                ]
+            }
+        if path == "/betaGroups/g1/betaTesters":
+            return {"data": [], "meta": {"paging": {"total": 1}}}
+        if path == "/betaGroups/g2/betaTesters":
+            return {"data": [], "meta": {"paging": {"total": 4}}}
+        if path == "/betaGroups/g2/builds":
+            return {"data": [{"attributes": {"version": "174"}}, {"attributes": {"version": "133"}}]}
         raise AssertionError(path)
 
 
@@ -525,4 +548,7 @@ def test_status_reports_versions_submissions_and_builds_as_the_api_sees_them():
         "  2026-08-30T10:14:00Z: CANCELING",
         "Recent builds:",
         "  1.4.0 (174): VALID, beta review WAITING_FOR_REVIEW",
+        "Beta groups:",
+        "  Team (internal, 1 testers): every build automatically",
+        "  Friends and Family (external, 4 testers): builds 174, 133",
     ]

@@ -867,9 +867,10 @@ def sync_beta_review_details(client: Client, app: str, listing: Listing, dry_run
 
 def status_report(client: Client, app: str, platform: str, *, recent_builds: int = 5) -> list[str]:
     """What App Store Connect believes, as the API reports it: every version
-    and its state, the review submissions and theirs, and the newest builds
-    with where each stands in beta review. The web page shows the same
-    things with friendlier words, and now and then different ones."""
+    and its state, the review submissions and theirs, the newest builds with
+    where each stands in beta review, and which builds each beta group can
+    see. The web page shows the same things with friendlier words, and now
+    and then different ones."""
     lines: list[str] = []
 
     versions = client.get(f"/apps/{app}/appStoreVersions", params={"filter[platform]": platform, "limit": 200})["data"]
@@ -924,6 +925,24 @@ def status_report(client: Client, app: str, platform: str, *, recent_builds: int
             line += f", beta review {review['attributes'].get('betaReviewState')}"
         else:
             line += ", not sent for beta review"
+        lines.append(line)
+
+    groups = client.get("/betaGroups", params={"filter[app]": app, "limit": 50})["data"]
+    lines.append("Beta groups:")
+    if not groups:
+        lines.append("  none")
+    for group in groups:
+        attributes = group["attributes"]
+        kind = "internal" if attributes.get("isInternalGroup") else "external"
+        testers = client.get(f"/betaGroups/{group['id']}/betaTesters", params={"limit": 1})
+        tester_count = testers.get("meta", {}).get("paging", {}).get("total", "?")
+        line = f"  {attributes.get('name')} ({kind}, {tester_count} testers)"
+        if attributes.get("hasAccessToAllBuilds"):
+            line += ": every build automatically"
+        else:
+            group_builds = client.get(f"/betaGroups/{group['id']}/builds", params={"limit": recent_builds})["data"]
+            numbers = ", ".join(str(item["attributes"].get("version")) for item in group_builds) or "none"
+            line += f": builds {numbers}"
         lines.append(line)
     return lines
 
