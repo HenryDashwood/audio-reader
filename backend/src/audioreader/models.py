@@ -84,6 +84,10 @@ class Feed(Base):
     #: When a companion was last looked for, so a newsletter without a feed
     #: is not searched for on every pass.
     companion_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    #: The newsletter's cursor into its companion, like a subscription's: the
+    #: companion's posts at or below it were the archive when the two were
+    #: linked, or when she last cleared Latest, and stay off that list.
+    companion_latest_after_episode_id: Mapped[int | None]
     description: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None]
     site_url: Mapped[str | None]

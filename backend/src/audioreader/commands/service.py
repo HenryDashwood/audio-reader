@@ -45,6 +45,7 @@ from audioreader.feeds.search import (
 )
 from audioreader.feeds.service import AlreadySubscribedError
 from audioreader.models import FEED_SOURCE_EMAIL, PLAYABLE_EPISODE, Episode, Feed, Subscription, User, utcnow
+from audioreader.newsletters import companions
 from audioreader.newsletters import service as newsletters
 from audioreader.newsletters.service import PendingSender, spoken_address
 from audioreader.text import search_key, summarise
@@ -201,12 +202,11 @@ async def build_candidates(
     names it. So the list is the newest items *plus* whatever the words she
     used match anywhere in her library.
     """
-    subscribed = select(Episode).join(Subscription, Subscription.feed_id == Episode.feed_id)
-    return _to_candidates(
-        await _recent_and_matching(
-            session, subscribed, Subscription.user_id == user.id, transcript, limit, search_limit
-        )
-    )
+    # Her subscriptions, and the companion feeds of her newsletters — minus a
+    # companion's copy of a post she was sent, which is hers to hear in full.
+    hers = Episode.feed_id.in_(companions.her_feed_ids(user.id))
+    episodes = await _recent_and_matching(session, select(Episode), hers, transcript, limit, search_limit)
+    return _to_candidates(await companions.without_feed_copies(session, episodes, user.id))
 
 
 async def feed_candidates(

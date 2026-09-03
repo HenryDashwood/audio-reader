@@ -15,9 +15,10 @@ named like the newsletter — Benedict Evans's essays are not his newsletter.
 
 import logging
 import re
-from datetime import datetime, timedelta
+import uuid
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
@@ -26,12 +27,14 @@ from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import matches_name
 from audioreader.models import (
+    APPROVAL_APPROVED,
     APPROVAL_BLOCKED,
     FEED_SOURCE_EMAIL,
     FEED_SOURCE_RSS,
     Episode,
     Feed,
     NewsletterSignup,
+    Subscription,
     utcnow,
 )
 
@@ -148,7 +151,12 @@ async def attach_companion(session: AsyncSession, feed: Feed, *, signup_site: st
             continue
         feed.companion_feed_id = companion.id
         feed.companion_checked_at = utcnow()
+        # What the feed already holds is the archive, not news.
+        feed.companion_latest_after_episode_id = await session.scalar(
+            select(func.max(Episode.id)).where(Episode.feed_id == companion.id)
+        )
         adopt(feed, companion)
+        await fold_subscription(session, feed)
         await session.commit()
         logger.info("linked newsletter %s to its feed %s", feed.title, companion.url)
         return companion
@@ -186,6 +194,129 @@ async def attach_missing_companions(session: AsyncSession, now: datetime | None 
             logger.exception("could not look for a companion feed for %s", feed.title)
             await session.rollback()
     return linked
+
+
+async def fold_subscription(session: AsyncSession, feed: Feed) -> bool:
+    """One row for one publication.
+
+    A newsletter whose companion she also follows by RSS would show her
+    the publication twice, and every post twice — the feed's copy and the
+    emailed one, which for a paid post is the only complete one. The RSS
+    subscription goes; the newsletter, wearing the publication's name,
+    shows the feed's posts as well. Not committed here.
+    """
+    if feed.companion_feed_id is None or feed.owner_user_id is None or feed.approval != APPROVAL_APPROVED:
+        return False
+    following = await session.scalar(
+        select(Subscription).where(Subscription.user_id == feed.owner_user_id, Subscription.feed_id == feed.id)
+    )
+    if following is None:
+        return False
+    result = await session.execute(
+        delete(Subscription).where(
+            Subscription.user_id == feed.owner_user_id, Subscription.feed_id == feed.companion_feed_id
+        )
+    )
+    folded = bool(getattr(result, "rowcount", 0))
+    if folded:
+        logger.info("folded an RSS subscription into the newsletter %s", feed.title)
+    return folded
+
+
+async def newsletter_for(session: AsyncSession, user_id: uuid.UUID, feed_id: int) -> Feed | None:
+    """The newsletter of hers that already shows this feed, if any."""
+    return await session.scalar(
+        select(Feed)
+        .join(Subscription, Subscription.feed_id == Feed.id)
+        .where(
+            Subscription.user_id == user_id,
+            Feed.owner_user_id == user_id,
+            Feed.source == FEED_SOURCE_EMAIL,
+            Feed.companion_feed_id == feed_id,
+        )
+    )
+
+
+def her_feed_ids(user_id: uuid.UUID):
+    """Every feed whose items are hers to hear: the ones she follows, and
+    the companions of the newsletters among them. A subquery."""
+    followed = select(Subscription.feed_id).where(Subscription.user_id == user_id)
+    companions = (
+        select(Feed.companion_feed_id)
+        .join(Subscription, Subscription.feed_id == Feed.id)
+        .where(Subscription.user_id == user_id, Feed.companion_feed_id.is_not(None))
+    )
+    return followed.union(companions)
+
+
+def companion_news(user_id: uuid.UUID):
+    """A companion's posts since its newsletter was linked, or since Latest
+    was last cleared — the part of the feed that is news to her. A select."""
+    return (
+        select(Episode)
+        .join(Feed, Feed.companion_feed_id == Episode.feed_id)
+        .join(Subscription, Subscription.feed_id == Feed.id)
+        .where(
+            Subscription.user_id == user_id,
+            or_(
+                Feed.companion_latest_after_episode_id.is_(None),
+                Episode.id > Feed.companion_latest_after_episode_id,
+            ),
+        )
+    )
+
+
+async def without_feed_copies(session: AsyncSession, episodes: list[Episode], user_id: uuid.UUID) -> list[Episode]:
+    """Drop a companion's copy of any post she was sent by email.
+
+    Across all her newsletters at once: the emailed copy is hers and, for
+    a paid post, the whole of it; the feed's is a preview at best.
+    """
+    pairs = (
+        await session.execute(
+            select(Feed.id, Feed.companion_feed_id)
+            .join(Subscription, Subscription.feed_id == Feed.id)
+            .where(Subscription.user_id == user_id, Feed.companion_feed_id.is_not(None))
+        )
+    ).all()
+    if not pairs:
+        return episodes
+    newsletter_of = {companion_id: feed_id for feed_id, companion_id in pairs}
+    emailed = list(
+        (
+            await session.execute(
+                select(Episode.feed_id, Episode.title, Episode.link).where(
+                    Episode.feed_id.in_([feed_id for feed_id, _ in pairs])
+                )
+            )
+        ).tuples()
+    )
+    posts = {feed_id: _Posts(feed_id, [row for row in emailed if row[0] == feed_id]) for feed_id, _ in pairs}
+    kept = []
+    for episode in episodes:
+        newsletter_id = newsletter_of.get(episode.feed_id)
+        if newsletter_id is not None and posts[newsletter_id].is_the_feeds_copy(
+            episode.feed_id, episode.title, episode.link
+        ):
+            continue
+        kept.append(episode)
+    return kept
+
+
+#: Sorts an undated item last, however new its id is.
+_UNDATED = datetime.min.replace(tzinfo=UTC)
+
+
+def newest_first(episode: Episode) -> tuple[datetime, int]:
+    """A sort key for merging lists the database sorted separately.
+
+    SQLite hands back naive datetimes and Postgres aware ones; the key
+    makes them comparable rather than trusting either.
+    """
+    when = episode.published_at or _UNDATED
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when, episode.id
 
 
 async def refresh_dependents(session: AsyncSession, companion: Feed) -> None:

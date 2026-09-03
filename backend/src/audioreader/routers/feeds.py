@@ -433,7 +433,8 @@ async def recent_episodes(
     show's own page, and the voice pipeline still offers it, so nothing is
     lost — only the "what's new" list stops repeating itself.
     """
-    episodes = (
+    newest = (Episode.published_at.desc().nulls_last(), Episode.id.desc())
+    episodes = list(
         await session.scalars(
             select(Episode)
             .options(joinedload(Episode.feed))
@@ -447,10 +448,25 @@ async def recent_episodes(
                 ),
                 Episode.id.not_in(positions.filed_away(user)),
             )
-            .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
+            .order_by(*newest)
             .limit(limit)
         )
-    ).all()
+    )
+    # A newsletter's companion feed has posts too: the ones since they were
+    # linked that never came by email. Its copy of an emailed post is not
+    # one of them — hers is the one in the list.
+    from_companions = list(
+        await session.scalars(
+            companions.companion_news(user.id)
+            .options(joinedload(Episode.feed))
+            .where(PLAYABLE_EPISODE, Episode.id.not_in(positions.filed_away(user)))
+            .order_by(*newest)
+            .limit(limit)
+        )
+    )
+    if from_companions:
+        from_companions = await companions.without_feed_copies(session, from_companions, user.id)
+        episodes = sorted(episodes + from_companions, key=companions.newest_first, reverse=True)[:limit]
     return await episodes_read(session, user, episodes)
 
 

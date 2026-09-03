@@ -629,10 +629,13 @@ async def approve(session: AsyncSession, user: User, feed_id: int) -> Feed | Non
     )
     if subscribed is None:
         session.add(Subscription(user_id=user.id, feed_id=feed.id, latest_after_episode_id=None))
-    await session.commit()
     # Its feed on the web, for the archive and the artwork. Best effort: the
     # sites involved are other people's, and following her is what matters.
-    from audioreader.newsletters.companions import attach_companion
+    from audioreader.newsletters.companions import attach_companion, fold_subscription
+
+    # Linked while it was still waiting, by the sweep: one row, from now.
+    await fold_subscription(session, feed)
+    await session.commit()
 
     try:
         await attach_companion(session, feed)

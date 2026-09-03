@@ -118,6 +118,13 @@ async def subscribe(session: AsyncSession, url: str, user: User) -> Feed:
     feed = await ensure_feed(session, url)
     if await is_subscribed(session, feed.id, user):
         raise AlreadySubscribedError(url)
+    # A newsletter of hers that already shows this feed is the subscription:
+    # a second row would show her the publication, and every post, twice.
+    from audioreader.newsletters.companions import newsletter_for  # circular at module level
+
+    newsletter = await newsletter_for(session, user.id, feed.id)
+    if newsletter is not None:
+        return newsletter
     # Following a show starts an inbox for what arrives next. Its existing
     # catalogue remains browsable and searchable, but subscribing must not
     # turn years of history into dozens of allegedly new items.
@@ -151,6 +158,17 @@ async def clear_latest(session: AsyncSession, user: User) -> None:
     latest_by_feed = {feed_id: latest_episode_id for feed_id, latest_episode_id in latest_rows.tuples()}
     for subscription in subscriptions:
         subscription.latest_after_episode_id = latest_by_feed.get(subscription.feed_id)
+    # A newsletter's companion has a cursor of its own, kept on the newsletter.
+    linked = await session.scalars(
+        select(Feed).where(
+            Feed.id.in_([subscription.feed_id for subscription in subscriptions]),
+            Feed.companion_feed_id.is_not(None),
+        )
+    )
+    for feed in linked:
+        feed.companion_latest_after_episode_id = await session.scalar(
+            select(func.max(Episode.id)).where(Episode.feed_id == feed.companion_feed_id)
+        )
     await session.commit()
 
 

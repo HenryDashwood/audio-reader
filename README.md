@@ -432,9 +432,14 @@ names it), or on the sender's domain when the feed there is named like the
 newsletter. The email feed
 takes the companion's name, artwork, blurb and site link, its page shows the
 companion's archive with one row per post (her emailed copy wins over the
-feed's), the companion is polled and never pruned, and Latest still shows
-only what was emailed. Linked on approval and by a sweep after each poll
-pass; a newsletter with no feed is looked for again after
+feed's), and the companion is polled and never pruned. Latest shows what
+was emailed plus any post the feed gained since the link that never came by
+email, never the feed's copy of an emailed post — for a paid post the email
+is the whole of it and the feed a preview. One row for one publication: an
+RSS subscription to the companion folds into the newsletter, and
+subscribing to the feed of a newsletter she follows returns the newsletter.
+Linked on approval and by a sweep after each poll pass; a newsletter with
+no feed is looked for again after
 `AUDIOREADER_NEWSLETTER_COMPANION_RETRY_DAYS` (default 7).
 
 Substack has one extra step. It delivers nothing to an address it has not

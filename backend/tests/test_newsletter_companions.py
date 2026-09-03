@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
+from audioreader.commands import service as commands
 from audioreader.config import settings
 from audioreader.feeds import service as feed_service
 from audioreader.feeds.poller import poll_all_feeds, prune_orphaned_feeds
@@ -39,6 +40,7 @@ def rss(title: str = "Baldwin", items: tuple[tuple[str, str, str], ...] = ()) ->
 {entries}</channel></rss>""".encode()
 
 
+POST_C = ("Post C", "https://www.bensouthwood.co.uk/p/post-c", "Wed, 02 Sep 2026 09:00:00 +0000")
 ITEMS = (
     ("Post B", "https://www.bensouthwood.co.uk/p/post-b", "Tue, 01 Sep 2026 09:00:00 +0000"),
     ("Post A", "https://www.bensouthwood.co.uk/p/post-a", "Mon, 24 Aug 2026 09:00:00 +0000"),
@@ -218,13 +220,99 @@ class TestWhatSheSees:
         assert post_a["link"] == "https://email.mg.substack.com/c/track-a"
         assert all(row["feed_title"] == "Baldwin" for row in rows)
 
-    async def test_latest_shows_only_what_was_emailed(self, client, session, user, substack_site):
+    async def test_latest_shows_what_was_emailed_and_not_the_archive(self, client, session, user, substack_site):
         feed = await newsletter(session, user)
         await companions.attach_companion(session, feed)
 
         latest = (await client.get("/episodes")).json()
 
+        # Post B and Post Zero were already in the feed when it was linked.
         assert [row["title"] for row in latest] == ["Post A"]
+
+    async def test_a_post_the_feed_gets_later_is_news_until_it_is_emailed(self, client, session, user, substack_site):
+        feed = await newsletter(session, user)
+        await companions.attach_companion(session, feed)
+        newer = (POST_C, *ITEMS)
+        substack_site.respond(content=rss(items=newer), content_type="application/rss+xml")
+        await poll_all_feeds(session)
+
+        latest = (await client.get("/episodes")).json()
+        assert [(row["title"], row["feed_title"]) for row in latest] == [("Post C", "Baldwin"), ("Post A", "Baldwin")]
+
+        # Then her copy arrives by email: one row, hers.
+        session.add(
+            Episode(
+                feed_id=feed.id,
+                guid="issue-c",
+                title="Post C",
+                content_html="<p>Post C as emailed, in full.</p>",
+                link="https://email.mg.substack.com/c/track-c",
+                published_at=utcnow(),
+            )
+        )
+        await session.commit()
+        latest = (await client.get("/episodes")).json()
+        assert [row["title"] for row in latest] == ["Post C", "Post A"]
+        assert latest[0]["link"] == "https://email.mg.substack.com/c/track-c"
+
+    async def test_clearing_latest_puts_the_feeds_news_behind_her_too(self, client, session, user, substack_site):
+        feed = await newsletter(session, user)
+        await companions.attach_companion(session, feed)
+        newer = (POST_C, *ITEMS)
+        substack_site.respond(content=rss(items=newer), content_type="application/rss+xml")
+        await poll_all_feeds(session)
+        assert [row["title"] for row in (await client.get("/episodes")).json()] == ["Post C", "Post A"]
+
+        await client.delete("/episodes")
+
+        assert (await client.get("/episodes")).json() == []
+
+
+class TestOneRowForOnePublication:
+    async def test_her_rss_subscription_folds_into_the_newsletter(self, client, session, user, substack_site):
+        await feed_service.subscribe(session, FEED_URL, user)
+        feed = await newsletter(session, user)
+
+        await companions.attach_companion(session, feed)
+
+        shows = (await client.get("/feeds")).json()
+        assert [(show["id"], show["title"], show["source"]) for show in shows] == [(feed.id, "Baldwin", "email")]
+        # The companion is still polled, for her archive.
+        assert await session.get(Feed, feed.companion_feed_id) is not None
+
+    async def test_following_a_sender_linked_while_waiting_folds_too(self, client, session, user, substack_site):
+        await feed_service.subscribe(session, FEED_URL, user)
+        feed = await newsletter(session, user, subscribed=False)
+        feed.approval = "pending"
+        await session.commit()
+        await companions.attach_missing_companions(session)
+
+        await client.post(f"/newsletters/{feed.id}/approve")
+
+        shows = (await client.get("/feeds")).json()
+        assert [show["id"] for show in shows] == [feed.id]
+
+    async def test_subscribing_to_the_feed_of_a_newsletter_she_follows_is_the_newsletter(
+        self, client, session, user, substack_site
+    ):
+        feed = await newsletter(session, user)
+        await companions.attach_companion(session, feed)
+
+        response = await client.post("/feeds", json={"url": SITE})
+
+        assert response.status_code == 201 and response.json()["id"] == feed.id
+        assert [show["id"] for show in (await client.get("/feeds")).json()] == [feed.id]
+
+    async def test_the_voice_can_reach_the_archive_but_not_the_feeds_copy(self, session, user, substack_site):
+        feed = await newsletter(session, user)
+        await companions.attach_companion(session, feed)
+
+        candidates = await commands.build_candidates(session, user, "play post zero", limit=10, search_limit=5)
+
+        titles = sorted(candidate.title for candidate in candidates)
+        assert titles == ["Post A", "Post B", "Post Zero"]
+        hers = await session.scalar(select(Episode.id).where(Episode.feed_id == feed.id))
+        assert next(candidate.id for candidate in candidates if candidate.title == "Post A") == hers
 
     async def test_the_feed_wears_the_publications_artwork(self, client, session, user, substack_site):
         feed = await newsletter(session, user)
