@@ -44,8 +44,12 @@ app-store-fixtures:
 	@mkdir -p build
 	@cd backend && AUDIOREADER_ENVIRONMENT=development AUDIOREADER_DATABASE_URL="sqlite+aiosqlite:///$(CURDIR)/build/app-store-screenshots.sqlite" uv run python ../scripts/seed_app_store_screenshots.py
 
+# The inbound domain is the real one so the Newsletters screen shows an
+# address of the shape she would be given; the fixture token is invented, so
+# nothing sent there arrives anywhere. The secret is a placeholder that merely
+# switches the feature on for this isolated backend.
 app-store-backend:
-	@cd backend && AUDIOREADER_ENVIRONMENT=development AUDIOREADER_DEVELOPMENT_AUTH_TOKEN=hearful-local-development AUDIOREADER_POLL_INTERVAL_SECONDS=0 AUDIOREADER_DATABASE_URL="sqlite+aiosqlite:///$(CURDIR)/build/app-store-screenshots.sqlite" uv run uvicorn audioreader.main:app --reload
+	@cd backend && AUDIOREADER_ENVIRONMENT=development AUDIOREADER_DEVELOPMENT_AUTH_TOKEN=hearful-local-development AUDIOREADER_POLL_INTERVAL_SECONDS=0 AUDIOREADER_INBOUND_EMAIL_DOMAIN=magpieinbox.com AUDIOREADER_INBOUND_EMAIL_SECRET=app-store-screenshots AUDIOREADER_DATABASE_URL="sqlite+aiosqlite:///$(CURDIR)/build/app-store-screenshots.sqlite" uv run uvicorn audioreader.main:app --reload
 
 app-store-screenshot:
 	@./scripts/capture_app_store_screenshot.sh

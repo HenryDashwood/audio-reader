@@ -8,9 +8,13 @@ You can make requests by tapping the microphone or through Siri, such as: “pla
 • Ask by topic, title, show, guest, or position
 • Pause, resume, skip, change speed, and set a sleep timer by voice
 • Hear articles read in the system voice you choose
+• Follow email newsletters with a newsletter address of your own
+• Keep one playback speed for podcasts and another for articles
 • Continue playback from where you stopped on another device
 • Use lock-screen and headphone controls
 • Browse and play everything on screen if you prefer
+
+Newsletters that only exist as email can be followed too. Magpie gives you a newsletter address of your own to hand over instead of your inbox, or signs you up itself when you paste in a newsletter's web address. The first time a sender writes, Magpie asks whether to follow it. Follow one and each issue is read aloud like any article, without the unsubscribe links and footers that emails carry, and Latest lists the issues alongside your podcasts and blog posts.
 
 Magpie supports open podcast and RSS feeds, and every article includes a direct link to the original web page.
 

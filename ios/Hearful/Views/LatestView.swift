@@ -109,6 +109,11 @@ struct LatestView: View {
         async let episodes: Void = model.load()
         async let pending: Void = pendingModel.load()
         _ = await (episodes, pending)
+        // A screenshot launch that named an article opens it once, from the
+        // list it belongs to, the way a tap on its row would have.
+        if case .article(let id) = ScreenshotRoute.requested, openEpisode == nil {
+            openEpisode = model.availableEpisodes.first { $0.id == id }
+        }
     }
 
     private func episodeList(_ episodes: [Episode], offline: Bool) -> some View {
@@ -171,6 +176,13 @@ final class LatestModel: ObservableObject {
     @Published private(set) var state: State = .loading
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
+
+    var availableEpisodes: [Episode] {
+        switch state {
+        case .loaded(let episodes), .stale(let episodes): episodes
+        case .loading, .failed: []
+        }
+    }
 
     init(
         api: HearfulAPIProtocol = HearfulAPI(),

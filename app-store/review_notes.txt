@@ -6,12 +6,14 @@ Suggested path, which takes about two minutes:
 
 1. Sign in with Apple on the first screen.
 2. Tap the microphone button at the top right. Read and allow the AI data-sharing screen, then allow the microphone and speech-recognition prompts.
-3. Say “subscribe to In Our Time”. The app searches, subscribes and confirms aloud. The show now appears in the Shows tab.
+3. Say “subscribe to In Our Time”. The app searches, subscribes and confirms aloud. The show now appears in the Following tab.
 4. Tap the microphone again and say “play the latest In Our Time”. The app confirms what it found and starts playing.
 5. Tap the microphone and say “pause”, then “carry on”.
 
-The Shows search also finds subscribed shows, episodes in the listener’s stored library, public podcasts, pasted feed or homepage addresses, and Apple Podcasts sharing links. If a publication is absent from the public directory, the explicit Search the web button offers the consented AI fallback. Episodes can also be played by tapping them.
+The Following search also finds subscribed shows, episodes in the listener’s stored library, public podcasts, pasted feed or homepage addresses, and Apple Podcasts sharing links. If a publication is absent from the public directory, the explicit Search the web button offers the consented AI fallback. Episodes can also be played by tapping them.
 
 An account is required because the app’s content is the listener’s own library and their position in each episode, stored server-side so it follows them between devices. Sign in with Apple is the only method offered. Account deletion is available in Settings and also revokes the Sign in with Apple connection.
 
-Speech is converted to text on the device. Only the text is sent to our server, never an audio recording. Before the first AI request, the app explicitly asks permission to send that text and recent episode details to OpenRouter and its model provider. Permission can be withdrawn under Settings → Privacy & Support. The privacy policy describes this in full.
+Newsletters that only exist as email are supported through a private inbound address. Settings → Newsletters shows the address for the signed-in account, created on first view. Any email sent to that address is delivered to the app: the first message from a new sender appears under “Waiting for your answer” at the top of the Latest tab, with Follow and Block buttons, and nothing from it is read until it has been followed. To test, send any email from your own account to the address shown in Settings and reopen Latest shortly afterwards. Following the sender turns it into a show in Following and reads its messages aloud like any article. When a pasted web address in the Following search has no feed, a Sign up by email button asks the newsletter's own sign-up form to send its issues to that address instead. Mail is received by a Cloudflare Email Routing worker and handed to our server, which keeps the message so it can be read aloud; blocking a sender discards its mail unread.
+
+Speech is converted to text on the device. Only the text is sent to our server, never an audio recording. Before the first AI request, the app explicitly asks permission to send that text and recent episode details to OpenAI. Permission can be withdrawn under Settings → Privacy & Support. The privacy policy describes this in full.

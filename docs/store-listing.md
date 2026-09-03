@@ -24,6 +24,12 @@ read on the TestFlight invitation.*
 > and a sleep timer. Every article includes a direct link to the original web
 > page.
 >
+> Newsletters that only exist as email can be followed too. Settings gives you
+> a newsletter address of your own to hand over instead of your inbox, or
+> Magpie can sign you up itself from a newsletter's web address. The first
+> time a sender writes, Magpie asks whether to follow it, and then reads each
+> issue aloud without the unsubscribe links and footers emails carry.
+>
 > The app saves your playback position in every episode and is designed so the
 > whole app can be used without looking at the screen. If you use VoiceOver,
 > that is the way it is meant to be used.
@@ -40,6 +46,7 @@ Everything is reachable by voice. That is the main thing to try.
 - Ask in different ways: by topic ("the one about the Delian League"), by position ("the latest"), by show, or by guest.
 - Try the transport words while something is playing: pause, skip, go back, faster, slower.
 - Set a sleep timer e.g "stop in twenty minutes" and cancel it.
+- Find your newsletter address in Settings, give it to an email-only newsletter (or send it an email yourself), then answer the sender that appears at the top of Latest and listen to what it sent.
 - Subscribe to a blog or newsletter and play an article. It should read in the voice chosen under Settings, and pause, resume and scrub from the lock screen and headphones like any podcast.
 - Change the reading voice in Settings and play the article again.
 - Open an article on screen and tap the Safari button to check the original page opens.

@@ -19,14 +19,23 @@ struct ContentView: View {
     @EnvironmentObject private var auth: AuthController
     @State private var showingVoice = false
     @State private var showingNowPlaying = false
-    @State private var selectedTab: AppTab = .shows
-    @State private var lastContentTab: AppTab = .shows
+    @State private var selectedTab: AppTab = Self.initialTab
+    @State private var lastContentTab: AppTab = Self.initialTab
     @State private var showsOpenEpisode: Episode?
     @State private var latestOpenEpisode: Episode?
     @State private var serverGeneration = 0
 
     @ObservedObject private var metrics = TabBarMetrics.shared
     @ObservedObject private var reader = ArticleControlsModel.shared
+
+    /// Where a screenshot launch asked to start; Following otherwise.
+    private static var initialTab: AppTab {
+        switch ScreenshotRoute.requested {
+        case .latest, .article: .latest
+        case .settings: .settings
+        case .following, .show, nil: .shows
+        }
+    }
 
     /// How far to raise the mini player so it sits on the tab bar rather than
     /// wherever this overlay happens to end. Where that edge lands is

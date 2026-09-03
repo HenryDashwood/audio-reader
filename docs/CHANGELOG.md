@@ -61,6 +61,16 @@ Stuff or Benedict's Newsletter. Worth trying:
   as well as the issues you were sent, with nothing listed twice. Latest
   should still show only what arrived by email.
 
+Also in this build:
+
+- Podcasts and articles now keep separate playback speeds. In Settings,
+  under **Playback Speed**, set one for podcasts and another for articles,
+  then move between an episode and a written piece: each should come back
+  at its own speed, and the speed you had before should carry over to both.
+- Written pieces in Latest and on a show's page say how long they are in
+  words, the way podcasts say minutes. Opening one whose feed only carried a
+  teaser should fill the count in, and it should still be there afterwards.
+
 Please say which newsletter you tried and whether anything in the email
 chrome was still read aloud, or anything from the writing was missing.
 

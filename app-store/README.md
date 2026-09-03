@@ -54,9 +54,27 @@ IOS_SIMULATOR_ID=<udid> \
 The fixture command uses an isolated SQLite database under the ignored
 `build/` directory, so it cannot alter the ordinary development database. It
 rebuilds only that dedicated database with records under the reserved
-`hearful.invalid` domain. It gives phone and iPad captures the same three shows,
-six episodes and listening position every time; the app itself still fetches
-and renders them through its real backend and production views.
+`hearful.invalid` domain. It gives phone and iPad captures the same three
+feeds, one followed email newsletter, one sender waiting for an answer, their
+episodes and issues, a newsletter address and a listening position every time;
+the app itself still fetches and renders them through its real backend and
+production views. The backend target switches newsletters on with the real
+inbound domain and an invented address, so the Settings screen shows the
+shape she would be given without anything sent there arriving anywhere.
+
+Debug builds open a named screen when launched with
+`HEARFUL_SCREENSHOT_SCREEN`, so a capture never depends on injecting taps into
+the simulator: `following`, `latest`, `settings`, `show:<id>` for a followed
+show's page, or `article:<episode id>` for a piece open for reading, with the
+ids being the ones the fixture backend hands out (`curl -H 'Authorization:
+Bearer hearful-local-development' localhost:8000/feeds`). Release builds ignore
+the variable.
+
+```bash
+xcrun simctl terminate <udid> com.henrydashwood.hearful
+SIMCTL_CHILD_HEARFUL_SCREENSHOT_SCREEN=show:4 \
+  xcrun simctl launch <udid> com.henrydashwood.hearful
+```
 
 Capture on the matching iPhone and iPad simulators. The command normalises the
 status bar before capture and refuses an unknown display type or unsafe file

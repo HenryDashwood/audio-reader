@@ -12,10 +12,11 @@ struct LibraryView: View {
     @State private var searchText = ""
     @State private var searchScope: LibrarySearchScope = .all
     @State private var showingAIConsent = false
+    @State private var path = NavigationPath()
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if searchText.isEmpty {
                     library
@@ -72,7 +73,16 @@ struct LibraryView: View {
                 }
             }
         }
-        .task { await model.load() }
+        .task {
+            await model.load()
+            // A screenshot launch that named a show opens it once, on top of
+            // the list it came from, the way a tap would have.
+            if case .show(let id) = ScreenshotRoute.requested,
+                let show = model.availableShows.first(where: { $0.id == id })
+            {
+                path.append(show)
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
             Task { await model.load() }
         }
