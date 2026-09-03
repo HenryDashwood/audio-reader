@@ -40,9 +40,9 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
     let id: Int
     let title: String
     let description: String?
-    /// Who wrote it, where the feed says. Kept as item authorship rather than
-    /// used for the reader's source line, which names the containing feed;
-    /// nil for most podcasts and anything stored before the field existed.
+    /// Who wrote it, where the feed says. Shown separately from the containing
+    /// publication in the article reader; nil for most podcasts and anything
+    /// stored before the field existed.
     var author: String?
     /// The podcast or publication this item belongs to.
     var feedTitle: String? = nil

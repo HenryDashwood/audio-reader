@@ -130,7 +130,7 @@ struct ArticleView: View {
                     document: ArticleDocument.page(
                         body: ArticleDocument.header(
                             title: episode.title, feedTitle: episode.feedTitle,
-                            feedURL: episode.feedURL,
+                            feedURL: episode.feedURL, author: episode.author,
                             publishedAt: episode.publishedAt)
                             + ArticleDocument.paragraphs(blurb),
                         pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize),
@@ -177,7 +177,7 @@ struct ArticleView: View {
         ArticleDocument.page(
             body: ArticleDocument.header(
                 title: episode.title, feedTitle: episode.feedTitle,
-                feedURL: episode.feedURL,
+                feedURL: episode.feedURL, author: episode.author,
                 publishedAt: episode.publishedAt)
                 + ArticleDocument.articleBody(article.body),
             pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize)
@@ -977,7 +977,8 @@ private struct ArticleWebView: UIViewRepresentable {
 /// The page the article is rendered into.
 enum ArticleDocument {
     /// Everything above the first paragraph: the article's title, then the
-    /// podcast or publication it belongs to and when it was published.
+    /// podcast or publication it belongs to, its author, and when it was
+    /// published.
     ///
     /// Title and byline live in the document rather than in the bar above it,
     /// so they scroll away like the top of any article instead of sitting
@@ -988,18 +989,31 @@ enum ArticleDocument {
     /// That is a fact about the app rather than about the piece, and the
     /// scrubber says it the moment she starts listening anyway.
     static func header(
-        title: String, feedTitle: String?, feedURL: URL?, publishedAt: Date?
+        title: String, feedTitle: String?, feedURL: URL?, author: String?, publishedAt: Date?
     ) -> String {
         var header = "<h1>\(ArticleTextModel.escaped(title))</h1>"
         var meta: [String] = []
-        if let feedTitle = feedTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !feedTitle.isEmpty
-        {
+        let publication = feedTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let feedTitle = publication, !feedTitle.isEmpty {
             let name = ArticleTextModel.escaped(feedTitle)
             meta.append(feedURL == nil ? name : "<a href=\"hearful://feed\">\(name)</a>")
         }
+
+        if let author = author?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !author.isEmpty
+        {
+            // Feeds sometimes fall back to their own publication-level author.
+            // Repeating the same name on either side of a dot adds no useful
+            // information; item-specific authors still appear here.
+            let duplicatesPublication = publication.map {
+                $0.caseInsensitiveCompare(author) == .orderedSame
+            } ?? false
+            if !duplicatesPublication {
+                meta.append(ArticleTextModel.escaped(author))
+            }
+        }
         // Cached items from an older backend may not name their feed; the line
-        // is then the date alone, or is not there.
+        // then contains whichever author or date is available, or is not there.
         if let publishedAt {
             meta.append(
                 ArticleTextModel.escaped(

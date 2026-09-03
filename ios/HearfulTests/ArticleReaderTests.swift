@@ -555,16 +555,17 @@ struct ArticleHeaderTests {
     /// the line and in which order, not about which country reads it.
     private var date: String { published.formatted(.dateTime.day().month(.wide).year()) }
 
-    @Test func theBylineLinksToTheContainingFeedAndShowsWhenItWasPublished() {
+    @Test func theBylineShowsPublicationAuthorAndDateInOrder() {
         let header = ArticleDocument.header(
             title: "The Beauty Of Settled Science", feedTitle: "Astral Codex Ten",
             feedURL: URL(string: "https://www.astralcodexten.com/feed"),
+            author: "Ada Whitfield",
             publishedAt: published)
 
         #expect(header.contains("<h1>The Beauty Of Settled Science</h1>"))
         #expect(
             header.contains(
-                "<p class=\"meta\"><a href=\"hearful://feed\">Astral Codex Ten</a> · \(date)</p>"))
+                "<p class=\"meta\"><a href=\"hearful://feed\">Astral Codex Ten</a> · Ada Whitfield · \(date)</p>"))
     }
 
     @Test func howLongItTakesToHearIsNotInIt() {
@@ -572,6 +573,7 @@ struct ArticleHeaderTests {
         // The scrubber says it the moment she starts listening.
         let header = ArticleDocument.header(
             title: "A post", feedTitle: "Ada's Blog", feedURL: nil,
+            author: nil,
             publishedAt: published)
 
         #expect(!header.contains("to listen"))
@@ -581,7 +583,8 @@ struct ArticleHeaderTests {
     @Test func anEpisodeWithoutFeedMetadataShowsItsDateAlone() {
         // Cached episodes from an older backend may not identify their feed.
         let header = ArticleDocument.header(
-            title: "A post", feedTitle: nil, feedURL: nil, publishedAt: published)
+            title: "A post", feedTitle: nil, feedURL: nil, author: nil,
+            publishedAt: published)
 
         #expect(header.contains("<p class=\"meta\">\(date)</p>"))
     }
@@ -589,7 +592,8 @@ struct ArticleHeaderTests {
     @Test func aBlankFeedTitleIsNotADanglingSeparator() {
         let header = ArticleDocument.header(
             title: "A post", feedTitle: "   ",
-            feedURL: URL(string: "https://example.com/feed"), publishedAt: published)
+            feedURL: URL(string: "https://example.com/feed"), author: nil,
+            publishedAt: published)
 
         #expect(!header.contains("·"))
         #expect(header.contains("<p class=\"meta\">\(date)</p>"))
@@ -597,7 +601,7 @@ struct ArticleHeaderTests {
 
     @Test func withNeitherThereIsNoBylineAtAll() {
         let header = ArticleDocument.header(
-            title: "A post", feedTitle: nil, feedURL: nil, publishedAt: nil)
+            title: "A post", feedTitle: nil, feedURL: nil, author: nil, publishedAt: nil)
 
         #expect(header == "<h1>A post</h1>")
     }
@@ -605,9 +609,38 @@ struct ArticleHeaderTests {
     @Test func aFeedNameIsEscapedOnItsWayIn() {
         let header = ArticleDocument.header(
             title: "A post", feedTitle: "Ben & Jerry <b>", feedURL: nil,
+            author: nil,
             publishedAt: nil)
 
         #expect(header.contains("Ben &amp; Jerry &lt;b&gt;"))
+    }
+
+    @Test func anAuthorWithoutOtherMetadataStillGetsAByline() {
+        let header = ArticleDocument.header(
+            title: "A post", feedTitle: nil, feedURL: nil, author: "Mara Bell",
+            publishedAt: nil)
+
+        #expect(header.contains("<p class=\"meta\">Mara Bell</p>"))
+    }
+
+    @Test func aBlankOrPublicationLevelAuthorIsNotRepeated() {
+        let blank = ArticleDocument.header(
+            title: "A post", feedTitle: "The Dispatch", feedURL: nil, author: "   ",
+            publishedAt: published)
+        let duplicate = ArticleDocument.header(
+            title: "A post", feedTitle: "The Dispatch", feedURL: nil,
+            author: "the dispatch", publishedAt: published)
+
+        #expect(blank.contains("<p class=\"meta\">The Dispatch · \(date)</p>"))
+        #expect(duplicate.contains("<p class=\"meta\">The Dispatch · \(date)</p>"))
+    }
+
+    @Test func anAuthorNameIsEscapedOnItsWayIn() {
+        let header = ArticleDocument.header(
+            title: "A post", feedTitle: nil, feedURL: nil,
+            author: "Johnson & Johnson <News>", publishedAt: nil)
+
+        #expect(header.contains("Johnson &amp; Johnson &lt;News&gt;"))
     }
 }
 
