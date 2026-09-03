@@ -5,7 +5,7 @@ import logging
 import operator
 import re
 from collections.abc import Sequence
-from datetime import UTC, date, datetime
+from datetime import date
 from functools import reduce
 
 from pydantic import ValidationError
@@ -268,11 +268,7 @@ async def _recent_and_matching(
 
     # Newest first overall, so "the latest" is still the top of the list and
     # an older match simply sits further down with its date beside it.
-    return sorted(
-        recent + older,
-        key=lambda episode: (episode.published_at or _UNDATED, episode.id),
-        reverse=True,
-    )
+    return sorted(recent + older, key=companions.newest_first, reverse=True)
 
 
 #: A word matching more than this share of the library is describing the
@@ -355,9 +351,6 @@ def spoken_keywords(transcript: str, limit: int = 6) -> list[str]:
         if len(word) > 3 and word not in _COMMAND_WORDS and word not in keywords:
             keywords.append(word)
     return keywords[:limit]
-
-
-_UNDATED = datetime.min.replace(tzinfo=UTC)
 
 
 def _to_candidates(episodes) -> list[Candidate]:

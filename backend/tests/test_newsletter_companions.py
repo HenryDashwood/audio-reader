@@ -133,6 +133,49 @@ class TestLinking:
 
         assert companion is not None and feed.companion_feed_id == companion.id
 
+    async def test_the_signups_site_is_not_trusted_against_its_own_name(
+        self, session, user, substack_site, respx_mock
+    ):
+        # A signup for one publication answered by another's mail must not
+        # hand the wrong site over as a companion.
+        respx_mock.route(host="astralcodexten.substack.com").respond(404)
+        feed = await newsletter(session, user, sender="astralcodexten.substack.com", title="Astral Codex Ten")
+        companion = await companions.attach_companion(session, feed, signup_site=SITE, signup_name="Understanding AI")
+
+        assert companion is None and feed.companion_feed_id is None and feed.title == "Astral Codex Ten"
+
+    async def test_an_issues_own_page_names_the_site(self, session, user, respx_mock):
+        # A Ghost newsletter from a custom domain with no feed: its issue's
+        # "view in browser" link is on the site that has one.
+        respx_mock.get("https://letters.anna.test/").respond(
+            content=b'<html><head><link rel="alternate" type="application/rss+xml" href="https://letters.anna.test/rss/">'
+            b"</head></html>",
+            content_type="text/html",
+        )
+        respx_mock.get("https://letters.anna.test/rss/").respond(content=rss(title="Anna's Letters"))
+        respx_mock.route(host="letters.anna.test").respond(404)
+        respx_mock.route(host="anna.test").respond(404)
+        feed = await newsletter(session, user, sender="anna@anna.test", title="Anna Smith at Anna's Letters")
+        feed.episodes[0].link = "https://letters.anna.test/issue-12/"
+        await session.commit()
+
+        companion = await companions.attach_companion(session, feed)
+
+        assert companion is not None and companion.url == "https://letters.anna.test/rss/"
+        assert feed.title == "Anna's Letters"
+
+    async def test_a_newsletter_with_no_feed_wears_its_sites_artwork(self, session, user, respx_mock):
+        respx_mock.get("https://anna.test/").respond(
+            content=b'<html><head><meta property="og:image" content="https://anna.test/hero.png"></head></html>',
+            content_type="text/html",
+        )
+        respx_mock.route(host="anna.test").respond(404)
+        feed = await newsletter(session, user, sender="anna@anna.test", title="Anna's Letters")
+
+        assert await companions.attach_companion(session, feed) is None
+        assert feed.site_image_url == "https://anna.test/hero.png"
+        assert feed.site_url == "https://anna.test"
+
     async def test_a_shared_mail_domain_alone_is_not_a_site(self, session, user):
         feed = await newsletter(session, user, sender="news@mail.beehiiv.com", title="Capital Gains")
 
@@ -142,7 +185,7 @@ class TestLinking:
         feed = await newsletter(session, user, sender="matthewyglesias@substack.com", title="Matthew Yglesias")
 
         assert companions.sender_address(feed) == "matthewyglesias@substack.com"
-        assert companions.candidate_sites(feed) == [("https://matthewyglesias.substack.com", False)]
+        assert companions.candidate_sites(feed) == [("https://matthewyglesias.substack.com", None)]
 
     async def test_a_substack_list_id_names_its_own_site(self, session, user, substack_site):
         # What Substack really sends: a List-ID of <bensouthwood.substack.com>,
@@ -151,7 +194,7 @@ class TestLinking:
 
         assert companions.sender_address(feed) is None
         assert companions.list_host(feed) == "bensouthwood.substack.com"
-        assert companions.candidate_sites(feed) == [(SITE, False)]
+        assert companions.candidate_sites(feed) == [(SITE, None)]
         companion = await companions.attach_companion(session, feed)
         assert companion is not None and feed.companion_feed_id == companion.id
         assert feed.title == "Baldwin"
@@ -159,7 +202,7 @@ class TestLinking:
     async def test_a_list_id_host_is_a_site_only_when_named_like_the_newsletter(self, session, user):
         feed = await newsletter(session, user, sender="news.anna.test", title="Words from Anna")
 
-        assert companions.candidate_sites(feed) == [("https://news.anna.test", True)]
+        assert companions.candidate_sites(feed) == [("https://news.anna.test", "Words from Anna")]
 
     async def test_a_mailing_platforms_list_id_is_not_a_site(self, session, user):
         for key in ("abc123def.list-id.mcsv.net", "capital-gains.mail.beehiiv.com", "0123abcd"):

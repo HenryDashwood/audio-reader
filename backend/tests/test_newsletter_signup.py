@@ -402,6 +402,7 @@ class TestWhatComesBack:
             200, content=b"Confirmed"
         )
         raw = build_email(
+            to=ADDRESS,
             sender="Anna <anna@anna.test>",
             subject="Please Confirm Subscription",
             html=CONFIRMATION_HTML,
@@ -419,7 +420,7 @@ class TestWhatComesBack:
     async def test_the_first_issue_is_already_followed(self, session, user, newsletters_enabled):
         signup = await signed_up(session, user, confirmed_at=service.utcnow())
         raw = build_email(
-            sender="Anna <anna@anna.test>", subject="Words from Anna: Issue 1", message_id="<1@anna.test>"
+            to=ADDRESS, sender="Anna <anna@anna.test>", subject="Words from Anna: Issue 1", message_id="<1@anna.test>"
         )
 
         delivery = await service.receive(session, user, raw)
@@ -437,7 +438,10 @@ class TestWhatComesBack:
         # substack.com, not the site's domain.
         await signed_up(session, user, publication="Understanding AI", expected="understandingai.org")
         raw = build_email(
-            sender="Understanding AI <understandingai@substack.com>", subject="Welcome!", message_id="<w@substack.com>"
+            to=ADDRESS,
+            sender="Understanding AI <understandingai@substack.com>",
+            subject="Welcome!",
+            message_id="<w@substack.com>",
         )
 
         delivery = await service.receive(session, user, raw)
@@ -447,7 +451,9 @@ class TestWhatComesBack:
 
     async def test_matched_by_publication_name_when_the_domain_differs(self, session, user, newsletters_enabled):
         await signed_up(session, user, publication="Words from Anna", expected="anna.test")
-        raw = build_email(sender="Words from Anna <hello@sendgrid-relay.test>", message_id="<2@relay.test>")
+        raw = build_email(
+            to=ADDRESS, sender="Words from Anna <hello@sendgrid-relay.test>", message_id="<2@relay.test>"
+        )
 
         delivery = await service.receive(session, user, raw)
 
@@ -455,7 +461,9 @@ class TestWhatComesBack:
 
     async def test_mailchimps_confirmed_notice_is_not_an_issue(self, session, user, newsletters_enabled):
         await signed_up(session, user, confirmed_at=service.utcnow())
-        raw = build_email(sender="Anna <anna@anna.test>", subject="Subscription Confirmed", message_id="<n@anna.test>")
+        raw = build_email(
+            to=ADDRESS, sender="Anna <anna@anna.test>", subject="Subscription Confirmed", message_id="<n@anna.test>"
+        )
 
         delivery = await service.receive(session, user, raw)
 
@@ -476,6 +484,7 @@ class TestWhatComesBack:
         await session.commit()
         followed = respx_mock.get("https://email.mg-tx1.substack.com/c/eJxck1FzqroX").respond(200, content=b"ok")
         raw = build_email(
+            to=ADDRESS,
             sender="Matthew Yglesias <matthewyglesias@substack.com>",
             subject="274513 is your Substack verification code",
             html=SIGN_IN_EMAIL,
@@ -494,6 +503,7 @@ class TestWhatComesBack:
         signup.platform = "substack"
         await session.commit()
         raw = build_email(
+            to=ADDRESS,
             sender="Ben Southwood <bensouthwood@substack.com>",
             subject="756893 is your Substack verification code",
             html="<p>Your code is 756893.</p>",
@@ -513,6 +523,7 @@ class TestWhatComesBack:
         # Substack sends its codes from a publication's address, List-ID and
         # all, so one used to land as the newest issue of that publication.
         issue = build_email(
+            to=ADDRESS,
             sender="Ben Southwood from Baldwin <bensouthwood@substack.com>",
             subject="On growth",
             html="<p>An issue.</p>",
@@ -523,6 +534,7 @@ class TestWhatComesBack:
         feed = (await session.scalars(select(Feed))).one()
         await service.approve(session, user, feed.id)
         code = build_email(
+            to=ADDRESS,
             sender="Ben Southwood from Baldwin <bensouthwood@substack.com>",
             subject="756893 is your Substack verification code",
             html="<p>Your code is 756893.</p>",
@@ -550,7 +562,7 @@ class TestWhatComesBack:
 
     async def test_a_stranger_still_waits(self, session, user, newsletters_enabled):
         await signed_up(session, user)
-        raw = build_email(sender="Someone Else <news@elsewhere.test>", message_id="<3@elsewhere.test>")
+        raw = build_email(to=ADDRESS, sender="Someone Else <news@elsewhere.test>", message_id="<3@elsewhere.test>")
 
         delivery = await service.receive(session, user, raw)
 
@@ -561,7 +573,7 @@ class TestWhatComesBack:
         signup = await signed_up(session, user)
         signup.created_at = service.utcnow() - timedelta(days=settings.newsletter_signup_window_days + 1)
         await session.commit()
-        raw = build_email(sender="Anna <anna@anna.test>", message_id="<late@anna.test>")
+        raw = build_email(to=ADDRESS, sender="Anna <anna@anna.test>", message_id="<late@anna.test>")
 
         delivery = await service.receive(session, user, raw)
 
@@ -572,7 +584,9 @@ class TestWhatComesBack:
     ):
         await signed_up(session, user)
         respx_mock.get("https://anna.us6.list-manage.com/subscribe/confirm").respond(500)
-        raw = build_email(sender="Anna <anna@anna.test>", html=CONFIRMATION_HTML, message_id="<c2@anna.test>")
+        raw = build_email(
+            to=ADDRESS, sender="Anna <anna@anna.test>", html=CONFIRMATION_HTML, message_id="<c2@anna.test>"
+        )
 
         delivery = await service.receive(session, user, raw)
 
@@ -684,3 +698,38 @@ class TestByVoice:
         assert finished.result.spoken_response.startswith("I have asked Understanding AI")
         assert "sign_up_for_newsletter" in client.requests[0][0]
         assert any(tool.get("name") == "sign_up_for_newsletter" for tool in client.requests[0][2])
+
+
+class TestWhatASignupMayClaim:
+    async def test_forwarded_mail_answers_no_signup(self, session, user, newsletters_enabled):
+        signup = await signed_up(session, user, publication="Understanding AI", expected="understandingai.org")
+        raw = build_email(
+            sender="Astral Codex Ten <astralcodexten@substack.com>",
+            to="henry@gmail.com",
+            list_id="<astralcodexten.substack.com>",
+            message_id="<acx@substack.com>",
+        )
+        raw = raw.replace(b"Subject:", b"X-Forwarded-To: hefty-prism-bolt@magpieinbox.com\r\nSubject:", 1)
+
+        delivery = await service.receive(session, user, raw)
+
+        assert delivery.status == "pending"
+        assert signup.completed_at is None and signup.feed_id is None
+
+    async def test_a_shared_mail_domain_an_old_signup_expected_vouches_for_nobody(
+        self, session, user, newsletters_enabled
+    ):
+        signup = await signed_up(
+            session, user, publication="Understanding AI", expected="understandingai.org, substack.com"
+        )
+        raw = build_email(
+            sender="Astral Codex Ten <astralcodexten@substack.com>",
+            to=ADDRESS,
+            list_id="<astralcodexten.substack.com>",
+            message_id="<acx@substack.com>",
+        )
+
+        delivery = await service.receive(session, user, raw)
+
+        assert delivery.status == "pending"
+        assert signup.completed_at is None

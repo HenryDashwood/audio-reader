@@ -29,6 +29,14 @@ DOMAIN = "in.test"
 SECRET = "worker-secret"
 
 
+@pytest.fixture(autouse=True)
+def example_sites_have_no_feed(request):
+    """The sample issue's "view in browser" link points at a host that, when
+    a test mocks the web, must answer rather than fail the mock."""
+    if "respx_mock" in request.fixturenames:
+        request.getfixturevalue("respx_mock").route(host="newsletters.example.com").respond(404)
+
+
 @pytest.fixture
 def inbound_enabled(monkeypatch):
     monkeypatch.setattr(settings, "inbound_email_domain", DOMAIN)

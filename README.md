@@ -426,10 +426,12 @@ the same when the site has no feed, and the streamed conversation has a
 `sign_up_for_newsletter` tool for a site the model found itself.
 
 A newsletter that also has a feed on the web gets it as a companion: the
-shared RSS feed of the same publication, found on the site the app signed her
-up on, at a Substack publication's own substack.com address (its List-ID
-names it), or on the sender's domain when the feed there is named like the
-newsletter. The email feed
+shared RSS feed of the same publication, found at a Substack publication's
+own substack.com address (its List-ID names it), on the site an issue's own
+link points at, on the site the app signed her up on when the feed there is
+named like that publication, or on the sender's domain when the feed there
+is named like the newsletter. A newsletter with no feed borrows the artwork
+of its site instead. The email feed
 takes the companion's name, artwork, blurb and site link, its page shows the
 companion's archive with one row per post (her emailed copy wins over the
 feed's), and the companion is polled and never pruned. Latest shows what
@@ -448,7 +450,10 @@ address in. So the first Substack a user is signed up to also requests that
 email (`POST https://substack.com/api/v1/email-login`), the backend follows
 its link when it arrives, and every Substack after that is a plain signup.
 That email comes from whichever publication Substack likes, so it is
-recognised by its subject rather than its sender. A code or sign-in email
+recognised by its subject rather than its sender. Mail that came by way of
+another inbox never answers a signup, and a shared mail domain such as
+substack.com never vouches for a sender. `scripts/newsletter_repair.py`
+undoes a wrong companion and reopens a signup that claimed the wrong mail. A code or sign-in email
 is a step of signing up, never an issue: it is kept as raw mail for the
 retention window and filed nowhere, whoever it came from.
 

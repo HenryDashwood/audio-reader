@@ -17,12 +17,14 @@ import logging
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
 from audioreader.feeds import service as feed_service
+from audioreader.feeds.artwork import website_artwork_url
 from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import matches_name
@@ -90,31 +92,55 @@ def _shared(domain: str) -> bool:
     return any(domain == shared or domain.endswith("." + shared) for shared in _SHARED_MAIL_DOMAINS)
 
 
-def candidate_sites(feed: Feed, signup_site: str | None = None) -> list[tuple[str, bool]]:
-    """Where the newsletter's feed might be, as (site, must_match_name)."""
-    candidates: list[tuple[str, bool]] = []
+#: Hosts an issue's own link may sit on that are not the publication's site:
+#: tracking redirects and shared "view in browser" pages.
+_LINK_HOSTS_TO_IGNORE = ("substack.com", "mailchi.mp", "campaign-archive.com", "list-manage.com", "eepurl.com")
+
+
+def candidate_sites(
+    feed: Feed, signup_site: str | None = None, signup_name: str | None = None, issue_link: str | None = None
+) -> list[tuple[str, str | None]]:
+    """Where the newsletter's feed might be, as (site, name the feed must match).
+
+    A name to match means the site is only circumstantial: the feed found
+    there is taken only if it is named like the newsletter (the sender's
+    domain) or like the publication she was signed up to (the signup's
+    site — a signup can be answered by the wrong mail, and the site must
+    not then be trusted on its own). None means the site is the
+    publication's beyond doubt: a Substack host names one publication,
+    and an issue's own page is on its site.
+    """
+    candidates: list[tuple[str, str | None]] = []
     if signup_site:
-        candidates.append((signup_site, False))
+        candidates.append((signup_site, signup_name or feed.title))
     address = sender_address(feed)
     host = list_host(feed)
     if address:
         if match := _SUBSTACK_SENDER.match(address):
-            candidates.append((f"https://{match.group(1)}.substack.com", False))
+            candidates.append((f"https://{match.group(1)}.substack.com", None))
         domain = address.partition("@")[2]
         if domain and not _shared(domain):
-            candidates.append((f"https://{domain}", True))
+            candidates.append((f"https://{domain}", feed.title))
     elif host:
         if _SUBSTACK_LIST.match(host):
-            candidates.append((f"https://{host}", False))
+            candidates.append((f"https://{host}", None))
         elif not _shared(host) and not any(marker in host for marker in _LIST_ONLY_HOSTS):
-            candidates.append((f"https://{host}", True))
+            candidates.append((f"https://{host}", feed.title))
+    if issue_link:
+        link_host = (urlsplit(issue_link).hostname or "").lower()
+        if link_host and not _shared(link_host) and not any(_under(link_host, h) for h in _LINK_HOSTS_TO_IGNORE):
+            candidates.append((f"https://{link_host}", None))
     seen: set[str] = set()
     unique = []
-    for site, must_match in candidates:
+    for site, name in candidates:
         if site not in seen:
             seen.add(site)
-            unique.append((site, must_match))
+            unique.append((site, name))
     return unique
+
+
+def _under(host: str, domain: str) -> bool:
+    return host == domain or host.endswith("." + domain)
 
 
 def adopt(feed: Feed, companion: Feed) -> None:
@@ -127,18 +153,32 @@ def adopt(feed: Feed, companion: Feed) -> None:
     feed.site_url = companion.site_url
 
 
-async def attach_companion(session: AsyncSession, feed: Feed, *, signup_site: str | None = None) -> Feed | None:
+async def attach_companion(
+    session: AsyncSession,
+    feed: Feed,
+    *,
+    signup_site: str | None = None,
+    signup_name: str | None = None,
+) -> Feed | None:
     """Find and link the newsletter's feed on the web, if it has one.
 
     Every attempt is dated, so a newsletter with no feed is not searched for
-    on every pass — only again after `newsletter_companion_retry_days`.
+    on every pass — only again after `newsletter_companion_retry_days`. A
+    newsletter with no feed at all still gets a face: the artwork of the
+    site its issues point at, or of the sender's own domain.
     """
     if feed.source != FEED_SOURCE_EMAIL:
         return None
-    candidates = candidate_sites(feed, signup_site)
+    issue_link = await session.scalar(
+        select(Episode.link)
+        .where(Episode.feed_id == feed.id, Episode.link.is_not(None))
+        .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
+        .limit(1)
+    )
+    candidates = candidate_sites(feed, signup_site, signup_name, issue_link)
     if not candidates:
         logger.info("nowhere to look for a companion feed for %s (%s)", feed.title, sender_key(feed))
-    for site, must_match in candidates:
+    for site, required_name in candidates:
         try:
             companion = await feed_service.ensure_feed(session, site)
         except (FeedFetchError, FeedParseError) as exc:
@@ -146,8 +186,10 @@ async def attach_companion(session: AsyncSession, feed: Feed, *, signup_site: st
             continue
         if companion.id == feed.id or companion.source != FEED_SOURCE_RSS:
             continue
-        if must_match and not (matches_name(feed.title, companion.title) or matches_name(companion.title, feed.title)):
-            logger.info("feed at %s is %r, not %r; not linked", site, companion.title, feed.title)
+        if required_name and not (
+            matches_name(required_name, companion.title) or matches_name(companion.title, required_name)
+        ):
+            logger.info("feed at %s is %r, not %r; not linked", site, companion.title, required_name)
             continue
         feed.companion_feed_id = companion.id
         feed.companion_checked_at = utcnow()
@@ -161,8 +203,22 @@ async def attach_companion(session: AsyncSession, feed: Feed, *, signup_site: st
         logger.info("linked newsletter %s to its feed %s", feed.title, companion.url)
         return companion
     feed.companion_checked_at = utcnow()
+    if not (feed.image_url or feed.site_image_url):
+        await _borrow_site_artwork(feed, [site for site, _ in candidates])
     await session.commit()
     return None
+
+
+async def _borrow_site_artwork(feed: Feed, sites: list[str]) -> None:
+    """A face for a newsletter with no feed: the first of its sites with one."""
+    for site in sites:
+        artwork = await website_artwork_url(site, feed.url)
+        if artwork:
+            feed.site_image_url = artwork
+            feed.site_url = feed.site_url or site
+            feed.site_artwork_checked_at = utcnow()
+            logger.info("newsletter %s wears the artwork of %s", feed.title, site)
+            return
 
 
 async def attach_missing_companions(session: AsyncSession, now: datetime | None = None) -> int:
@@ -181,14 +237,17 @@ async def attach_missing_companions(session: AsyncSession, now: datetime | None 
     ).all()
     linked = 0
     for feed in due:
-        signup_site = await session.scalar(
-            select(NewsletterSignup.site_url)
-            .where(NewsletterSignup.feed_id == feed.id)
-            .order_by(NewsletterSignup.id.desc())
-            .limit(1)
+        signup = await session.scalar(
+            select(NewsletterSignup).where(NewsletterSignup.feed_id == feed.id).order_by(NewsletterSignup.id.desc())
         )
         try:
-            if await attach_companion(session, feed, signup_site=signup_site) is not None:
+            companion = await attach_companion(
+                session,
+                feed,
+                signup_site=signup.site_url if signup else None,
+                signup_name=signup.publication if signup else None,
+            )
+            if companion is not None:
                 linked += 1
         except Exception:  # noqa: BLE001 - one newsletter's trouble must not stop the pass
             logger.exception("could not look for a companion feed for %s", feed.title)

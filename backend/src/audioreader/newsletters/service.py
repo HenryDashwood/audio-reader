@@ -391,6 +391,11 @@ async def _signup_awaiting(session: AsyncSession, user: User, message: Newslette
     the publication's name against the sender's, and only inside the window:
     a newsletter that first writes months later is a stranger again.
     """
+    if message.forwarded or _addressed_elsewhere(message):
+        # The app signs her own address up, and the reply comes straight
+        # to it. Mail that came by way of another inbox answers nothing —
+        # however well its sender happens to match.
+        return None
     open_signups = (
         await session.scalars(
             select(NewsletterSignup).where(
@@ -411,12 +416,24 @@ async def _signup_awaiting(session: AsyncSession, user: User, message: Newslette
     for signup in open_signups:
         if not _within_signup_window(signup):
             continue
-        expected = [item.strip().lower() for item in signup.expected_senders.split(",") if item.strip()]
+        # A shared mail domain expected by an older signup vouches for
+        # nobody: every Substack writes from substack.com.
+        expected = [
+            item.strip().lower()
+            for item in signup.expected_senders.split(",")
+            if item.strip() and not _shared_mail_domain(item.strip().lower())
+        ]
         if any(sender.address == item or domain == item or domain.endswith("." + item) for item in expected):
             return signup
         if matches_name(signup.publication, sender.name) or matches_name(sender.name, signup.publication):
             return signup
     return None
+
+
+def _shared_mail_domain(domain: str) -> bool:
+    from audioreader.newsletters.companions import _SHARED_MAIL_DOMAINS  # circular at module level
+
+    return any(domain == shared or domain.endswith("." + shared) for shared in _SHARED_MAIL_DOMAINS)
 
 
 async def _follow_confirmation(link: str) -> bool:
