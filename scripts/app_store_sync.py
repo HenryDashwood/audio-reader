@@ -90,6 +90,15 @@ EDITABLE_STATES = {
     "INVALID_BINARY",
 }
 
+#: Versions that are finished with: on sale, superseded, or taken down. They
+#: never stand in the way of creating the next one.
+SETTLED_STATES = {
+    "READY_FOR_SALE",
+    "REPLACED_WITH_NEW_VERSION",
+    "REMOVED_FROM_SALE",
+    "DEVELOPER_REMOVED_FROM_SALE",
+}
+
 
 class Failure(Exception):
     """A validation or API failure that should be printed without a traceback."""
@@ -322,16 +331,40 @@ def api_token() -> str:
     )
 
 
+#: Answers App Store Connect gives now and then to a request that is fine:
+#: a 401 for a token it accepted a moment ago, a 429, or a gateway error.
+#: Retried for reads and idempotent writes. A POST is retried only when the
+#: request was never accepted (401 and 429), so nothing is created twice.
+TRANSIENT_STATUSES = {401, 429, 500, 502, 503, 504}
+POST_RETRY_STATUSES = {401, 429}
+RETRY_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 5.0
+
+
 class Client:
-    def __init__(self) -> None:
+    def __init__(self, session: Any | None = None, *, sleep: Any = time.sleep) -> None:
         import requests
 
         self.requests = requests
-        self.session = requests.Session()
+        self.sleep = sleep
+        self.session = session if session is not None else requests.Session()
         self.session.headers["Authorization"] = f"Bearer {api_token()}"
 
     def request(self, method: str, path: str, *, allow_not_found: bool = False, **kwargs: Any) -> dict:
-        response = self.session.request(method, f"{API}{path}", timeout=60, **kwargs)
+        retryable = POST_RETRY_STATUSES if method == "POST" else TRANSIENT_STATUSES
+        for attempt in range(1, RETRY_ATTEMPTS + 1):
+            response = self.session.request(method, f"{API}{path}", timeout=60, **kwargs)
+            if response.status_code not in retryable or attempt == RETRY_ATTEMPTS:
+                break
+            print(
+                f"{method} {path} -> {response.status_code}; retrying ({attempt}/{RETRY_ATTEMPTS})",
+                file=sys.stderr,
+            )
+            self.sleep(RETRY_DELAY_SECONDS * attempt)
+            if response.status_code == 401:
+                # A fresh token costs nothing and rules out the one thing
+                # about the old one that could actually have gone wrong.
+                self.session.headers["Authorization"] = f"Bearer {api_token()}"
         if allow_not_found and response.status_code == 404:
             return {}
         if not response.ok:
@@ -474,20 +507,37 @@ def ensure_version(client: Client, app: str, listing: Listing, version: str, dry
     print(f"version {version}: create")
     if dry_run:
         return None
-    return client.post(
-        "/appStoreVersions",
-        {
-            "data": {
-                "type": "appStoreVersions",
-                "attributes": {
-                    "platform": config["platform"],
-                    "versionString": version,
-                    **desired,
-                },
-                "relationships": {"app": {"data": {"type": "apps", "id": app}}},
-            }
-        },
-    )["data"]
+    try:
+        return client.post(
+            "/appStoreVersions",
+            {
+                "data": {
+                    "type": "appStoreVersions",
+                    "attributes": {
+                        "platform": config["platform"],
+                        "versionString": version,
+                        **desired,
+                    },
+                    "relationships": {"app": {"data": {"type": "apps", "id": app}}},
+                }
+            },
+        )["data"]
+    except AppStoreConnectFailure as error:
+        if error.status != 409:
+            raise
+        # Apple's own message is "You cannot create a new version of the App
+        # in the current state", which does not say what the state is. It is
+        # a version waiting for review, in review, or pending release.
+        in_flight = [item for item in versions if item["attributes"].get("appStoreState") not in SETTLED_STATES]
+        labels = ", ".join(
+            f"{item['attributes'].get('versionString')} ({item['attributes'].get('appStoreState')})"
+            for item in (in_flight or versions)
+        )
+        raise Failure(
+            f"App Store Connect will not create version {version} while another version is in flight: {labels}. "
+            "Let it be reviewed and released, or remove it from review in App Store Connect, then sync again with "
+            f"'gh workflow run testflight.yml --ref main -f distribute_build=<build> -f sync_version={version}'"
+        ) from error
 
 
 def upload_screenshot(client: Client, screenshot_set: str, path: Path) -> str:

@@ -168,6 +168,103 @@ def test_version_with_selected_build_is_not_retargeted():
     assert client.patches == []
 
 
+class FakeInFlightVersionClient(FakeVersionClient):
+    """The app has 1.3.0 waiting for review and nothing editable, and Apple
+    answers the attempt to create 1.4.0 with its unhelpful 409."""
+
+    def __init__(self):
+        super().__init__()
+        self.versions = [
+            {"id": "old-id", "attributes": {"versionString": "1.2.0", "appStoreState": "REPLACED_WITH_NEW_VERSION"}},
+            {"id": "live-id", "attributes": {"versionString": "1.3.0", "appStoreState": "WAITING_FOR_REVIEW"}},
+        ]
+
+    def post(self, path: str, body: dict) -> dict:
+        raise store.AppStoreConnectFailure(
+            "POST",
+            path,
+            409,
+            json.dumps(
+                {
+                    "errors": [
+                        {
+                            "status": "409",
+                            "code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                            "detail": "You cannot create a new version of the App in the current state.",
+                        }
+                    ]
+                }
+            ),
+        )
+
+
+def test_refused_version_creation_names_the_version_in_flight():
+    client = FakeInFlightVersionClient()
+
+    with pytest.raises(store.Failure) as failure:
+        store.ensure_version(client, "app-id", listing(), "1.4.0", dry_run=False)
+
+    message = str(failure.value)
+    assert "1.3.0 (WAITING_FOR_REVIEW)" in message
+    assert "1.2.0" not in message
+    assert "sync_version=1.4.0" in message
+
+
+class FakeResponse:
+    def __init__(self, status_code: int, body: dict | None = None):
+        self.status_code = status_code
+        self.ok = status_code < 400
+        self.content = json.dumps(body).encode() if body is not None else b""
+        self.text = self.content.decode()
+
+    def json(self) -> dict:
+        return json.loads(self.text)
+
+
+class FakeSession:
+    def __init__(self, responses: list[FakeResponse]):
+        self.responses = list(responses)
+        self.headers: dict[str, str] = {}
+        self.calls: list[tuple[str, str, str]] = []
+
+    def request(self, method: str, url: str, **_kwargs) -> FakeResponse:
+        self.calls.append((method, url, self.headers["Authorization"]))
+        return self.responses.pop(0)
+
+
+def retrying_client(monkeypatch, responses: list[FakeResponse]) -> tuple[store.Client, FakeSession, list[float]]:
+    tokens = iter(("first", "second", "third"))
+    monkeypatch.setattr(store, "api_token", lambda: next(tokens))
+    slept: list[float] = []
+    session = FakeSession(responses)
+    return store.Client(session, sleep=slept.append), session, slept
+
+
+def test_a_passing_401_is_retried_with_a_fresh_token(monkeypatch):
+    client, session, slept = retrying_client(monkeypatch, [FakeResponse(401), FakeResponse(200, {"data": []})])
+
+    assert client.get("/apps") == {"data": []}
+    assert [call[2] for call in session.calls] == ["Bearer first", "Bearer second"]
+    assert slept == [store.RETRY_DELAY_SECONDS]
+
+
+def test_a_persistent_failure_is_reported_after_the_last_attempt(monkeypatch):
+    client, session, _ = retrying_client(monkeypatch, [FakeResponse(503)] * store.RETRY_ATTEMPTS)
+
+    with pytest.raises(store.AppStoreConnectFailure, match="-> 503"):
+        client.get("/apps")
+    assert len(session.calls) == store.RETRY_ATTEMPTS
+
+
+def test_a_post_that_may_have_landed_is_not_retried(monkeypatch):
+    client, session, slept = retrying_client(monkeypatch, [FakeResponse(503), FakeResponse(201, {"data": {}})])
+
+    with pytest.raises(store.AppStoreConnectFailure, match="-> 503"):
+        client.post("/appStoreVersions", {})
+    assert len(session.calls) == 1
+    assert slept == []
+
+
 class FakeFirstVersionLocalizationClient:
     def __init__(self):
         self.patches: list[dict] = []
