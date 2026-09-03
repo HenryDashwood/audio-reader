@@ -28,6 +28,8 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
     @Published private(set) var playbackRate: Float = 1.0
+    @Published private(set) var podcastPlaybackRate: Float = 1.0
+    @Published private(set) var articlePlaybackRate: Float = 1.0
     @Published private(set) var playbackFailure: PlaybackFailure?
 
     let audio: AudioPlayer
@@ -49,6 +51,8 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         self.audio = audio
         self.article = article
         playbackRate = audio.playbackRate
+        podcastPlaybackRate = audio.playbackRate
+        articlePlaybackRate = article.playbackRate
         mirror(
             episodes: audio.$currentEpisode, playing: audio.$isPlaying,
             times: audio.$currentTime, durations: audio.$duration,
@@ -194,12 +198,21 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         }
     }
 
-    /// Applied to both players: her preferred speed follows her between
-    /// podcasts and articles, and AudioPlayer persists it.
+    /// Changes the active kind only. Podcast audio and the system article
+    /// voice each remember their own comfortable speed.
     func setPlaybackRate(_ rate: Float) {
+        switch mode {
+        case .audio: setPodcastPlaybackRate(rate)
+        case .article: setArticlePlaybackRate(rate)
+        }
+    }
+
+    func setPodcastPlaybackRate(_ rate: Float) {
         audio.setPlaybackRate(rate)
+    }
+
+    func setArticlePlaybackRate(_ rate: Float) {
         article.setPlaybackRate(rate)
-        playbackRate = min(max(rate, 0.5), 3.0)
     }
 
     // MARK: - Wiring
@@ -219,11 +232,13 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
             isPlaying = audio.isPlaying
             currentTime = audio.currentTime
             duration = audio.duration
+            playbackRate = audio.playbackRate
         case .article:
             currentEpisode = article.currentEpisode
             isPlaying = article.isPlaying
             currentTime = article.currentTime
             duration = article.duration
+            playbackRate = article.playbackRate
         }
     }
 
@@ -252,7 +267,12 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
             self.duration = value
         }.store(in: &cancellables)
         rates.sink { [weak self] value in
-            guard let self, self.mode == expected else { return }
+            guard let self else { return }
+            switch expected {
+            case .audio: self.podcastPlaybackRate = value
+            case .article: self.articlePlaybackRate = value
+            }
+            guard self.mode == expected else { return }
             self.playbackRate = value
         }.store(in: &cancellables)
     }

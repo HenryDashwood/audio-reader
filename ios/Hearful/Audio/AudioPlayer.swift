@@ -30,10 +30,10 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     @Published var isScrubbing = false
     @Published private(set) var playbackRate: Float = 1.0
 
-    static let playbackRates: [Float] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
-    private static let rateKey = "HearfulPlaybackRate"
+    static let playbackRates = PlaybackSpeedPreference.rates
 
     private let player = AVPlayer()
+    private let defaults: UserDefaults
     private var timeObserver: Any?
     private var statusObservation: NSKeyValueObservation?
     private var playbackStateObservation: NSKeyValueObservation?
@@ -62,10 +62,14 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         duration > 0 ? min(max(currentTime / duration, 0), 1) : 0
     }
 
-    override init() {
+    override convenience init() {
+        self.init(defaults: .standard)
+    }
+
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
         super.init()
-        let stored = UserDefaults.standard.float(forKey: Self.rateKey)
-        playbackRate = stored > 0 ? stored : 1.0
+        playbackRate = PlaybackSpeedPreference.load(.podcast, defaults: defaults)
         // defaultRate makes every play()/resume() come back at her speed
         // without each call site having to remember it.
         player.defaultRate = playbackRate
@@ -75,9 +79,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
 
     /// Sets how fast episodes play, remembered across launches and episodes.
     func setPlaybackRate(_ rate: Float) {
-        let clamped = min(max(rate, 0.5), 3.0)
+        let clamped = PlaybackSpeedPreference.clamped(rate)
         playbackRate = clamped
-        UserDefaults.standard.set(clamped, forKey: Self.rateKey)
+        PlaybackSpeedPreference.save(clamped, for: .podcast, defaults: defaults)
         player.defaultRate = clamped
         // `isPlaying` is false while AVPlayer is buffering even though a
         // play request is still active. Updating only in the .playing state

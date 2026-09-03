@@ -46,6 +46,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     private var synthesizer: SpeechSynthesizing
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
+    private let defaults: UserDefaults
     private var script: ArticleScript?
     private var chunkIndex = 0
     /// True once she asked for sound: speech starts as soon as text arrives.
@@ -68,16 +69,15 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     init(
         api: HearfulAPIProtocol = HearfulAPI(),
         cache: OfflineCache = .shared,
-        synthesizer: SpeechSynthesizing = SpeechSynthesizers.make()
+        synthesizer: SpeechSynthesizing = SpeechSynthesizers.make(),
+        defaults: UserDefaults = .standard
     ) {
         self.api = api
         self.cache = cache
         self.synthesizer = synthesizer
+        self.defaults = defaults
         synthesizer.delegate = self
-        // Same stored preference as AudioPlayer: her speed is her speed,
-        // whether the thing playing is streamed or spoken.
-        let stored = UserDefaults.standard.float(forKey: "HearfulPlaybackRate")
-        playbackRate = stored > 0 ? stored : 1.0
+        playbackRate = PlaybackSpeedPreference.load(.article, defaults: defaults)
     }
 
     var progress: Double {
@@ -171,9 +171,10 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// the price of the voice actually talking faster rather than being
     /// stretched (stretching is what made fast speech sound smeared).
     func setPlaybackRate(_ rate: Float) {
-        let clamped = min(max(rate, 0.5), 3.0)
+        let clamped = PlaybackSpeedPreference.clamped(rate)
         guard clamped != playbackRate else { return }
         playbackRate = clamped
+        PlaybackSpeedPreference.save(clamped, for: .article, defaults: defaults)
         if wantsPlayback, script != nil {
             speakCurrentChunk()
         }

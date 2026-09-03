@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var auth: AuthController
+    @ObservedObject private var player = PlaybackCoordinator.shared
     @State private var systemVoiceID: String = SpeechVoice.current?.identifier ?? ""
     @State private var previewSpeaker = Speaker()
     @State private var confirmingDelete = false
@@ -17,6 +18,35 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    Picker(
+                        "Podcasts",
+                        selection: Binding(
+                            get: { player.podcastPlaybackRate },
+                            set: { player.setPodcastPlaybackRate($0) }
+                        )
+                    ) {
+                        playbackSpeedOptions
+                    }
+
+                    Picker(
+                        "Articles",
+                        selection: Binding(
+                            get: { player.articlePlaybackRate },
+                            set: { player.setArticlePlaybackRate($0) }
+                        )
+                    ) {
+                        playbackSpeedOptions
+                    }
+                } header: {
+                    Text("Playback Speed")
+                } footer: {
+                    Text(
+                        "Magpie remembers separate speeds for recorded podcasts "
+                            + "and articles read by the system voice."
+                    )
+                }
+
                 Section {
                     if voices.isEmpty {
                         Text("No speech voice is available")
@@ -178,6 +208,19 @@ struct SettingsView: View {
                 Task { await previewSpeaker.speak("This voice will read your articles.") }
             }
         }
+    }
+
+    @ViewBuilder
+    private var playbackSpeedOptions: some View {
+        ForEach(PlaybackSpeedPreference.rates, id: \.self) { rate in
+            Text(speedLabel(rate)).tag(rate)
+        }
+    }
+
+    private func speedLabel(_ rate: Float) -> String {
+        let number = rate.truncatingRemainder(dividingBy: 1) == 0
+            ? String(Int(rate)) : String(format: "%g", rate)
+        return "\(number)×"
     }
 
     private func deleteAccount() async {
