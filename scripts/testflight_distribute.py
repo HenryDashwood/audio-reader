@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import time
+from collections.abc import Mapping
 
 import jwt
 import requests
@@ -41,25 +42,30 @@ class Failure(Exception):
     """Something went wrong that a human needs to look at."""
 
 
-def token() -> str:
-    for name in ("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8_BASE64"):
-        if not os.environ.get(name):
-            raise Failure(f"{name} is not set")
+def token_claims(environ: Mapping[str, str], now: int) -> tuple[dict, str, str]:
+    """The JWT payload, key id and private key for signing requests.
 
-    key = base64.b64decode(os.environ["ASC_KEY_P8_BASE64"]).decode()
-    now = int(time.time())
-    return jwt.encode(
-        # Apple rejects tokens with a lifetime over 20 minutes.
-        {
-            "iss": os.environ["ASC_ISSUER_ID"],
-            "iat": now,
-            "exp": now + 19 * 60,
-            "aud": "appstoreconnect-v1",
-        },
-        key,
-        algorithm="ES256",
-        headers={"kid": os.environ["ASC_KEY_ID"], "typ": "JWT"},
-    )
+    An individual key is preferred when one is configured: the beta review
+    submission it makes shows in App Store Connect under the person's name
+    rather than as "API user <key id>". Individual keys carry `sub: user`
+    and no issuer; the team key is the fallback.
+    """
+    # Apple rejects tokens with a lifetime over 20 minutes.
+    claims: dict = {"iat": now, "exp": now + 19 * 60, "aud": "appstoreconnect-v1"}
+    if environ.get("ASC_INDIVIDUAL_KEY_ID") and environ.get("ASC_INDIVIDUAL_KEY_P8_BASE64"):
+        claims["sub"] = "user"
+        key = base64.b64decode(environ["ASC_INDIVIDUAL_KEY_P8_BASE64"]).decode()
+        return claims, environ["ASC_INDIVIDUAL_KEY_ID"], key
+    for name in ("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8_BASE64"):
+        if not environ.get(name):
+            raise Failure(f"{name} is not set")
+    claims["iss"] = environ["ASC_ISSUER_ID"]
+    return claims, environ["ASC_KEY_ID"], base64.b64decode(environ["ASC_KEY_P8_BASE64"]).decode()
+
+
+def token() -> str:
+    claims, key_id, key = token_claims(os.environ, int(time.time()))
+    return jwt.encode(claims, key, algorithm="ES256", headers={"kid": key_id, "typ": "JWT"})
 
 
 class Client:
@@ -133,8 +139,7 @@ def wait_for_build(client: Client, app: str, build_number: str) -> str:
 
         if time.time() > deadline:
             raise Failure(
-                f"build {build_number} was still {reported or 'absent'} after "
-                f"{POLL_TIMEOUT_SECONDS // 60} minutes"
+                f"build {build_number} was still {reported or 'absent'} after {POLL_TIMEOUT_SECONDS // 60} minutes"
             )
         time.sleep(POLL_INTERVAL_SECONDS)
 
@@ -155,7 +160,7 @@ def set_release_notes(client: Client, build: str, notes: str) -> None:
                     }
                 },
             )
-        locales = ", ".join(l["attributes"]["locale"] for l in existing)
+        locales = ", ".join(item["attributes"]["locale"] for item in existing)
         print(f"set release notes for {locales}", flush=True)
         return
 
@@ -196,9 +201,7 @@ def submit_for_review(client: Client, build: str) -> None:
             {
                 "data": {
                     "type": "betaAppReviewSubmissions",
-                    "relationships": {
-                        "build": {"data": {"type": "builds", "id": build}}
-                    },
+                    "relationships": {"build": {"data": {"type": "builds", "id": build}}},
                 }
             },
         )

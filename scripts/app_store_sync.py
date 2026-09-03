@@ -21,6 +21,7 @@ import re
 import struct
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,7 @@ FIELD_LIMITS = {
     "promotional_text": 170,
     "review_notes": 4_000,
     "whats_new": 4_000,
+    "beta_description": 4_000,
 }
 REQUIRED_FIELDS = (
     "name",
@@ -232,6 +234,11 @@ def load_listing(root: Path = STORE_ROOT) -> Listing:
         marketing_url = text_file(directory / "marketing_url.txt", required=False)
         if marketing_url:
             fields["marketing_url"] = marketing_url
+        # What testers read on the TestFlight invitation. Optional: a locale
+        # without one keeps whatever App Store Connect already has.
+        beta_description = text_file(directory / "beta_description.txt", required=False)
+        if beta_description:
+            fields["beta_description"] = beta_description
 
         locale_screenshots: dict[str, tuple[Path, ...]] = {}
         screenshot_root = root / "screenshots" / locale
@@ -311,23 +318,64 @@ def latest_changelog_entry(path: Path) -> tuple[str, str]:
     return version, body
 
 
-def api_token() -> str:
-    for name in ("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8_BASE64"):
-        if not os.environ.get(name):
-            raise Failure(f"{name} is not set")
-    try:
-        key = base64.b64decode(os.environ["ASC_KEY_P8_BASE64"], validate=True).decode()
-    except (ValueError, UnicodeDecodeError) as error:
-        raise Failure("ASC_KEY_P8_BASE64 is not a base64-encoded UTF-8 private key") from error
+@dataclass(frozen=True)
+class SigningKey:
+    key_id: str
+    private_key: str
+    #: None for an individual key, which belongs to a person rather than the
+    #: team and has no issuer.
+    issuer_id: str | None
 
+    def claims(self, now: int) -> dict[str, Any]:
+        # Apple rejects tokens with a lifetime over 20 minutes.
+        claims: dict[str, Any] = {"iat": now, "exp": now + 19 * 60, "aud": "appstoreconnect-v1"}
+        if self.issuer_id is None:
+            claims["sub"] = "user"
+        else:
+            claims["iss"] = self.issuer_id
+        return claims
+
+
+def signing_key(environ: Mapping[str, str] = os.environ) -> SigningKey:
+    """The key to sign requests with.
+
+    An individual key is preferred when one is configured: what it submits
+    shows in App Store Connect under the person's name rather than as
+    "API user <key id>". The team key is the fallback, and the one the build
+    upload keeps using either way.
+    """
+    if environ.get("ASC_INDIVIDUAL_KEY_ID") and environ.get("ASC_INDIVIDUAL_KEY_P8_BASE64"):
+        return SigningKey(
+            environ["ASC_INDIVIDUAL_KEY_ID"],
+            decode_private_key(environ["ASC_INDIVIDUAL_KEY_P8_BASE64"], "ASC_INDIVIDUAL_KEY_P8_BASE64"),
+            None,
+        )
+    for name in ("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8_BASE64"):
+        if not environ.get(name):
+            raise Failure(f"{name} is not set")
+    return SigningKey(
+        environ["ASC_KEY_ID"],
+        decode_private_key(environ["ASC_KEY_P8_BASE64"], "ASC_KEY_P8_BASE64"),
+        environ["ASC_ISSUER_ID"],
+    )
+
+
+def decode_private_key(encoded: str, name: str) -> str:
+    try:
+        return base64.b64decode(encoded, validate=True).decode()
+    except (ValueError, UnicodeDecodeError) as error:
+        raise Failure(f"{name} is not a base64-encoded UTF-8 private key") from error
+
+
+def api_token() -> str:
     import jwt
 
-    now = int(time.time())
+    key = signing_key()
     return jwt.encode(
-        {"iss": os.environ["ASC_ISSUER_ID"], "iat": now, "exp": now + 19 * 60, "aud": "appstoreconnect-v1"},
-        key,
+        key.claims(int(time.time())),
+        key.private_key,
         algorithm="ES256",
-        headers={"kid": os.environ["ASC_KEY_ID"], "typ": "JWT"},
+        headers={"kid": key.key_id, "typ": "JWT"},
     )
 
 
@@ -706,18 +754,31 @@ def write_version_localization(
     return remote
 
 
-def sync_review_notes(client: Client, version: dict, listing: Listing, dry_run: bool) -> None:
-    environment_fields = {
-        "contactFirstName": "ASC_REVIEW_CONTACT_FIRST_NAME",
-        "contactLastName": "ASC_REVIEW_CONTACT_LAST_NAME",
-        "contactEmail": "ASC_REVIEW_CONTACT_EMAIL",
-        "contactPhone": "ASC_REVIEW_CONTACT_PHONE",
-    }
-    missing = [environment for environment in environment_fields.values() if not os.environ.get(environment)]
+REVIEW_CONTACT_FIELDS = {
+    "contactFirstName": "ASC_REVIEW_CONTACT_FIRST_NAME",
+    "contactLastName": "ASC_REVIEW_CONTACT_LAST_NAME",
+    "contactEmail": "ASC_REVIEW_CONTACT_EMAIL",
+    "contactPhone": "ASC_REVIEW_CONTACT_PHONE",
+}
+
+
+def review_contact_configured(environ: Mapping[str, str] = os.environ) -> bool:
+    return all(environ.get(name) for name in REVIEW_CONTACT_FIELDS.values())
+
+
+def review_details(listing: Listing, environ: Mapping[str, str] = os.environ) -> dict[str, Any]:
+    """The private review record: who to ring, and the notes. Shared by App
+    Review and Beta App Review, which ask the same questions."""
+    missing = [environment for environment in REVIEW_CONTACT_FIELDS.values() if not environ.get(environment)]
     if missing:
         raise Failure(f"--review-notes requires {', '.join(missing)}")
-    desired = {api_name: os.environ[environment] for api_name, environment in environment_fields.items()}
+    desired: dict[str, Any] = {api: environ[environment] for api, environment in REVIEW_CONTACT_FIELDS.items()}
     desired.update({"demoAccountRequired": False, "notes": listing.review_notes})
+    return desired
+
+
+def sync_review_notes(client: Client, version: dict, listing: Listing, dry_run: bool) -> None:
+    desired = review_details(listing)
     response = client.request("GET", f"/appStoreVersions/{version['id']}/appStoreReviewDetail", allow_not_found=True)
     remote = response.get("data")
     if remote is not None and not changed(remote, desired):
@@ -742,6 +803,66 @@ def sync_review_notes(client: Client, version: dict, listing: Listing, dry_run: 
             f"/appStoreReviewDetails/{remote['id']}",
             {"data": {"type": "appStoreReviewDetails", "id": remote["id"], "attributes": desired}},
         )
+
+
+def sync_beta_descriptions(client: Client, app: str, listing: Listing, dry_run: bool) -> None:
+    """The Beta App Description testers read on the TestFlight invitation,
+    one per locale that keeps a beta_description.txt."""
+    wanted = {
+        locale.locale: locale.fields["beta_description"]
+        for locale in listing.locales
+        if "beta_description" in locale.fields
+    }
+    if not wanted:
+        print("beta description: none kept in the repository; TestFlight left alone")
+        return
+    remotes = client.get(f"/apps/{app}/betaAppLocalizations", params={"limit": 200})["data"]
+    by_locale = {item["attributes"].get("locale"): item for item in remotes}
+    for locale, description in wanted.items():
+        remote = by_locale.get(locale)
+        desired = {"description": description}
+        if remote is not None and not changed(remote, desired):
+            print(f"beta description {locale}: unchanged")
+            continue
+        print(f"beta description {locale}: {'create' if remote is None else 'update'}")
+        if dry_run:
+            continue
+        if remote is None:
+            client.post(
+                "/betaAppLocalizations",
+                {
+                    "data": {
+                        "type": "betaAppLocalizations",
+                        "attributes": {**desired, "locale": locale},
+                        "relationships": {"app": {"data": {"type": "apps", "id": app}}},
+                    }
+                },
+            )
+        else:
+            client.patch(
+                f"/betaAppLocalizations/{remote['id']}",
+                {"data": {"type": "betaAppLocalizations", "id": remote["id"], "attributes": desired}},
+            )
+
+
+def sync_beta_review_details(client: Client, app: str, listing: Listing, dry_run: bool) -> None:
+    """Beta App Review Information: the same contact and notes App Review
+    gets, on the record App Store Connect keeps for the app's TestFlight
+    builds. Apple creates that record with the app, so it is only updated."""
+    desired = review_details(listing)
+    remote = client.get(f"/apps/{app}/betaAppReviewDetail").get("data")
+    if remote is None:
+        raise Failure("App Store Connect has no Beta App Review record for this app yet; open TestFlight once")
+    if not changed(remote, desired):
+        print("beta review details: unchanged")
+        return
+    print("beta review details: update")
+    if dry_run:
+        return
+    client.patch(
+        f"/betaAppReviewDetails/{remote['id']}",
+        {"data": {"type": "betaAppReviewDetails", "id": remote["id"], "attributes": desired}},
+    )
 
 
 def validate_command() -> int:
@@ -776,6 +897,21 @@ def sync_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def testflight_command(args: argparse.Namespace) -> int:
+    """TestFlight's test information is app-level and idempotent, so it is
+    synced on every distributed build rather than only on a release tag."""
+    listing = load_listing()
+    for warning in validate_listing(listing):
+        print(f"warning: {warning}")
+    client = Client()
+    app = app_id(client, listing.config["bundleId"])
+    sync_beta_descriptions(client, app, listing, args.dry_run)
+    if args.review_notes:
+        sync_beta_review_details(client, app, listing, args.dry_run)
+    print("dry run complete; TestFlight was not changed" if args.dry_run else "TestFlight test information is in sync")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -789,10 +925,23 @@ def main() -> int:
         help="read remote state and print changes without writing",
     )
     sync_parser.add_argument("--review-notes", action="store_true", help="also sync private App Review details")
+    testflight_parser = subparsers.add_parser(
+        "testflight", help="write the beta app description, and optionally Beta App Review details, to TestFlight"
+    )
+    testflight_parser.add_argument(
+        "--dry-run", action="store_true", help="read remote state and print changes without writing"
+    )
+    testflight_parser.add_argument(
+        "--review-notes", action="store_true", help="also sync the private Beta App Review contact and notes"
+    )
     args = parser.parse_args()
 
     try:
-        return validate_command() if args.command == "validate" else sync_command(args)
+        if args.command == "validate":
+            return validate_command()
+        if args.command == "testflight":
+            return testflight_command(args)
+        return sync_command(args)
     except (Failure, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

@@ -311,3 +311,172 @@ def test_first_public_version_syncs_without_unavailable_whats_new():
     assert client.patches[0]["whatsNew"] == "Release notes"
     assert "whatsNew" not in client.patches[1]
     assert client.patches[1]["description"] == "Description"
+
+
+def test_team_key_signs_with_an_issuer():
+    key = store.signing_key({"ASC_KEY_ID": "TEAMKEY", "ASC_ISSUER_ID": "issuer-uuid", "ASC_KEY_P8_BASE64": "a2V5"})
+
+    assert key.key_id == "TEAMKEY"
+    assert key.private_key == "key"
+    claims = key.claims(1_000)
+    assert claims["iss"] == "issuer-uuid"
+    assert "sub" not in claims
+    assert claims["exp"] - claims["iat"] == 19 * 60
+    assert claims["aud"] == "appstoreconnect-v1"
+
+
+def test_an_individual_key_is_preferred_and_signs_as_the_person():
+    key = store.signing_key(
+        {
+            "ASC_KEY_ID": "TEAMKEY",
+            "ASC_ISSUER_ID": "issuer-uuid",
+            "ASC_KEY_P8_BASE64": "a2V5",
+            "ASC_INDIVIDUAL_KEY_ID": "MYKEY",
+            "ASC_INDIVIDUAL_KEY_P8_BASE64": "bWluZQ==",
+        }
+    )
+
+    assert key.key_id == "MYKEY"
+    assert key.private_key == "mine"
+    claims = key.claims(1_000)
+    assert claims["sub"] == "user"
+    assert "iss" not in claims
+
+
+def test_a_half_configured_individual_key_falls_back_to_the_team_key():
+    key = store.signing_key(
+        {
+            "ASC_KEY_ID": "TEAMKEY",
+            "ASC_ISSUER_ID": "issuer-uuid",
+            "ASC_KEY_P8_BASE64": "a2V5",
+            "ASC_INDIVIDUAL_KEY_ID": "MYKEY",
+        }
+    )
+
+    assert key.key_id == "TEAMKEY"
+
+
+def test_missing_team_key_is_named():
+    with pytest.raises(store.Failure, match="ASC_ISSUER_ID is not set"):
+        store.signing_key({"ASC_KEY_ID": "TEAMKEY", "ASC_KEY_P8_BASE64": "a2V5"})
+
+
+def test_beta_description_is_optional_but_bounded(tmp_path: Path):
+    root = tmp_path / "app-store"
+    locale = root / "metadata" / "en-GB"
+    locale.mkdir(parents=True)
+    (root / "config.json").write_text(
+        json.dumps(
+            {
+                "bundleId": "com.example.hearful",
+                "platform": "IOS",
+                "primaryLocale": "en-GB",
+                "copyright": "2026 Example",
+                "releaseType": "MANUAL",
+            }
+        )
+    )
+    for field in store.REQUIRED_FIELDS:
+        value = "https://example.com/page" if field.endswith("_url") else "Words"
+        (locale / f"{field}.txt").write_text(value)
+    (root / "review_notes.txt").write_text("Review these steps.")
+
+    assert "beta_description" not in store.load_listing(root).locales[0].fields
+
+    (locale / "beta_description.txt").write_text("What testers read.")
+    assert store.load_listing(root).locales[0].fields["beta_description"] == "What testers read."
+
+    (locale / "beta_description.txt").write_text("x" * 4_001)
+    with pytest.raises(store.Failure, match="beta_description is 4001 characters"):
+        store.validate_listing(store.load_listing(root))
+
+
+def beta_listing(description: str = "What testers read.") -> store.Listing:
+    base = listing()
+    locale = base.locales[0]
+    return store.Listing(
+        config=base.config,
+        locales=(store.LocaleListing(locale.locale, {**locale.fields, "beta_description": description}, {}),),
+        review_notes=base.review_notes,
+    )
+
+
+class FakeTestFlightClient:
+    def __init__(self, *, localizations: list[dict] | None = None, review: dict | None = None):
+        self.localizations = localizations or []
+        self.review = review
+        self.posts: list[tuple[str, dict]] = []
+        self.patches: list[tuple[str, dict]] = []
+
+    def get(self, path: str, **_kwargs) -> dict:
+        if path.endswith("/betaAppLocalizations"):
+            return {"data": self.localizations}
+        if path.endswith("/betaAppReviewDetail"):
+            return {"data": self.review}
+        raise AssertionError(path)
+
+    def post(self, path: str, body: dict) -> dict:
+        self.posts.append((path, body))
+        return {"data": {}}
+
+    def patch(self, path: str, body: dict) -> dict:
+        self.patches.append((path, body))
+        return {"data": {}}
+
+
+def test_beta_description_is_created_for_a_new_locale():
+    client = FakeTestFlightClient()
+
+    store.sync_beta_descriptions(client, "app-id", beta_listing(), dry_run=False)
+
+    assert client.posts[0][0] == "/betaAppLocalizations"
+    attributes = client.posts[0][1]["data"]["attributes"]
+    assert attributes == {"description": "What testers read.", "locale": "en-GB"}
+    assert client.posts[0][1]["data"]["relationships"]["app"]["data"]["id"] == "app-id"
+
+
+def test_beta_description_is_updated_only_when_it_differs():
+    remote = {"id": "loc-id", "attributes": {"locale": "en-GB", "description": "Old words."}}
+    client = FakeTestFlightClient(localizations=[remote])
+
+    store.sync_beta_descriptions(client, "app-id", beta_listing("Old words."), dry_run=False)
+    assert client.patches == []
+
+    store.sync_beta_descriptions(client, "app-id", beta_listing(), dry_run=False)
+    assert client.patches[0][0] == "/betaAppLocalizations/loc-id"
+    assert client.patches[0][1]["data"]["attributes"] == {"description": "What testers read."}
+
+
+def test_no_beta_description_leaves_testflight_alone():
+    client = FakeTestFlightClient()
+
+    store.sync_beta_descriptions(client, "app-id", listing(), dry_run=False)
+
+    assert client.posts == [] and client.patches == []
+
+
+def test_beta_review_details_carry_the_contact_and_notes(monkeypatch):
+    for name, value in (
+        ("ASC_REVIEW_CONTACT_FIRST_NAME", "Ada"),
+        ("ASC_REVIEW_CONTACT_LAST_NAME", "Lovelace"),
+        ("ASC_REVIEW_CONTACT_EMAIL", "ada@example.com"),
+        ("ASC_REVIEW_CONTACT_PHONE", "+44 20 7946 0000"),
+    ):
+        monkeypatch.setenv(name, value)
+    client = FakeTestFlightClient(review={"id": "review-id", "attributes": {"notes": "Stale."}})
+
+    store.sync_beta_review_details(client, "app-id", listing(), dry_run=False)
+
+    assert client.patches[0][0] == "/betaAppReviewDetails/review-id"
+    attributes = client.patches[0][1]["data"]["attributes"]
+    assert attributes["notes"] == "Review these steps."
+    assert attributes["contactLastName"] == "Lovelace"
+    assert attributes["demoAccountRequired"] is False
+
+
+def test_beta_review_details_need_every_contact_field(monkeypatch):
+    monkeypatch.delenv("ASC_REVIEW_CONTACT_PHONE", raising=False)
+    monkeypatch.setenv("ASC_REVIEW_CONTACT_FIRST_NAME", "Ada")
+
+    with pytest.raises(store.Failure, match="ASC_REVIEW_CONTACT_PHONE"):
+        store.sync_beta_review_details(FakeTestFlightClient(), "app-id", listing(), dry_run=False)

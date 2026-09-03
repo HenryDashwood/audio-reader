@@ -8,8 +8,12 @@ CI validate it, and sync it from a release tag.
 
 - `config.json` identifies the app and holds non-localised version settings.
 - `metadata/<locale>/` contains one plain-text field per App Store field.
-- `review_notes.txt` is the non-public explanation for App Review. Contact
-  details are deliberately not committed.
+- `review_notes.txt` is the non-public explanation for App Review, and for
+  Beta App Review on TestFlight. Contact details are deliberately not
+  committed.
+- `metadata/<locale>/beta_description.txt` is the Beta App Description
+  testers read on the TestFlight invitation. Optional: a locale without one
+  keeps whatever TestFlight already has.
 - `screenshots/<locale>/<display type>/` contains the final ordered images.
   Filenames sort into their storefront order, so use names such as
   `01-latest.jpg`, `02-shows.jpg`, and `03-player.jpg`.
@@ -103,8 +107,21 @@ Use `--dry-run` with those credentials to inspect the remote plan without
 writing. Screenshot sets are only replaced when their ordered file names and
 checksums differ. An API key with the App Manager role is required.
 
-Review notes are stored here but are not uploaded by CI because Apple's review
-record also contains a private phone number. To sync them, set the four contact
+Every distributed build, tagged or not, also syncs the TestFlight test
+information: the beta app description, and with the contact set, Beta App
+Review's contact and notes. The same operation is:
+
+```bash
+uv run scripts/app_store_sync.py testflight [--review-notes] [--dry-run]
+```
+
+Both commands sign with the individual API key in `ASC_INDIVIDUAL_KEY_ID` and
+`ASC_INDIVIDUAL_KEY_P8_BASE64` when those are set, so what they submit shows
+under a person's name in App Store Connect, and fall back to the team key.
+
+Apple's review record also contains a private phone number, so the contact is
+never committed. CI writes the review notes only when the four
+`ASC_REVIEW_CONTACT_*` repository secrets exist; locally, set the same four
 variables and opt in:
 
 ```bash
@@ -127,8 +144,7 @@ than repository copy. Before submitting a version, check these manually:
 - App Accessibility declarations against the device pass in
   `docs/store-listing.md`;
 - price, territories, tax and banking agreements;
-- export-compliance answers, the selected build, release mode, and review
-  contact details;
+- export-compliance answers, the selected build, and release mode;
 - every screenshot on both phone and iPad, at full size.
 
 The synchroniser intentionally does not submit for review. A successful upload

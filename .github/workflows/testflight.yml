@@ -275,12 +275,22 @@ jobs:
       # so `@v10` does not resolve even though v10.0.1 is the current release.
       - uses: astral-sh/setup-uv@v10.0.1
 
+      # The individual key and the review contact are optional. With the
+      # individual key, submissions show under a person's name in App Store
+      # Connect rather than as "API user"; with the contact, the private
+      # review notes are written too, instead of being pasted by hand.
       - name: Sync the public App Store listing
         if: github.ref_type == 'tag' || inputs.sync_version != ''
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           ASC_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+          ASC_INDIVIDUAL_KEY_ID: ${{ secrets.APP_STORE_CONNECT_INDIVIDUAL_KEY_ID }}
+          ASC_INDIVIDUAL_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_INDIVIDUAL_KEY_P8 }}
+          ASC_REVIEW_CONTACT_FIRST_NAME: ${{ secrets.ASC_REVIEW_CONTACT_FIRST_NAME }}
+          ASC_REVIEW_CONTACT_LAST_NAME: ${{ secrets.ASC_REVIEW_CONTACT_LAST_NAME }}
+          ASC_REVIEW_CONTACT_EMAIL: ${{ secrets.ASC_REVIEW_CONTACT_EMAIL }}
+          ASC_REVIEW_CONTACT_PHONE: ${{ secrets.ASC_REVIEW_CONTACT_PHONE }}
           SYNC_VERSION: ${{ inputs.sync_version }}
         run: |
           set -euo pipefail
@@ -288,13 +298,19 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             version="${GITHUB_REF_NAME#v}"
           fi
-          uv run scripts/app_store_sync.py sync --version "$version"
+          args=(--version "$version")
+          if [ -n "$ASC_REVIEW_CONTACT_PHONE" ]; then
+            args+=(--review-notes)
+          fi
+          uv run scripts/app_store_sync.py sync "${args[@]}"
 
       - name: Set release notes and distribute
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           ASC_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+          ASC_INDIVIDUAL_KEY_ID: ${{ secrets.APP_STORE_CONNECT_INDIVIDUAL_KEY_ID }}
+          ASC_INDIVIDUAL_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_INDIVIDUAL_KEY_P8 }}
           BUILD_NUMBER: ${{ needs.testflight.outputs.build }}
           DISTRIBUTE_BUILD: ${{ inputs.distribute_build }}
         run: |
@@ -318,3 +334,25 @@ jobs:
           fi
 
           uv run scripts/testflight_distribute.py "${args[@]}"
+
+      # App-level and idempotent, so every distributed build keeps the
+      # TestFlight invitation text and Beta App Review record in step with
+      # the repository.
+      - name: Sync the TestFlight test information
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+          ASC_INDIVIDUAL_KEY_ID: ${{ secrets.APP_STORE_CONNECT_INDIVIDUAL_KEY_ID }}
+          ASC_INDIVIDUAL_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_INDIVIDUAL_KEY_P8 }}
+          ASC_REVIEW_CONTACT_FIRST_NAME: ${{ secrets.ASC_REVIEW_CONTACT_FIRST_NAME }}
+          ASC_REVIEW_CONTACT_LAST_NAME: ${{ secrets.ASC_REVIEW_CONTACT_LAST_NAME }}
+          ASC_REVIEW_CONTACT_EMAIL: ${{ secrets.ASC_REVIEW_CONTACT_EMAIL }}
+          ASC_REVIEW_CONTACT_PHONE: ${{ secrets.ASC_REVIEW_CONTACT_PHONE }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "$ASC_REVIEW_CONTACT_PHONE" ]; then
+            args+=(--review-notes)
+          fi
+          uv run scripts/app_store_sync.py testflight "${args[@]}"

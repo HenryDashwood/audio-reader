@@ -200,7 +200,7 @@ so `CURRENT_PROJECT_VERSION` in the project file no longer needs bumping by
 hand. It still does for an upload archived locally in Xcode, since App Store
 Connect rejects a build number it has already seen.
 
-The workflow needs five repository secrets:
+The workflow needs six repository secrets, and takes six more when they exist:
 
 | Secret | What it is |
 | --- | --- |
@@ -210,6 +210,9 @@ The workflow needs five repository secrets:
 | `APP_STORE_CONNECT_ISSUER_ID` | Issuer ID from the same Keys page |
 | `APP_STORE_CONNECT_KEY_P8` | The downloaded `AuthKey_*.p8`, base64-encoded |
 | `APPLE_PROVISIONING_PROFILE` | An App Store `.mobileprovision` for `com.henrydashwood.hearful`, base64-encoded |
+| `APP_STORE_CONNECT_INDIVIDUAL_KEY_ID` | Optional. Key ID of an *individual* API key, generated from your own profile in App Store Connect (User profile → Individual API Key). With it, the beta review submission and the listing sync show under your name instead of "API user" |
+| `APP_STORE_CONNECT_INDIVIDUAL_KEY_P8` | Optional. That key's `.p8`, base64-encoded. Individual keys have no issuer ID; the team key above still does the build upload |
+| `ASC_REVIEW_CONTACT_FIRST_NAME`, `..._LAST_NAME`, `..._EMAIL`, `..._PHONE` | Optional, all four together. The review contact Apple asks for. With them, CI writes `app-store/review_notes.txt` and the contact to App Review on a release tag, and to Beta App Review on every distributed build |
 
 Uploading from Xcode does not necessarily leave an Apple Distribution
 certificate on the Mac — Xcode can sign with a cloud-managed identity whose key

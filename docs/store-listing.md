@@ -11,28 +11,10 @@ Privacy policy URL: <https://audio-reader-production.up.railway.app/privacy>
 
 ## Beta App Description
 
-*TestFlight → Test Information → Beta App Description. This is what testers
-read on the TestFlight invitation.*
-
-> Magpie is a podcast and article player that can be controlled by voice.
->
-> Tap the microphone or use Siri to make requests, such as "play the latest In
-> Our Time", "subscribe to Astral Codex Ten", or "play the one about
-> Agincourt". Magpie also reads written articles and newsletters aloud using
-> iPhone system voices. Blogs and Substacks get the same playback controls as
-> podcasts: lock-screen controls, AirPods support, adjustable playback speed,
-> and a sleep timer. Every article includes a direct link to the original web
-> page.
->
-> Newsletters that only exist as email can be followed too. Settings gives you
-> a newsletter address of your own to hand over instead of your inbox, or
-> Magpie can sign you up itself from a newsletter's web address. The first
-> time a sender writes, Magpie asks whether to follow it, and then reads each
-> issue aloud without the unsubscribe links and footers emails carry.
->
-> The app saves your playback position in every episode and is designed so the
-> whole app can be used without looking at the screen. If you use VoiceOver,
-> that is the way it is meant to be used.
+The canonical copy is
+[`app-store/metadata/en-GB/beta_description.txt`](../app-store/metadata/en-GB/beta_description.txt).
+Every distributed build syncs it to TestFlight → Test Information, so edit it
+there rather than in App Store Connect.
 
 ---
 
@@ -63,7 +45,10 @@ If you use VoiceOver, please tell us anywhere the app is awkward, silent when it
 
 The canonical copy is [`app-store/review_notes.txt`](../app-store/review_notes.txt).
 Keep reviewer instructions there so the local package and App Store Connect do
-not drift apart.
+not drift apart. With the four `ASC_REVIEW_CONTACT_*` repository secrets set,
+CI writes the notes and contact to both App Review (on a release tag) and Beta
+App Review (on every distributed build); without them the notes stay a manual
+paste.
 
 ---
 
