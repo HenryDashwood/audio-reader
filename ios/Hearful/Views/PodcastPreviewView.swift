@@ -23,7 +23,7 @@ struct PodcastPreviewView: View {
                 List {
                     Section {
                         HStack(alignment: .top, spacing: 14) {
-                            Artwork(url: preview.show.artworkURL ?? podcast.artworkURL, size: 88)
+                            Artwork(url: preview.show.artworkURL ?? podcast.artworkURL, title: preview.show.title, size: 88)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(preview.show.title).font(.title3.weight(.semibold))
                                 if let publisher = podcast.publisher {

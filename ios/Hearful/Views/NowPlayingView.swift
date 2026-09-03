@@ -40,7 +40,7 @@ struct NowPlayingView: View {
             .padding(.top, 8)
             .padding(.horizontal, 8)
 
-            Artwork(url: player.currentEpisode?.imageURL, size: 260)
+            Artwork(url: player.currentEpisode?.imageURL, title: player.currentEpisode?.feedTitle ?? "", size: 260)
                 .shadow(radius: 12, y: 6)
                 .padding(.top, 12)
 
@@ -254,7 +254,7 @@ struct MiniPlayer: View {
                     showingNowPlaying = true
                 } label: {
                     HStack(spacing: 10) {
-                        Artwork(url: episode.imageURL, size: 32)
+                        Artwork(url: episode.imageURL, title: episode.feedTitle ?? "", size: 32)
                         Text(episode.title).font(.subheadline).lineLimit(1)
                         Spacer(minLength: 2)
                     }

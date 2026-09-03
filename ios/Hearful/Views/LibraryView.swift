@@ -367,7 +367,7 @@ private struct ShowRow: View {
 
     var body: some View {
         HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 12) {
-            Artwork(url: show.artworkURL)
+            Artwork(url: show.artworkURL, title: show.title)
             VStack(alignment: .leading, spacing: 2) {
                 Text(show.title)
                     .font(.headline)
@@ -397,7 +397,7 @@ private struct PodcastResultRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Artwork(url: result.artworkURL)
+            Artwork(url: result.artworkURL, title: result.title)
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.title).font(.headline).lineLimit(2)
                 if let publisher = result.publisher {

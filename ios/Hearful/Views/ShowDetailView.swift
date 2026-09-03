@@ -15,7 +15,7 @@ struct ShowDetailView: View {
         List {
             Section {
                 HStack(alignment: .top, spacing: 14) {
-                    Artwork(url: show.artworkURL, size: 88)
+                    Artwork(url: show.artworkURL, title: show.title, size: 88)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(show.title).font(.title3.weight(.semibold))
                         Text(show.itemCountLabel)
@@ -188,7 +188,7 @@ struct EpisodeRow: View {
 
     private var summary: some View {
         HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 12) {
-            Artwork(url: episode.imageURL, size: 56)
+            Artwork(url: episode.imageURL, title: episode.feedTitle ?? "", size: 56)
             VStack(alignment: .leading, spacing: 4) {
                 Text(episode.title)
                     .font(.body.weight(isCurrent ? .semibold : .regular))

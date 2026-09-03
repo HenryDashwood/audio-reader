@@ -23,6 +23,9 @@ Stuff or Benedict's Newsletter. Worth trying:
   sender should appear at the top of Latest under **Waiting for your
   answer**, with how many messages it has sent and the latest subject, and
   nothing from it should be in the list below yet.
+- A show with no artwork should show its initials on a colour of its own,
+  the same colour every time, rather than a grey waveform — for written
+  shows and podcasts alike.
 - Tap **Follow**. The sender should become a show in Following, its messages
   should appear in Latest, and opening one should read the writing without
   the unsubscribe links, addresses and "view in browser" lines that emails
