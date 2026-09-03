@@ -195,6 +195,16 @@ def distribute(client: Client, app: str, build: str, group_name: str) -> None:
 
 
 def submit_for_review(client: Client, build: str) -> None:
+    # A build that is waiting for, in, or through beta review cannot be
+    # submitted again, and Apple says so in more than one way: a 409 for the
+    # duplicate, or a 422 INVALID_QC_STATE. Asking first is clearer than
+    # reading tea leaves in the refusal.
+    existing = client.get(f"/builds/{build}/betaAppReviewSubmission").get("data")
+    if existing is not None:
+        state = existing.get("attributes", {}).get("betaReviewState")
+        if state != "REJECTED":
+            print(f"already submitted for beta app review ({state})", flush=True)
+            return
     try:
         client.post(
             "/betaAppReviewSubmissions",
@@ -209,7 +219,7 @@ def submit_for_review(client: Client, build: str) -> None:
     except Failure as error:
         # Adding a build to an external group can submit it as a side effect,
         # and Apple then rejects the explicit submission as a duplicate.
-        if "409" in str(error):
+        if "409" in str(error) or "INVALID_QC_STATE" in str(error):
             print("already submitted for beta app review", flush=True)
             return
         raise
