@@ -25,6 +25,21 @@ enum AudioSessionEventReader {
 
         switch type {
         case .began:
+            // Since iOS 17 the system can describe a route going away — the
+            // AirPods coming out — as an interruption rather than a route
+            // change, and one that never "ends". Treated as the disconnection
+            // it is, so a later call ending cannot put the episode back on
+            // through the speaker. The microphone being muted is a recording
+            // matter and no reason to touch playback.
+            if let rawReason = userInfo[AVAudioSessionInterruptionReasonKey] as? UInt,
+                let reason = AVAudioSession.InterruptionReason(rawValue: rawReason)
+            {
+                switch reason {
+                case .routeDisconnected: return .outputDeviceDisconnected
+                case .builtInMicMuted: return nil
+                default: break
+                }
+            }
             return .interrupted
         case .ended:
             let options = (userInfo[AVAudioSessionInterruptionOptionKey] as? UInt).map(
@@ -63,16 +78,23 @@ struct InterruptionPolicy {
     }
 
     private(set) var wasPlayingWhenInterrupted = false
+    /// Between a begin and its end. One phone call can begin more than once —
+    /// the ring, then the answer — and only the first begin saw her intent;
+    /// by the second, playback is already paused, and reading intent again
+    /// would conclude she had not been listening and never resume.
+    private(set) var isInterrupted = false
 
     mutating func decide(_ event: AudioSessionEvent, wantsPlayback: Bool) -> Action {
         switch event {
         case .interrupted:
+            guard !isInterrupted else { return .nothing }
+            isInterrupted = true
             wasPlayingWhenInterrupted = wantsPlayback
             return wantsPlayback ? .pause : .nothing
 
         case .interruptionEnded(let shouldResume):
             let resuming = wasPlayingWhenInterrupted && shouldResume
-            wasPlayingWhenInterrupted = false
+            reset()
             return resuming ? .resume : .nothing
 
         case .outputDeviceDisconnected:
@@ -81,5 +103,16 @@ struct InterruptionPolicy {
             wasPlayingWhenInterrupted = false
             return wantsPlayback ? .pause : .nothing
         }
+    }
+
+    /// She has taken over: pressed play or pause herself, or put something
+    /// else on. Whatever an interruption remembered is void. The system
+    /// promises no end for every begin — an app suspended during a long call
+    /// gets none — and without this the remembered intent would sit waiting
+    /// for the next unrelated end, Siri hours later, to start the episode on
+    /// its own.
+    mutating func reset() {
+        isInterrupted = false
+        wasPlayingWhenInterrupted = false
     }
 }

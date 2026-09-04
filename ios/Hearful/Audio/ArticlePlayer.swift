@@ -122,6 +122,26 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         updateNowPlayingPosition()
     }
 
+    /// A call or an alarm has taken the audio.
+    ///
+    /// The passage is stopped rather than paused. The synthesiser does not
+    /// reliably carry on after the system has silenced it: continueSpeaking()
+    /// reports success and no sound follows, leaving a player that says it is
+    /// playing while nothing on screen can explain the silence — and pressing
+    /// pause and play again only repeats the trick. Stopped, resume() finds no
+    /// paused speech and reads the current passage from its start, which
+    /// costs her at most a paragraph heard twice.
+    func pauseForInterruption() {
+        wantsPlayback = false
+        cancelSpeech(clearingLocation: false)
+        isPlaying = false
+        updateNowPlayingPosition()
+    }
+
+    /// The synthesiser gives no such signal; a stuck reader is handled by
+    /// starting the passage again rather than by asking twice.
+    var isStuckAfterPlayRequest: Bool { false }
+
     func resume() {
         guard let episode = currentEpisode else { return }
         try? AudioSession.configureForPlayback()

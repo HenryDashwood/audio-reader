@@ -1,6 +1,27 @@
 import Combine
 import UIKit
 
+/// One report on its way to the backend.
+///
+/// Broadcast as `.hearfulPositionReported` before it is sent, so the lists on
+/// screen can move with her instead of waiting for a reload: a row saying
+/// "40 min left" an hour into the episode was the list remembering the
+/// position it was fetched with.
+nonisolated struct PositionReport: Equatable, Sendable {
+    let episodeID: Int
+    let seconds: TimeInterval
+    let completed: Bool
+    /// The audio's measured length, or nil while only the feed's claim is
+    /// known. Never set for an article: the reader's length is an estimate
+    /// at her chosen speed, not something to write over the feed's.
+    let durationSeconds: Int?
+}
+
+extension Notification.Name {
+    /// Posted with a `PositionReport` as its object.
+    nonisolated static let hearfulPositionReported = Notification.Name("hearfulPositionReported")
+}
+
 /// Watches playback and tells the backend where she is in each episode.
 ///
 /// A separate observer rather than code inside the players, so they keep zero
@@ -136,12 +157,18 @@ final class PositionReporter {
         lastReportAt = Date()
         let duration = player.duration
         let completed = duration > 0 && seconds / duration > 0.95
+        let report = PositionReport(
+            episodeID: episode.id, seconds: seconds, completed: completed,
+            durationSeconds: player.measuredDuration.map { Int($0.rounded()) })
+        // The lists hear first: what she sees must not wait on the network.
+        NotificationCenter.default.post(name: .hearfulPositionReported, object: report)
         let api = self.api
         let precedingReport = reportQueueTail
         reportQueueTail = Task {
             await precedingReport?.value
             try? await api.reportPosition(
-                episodeID: episode.id, seconds: seconds, completed: completed)
+                episodeID: report.episodeID, seconds: report.seconds,
+                completed: report.completed, durationSeconds: report.durationSeconds)
         }
     }
 }

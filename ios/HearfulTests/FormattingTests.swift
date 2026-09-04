@@ -132,6 +132,54 @@ struct ListeningProgressTests {
     }
 }
 
+@Suite("Applying a position report to a list")
+struct PositionReportMergeTests {
+    private func episode(id: Int, position: Double? = nil, duration: Int? = 3600) -> Episode {
+        Episode(
+            id: id, title: "Episode \(id)", description: nil,
+            audioURL: URL(string: "https://cdn.example.com/\(id).mp3"),
+            durationSeconds: duration, publishedAt: nil, link: nil,
+            positionSeconds: position, completed: nil)
+    }
+
+    @Test func theReportedEpisodeMovesAndTheRestDoNot() {
+        let updated = episodesByApplyingPositionReport(
+            [episode(id: 1, position: 100), episode(id: 2, position: 200)],
+            PositionReport(episodeID: 2, seconds: 1500, completed: false, durationSeconds: nil))
+
+        #expect(updated.map(\.positionSeconds) == [100, 1500])
+        #expect(updated[1].listeningProgress == .inProgress(remainingSeconds: 2100))
+    }
+
+    @Test func aMeasuredDurationReplacesTheFeedsClaim() {
+        // The feed said an hour; the audio turned out to be fifty minutes.
+        // Left alone, the row would count down ten minutes the player never
+        // had.
+        let updated = episodesByApplyingPositionReport(
+            [episode(id: 1)],
+            PositionReport(episodeID: 1, seconds: 1500, completed: false, durationSeconds: 3000))
+
+        #expect(updated[0].durationSeconds == 3000)
+        #expect(updated[0].listeningProgress == .inProgress(remainingSeconds: 1500))
+    }
+
+    @Test func anUnknownDurationLeavesTheFeedsClaim() {
+        let updated = episodesByApplyingPositionReport(
+            [episode(id: 1)],
+            PositionReport(episodeID: 1, seconds: 1500, completed: false, durationSeconds: nil))
+
+        #expect(updated[0].durationSeconds == 3600)
+    }
+
+    @Test func finishingFilesItAsPlayed() {
+        let updated = episodesByApplyingPositionReport(
+            [episode(id: 1)],
+            PositionReport(episodeID: 1, seconds: 3590, completed: true, durationSeconds: nil))
+
+        #expect(updated[0].listeningProgress == .played)
+    }
+}
+
 @Suite("Continue listening selection")
 struct ContinueListeningTests {
     private func episode(position: Double?, completed: Bool? = nil) -> Episode {

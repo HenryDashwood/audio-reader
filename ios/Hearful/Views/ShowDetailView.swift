@@ -59,6 +59,7 @@ struct ShowDetailView: View {
                     ForEach(episodes) { episode in
                         EpisodeRow(
                             episode: episode,
+                            progress: player.listeningProgress(for: episode),
                             isCurrent: player.currentEpisode?.id == episode.id,
                             play: { player.playReportingFailure(episode) }
                         )
@@ -111,6 +112,12 @@ struct ShowDetailView: View {
                 model.filed(change)
             }
         }
+        // Listening moves the rows too; see the same hook in Latest.
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulPositionReported)) { note in
+            if let report = note.object as? PositionReport {
+                model.progressed(report, showID: show.id)
+            }
+        }
     }
 
     /// The mirror of the preview page's Subscribe button. Unsubscribing is
@@ -151,6 +158,10 @@ struct EpisodeRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let episode: Episode
+    /// How far through it she is, where the caller knows better than the
+    /// episode payload does — the player's live clock for the episode it has
+    /// loaded. Nil means the payload's own saved position.
+    var progress: ListeningProgress? = nil
     var isCurrent = false
     /// Starts it, from the row, without going to its page first.
     ///
@@ -201,7 +212,7 @@ struct EpisodeRow: View {
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                EpisodeMetadata(episode: episode)
+                EpisodeMetadata(episode: episode, progress: resolvedProgress)
                 if let description = episode.description, !description.isEmpty {
                     Text(description)
                         .font(.caption)
@@ -217,10 +228,14 @@ struct EpisodeRow: View {
         .accessibilityHint("Double tap to open this \(episode.isArticle ? "post" : "episode")")
     }
 
+    private var resolvedProgress: ListeningProgress {
+        progress ?? episode.listeningProgress
+    }
+
     /// The hint changes with the state, because the action does: playing a
     /// half-finished episode picks it up where she left off.
     private var hint: String {
-        switch episode.listeningProgress {
+        switch resolvedProgress {
         case .inProgress: "Double tap to carry on where you left off"
         case .played: "Double tap to play again from the start"
         case .unplayed: "Double tap to play"
@@ -233,15 +248,16 @@ struct EpisodeRow: View {
 /// in a length; these candidates wrap between fields instead.
 private struct EpisodeMetadata: View {
     let episode: Episode
+    let progress: ListeningProgress
 
     private var length: String? {
         episode.isArticle
             ? formatWordCount(episode.wordCount)
             : formatLength(seconds: episode.durationSeconds)
     }
-    private var progress: String? { episode.listeningProgress.label }
+    private var progressLabel: String? { progress.label }
     private var hasPrimary: Bool { episode.publishedAt != nil || length != nil }
-    private var hasStatus: Bool { progress != nil || episode.dismissed == true }
+    private var hasStatus: Bool { progressLabel != nil || episode.dismissed == true }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -281,16 +297,16 @@ private struct EpisodeMetadata: View {
 
     private var status: some View {
         HStack(spacing: 6) {
-            if let progress {
+            if let progressLabel {
                 // Positions have been recorded all along; this is the first
                 // visible evidence that she has heard or started an item.
-                Text(progress)
+                Text(progressLabel)
                     .foregroundStyle(
-                        episode.listeningProgress == .played
+                        progress == .played
                             ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
             }
             if episode.dismissed == true {
-                if progress != nil { Text("·") }
+                if progressLabel != nil { Text("·") }
                 // Said rather than implied: a filed item otherwise looks like
                 // every other row when viewed inside its show.
                 Text("Not in Latest")
@@ -307,10 +323,10 @@ private struct EpisodeMetadata: View {
             if let length {
                 Text(length).fixedSize(horizontal: true, vertical: false)
             }
-            if let progress {
-                Text(progress)
+            if let progressLabel {
+                Text(progressLabel)
                     .foregroundStyle(
-                        episode.listeningProgress == .played
+                        progress == .played
                             ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                     .fixedSize(horizontal: true, vertical: false)
             }
@@ -454,6 +470,26 @@ final class EpisodeListModel: ObservableObject {
                 }
                 return updated
             })
+    }
+
+    /// Where she has got to, as just reported to the backend: the row keeps
+    /// step with the player, and the saved copy of this show with the row.
+    /// A search result is not the show's saved list, so that is updated on
+    /// its own, as learnedWordCount does.
+    func progressed(_ report: PositionReport, showID: Int) {
+        guard case .loaded(let episodes) = state else { return }
+        let updated = episodesByApplyingPositionReport(episodes, report)
+        state = .loaded(updated)
+
+        if isSearching {
+            guard let cached = cache.load([Episode].self, for: .episodes(showID: showID))
+            else { return }
+            cache.save(
+                episodesByApplyingPositionReport(cached, report),
+                for: .episodes(showID: showID))
+        } else {
+            cache.save(updated, for: .episodes(showID: showID))
+        }
     }
 
     /// The full text is fetched only after the row opens, so fold its newly

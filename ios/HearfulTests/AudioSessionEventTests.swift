@@ -35,6 +35,18 @@ struct AudioSessionEventReaderTests {
         #expect(event == .interruptionEnded(shouldResume: false))
     }
 
+    @Test func aRouteGoingAwayIsADisconnectionNotAnInterruption() {
+        // Newer systems report the AirPods coming out this way, and never
+        // send an end for it. Taken as an interruption, the next call ending
+        // would put the episode back on through the speaker.
+        let event = AudioSessionEventReader.interruption(from: [
+            AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue,
+            AVAudioSessionInterruptionReasonKey: AVAudioSession.InterruptionReason
+                .routeDisconnected.rawValue,
+        ])
+        #expect(event == .outputDeviceDisconnected)
+    }
+
     @Test func junkUserInfoIsIgnored() {
         #expect(AudioSessionEventReader.interruption(from: [:]) == nil)
         #expect(AudioSessionEventReader.routeChange(from: ["nonsense": 3]) == nil)
@@ -84,6 +96,27 @@ struct InterruptionPolicyTests {
         var policy = InterruptionPolicy()
         _ = policy.decide(.interrupted, wantsPlayback: true)
         #expect(policy.decide(.interruptionEnded(shouldResume: false), wantsPlayback: false) == .nothing)
+    }
+
+    @Test func aCallBeginningTwiceStillResumes() {
+        // One call arrives as two begins — the ring, then the answer — and by
+        // the second, playback is already paused. Reading intent again there
+        // concluded she had not been listening, and the call ending resumed
+        // nothing.
+        var policy = InterruptionPolicy()
+        _ = policy.decide(.interrupted, wantsPlayback: true)
+        #expect(policy.decide(.interrupted, wantsPlayback: false) == .nothing)
+        #expect(policy.decide(.interruptionEnded(shouldResume: true), wantsPlayback: false) == .resume)
+    }
+
+    @Test func herTakingOverForgetsTheInterruption() {
+        // A begin with no end — the app was suspended during the call. Once
+        // she has pressed play herself, an unrelated end later must not start
+        // the episode on its own.
+        var policy = InterruptionPolicy()
+        _ = policy.decide(.interrupted, wantsPlayback: true)
+        policy.reset()
+        #expect(policy.decide(.interruptionEnded(shouldResume: true), wantsPlayback: false) == .nothing)
     }
 
     @Test func aSecondEndingDoesNotResumeAgain() {
@@ -165,6 +198,34 @@ struct PlaybackInterruptionTests {
 
         player.handle(.interruptionEnded(shouldResume: true))
         #expect(player.article.isPlaying)
+    }
+
+    @Test func aCallThatBeginsTwiceStillPutsTheArticleBackOn() async throws {
+        let (player, _) = makePlayer()
+        try player.play(article())
+        await waitUntilLoaded(player)
+
+        player.handle(.interrupted)
+        player.handle(.interrupted)
+        player.handle(.interruptionEnded(shouldResume: true))
+
+        #expect(player.article.isPlaying)
+    }
+
+    @Test func aStrandedInterruptionCannotStartHerLater() async throws {
+        // No end ever came for the call; she pressed play herself, then
+        // paused. When Siri's turn ends an hour later, that must not start
+        // the article.
+        let (player, _) = makePlayer()
+        try player.play(article())
+        await waitUntilLoaded(player)
+
+        player.handle(.interrupted)
+        player.resume()
+        player.pause()
+        player.handle(.interruptionEnded(shouldResume: true))
+
+        #expect(!player.article.isPlaying)
     }
 
     @Test func anInterruptionWithNothingPlayingStartsNothing() {

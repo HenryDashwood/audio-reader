@@ -103,6 +103,14 @@ struct LatestView: View {
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
             Task { await reload() }
         }
+        // Listening moves the list too. Without this a row went on saying
+        // how much was left when the list was fetched, however long ago
+        // that was, until she pulled to refresh.
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulPositionReported)) { note in
+            if let report = note.object as? PositionReport {
+                model.progressed(report)
+            }
+        }
     }
 
     private func reload() async {
@@ -132,8 +140,8 @@ struct LatestView: View {
             // Moved rather than copied: a duplicated row is a small visual
             // redundancy but a real cost to anyone reading the list linearly
             // with VoiceOver, who has to swipe past the same episode twice.
-            let started = episodes.filter { $0.listeningProgress.hasStarted }
-            let rest = episodes.filter { !$0.listeningProgress.hasStarted }
+            let started = episodes.filter { player.listeningProgress(for: $0).hasStarted }
+            let rest = episodes.filter { !player.listeningProgress(for: $0).hasStarted }
             if started.isEmpty {
                 ForEach(episodes) { row(for: $0) }
             } else {
@@ -152,6 +160,7 @@ struct LatestView: View {
     private func row(for episode: Episode) -> some View {
         EpisodeRow(
             episode: episode,
+            progress: player.listeningProgress(for: episode),
             isCurrent: player.currentEpisode?.id == episode.id,
             play: { player.playReportingFailure(episode) }
         )
@@ -248,6 +257,23 @@ final class LatestModel: ObservableObject {
         case .stale(let episodes):
             let updated = episodesByUpdatingWordCount(
                 episodes, episodeID: episodeID, wordCount: wordCount)
+            cache.save(updated, for: .recentEpisodes)
+            state = .stale(updated)
+        case .loading, .failed:
+            break
+        }
+    }
+
+    /// Where she has got to, as just reported to the backend: the row keeps
+    /// step with the player, and the offline copy with the row.
+    func progressed(_ report: PositionReport) {
+        switch state {
+        case .loaded(let episodes):
+            let updated = episodesByApplyingPositionReport(episodes, report)
+            cache.save(updated, for: .recentEpisodes)
+            state = .loaded(updated)
+        case .stale(let episodes):
+            let updated = episodesByApplyingPositionReport(episodes, report)
             cache.save(updated, for: .recentEpisodes)
             state = .stale(updated)
         case .loading, .failed:

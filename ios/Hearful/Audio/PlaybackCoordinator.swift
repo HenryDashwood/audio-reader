@@ -46,6 +46,12 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     /// nothing was playing and leave the episode stopped for good. Intent does
     /// not race: nothing but she changes it.
     private var wantsPlayback = false
+    /// The follow-up attempts after an interruption ends; see
+    /// `resumeAfterInterruption`.
+    private var resumeNudge: Task<Void, Never>?
+    /// Seconds after the first attempt at which to ask again if it went
+    /// nowhere. Internal so the tests can read them.
+    static let resumeNudgeDelays: [TimeInterval] = [1, 2, 4]
 
     init(audio: AudioPlayer, article: ArticlePlayer) {
         self.audio = audio
@@ -69,6 +75,28 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
 
     var progress: Double {
         duration > 0 ? min(max(currentTime / duration, 0), 1) : 0
+    }
+
+    /// The audio's length as measured from the loaded asset, or nil while
+    /// only the feed's claim is known — and always nil for an article, whose
+    /// length is the reader's estimate at her chosen speed.
+    var measuredDuration: TimeInterval? {
+        mode == .audio && audio.hasMeasuredDuration ? audio.duration : nil
+    }
+
+    /// What a list row should say about an episode.
+    ///
+    /// The one loaded in the player answers from the live clock, so a row and
+    /// the player can never disagree about how much is left. Every other row
+    /// answers from the position its list was fetched with. Articles keep to
+    /// the snapshot: their length is an estimate, and a row that counted
+    /// down an estimate would be claiming more than it knows.
+    func listeningProgress(for episode: Episode) -> ListeningProgress {
+        guard mode == .audio, currentEpisode?.id == episode.id, duration > 0, currentTime > 0
+        else { return episode.listeningProgress }
+        return ListeningProgress(
+            positionSeconds: currentTime, durationSeconds: Int(duration.rounded()),
+            completed: nil)
     }
 
     /// True while the user is dragging the scrubber; forwarded so the ticking
@@ -99,6 +127,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
 
     func play(_ episode: Episode) throws {
         playbackFailure = nil
+        sheTookOver()
         wantsPlayback = true
         if Self.playsAsArticle(episode) {
             audio.pause()
@@ -153,6 +182,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     // MARK: - Transport (routed to the active player)
 
     func pause() {
+        sheTookOver()
         wantsPlayback = false
         active.pause()
     }
@@ -163,8 +193,18 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         // restoring what she interrupted, would otherwise activate the audio
         // session — silencing whatever else is playing — for no sound at all.
         guard currentEpisode != nil else { return }
+        sheTookOver()
         wantsPlayback = true
         active.resume()
+    }
+
+    /// Her own play, pause or new episode: any interruption still remembered
+    /// is over as far as she is concerned, and the follow-up attempts from
+    /// the last one have nothing left to do.
+    private func sheTookOver() {
+        interruptions.reset()
+        resumeNudge?.cancel()
+        resumeNudge = nil
     }
 
     func toggle() {
@@ -178,6 +218,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     /// Both players are cleared, not just the active one, so nothing is left
     /// holding an item that a later mode switch would bring back on screen.
     func clear() {
+        sheTookOver()
         wantsPlayback = false
         audio.clear()
         article.clear()
@@ -350,9 +391,40 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         // Decided from intent, not from isPlaying — see wantsPlayback above.
         // decide() records the answer before pause() clears the flag.
         switch interruptions.decide(event, wantsPlayback: wantsPlayback) {
-        case .pause: pause()
-        case .resume: resume()
-        case .nothing: break
+        case .pause:
+            // Not pause(): that is her stopping it, and forgets the
+            // interruption this is part of.
+            wantsPlayback = false
+            resumeNudge?.cancel()
+            active.pauseForInterruption()
+        case .resume:
+            resumeAfterInterruption()
+        case .nothing:
+            break
+        }
+    }
+
+    /// Puts playback back on once whatever took the audio has finished — and
+    /// asks again over the next few seconds if the first ask went nowhere.
+    ///
+    /// The system announces a call's end a moment before the phone has let go
+    /// of the audio hardware, so the first play() after a call can be refused
+    /// outright: the session does not activate, the player stays paused, and
+    /// she is left with an episode that silently never came back. Each retry
+    /// goes through resume(), which activates the session afresh.
+    private func resumeAfterInterruption() {
+        guard currentEpisode != nil else { return }
+        wantsPlayback = true
+        active.resume()
+        resumeNudge?.cancel()
+        resumeNudge = Task { [weak self] in
+            for delay in Self.resumeNudgeDelays {
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled, let self, self.wantsPlayback,
+                    self.active.isStuckAfterPlayRequest
+                else { return }
+                self.active.resume()
+            }
         }
     }
 
@@ -429,7 +501,14 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
 @MainActor
 protocol TransportControllable {
     func pause()
+    /// The system has taken the audio — a call, an alarm. Not her decision,
+    /// unlike pause(), and a player may prefer to stop outright and start the
+    /// current passage again when the audio is given back.
+    func pauseForInterruption()
     func resume()
+    /// Play was asked for and nothing has begun: not playing, not buffering,
+    /// the request simply refused. False where the player cannot tell.
+    var isStuckAfterPlayRequest: Bool { get }
     func skip(by seconds: TimeInterval)
 }
 

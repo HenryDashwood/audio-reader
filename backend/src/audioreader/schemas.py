@@ -267,6 +267,11 @@ class AuthResponse(BaseModel):
 class PositionUpdate(BaseModel):
     position_seconds: float
     completed: bool = False
+    #: How long the audio actually is, measured by the player once it loaded.
+    #: Feeds only claim a length, and claim wrong often enough that "minutes
+    #: left" in a list disagrees with the player; the measured figure
+    #: replaces the claim.
+    duration_seconds: int | None = None
 
     @field_validator("position_seconds")
     @classmethod
@@ -274,6 +279,12 @@ class PositionUpdate(BaseModel):
         # A scrubber can briefly report negative time; clamp rather than 422,
         # since the app fires these in the background and never sees the error.
         return max(0.0, value)
+
+    @field_validator("duration_seconds")
+    @classmethod
+    def positive_or_absent(cls, value: int | None) -> int | None:
+        # Same reasoning: a nonsense length is dropped, not refused.
+        return value if value is not None and value > 0 else None
 
 
 class EpisodeStateUpdate(BaseModel):

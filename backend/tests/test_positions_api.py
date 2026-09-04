@@ -50,6 +50,29 @@ class TestPutPosition:
         )
         assert (await client.get(f"/episodes/{episode.id}")).json()["completed"] is True
 
+    async def test_a_measured_duration_replaces_the_feeds_claim(self, client, episode):
+        # The feed said 45 minutes; the player, having loaded the audio, knows
+        # better. Without this, "minutes left" in a list is worked out from the
+        # claim while the player counts down the real thing.
+        await client.put(f"/episodes/{episode.id}/position", json={"position_seconds": 100, "duration_seconds": 3010})
+
+        assert (await client.get(f"/episodes/{episode.id}")).json()["duration_seconds"] == 3010
+
+    async def test_an_omitted_duration_leaves_the_feeds_claim(self, client, episode):
+        await client.put(f"/episodes/{episode.id}/position", json={"position_seconds": 100})
+
+        assert (await client.get(f"/episodes/{episode.id}")).json()["duration_seconds"] == 2700
+
+    async def test_a_nonsense_duration_is_dropped(self, client, episode):
+        # Fired from a background heartbeat that never reads the answer, so
+        # junk is ignored rather than rejected with a 422 nobody sees.
+        response = await client.put(
+            f"/episodes/{episode.id}/position", json={"position_seconds": 100, "duration_seconds": 0}
+        )
+        assert response.status_code == 204
+
+        assert (await client.get(f"/episodes/{episode.id}")).json()["duration_seconds"] == 2700
+
     async def test_unknown_episode_is_404(self, client):
         response = await client.put("/episodes/9999/position", json={"position_seconds": 10})
         assert response.status_code == 404

@@ -37,6 +37,26 @@ nonisolated func episodesByUpdatingWordCount(
     }
 }
 
+/// Where she has got to, as the position reporter has just told the backend,
+/// folded into a list's snapshot so its rows say the same thing the server
+/// will say at the next load. The measured length replaces the feed's claim
+/// for the same reason: "minutes left" worked out from a claim the audio did
+/// not live up to was the row and the player disagreeing.
+nonisolated func episodesByApplyingPositionReport(
+    _ episodes: [Episode], _ report: PositionReport
+) -> [Episode] {
+    episodes.map { episode in
+        guard episode.id == report.episodeID else { return episode }
+        var updated = episode
+        updated.positionSeconds = report.seconds
+        updated.completed = report.completed
+        if let durationSeconds = report.durationSeconds {
+            updated.durationSeconds = durationSeconds
+        }
+        return updated
+    }
+}
+
 /// How far through an episode she is, as a list row should describe it.
 ///
 /// The backend stores a position for anything she has played, including the

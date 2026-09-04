@@ -672,7 +672,9 @@ private final class FailingAPI: HearfulAPIProtocol, @unchecked Sendable {
     func logout() async throws {}
     func me() async throws -> UserInfo { throw APIError(underlying: "offline") }
     func deleteAccount() async throws {}
-    func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {}
+    func reportPosition(
+        episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?
+    ) async throws {}
     func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {}
     func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String?) async throws {}
     func reportDiagnostic(_ event: [String: any Sendable]) async throws {}

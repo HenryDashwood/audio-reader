@@ -522,7 +522,7 @@ struct AuthAndPositionTests {
         let transport = FakeTransport(status: 204, json: "")
         try await withToken("tok") {
             try await makeClient(transport).reportPosition(
-                episodeID: 104, seconds: 125.5, completed: false)
+                episodeID: 104, seconds: 125.5, completed: false, durationSeconds: nil)
         }
 
         let request = try #require(transport.lastRequest)
@@ -532,6 +532,21 @@ struct AuthAndPositionTests {
             with: try #require(request.httpBody)) as? [String: Any]
         #expect(body?["position_seconds"] as? Double == 125.5)
         #expect(body?["completed"] as? Bool == false)
+        // Unknown means unsent, not zero: the backend would take a zero as a
+        // measurement and drop it, but nothing should have to rely on that.
+        #expect(body?["duration_seconds"] == nil)
+    }
+
+    @Test func reportPositionCarriesTheMeasuredDuration() async throws {
+        let transport = FakeTransport(status: 204, json: "")
+        try await withToken("tok") {
+            try await makeClient(transport).reportPosition(
+                episodeID: 104, seconds: 125.5, completed: false, durationSeconds: 3010)
+        }
+
+        let body = try JSONSerialization.jsonObject(
+            with: try #require(transport.lastRequest?.httpBody)) as? [String: Any]
+        #expect(body?["duration_seconds"] as? Int == 3010)
     }
 
     @Test func clearLatestSendsADelete() async throws {

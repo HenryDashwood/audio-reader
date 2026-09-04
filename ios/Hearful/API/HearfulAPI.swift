@@ -61,7 +61,10 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     /// and library context may be sent to the AI provider.
     func setAIDataSharing(granted: Bool) async throws -> UserInfo
     func deleteAccount() async throws
-    func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws
+    /// `durationSeconds` is the audio's measured length, or nil while only
+    /// the feed's claim is known.
+    func reportPosition(episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?)
+        async throws
     /// Files an episode: heard, put aside, or back in the list. A nil flag is
     /// left alone, so hiding one says nothing about whether she heard it.
     func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws
@@ -505,7 +508,9 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         try await perform(request)
     }
 
-    func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {
+    func reportPosition(episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?)
+        async throws
+    {
         let url = baseURL.appendingPathComponent("episodes")
             .appendingPathComponent("\(episodeID)")
             .appendingPathComponent("position")
@@ -513,7 +518,8 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
-            PositionUpdate(positionSeconds: seconds, completed: completed))
+            PositionUpdate(
+                positionSeconds: seconds, completed: completed, durationSeconds: durationSeconds))
         try await perform(request)
     }
 

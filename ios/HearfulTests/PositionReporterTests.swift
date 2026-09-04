@@ -9,11 +9,17 @@ final class RecordingAPI: HearfulAPIProtocol, @unchecked Sendable {
         let episodeID: Int
         let seconds: Double
         let completed: Bool
+        var durationSeconds: Int? = nil
     }
     var reports: [Report] = []
 
-    func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {
-        reports.append(Report(episodeID: episodeID, seconds: seconds, completed: completed))
+    func reportPosition(
+        episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?
+    ) async throws {
+        reports.append(
+            Report(
+                episodeID: episodeID, seconds: seconds, completed: completed,
+                durationSeconds: durationSeconds))
     }
 
     var filings: [(episodeID: Int, played: Bool?, dismissed: Bool?)] = []
@@ -64,6 +70,11 @@ private func episode(id: Int, position: Double? = nil) -> Episode {
         positionSeconds: position, completed: nil)
 }
 
+@MainActor
+private final class ReceivedReports {
+    var reports: [PositionReport] = []
+}
+
 /// Waits out the fire-and-forget report Task before asserting.
 @MainActor
 private func settle() async {
@@ -94,6 +105,32 @@ struct PositionReporterTests {
         await settle()
 
         #expect(api.reports.last == .init(episodeID: 104, seconds: 1.0, completed: false))
+    }
+
+    @Test func everyReportIsBroadcastForTheLists() {
+        // The lists on screen learn where she is from the same report the
+        // backend gets, and before it: a row must not wait on the network.
+        let (reporter, _) = makeReporter()
+        let received = ReceivedReports()
+        let token = NotificationCenter.default.addObserver(
+            forName: .hearfulPositionReported, object: nil, queue: .main
+        ) { note in
+            guard let report = note.object as? PositionReport else { return }
+            MainActor.assumeIsolated { received.reports.append(report) }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        reporter.episodeChanged(to: episode(id: 104))
+        reporter.playingChanged(true)
+        reporter.timeTicked(to: 42)
+        reporter.playingChanged(false)
+
+        // No asset has loaded in a test, so the duration is only the feed's
+        // claim — and that is not reported back.
+        #expect(
+            received.reports.last
+                == PositionReport(
+                    episodeID: 104, seconds: 42, completed: false, durationSeconds: nil))
     }
 
     @Test func switchingEpisodesFlushesTheOutgoingOne() async {

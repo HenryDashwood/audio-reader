@@ -45,7 +45,9 @@ private final class FilingAPI: HearfulAPIProtocol, @unchecked Sendable {
     func logout() async throws {}
     func me() async throws -> UserInfo { UserInfo(id: "u", displayName: nil) }
     func deleteAccount() async throws {}
-    func reportPosition(episodeID: Int, seconds: Double, completed: Bool) async throws {}
+    func reportPosition(
+        episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?
+    ) async throws {}
     func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String? = nil) async throws
     {}
     func reportDiagnostic(_ event: [String: any Sendable]) async throws {}

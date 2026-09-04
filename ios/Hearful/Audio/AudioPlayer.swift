@@ -25,6 +25,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: TimeInterval = 0
     @Published private(set) var duration: TimeInterval = 0
+    /// True once the loaded asset has said how long it is. Until then
+    /// `duration` is the feed's claim, which is not worth repeating to anyone.
+    private(set) var hasMeasuredDuration = false
     /// True while the user is dragging the scrubber, so the ticking clock does
     /// not fight the thumb they are holding.
     @Published var isScrubbing = false
@@ -120,7 +123,11 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         if currentEpisode?.id != episode.id || player.currentItem == nil
             || player.currentItem?.status == .failed || failedEpisodeID == episode.id
         {
-            replaceItem(url: url, episode: episode)
+            // Trying the same episode again after a failure carries on from
+            // the clock, not from the position the list was fetched with —
+            // which by now may be an hour behind where she actually was.
+            let retrying = currentEpisode?.id == episode.id && currentTime > 0
+            replaceItem(url: url, episode: episode, resumeAt: retrying ? currentTime : nil)
         }
         player.play()
         updateNowPlayingPosition()
@@ -133,16 +140,31 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         updateNowPlayingPosition()
     }
 
+    /// AVPlayer stops itself when the system takes the audio; this just keeps
+    /// our own state honest about it.
+    func pauseForInterruption() {
+        pause()
+    }
+
     func resume() {
         try? AudioSession.configureForPlayback()
         playbackRequested = true
         if let episode = currentEpisode, let url = episode.audioURL,
             player.currentItem?.status == .failed || failedEpisodeID == episode.id
         {
-            replaceItem(url: url, episode: episode)
+            replaceItem(url: url, episode: episode, resumeAt: currentTime > 0 ? currentTime : nil)
         }
         player.play()
         updateNowPlayingPosition()
+    }
+
+    /// Play was asked for and the player has not so much as begun — not
+    /// playing, not buffering, the request simply refused. It happens after a
+    /// phone call: the system says the call has ended a moment before the
+    /// phone has let go of the audio hardware, and the session will not
+    /// activate. A second ask a moment later is accepted.
+    var isStuckAfterPlayRequest: Bool {
+        playbackRequested && player.timeControlStatus == .paused
     }
 
     func toggle() {
@@ -172,6 +194,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         }
         currentTime = 0
         duration = 0
+        hasMeasuredDuration = false
         isPlaying = false
     }
 
@@ -208,7 +231,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         updateNowPlayingPosition()
     }
 
-    private func replaceItem(url: URL, episode: Episode) {
+    /// `resumeAt` overrides the episode's saved position, for a retry of the
+    /// item she was already part-way through.
+    private func replaceItem(url: URL, episode: Episode, resumeAt: TimeInterval? = nil) {
         stallTask?.cancel()
         failedEpisodeID = nil
         let item = AVPlayerItem(url: url)
@@ -223,10 +248,11 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         // The feed's stated duration is a good enough starting value; the real
         // one arrives once the asset has loaded.
         duration = episode.durationSeconds.map(Double.init) ?? 0
+        hasMeasuredDuration = false
         // Resume where she left off — but not for an episode she finished,
         // not within the first moments (starting over costs nothing), and not
         // into the final seconds (an outro is worse than a fresh start).
-        let resumeAt = episode.completed == true ? 0 : (episode.positionSeconds ?? 0)
+        let resumeAt = resumeAt ?? (episode.completed == true ? 0 : (episode.positionSeconds ?? 0))
         statusObservation = item.observe(\.status) { [weak self] item, _ in
             Task { @MainActor in
                 guard let self else { return }
@@ -240,7 +266,10 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                 }
                 guard item.status == .readyToPlay else { return }
                 let seconds = item.duration.seconds
-                if seconds.isFinite, seconds > 0 { self.duration = seconds }
+                if seconds.isFinite, seconds > 0 {
+                    self.duration = seconds
+                    self.hasMeasuredDuration = true
+                }
                 if resumeAt > 5, resumeAt < self.duration - 10 {
                     self.seek(to: resumeAt)
                 }

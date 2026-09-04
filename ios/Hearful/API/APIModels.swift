@@ -51,7 +51,9 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
     /// in-app page.
     var feedURL: URL? = nil
     let audioURL: URL?
-    let durationSeconds: Int?
+    /// The feed's claim until the player has measured the audio; see
+    /// `PositionUpdate`.
+    var durationSeconds: Int?
     /// Length of the article's full text, where the backend already knows it.
     /// Optional for audio, teaser-only feeds and payloads cached by older apps.
     var wordCount: Int? = nil
@@ -257,10 +259,15 @@ nonisolated struct EpisodeStateUpdate: Encodable {
 nonisolated struct PositionUpdate: Encodable {
     let positionSeconds: Double
     let completed: Bool
+    /// The audio's measured length, sent once the player has loaded it so the
+    /// backend can replace the feed's claim. Omitted while only the claim is
+    /// known, and for articles, whose length is an estimate in the reader.
+    var durationSeconds: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case completed
         case positionSeconds = "position_seconds"
+        case durationSeconds = "duration_seconds"
     }
 }
 

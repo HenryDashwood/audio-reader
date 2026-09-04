@@ -532,4 +532,8 @@ async def put_position(episode_id: int, body: PositionUpdate, session: Session, 
     episode = await session.get(Episode, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
+    if body.duration_seconds is not None and body.duration_seconds != episode.duration_seconds:
+        # The player has measured the audio; the feed only claimed a length.
+        # Committed with the position below.
+        episode.duration_seconds = body.duration_seconds
     await positions.upsert_position(session, user, episode_id, body.position_seconds, body.completed)
