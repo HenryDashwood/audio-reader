@@ -1,12 +1,14 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
 from audioreader.config import settings
-from audioreader.feeds import service
-from audioreader.feeds.poller import poll_all_feeds, poll_feed, poll_lock
-from audioreader.models import Episode
+from audioreader.feeds import poller, service
+from audioreader.feeds.poller import feed_is_failing, poll_all_feeds, poll_feed, poll_lock
+from audioreader.models import Episode, utcnow
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FEED_URL = "https://example.com/feed.xml"
@@ -233,6 +235,149 @@ class TestFailureTracking:
 
         assert summary.failed == 1
         assert summary.polled == 1
+
+
+def aware(moment: datetime | None) -> datetime:
+    # SQLite hands back naive datetimes for timezone-aware columns.
+    assert moment is not None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+class TestThrottling:
+    """A 429 is the site asking for a pause, not a feed that has broken."""
+
+    async def test_a_throttle_is_not_held_against_the_feed(self, session, user, respx_mock, podcast_xml):
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        respx_mock.get(FEED_URL).respond(status_code=429, headers={"Retry-After": "60"})
+
+        summary = await poll_all_feeds(session)
+
+        assert summary.failed == 1
+        assert summary.throttled == 1
+        await session.refresh(feed)
+        assert feed.consecutive_failures == 0
+        assert feed.last_error
+        assert feed.throttled_until is not None
+
+    async def test_a_throttled_feed_is_left_alone(self, session, user, respx_mock, podcast_xml):
+        # Asking again fifteen minutes later, like every other feed, is what
+        # keeps the throttle going.
+        await subscribed_feed(session, user, respx_mock, podcast_xml)
+        route = respx_mock.get(FEED_URL).respond(status_code=429, headers={"Retry-After": "60"})
+        # respx keeps one route per pattern, history included: the subscribe
+        # fetch is already on it.
+        fetched_so_far = route.call_count
+
+        await poll_all_feeds(session)
+        summary = await poll_all_feeds(session)
+
+        assert route.call_count == fetched_so_far + 1
+        assert summary.polled == 0
+        assert summary.failed == 0
+
+    async def test_our_floor_wins_over_a_short_hint(self, session, user, respx_mock, podcast_xml, monkeypatch):
+        monkeypatch.setattr(settings, "feed_throttle_backoff_seconds", 3600)
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        respx_mock.get(FEED_URL).respond(status_code=429, headers={"Retry-After": "60"})
+        before = utcnow()
+
+        await poll_all_feeds(session)
+
+        await session.refresh(feed)
+        assert aware(feed.throttled_until) >= before + timedelta(seconds=3600)
+
+    async def test_the_sites_hint_wins_when_longer(self, session, user, respx_mock, podcast_xml, monkeypatch):
+        monkeypatch.setattr(settings, "feed_throttle_backoff_seconds", 60)
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        respx_mock.get(FEED_URL).respond(status_code=429, headers={"Retry-After": "7200"})
+        before = utcnow()
+
+        await poll_all_feeds(session)
+
+        await session.refresh(feed)
+        assert aware(feed.throttled_until) >= before + timedelta(seconds=7200)
+
+    async def test_no_hint_means_the_floor(self, session, user, respx_mock, podcast_xml, monkeypatch):
+        monkeypatch.setattr(settings, "feed_throttle_backoff_seconds", 1800)
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        respx_mock.get(FEED_URL).respond(status_code=429)
+        before = utcnow()
+
+        await poll_all_feeds(session)
+
+        await session.refresh(feed)
+        assert aware(feed.throttled_until) >= before + timedelta(seconds=1800)
+
+    async def test_a_throttle_expires_and_success_clears_it(
+        self, session, user, respx_mock, podcast_xml, podcast_updated_xml
+    ):
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        feed.throttled_until = utcnow() - timedelta(minutes=1)
+        feed.last_error = "the site temporarily limited Magpie's feed requests"
+        await session.commit()
+        respx_mock.get(FEED_URL).respond(content=podcast_updated_xml)
+
+        summary = await poll_all_feeds(session)
+
+        assert summary.polled == 1
+        await session.refresh(feed)
+        assert feed.throttled_until is None
+        assert feed.last_error is None
+
+    async def test_a_feed_throttled_for_days_is_failing(self, session, user, respx_mock, podcast_xml, monkeypatch):
+        monkeypatch.setattr(settings, "feed_stale_after_days", 3)
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        feed.last_error = "the site temporarily limited Magpie's feed requests"
+
+        # An evening's throttling is nothing to tell her about...
+        feed.last_polled_at = utcnow() - timedelta(hours=2)
+        assert not feed_is_failing(feed)
+
+        # ...days of it is a feed that is not updating, whatever the reason.
+        feed.last_polled_at = utcnow() - timedelta(days=4)
+        assert feed_is_failing(feed)
+
+        # A feed that merely has nothing new is not failing at all.
+        feed.last_error = None
+        assert not feed_is_failing(feed)
+
+
+class TestPacing:
+    """A pass reaches a shared host as a trickle, not a burst."""
+
+    async def paced_pass(self, session, user, respx_mock, podcast_xml, article_xml, monkeypatch, **kwargs):
+        await subscribed_feed(session, user, respx_mock, podcast_xml)
+        await subscribed_feed(session, user, respx_mock, article_xml, url=OTHER_URL)
+        respx_mock.get(FEED_URL).respond(content=podcast_xml)
+        respx_mock.get(OTHER_URL).respond(content=article_xml)
+        sleeps: list[float] = []
+
+        async def record(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        monkeypatch.setattr(poller, "asyncio", SimpleNamespace(sleep=record))
+        await poll_all_feeds(session, **kwargs)
+        return sleeps
+
+    async def test_feeds_are_spaced_out(self, session, user, respx_mock, podcast_xml, article_xml, monkeypatch):
+        sleeps = await self.paced_pass(
+            session, user, respx_mock, podcast_xml, article_xml, monkeypatch, spacing_seconds=2.5
+        )
+        # One gap between two feeds: nothing before the first, nothing after the last.
+        assert sleeps == [2.5]
+
+    async def test_pacing_takes_at_most_half_the_interval(
+        self, session, user, respx_mock, podcast_xml, article_xml, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "poll_interval_seconds", 8)
+        sleeps = await self.paced_pass(
+            session, user, respx_mock, podcast_xml, article_xml, monkeypatch, spacing_seconds=10
+        )
+        assert sleeps == [2.0]
+
+    async def test_no_spacing_by_default(self, session, user, respx_mock, podcast_xml, article_xml, monkeypatch):
+        sleeps = await self.paced_pass(session, user, respx_mock, podcast_xml, article_xml, monkeypatch)
+        assert sleeps == []
 
 
 class TestPollLock:

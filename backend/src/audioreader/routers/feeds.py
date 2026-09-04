@@ -19,6 +19,7 @@ from audioreader.feeds.discovery import (
 )
 from audioreader.feeds.fetcher import FeedFetchError, FeedRateLimitedError
 from audioreader.feeds.parser import FeedParseError
+from audioreader.feeds.poller import feed_is_failing
 from audioreader.feeds.search import PodcastSearchError, search_podcasts
 from audioreader.llm.client import LLMClient
 from audioreader.llm.provider import get_discovery_llm_client
@@ -94,7 +95,7 @@ def to_feed_read(feed: Feed, episode_count: int, audio_count: int) -> FeedRead:
         # episodes simply have not loaded yet would be a worse guess than the
         # default, and the label corrects itself on the next refresh.
         is_article_feed=episode_count > 0 and audio_count == 0,
-        is_failing=feed.consecutive_failures >= settings.feed_failure_threshold,
+        is_failing=feed_is_failing(feed),
     )
 
 

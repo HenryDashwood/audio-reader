@@ -105,6 +105,9 @@ class Feed(Base):
     # Counting failures makes that visible in the API, and to the listener.
     consecutive_failures: Mapped[int] = mapped_column(default=0, server_default="0")
     last_error: Mapped[str | None] = mapped_column(Text)
+    # Set when the site answered 429: the poller leaves the feed alone until
+    # then. Cleared by the next successful poll.
+    throttled_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Cache validators make a large but unchanged feed a cheap 304 rather than
     # another full download and parse every fifteen minutes.
     etag: Mapped[str | None] = mapped_column(Text)

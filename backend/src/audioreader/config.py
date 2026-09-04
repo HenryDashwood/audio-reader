@@ -114,6 +114,23 @@ class Settings(BaseSettings):
     # which comfortably outlasts an ordinary blip.
     feed_failure_threshold: int = 5
 
+    # A pause between one feed's fetch and the next within a poll pass. Shared
+    # hosts — WordPress.com above all — run one rate limiter for every site
+    # they serve, and sixty feeds fetched back to back from one datacenter IP
+    # look like a scraper. At the default this spreads a pass over a few
+    # minutes; never more than half the interval, however many feeds there are.
+    feed_poll_spacing_seconds: float = 3.0
+
+    # How long to leave a feed alone after its site answered 429. A larger
+    # Retry-After from the site wins; asking again fifteen minutes later, as
+    # every other feed is, only extends the throttle.
+    feed_throttle_backoff_seconds: int = 3600
+
+    # A throttle is not a broken feed, so it is not counted towards the
+    # failure threshold. But a site that has refused every request for this
+    # long is one she should hear about, whatever its reason.
+    feed_stale_after_days: int = 3
+
     # How long an unsubscribed, never-listened-to feed stays in the shared
     # catalog before being cleaned up. Generous: re-subscribing to a feed that
     # is still there is instant, and the only cost of keeping it is disk.

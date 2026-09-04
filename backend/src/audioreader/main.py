@@ -41,7 +41,7 @@ async def _poll_forever(interval_seconds: int) -> None:
                     # people's feed servers.
                     logger.info("poll pass skipped: another replica holds the lock")
                     continue
-                summary = await poll_all_feeds(session)
+                summary = await poll_all_feeds(session, spacing_seconds=settings.feed_poll_spacing_seconds)
                 # Under the same lock, and after polling: cleanup is the least
                 # urgent thing here and must never delay new episodes.
                 await prune_orphaned_feeds(session)
@@ -53,9 +53,10 @@ async def _poll_forever(interval_seconds: int) -> None:
                 # Senders she left or blocked that have not yet accepted.
                 await tell_left_senders(session)
             logger.info(
-                "poll pass: %d ok, %d failed, %d new episodes",
+                "poll pass: %d ok, %d failed (%d throttled), %d new episodes",
                 summary.polled,
                 summary.failed,
+                summary.throttled,
                 summary.episodes_added,
             )
             if summary.failing:

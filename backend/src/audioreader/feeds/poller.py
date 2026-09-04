@@ -1,17 +1,18 @@
 """Re-fetch subscribed feeds and store episodes that appeared since last poll."""
 
+import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
 from audioreader.feeds.artwork import site_artwork_is_due, supplement_feed_artwork, website_artwork_url
-from audioreader.feeds.fetcher import FeedFetchError, fetch_feed_update
+from audioreader.feeds.fetcher import FeedFetchError, FeedRateLimitedError, fetch_feed_update
 from audioreader.feeds.parser import FeedParseError, parse_feed
 from audioreader.feeds.service import apply_feed_metadata, new_episodes
 from audioreader.models import FEED_SOURCE_RSS, Episode, Feed, PlaybackPosition, Subscription, utcnow
@@ -22,6 +23,41 @@ logger = logging.getLogger(__name__)
 #: Arbitrary but fixed: Postgres advisory locks are keyed by a bare integer, so
 #: the only requirement is that nothing else in this database picks the same one.
 POLL_LOCK_KEY = 0x4155_4449  # "AUDI"
+
+#: However long a site asks for, a feed is looked at again within a day.
+MAX_THROTTLE = timedelta(days=1)
+
+
+def _aware(moment: datetime) -> datetime:
+    # SQLite hands back naive datetimes for timezone-aware columns.
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def throttle_until(exc: FeedRateLimitedError, now: datetime | None = None) -> datetime:
+    """When to try a throttled feed again: the site's hint or our floor, whichever is later."""
+
+    hinted = timedelta(seconds=exc.retry_after_seconds or 0.0)
+    floor = timedelta(seconds=settings.feed_throttle_backoff_seconds)
+    backoff = min(max(hinted, floor), MAX_THROTTLE)
+    return (now or utcnow()) + backoff
+
+
+def feed_is_failing(feed: Feed, now: datetime | None = None) -> bool:
+    """Whether the listener should be told this feed is not updating.
+
+    Ordinary failures count towards a threshold. A throttle does not: the site
+    is up, it is just refusing datacenter traffic for a while, and calling
+    that "not updating" after an hour would flag half the WordPress.com feeds
+    every quiet evening. But a site that has refused every request for days is
+    not updating, whatever its reason.
+    """
+
+    if feed.consecutive_failures >= settings.feed_failure_threshold:
+        return True
+    if feed.last_error is None or feed.last_polled_at is None:
+        return False
+    stale_after = timedelta(days=settings.feed_stale_after_days)
+    return _aware(feed.last_polled_at) <= (now or utcnow()) - stale_after
 
 
 async def poll_feed(session: AsyncSession, feed: Feed) -> int:
@@ -35,6 +71,7 @@ async def poll_feed(session: AsyncSession, feed: Feed) -> int:
         feed.last_polled_at = utcnow()
         feed.consecutive_failures = 0
         feed.last_error = None
+        feed.throttled_until = None
         if (
             feed.image_url is None
             and feed.site_image_url is None
@@ -64,6 +101,7 @@ async def poll_feed(session: AsyncSession, feed: Feed) -> int:
     feed.last_modified = fetched.last_modified
     feed.consecutive_failures = 0
     feed.last_error = None
+    feed.throttled_until = None
     await session.commit()
     return len(episodes)
 
@@ -72,6 +110,8 @@ async def poll_feed(session: AsyncSession, feed: Feed) -> int:
 class PollSummary:
     polled: int = 0
     failed: int = 0
+    #: Sites that answered 429; counted in `failed` too, but not held against the feed.
+    throttled: int = 0
     episodes_added: int = 0
     #: Feeds that have now failed enough times in a row to be worth reporting.
     failing: tuple[str, ...] = ()
@@ -101,9 +141,14 @@ async def poll_lock(session: AsyncSession) -> AsyncIterator[bool]:
             await session.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": POLL_LOCK_KEY})
 
 
-async def poll_all_feeds(session: AsyncSession) -> PollSummary:
-    """Poll every feed; one broken feed must never block the rest."""
+async def poll_all_feeds(session: AsyncSession, *, spacing_seconds: float = 0.0) -> PollSummary:
+    """Poll every feed; one broken feed must never block the rest.
+
+    `spacing_seconds` is the pause between one feed and the next, so that a
+    pass reaches a shared host as a trickle rather than a burst.
+    """
     summary = PollSummary()
+    now = utcnow()
     # Iterate over plain ids, not ORM objects: a rollback for one broken feed
     # expires every object the session has loaded, so each iteration loads its
     # feed fresh instead of trusting objects fetched before the loop.
@@ -118,11 +163,19 @@ async def poll_all_feeds(session: AsyncSession) -> PollSummary:
             select(Feed.id).where(
                 or_(Feed.id.in_(select(Subscription.feed_id)), Feed.id.in_(companions)),
                 Feed.source == FEED_SOURCE_RSS,
+                # A site that asked for a pause gets one.
+                or_(Feed.throttled_until.is_(None), Feed.throttled_until <= now),
             )
         )
     ).all()
+    # Never more than half the interval spent pacing, however many feeds
+    # there are; the other half is for the fetches themselves.
+    if settings.poll_interval_seconds > 0 and feed_ids:
+        spacing_seconds = min(spacing_seconds, settings.poll_interval_seconds / 2 / len(feed_ids))
     failing = []
-    for feed_id in feed_ids:
+    for index, feed_id in enumerate(feed_ids):
+        if index and spacing_seconds > 0:
+            await asyncio.sleep(spacing_seconds)
         feed = await session.get(Feed, feed_id)
         if feed is None:
             continue
@@ -130,6 +183,25 @@ async def poll_all_feeds(session: AsyncSession) -> PollSummary:
         try:
             summary.episodes_added += await poll_feed(session, feed)
             summary.polled += 1
+        except FeedRateLimitedError as exc:
+            await session.rollback()
+            summary.failed += 1
+            summary.throttled += 1
+            feed = await session.get(Feed, feed_id)
+            if feed is not None:
+                # Not a failure of the feed, so not counted as one: the site
+                # is up and simply wants less of us. Honour that by leaving
+                # the feed alone for as long as it asked, at least.
+                until = throttle_until(exc)
+                feed.last_error = str(exc)[:500]
+                feed.throttled_until = until
+                await session.commit()
+                logger.warning(
+                    "feed %s (%s) is throttled by its site; next poll after %s",
+                    feed_id,
+                    feed_url,
+                    until.isoformat(timespec="minutes"),
+                )
         except (FeedFetchError, FeedParseError) as exc:
             await session.rollback()
             summary.failed += 1

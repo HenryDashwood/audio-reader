@@ -60,6 +60,13 @@ class FeedRateLimitedError(FeedFetchError):
 
     code = "site_rate_limited"
 
+    def __init__(
+        self, message: str, *, status_code: int | None = None, retry_after_seconds: float | None = None
+    ) -> None:
+        super().__init__(message, status_code=status_code)
+        #: The site's own hint, if it gave one, for the poller to honour.
+        self.retry_after_seconds = retry_after_seconds
+
 
 class FeedResolutionError(FeedFetchError):
     """DNS returned no address for the hostname.
@@ -243,7 +250,8 @@ async def _fetch_public_resource(
                         )
 
                     if response.status_code in RETRYABLE_STATUSES:
-                        delay = _retry_delay_seconds(response.headers.get("retry-after"))
+                        retry_after = response.headers.get("retry-after")
+                        delay = _retry_delay_seconds(retry_after)
                         if retry_count < MAX_UPSTREAM_RETRIES and delay <= MAX_RETRY_DELAY_SECONDS:
                             retry_count += 1
                             await asyncio.sleep(delay)
@@ -252,6 +260,7 @@ async def _fetch_public_resource(
                             raise FeedRateLimitedError(
                                 "the site temporarily limited Magpie's feed requests",
                                 status_code=429,
+                                retry_after_seconds=delay if retry_after else None,
                             )
                     try:
                         response.raise_for_status()

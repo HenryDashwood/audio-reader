@@ -77,10 +77,12 @@ async def test_a_short_upstream_rate_limit_is_retried_once(respx_mock, monkeypat
 async def test_a_long_retry_after_is_reported_without_hammering(respx_mock):
     route = respx_mock.get("https://busy.example/feed").respond(status_code=429, headers={"Retry-After": "60"})
 
-    with pytest.raises(fetcher.FeedRateLimitedError):
+    with pytest.raises(fetcher.FeedRateLimitedError) as raised:
         await fetcher.fetch_feed("https://busy.example/feed")
 
     assert route.call_count == 1
+    # The poller honours the site's hint, so the error has to carry it.
+    assert raised.value.retry_after_seconds == 60
 
 
 async def test_requests_identify_the_app_to_rate_limiters(respx_mock):
