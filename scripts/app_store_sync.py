@@ -496,7 +496,13 @@ def sync_app_info(client: Client, app: str, listing: Listing, dry_run: bool) -> 
             )
 
 
-def ensure_version(client: Client, app: str, listing: Listing, version: str, dry_run: bool) -> dict | None:
+def ensure_version(
+    client: Client, app: str, listing: Listing, version: str, dry_run: bool, *, build_number: str | None = None
+) -> dict | None:
+    """The editable App Store version for `version`: the one already there,
+    a stale draft renamed to it, or a new one. `build_number` is the build
+    the caller means to select afterwards; with it, a draft that still holds
+    an older build can be renamed, since the build is about to be replaced."""
     config = listing.config
     versions = client.get(
         f"/apps/{app}/appStoreVersions",
@@ -529,15 +535,18 @@ def ensure_version(client: Client, app: str, listing: Listing, version: str, dry
             f"{item['attributes'].get('versionString')} ({item['attributes'].get('appStoreState')})"
             for item in editable
         )
-        if len(editable) != 1 or editable[0]["attributes"].get("appStoreState") != "PREPARE_FOR_SUBMISSION":
+        if len(editable) != 1:
             raise Failure(f"cannot create version {version}; editable App Store version(s) already exist: {labels}")
 
+        # One draft, whether never submitted or sent back: App Store Connect
+        # keeps a version's identity through a rename, so the draft becomes
+        # the new version rather than sitting beside it.
         remote = editable[0]
         build_response = client.get(f"/appStoreVersions/{remote['id']}/build", allow_not_found=True)
-        if build_response.get("data") is not None:
+        if build_response.get("data") is not None and build_number is None:
             raise Failure(
                 f"cannot retarget App Store version {remote['attributes'].get('versionString')} to {version}; "
-                "it already has a selected build"
+                "it already has a selected build. Pass --select-build to replace it"
             )
 
         previous = remote["attributes"].get("versionString")
@@ -622,6 +631,100 @@ def upload_screenshot(client: Client, screenshot_set: str, path: Path) -> str:
 
 def local_screenshot_signature(paths: tuple[Path, ...]) -> list[tuple[str, str]]:
     return [(path.name, hashlib.md5(path.read_bytes()).hexdigest()) for path in paths]  # noqa: S324
+
+
+def find_build(client: Client, app: str, version: str, build_number: str) -> dict:
+    """The processed build numbered `build_number` whose marketing version
+    is `version`; App Store Connect only lets a version pick from those."""
+    builds = client.get(
+        "/builds",
+        params={
+            "filter[app]": app,
+            "filter[version]": build_number,
+            "filter[preReleaseVersion.version]": version,
+            "limit": 5,
+        },
+    )["data"]
+    valid = [item for item in builds if item["attributes"].get("processingState") == "VALID"]
+    if not valid:
+        states = ", ".join(item["attributes"].get("processingState", "?") for item in builds) or "none uploaded"
+        raise Failure(f"no processed build {build_number} carries version {version} (found: {states})")
+    return valid[0]
+
+
+def select_build(client: Client, app: str, version: dict, build_number: str, dry_run: bool) -> None:
+    """Point the App Store version at the build, as the Build section of
+    the version page does. A build that is already selected is left alone."""
+    target = find_build(client, app, version["attributes"]["versionString"], build_number)
+    current = client.get(f"/appStoreVersions/{version['id']}/build", allow_not_found=True).get("data")
+    if current is not None and current.get("id") == target["id"]:
+        print(f"build {build_number}: already selected")
+        return
+    if current is None:
+        print(f"build {build_number}: select")
+    else:
+        print(f"build {build_number}: select, replacing {current['attributes'].get('version', '?')}")
+    if dry_run:
+        return
+    client.patch(
+        f"/appStoreVersions/{version['id']}/relationships/build",
+        {"data": {"type": "builds", "id": target["id"]}},
+    )
+
+
+#: A submission that is still Apple's to act on. Only one can exist at a
+#: time, and a new one would be refused, so it is reported instead.
+SUBMISSION_IN_FLIGHT = {"WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES", "COMPLETING", "CANCELING"}
+
+
+def submit_for_review(client: Client, app: str, version: dict, platform: str, dry_run: bool) -> None:
+    """Send the version to App Review: a submission holding the version as
+    its one item, then submitted. An unsubmitted draft submission is reused;
+    one Apple already holds is reported and left alone."""
+    submissions = client.get(
+        "/reviewSubmissions", params={"filter[app]": app, "filter[platform]": platform, "limit": 20}
+    )["data"]
+    in_flight = next((item for item in submissions if item["attributes"].get("state") in SUBMISSION_IN_FLIGHT), None)
+    if in_flight is not None:
+        print(f"review submission: already {in_flight['attributes'].get('state')}; nothing submitted")
+        return
+    draft = next((item for item in submissions if item["attributes"].get("state") == "READY_FOR_REVIEW"), None)
+    print(f"review submission: {'reuse draft' if draft else 'create'}, add version, submit")
+    if dry_run:
+        return
+    if draft is None:
+        draft = client.post(
+            "/reviewSubmissions",
+            {
+                "data": {
+                    "type": "reviewSubmissions",
+                    "attributes": {"platform": platform},
+                    "relationships": {"app": {"data": {"type": "apps", "id": app}}},
+                }
+            },
+        )["data"]
+    items = client.get(f"/reviewSubmissions/{draft['id']}/items", params={"limit": 20})["data"]
+    if not any(
+        item.get("relationships", {}).get("appStoreVersion", {}).get("data", {}).get("id") == version["id"]
+        for item in items
+    ):
+        client.post(
+            "/reviewSubmissionItems",
+            {
+                "data": {
+                    "type": "reviewSubmissionItems",
+                    "relationships": {
+                        "reviewSubmission": {"data": {"type": "reviewSubmissions", "id": draft["id"]}},
+                        "appStoreVersion": {"data": {"type": "appStoreVersions", "id": version["id"]}},
+                    },
+                }
+            },
+        )
+    client.patch(
+        f"/reviewSubmissions/{draft['id']}",
+        {"data": {"type": "reviewSubmissions", "id": draft["id"], "attributes": {"submitted": True}}},
+    )
+    print(f"submitted {version['attributes']['versionString']} for App Review")
 
 
 def sync_screenshots(client: Client, localization: dict, locale: LocaleListing, dry_run: bool) -> None:
@@ -977,13 +1080,19 @@ def sync_command(args: argparse.Namespace) -> int:
     client = Client()
     app = app_id(client, listing.config["bundleId"])
     sync_app_info(client, app, listing, args.dry_run)
-    version = ensure_version(client, app, listing, args.version, args.dry_run)
+    version = ensure_version(client, app, listing, args.version, args.dry_run, build_number=args.select_build)
     if version is None:
         print("version metadata: would sync after creating the version")
         return 0
     sync_version_localizations(client, version, listing, whats_new, args.dry_run)
     if args.review_notes:
         sync_review_notes(client, version, listing, args.dry_run)
+    if args.select_build:
+        select_build(client, app, version, args.select_build, args.dry_run)
+    if args.submit:
+        if not args.select_build:
+            raise Failure("--submit needs --select-build: a version goes to review with a build")
+        submit_for_review(client, app, version, listing.config["platform"], args.dry_run)
     print("dry run complete; App Store Connect was not changed" if args.dry_run else "App Store listing is in sync")
     return 0
 
@@ -1016,6 +1125,14 @@ def main() -> int:
         help="read remote state and print changes without writing",
     )
     sync_parser.add_argument("--review-notes", action="store_true", help="also sync private App Review details")
+    sync_parser.add_argument(
+        "--select-build", metavar="NUMBER", help="select this processed build for the version, replacing any other"
+    )
+    sync_parser.add_argument(
+        "--submit",
+        action="store_true",
+        help="submit the version for App Review once it is in sync (needs --select-build)",
+    )
     subparsers.add_parser(
         "status", help="print every version, review submission and recent build as the API sees them"
     )

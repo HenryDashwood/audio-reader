@@ -90,9 +90,14 @@ being released.
 
 A `v*` release tag validates and uploads the app name, subtitle, privacy URL,
 version description, keywords, promotional text, support URL, copyright, and
-any non-empty screenshot sets. It creates the iOS App Store version when it is
-not already present. It does **not** submit the version for review or release
-it; those remain explicit decisions in App Store Connect.
+any non-empty screenshot sets, and selects the build it has just distributed.
+It creates the iOS App Store version when it is not already present, or renames
+the one editable draft (never submitted, or sent back by review) to the new
+version. It does **not** submit the version for review on its own: that is a
+manual run of the workflow with **submit_for_review** ticked, alongside the
+build number and version, which sends the version to App Review with the
+repository's notes and contact. Releasing an approved version stays a decision
+made in App Store Connect.
 
 The same operation can be run locally:
 
@@ -103,8 +108,9 @@ ASC_KEY_P8_BASE64=... \
   uv run scripts/app_store_sync.py sync --version 1.0
 ```
 
-Use `--dry-run` with those credentials to inspect the remote plan without
-writing. To see what App Store Connect itself believes, which the web page
+Add `--select-build <number>` to pick a processed build for the version, and
+`--submit` to send it to App Review once everything is in sync. Use `--dry-run`
+with those credentials to inspect the remote plan without writing. To see what App Store Connect itself believes, which the web page
 sometimes puts in friendlier words and occasionally different ones:
 
 ```bash
@@ -159,5 +165,5 @@ than repository copy. Before submitting a version, check these manually:
 - export-compliance answers, the selected build, and release mode;
 - every screenshot on both phone and iPad, at full size.
 
-The synchroniser intentionally does not submit for review. A successful upload
-means the listing is in sync, not that the version is ready to publish.
+A successful sync means the listing is in sync, not that the version has been
+submitted: that takes the explicit `submit_for_review` run described above.

@@ -10,6 +10,27 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.4.1
+
+A small follow-up to 1.4.0, mostly about what happens around a phone call.
+Worth trying:
+
+- Take a call while a podcast is playing, and again while an article is
+  being read. When the call ends, the podcast should carry on by itself, and
+  the article should start its current paragraph again rather than sit in
+  silence while claiming to be playing.
+- Pull your AirPods out during a call. When the call ends, nothing should
+  start playing out of the phone's speaker.
+- Press pause yourself before a call comes in. When it ends, the episode
+  should stay paused: only something you were listening to comes back.
+- Look at "minutes left" on an episode in Latest and then play it. The
+  figure should agree with the player, even for shows whose feeds
+  misreport their lengths.
+- If an episode fails to start, try it again. It should pick up from where
+  you actually were, not from where the list thought you were an hour ago.
+
+Everything from 1.4.0 below is still worth trying if you have not yet.
+
 ## 1.4.0
 
 This build can follow newsletters that only exist as email, such as Money

@@ -168,6 +168,134 @@ def test_version_with_selected_build_is_not_retargeted():
     assert client.patches == []
 
 
+def test_a_rejected_draft_with_a_build_is_retargeted_when_the_build_will_be_replaced():
+    client = FakeVersionClient(build={"id": "build-133", "type": "builds"})
+    client.versions[0]["attributes"]["appStoreState"] = "DEVELOPER_REJECTED"
+
+    result = store.ensure_version(client, "app-id", listing(), "1.4.1", dry_run=False, build_number="180")
+
+    assert result is not None and result["attributes"]["versionString"] == "1.4.1"
+    assert client.patches[0][1]["data"]["attributes"]["versionString"] == "1.4.1"
+
+
+class FakeBuildClient:
+    def __init__(self, *, current: dict | None, builds: list[dict]):
+        self.current = current
+        self.builds = builds
+        self.patches: list[tuple[str, dict]] = []
+
+    def get(self, path: str, **kwargs) -> dict:
+        if path == "/builds":
+            assert kwargs["params"]["filter[preReleaseVersion.version]"] == "1.4.1"
+            return {"data": self.builds}
+        if path.endswith("/build"):
+            return {"data": self.current}
+        raise AssertionError(path)
+
+    def patch(self, path: str, body: dict) -> dict:
+        self.patches.append((path, body))
+        return {}
+
+
+def version_1_4_1() -> dict:
+    return {"id": "v-id", "attributes": {"versionString": "1.4.1", "appStoreState": "PREPARE_FOR_SUBMISSION"}}
+
+
+def test_the_processed_build_for_the_version_replaces_the_old_one():
+    processed = {"id": "b180", "attributes": {"version": "180", "processingState": "VALID"}}
+    client = FakeBuildClient(current={"id": "b133", "attributes": {"version": "133"}}, builds=[processed])
+
+    store.select_build(client, "app-id", version_1_4_1(), "180", dry_run=False)
+
+    assert client.patches == [
+        ("/appStoreVersions/v-id/relationships/build", {"data": {"type": "builds", "id": "b180"}})
+    ]
+
+
+def test_a_build_still_processing_cannot_be_selected():
+    client = FakeBuildClient(current=None, builds=[{"id": "b180", "attributes": {"processingState": "PROCESSING"}}])
+
+    with pytest.raises(store.Failure, match="no processed build 180 carries version 1.4.1"):
+        store.select_build(client, "app-id", version_1_4_1(), "180", dry_run=False)
+
+
+def test_an_already_selected_build_is_left_alone():
+    processed = {"id": "b180", "attributes": {"version": "180", "processingState": "VALID"}}
+    client = FakeBuildClient(current={"id": "b180", "attributes": {"version": "180"}}, builds=[processed])
+
+    store.select_build(client, "app-id", version_1_4_1(), "180", dry_run=False)
+
+    assert client.patches == []
+
+
+class FakeSubmissionClient:
+    def __init__(self, submissions: list[dict], items: list[dict] | None = None):
+        self.submissions = submissions
+        self.items = items or []
+        self.posts: list[tuple[str, dict]] = []
+        self.patches: list[tuple[str, dict]] = []
+
+    def get(self, path: str, **_kwargs) -> dict:
+        if path == "/reviewSubmissions":
+            return {"data": self.submissions}
+        if path.endswith("/items"):
+            return {"data": self.items}
+        raise AssertionError(path)
+
+    def post(self, path: str, body: dict) -> dict:
+        self.posts.append((path, body))
+        return {"data": {"id": "new-submission"}}
+
+    def patch(self, path: str, body: dict) -> dict:
+        self.patches.append((path, body))
+        return {}
+
+
+def test_a_submission_apple_holds_is_reported_not_repeated(capsys):
+    client = FakeSubmissionClient([{"id": "s1", "attributes": {"state": "WAITING_FOR_REVIEW"}}])
+
+    store.submit_for_review(client, "app-id", version_1_4_1(), "IOS", dry_run=False)
+
+    assert client.posts == [] and client.patches == []
+    assert "already WAITING_FOR_REVIEW" in capsys.readouterr().out
+
+
+def test_a_fresh_submission_holds_the_version_and_is_submitted():
+    client = FakeSubmissionClient([{"id": "old", "attributes": {"state": "COMPLETE"}}])
+
+    store.submit_for_review(client, "app-id", version_1_4_1(), "IOS", dry_run=False)
+
+    assert [path for path, _ in client.posts] == ["/reviewSubmissions", "/reviewSubmissionItems"]
+    item = client.posts[1][1]["data"]["relationships"]
+    assert item["reviewSubmission"]["data"]["id"] == "new-submission"
+    assert item["appStoreVersion"]["data"]["id"] == "v-id"
+    assert client.patches == [
+        (
+            "/reviewSubmissions/new-submission",
+            {"data": {"type": "reviewSubmissions", "id": "new-submission", "attributes": {"submitted": True}}},
+        )
+    ]
+
+
+def test_a_draft_submission_already_holding_the_version_is_just_submitted():
+    draft = {"id": "draft", "attributes": {"state": "READY_FOR_REVIEW"}}
+    held = {"relationships": {"appStoreVersion": {"data": {"id": "v-id"}}}}
+    client = FakeSubmissionClient([draft], items=[held])
+
+    store.submit_for_review(client, "app-id", version_1_4_1(), "IOS", dry_run=False)
+
+    assert client.posts == []
+    assert client.patches[0][0] == "/reviewSubmissions/draft"
+
+
+def test_dry_run_submits_nothing():
+    client = FakeSubmissionClient([])
+
+    store.submit_for_review(client, "app-id", version_1_4_1(), "IOS", dry_run=True)
+
+    assert client.posts == [] and client.patches == []
+
+
 class FakeInFlightVersionClient(FakeVersionClient):
     """The app has 1.3.0 waiting for review and nothing editable, and Apple
     answers the attempt to create 1.4.0 with its unhelpful 409."""
