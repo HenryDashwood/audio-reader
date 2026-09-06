@@ -67,7 +67,7 @@ struct ArticleView: View {
         // button — so it all leaves and returns together when she scrolls,
         // and the foot of the screen is left to the tab bar and whatever is
         // playing. Ordered outwards from the page's own business: listening
-        // to it, leaving for it, looking through it, then asking for
+        // to it, leaving for it, sharing it, looking through it, then asking for
         // something else entirely.
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -78,6 +78,9 @@ struct ArticleView: View {
                     Link(destination: link) { Image(systemName: "safari") }
                         .accessibilityLabel("Open the original")
                         .accessibilityHint("Opens this page in your browser")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    ArticleShareButton(episode: episode, link: link)
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {

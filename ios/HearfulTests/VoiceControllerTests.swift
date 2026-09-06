@@ -403,6 +403,16 @@ struct VoiceControllerTests {
         #expect(recorder.events.contains(.cue(.listening)))
     }
 
+    @Test func silenceDoesNotConfirmARequestWasCaptured() async {
+        let speech = FakeSpeech()
+        speech.transcript = " \n "
+        let (controller, recorder, _, _, _) = makeController(speech: speech)
+
+        await controller.beginCommand()
+
+        #expect(!recorder.events.contains(.cue(.processing)))
+    }
+
     @Test func doesNotSayListeningBeforeTheMicrophoneIsReady() async {
         let speech = FakeSpeech()
         let gate = CommandGate()
@@ -430,6 +440,7 @@ struct VoiceControllerTests {
         await controller.beginCommand()
 
         #expect(!recorder.events.contains(.cue(.listening)))
+        #expect(!recorder.events.contains(.cue(.processing)))
     }
 
     @Test func fasterNudgesTheRateLocally() async {
@@ -440,6 +451,9 @@ struct VoiceControllerTests {
         await controller.beginCommand()
 
         #expect(recorder.events.contains(.rateSet(1.25)))
+        let received = recorder.events.firstIndex(of: .cue(.processing))
+        let changed = recorder.events.firstIndex(of: .rateSet(1.25))
+        #expect(received != nil && changed != nil && received! < changed!)
         #expect(player.playbackRate == 1.25)
         #expect(api.transcripts.isEmpty)  // never left the phone
     }
@@ -595,6 +609,7 @@ struct VoiceControllerTests {
         let command = Task { await controller.beginCommand() }
         await wait { controller.state == .thinking }
         #expect(recorder.spoken.isEmpty)
+        #expect(recorder.events.filter { $0 == .cue(.processing) }.count == 1)
         await gate.release()
         await command.value
 
@@ -662,6 +677,18 @@ struct VoiceConversationTests {
         ]
         let (controller, recorder, _, _, _) = makeController(speech: speech, api: api)
         return (controller, recorder, speech, api)
+    }
+
+    @Test func bookendsEachCapturedRequest() async {
+        let (controller, recorder, _, _) = clarified()
+
+        await controller.beginCommand()
+
+        let cues = recorder.events.filter { if case .cue = $0 { true } else { false } }
+        #expect(cues == [
+            .cue(.acknowledged), .cue(.listening), .cue(.processing),
+            .cue(.listening), .cue(.processing),
+        ])
     }
 
     @Test func aQuestionReopensTheMicrophoneWithoutATap() async {
@@ -1252,6 +1279,7 @@ struct VoiceControllerCancelTests {
         await wait { controller.state == .idle }
 
         #expect(!recorder.events.contains(.cue(.failed)))
+        #expect(!recorder.events.contains(.cue(.processing)))
     }
 
     @Test func itGoesBackToIdle() async {

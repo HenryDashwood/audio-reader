@@ -9,6 +9,8 @@ enum Cue: Equatable {
     case opened
     case acknowledged
     case listening
+    /// Speech was captured; the app is now handling the request.
+    case processing
     case failed
     /// An episode or article has reached its end.
     ///
@@ -42,10 +44,8 @@ final class Feedback: FeedbackPlaying {
 
     private let tick = UIImpactFeedbackGenerator(style: .light)
     private let impact = UIImpactFeedbackGenerator(style: .medium)
-    /// Rigid rather than another weight of the same thing: the go-ahead has to
-    /// be told apart from the acknowledgement by character, not by guessing at
-    /// strength, and they can arrive a couple of seconds apart.
-    private let ready = UIImpactFeedbackGenerator(style: .rigid)
+    /// A substantial pulse marks the moment the microphone is ready.
+    private let ready = UIImpactFeedbackGenerator(style: .heavy)
     private let notice = UINotificationFeedbackGenerator()
 
     init() {
@@ -76,8 +76,13 @@ final class Feedback: FeedbackPlaying {
             // the only honest signal that speaking now will be recorded — and
             // with the phone in her hand it arrives even when the tone is lost
             // under VoiceOver, a noisy room, or headphones she is not wearing.
-            ready.impactOccurred()
+            ready.impactOccurred(intensity: 1.0)
             AudioServicesPlaySystemSound(1114)  // end record: "go ahead"
+        case .processing:
+            // The companion recording tone bookends the go-ahead. A lighter
+            // pulse confirms receipt without implying the command succeeded.
+            impact.impactOccurred()
+            AudioServicesPlaySystemSound(1113)
         case .failed:
             notice.notificationOccurred(.error)
         case .finished:

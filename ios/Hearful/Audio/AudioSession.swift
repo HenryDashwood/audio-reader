@@ -52,6 +52,9 @@ enum AudioSession {
         try session.setCategory(
             .playAndRecord, mode: .measurement,
             options: [.duckOthers, .defaultToSpeaker, .allowBluetoothHFP])
+        // The go-ahead fires after capture starts. Recording otherwise
+        // suppresses the very haptic and sound that tell her to speak.
+        try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
         try session.setActive(true, options: .notifyOthersOnDeactivation)
     }
 

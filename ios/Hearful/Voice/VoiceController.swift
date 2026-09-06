@@ -250,6 +250,11 @@ final class VoiceController: ObservableObject {
                 await fail(saying: "I did not hear anything. Tap and try again.")
                 return .done
             }
+            // Bookend listening only when there is a request to handle. This
+            // includes local commands, before any response or network wait.
+            state = .thinking
+            feedback.play(.processing)
+
             // Replace the last live guess with the recogniser's final answer
             // before committing it. The settled line on screen is therefore
             // byte-for-byte the text sent below, including any proper noun
@@ -279,7 +284,6 @@ final class VoiceController: ObservableObject {
                 return .done
             }
 
-            state = .thinking
             attempt.commandSent = true
             // Captured before the request rather than read inside it: what is
             // playing is what she was listening to when she spoke, and by the
