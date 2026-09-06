@@ -12,6 +12,11 @@ state follows the article across its copies, including copies imported later.
 Separating sources preserves their shared state. Existing Latest cutoffs are
 retained; combining sources does not refill Latest with their archives.
 
+Opening a feed preview or subscribing refreshes catalog data older than fifteen
+minutes, even when nobody already follows that feed. Recent previews reuse the
+cached posts. If a publisher is unavailable or asks for a pause, the cached
+posts remain available and refresh waits before trying again.
+
 Short posts and paywalled previews remain visible. There are no publisher
 specific rules or automatic merges based on publication names. URL matching
 ignores fragments, common tracking parameters and trailing slashes, while

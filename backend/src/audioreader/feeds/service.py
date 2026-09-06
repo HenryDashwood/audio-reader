@@ -17,15 +17,14 @@ class AlreadySubscribedError(Exception):
 async def ensure_feed(session: AsyncSession, url: str) -> Feed:
     """Get a feed into the shared catalog without following it.
 
-    A feed already in the catalog is not re-fetched: the poller keeps it
-    current. This is what lets a show be previewed or played before anyone
-    subscribes to it. The URL need not be the feed itself — a homepage is
+    Recent catalog entries are reused; stale entries are refreshed on demand,
+    including previews that nobody subscribes to and the poller skips.
+    The URL need not be the feed itself — a homepage is
     resolved to its advertised feed, and the feed is stored under the
     resolved URL so both routes lead to one catalog entry."""
     feed = await _feed_for_url(session, url)
     if feed is not None:
-        if await _backfill_site_artwork(feed):
-            await session.commit()
+        await _refresh_cached_feed(session, feed)
         return feed
     resolved_url, parsed = await resolve_feed(url)
     aliases = {url}
@@ -34,10 +33,9 @@ async def ensure_feed(session: AsyncSession, url: str) -> Feed:
     feed = await _feed_for_url(session, resolved_url)
     if feed is not None:
         changed = await _remember_aliases(session, feed, aliases)
-        if await _backfill_site_artwork(feed):
-            changed = True
         if changed:
             await session.commit()
+        await _refresh_cached_feed(session, feed)
         return feed
     feed = Feed(url=resolved_url, title=parsed.title)
     apply_feed_metadata(feed, parsed)
@@ -47,6 +45,16 @@ async def ensure_feed(session: AsyncSession, url: str) -> Feed:
     await _remember_aliases(session, feed, aliases)
     await session.commit()
     return feed
+
+
+async def _refresh_cached_feed(session: AsyncSession, feed: Feed) -> None:
+    # The poller shares the ingestion helpers below, so import after both
+    # modules have loaded. Preview and background refresh use the same path.
+    from audioreader.feeds.poller import refresh_stale_feed
+
+    await refresh_stale_feed(session, feed)
+    if feed.throttled_until is None and await _backfill_site_artwork(feed):
+        await session.commit()
 
 
 async def _backfill_site_artwork(feed: Feed) -> bool:
@@ -110,8 +118,9 @@ async def is_subscribed(session: AsyncSession, feed_id: int, user: User) -> bool
 
 async def subscribe(session: AsyncSession, url: str, user: User) -> Feed:
     """Follow a feed: add it to the shared catalog if it is new, then record
-    this user's subscription. A feed another user already follows is not
-    re-fetched — only the same user subscribing twice is an error.
+    this user's subscription. A recent catalog copy can be reused; an older
+    one is refreshed before setting the new subscription's Latest cursor.
+    Only the same user subscribing twice is an error.
 
     The duplicate check runs after resolution, so subscribing via the
     homepage and via the feed URL count as the same subscription."""

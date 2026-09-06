@@ -27,6 +27,10 @@ POLL_LOCK_KEY = 0x4155_4449  # "AUDI"
 #: However long a site asks for, a feed is looked at again within a day.
 MAX_THROTTLE = timedelta(days=1)
 
+# Unsubscribed previews have no background poll. Reopening one checks for new
+# posts at most once per fifteen minutes, the ordinary poller's default pace.
+CATALOG_REFRESH_INTERVAL = timedelta(minutes=15)
+
 
 def _aware(moment: datetime) -> datetime:
     # SQLite hands back naive datetimes for timezone-aware columns.
@@ -60,8 +64,45 @@ def feed_is_failing(feed: Feed, now: datetime | None = None) -> bool:
     return _aware(feed.last_polled_at) <= (now or utcnow()) - stale_after
 
 
-async def poll_feed(session: AsyncSession, feed: Feed) -> int:
+def _refresh_due(feed: Feed, now: datetime) -> bool:
+    if feed.throttled_until is not None and _aware(feed.throttled_until) > now:
+        return False
+    return feed.last_polled_at is None or _aware(feed.last_polled_at) <= now - CATALOG_REFRESH_INTERVAL
+
+
+async def refresh_stale_feed(session: AsyncSession, feed: Feed) -> None:
+    """Keep cached previews usable even when their publisher is unavailable."""
+    if not _refresh_due(feed, utcnow()):
+        return
+    try:
+        await poll_feed(session, feed, only_if_stale=True)
+    except (FeedFetchError, FeedParseError) as exc:
+        # Fetching and parsing fail before poll_feed changes any stored posts.
+        # Commit just the retry state, preserving the request's loaded user and
+        # cached feed instead of expiring them with a session-wide rollback.
+        feed.last_error = str(exc)[:500]
+        if isinstance(exc, FeedRateLimitedError):
+            feed.throttled_until = throttle_until(exc)
+        else:
+            feed.consecutive_failures += 1
+            feed.throttled_until = utcnow() + CATALOG_REFRESH_INTERVAL
+        await session.commit()
+        logger.warning("could not refresh cached feed %s: %s", feed.id, exc)
+
+
+async def poll_feed(session: AsyncSession, feed: Feed, *, only_if_stale: bool = False) -> int:
     """Fetch one feed and store its new episodes. Returns how many were added."""
+    # Foreground previews can now overlap the background poller or another
+    # preview. Lock and reload the feed before checking freshness and known
+    # GUIDs, so only one refresh can insert a given episode at a time.
+    await session.flush()
+    await session.refresh(feed, with_for_update=True)
+    now = utcnow()
+    if (feed.throttled_until is not None and _aware(feed.throttled_until) > now) or (
+        only_if_stale and not _refresh_due(feed, now)
+    ):
+        await session.commit()
+        return 0
     fetched = await fetch_feed_update(feed.url, etag=feed.etag, last_modified=feed.last_modified)
     if fetched.not_modified:
         # A 304 is a successful poll: the publisher confirmed that the stored

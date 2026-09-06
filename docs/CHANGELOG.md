@@ -12,6 +12,12 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.4.1
 
+Reopening a feed preview now checks for new posts when its cached copy is more
+than fifteen minutes old, even if nobody follows that feed yet. Please try a
+publication you previewed a few days ago. Its new posts should appear without
+subscribing first; saved posts remain available if the publisher cannot be
+reached.
+
 Publication pages now keep "Manage sources" and "Unsubscribe" in the three-dot
 menu beside the title. With VoiceOver, the button is called "Manage" followed
 by the publication's name. Please check both actions and the layout with larger

@@ -111,7 +111,7 @@ class TestPreview:
         response = await client.post("/feeds/preview", json={"url": FEED_URL})
         assert response.json()["subscribed"] is True
 
-    async def test_a_catalogued_feed_is_not_refetched(self, client, respx_mock, podcast_xml):
+    async def test_a_recent_catalogued_feed_is_not_refetched(self, client, respx_mock, podcast_xml):
         route = respx_mock.get(FEED_URL).respond(content=podcast_xml, content_type="application/rss+xml")
         await client.post("/feeds/preview", json={"url": FEED_URL})
         await client.post("/feeds/preview", json={"url": FEED_URL})
