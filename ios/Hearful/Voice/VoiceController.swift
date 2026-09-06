@@ -119,6 +119,9 @@ final class VoiceController: ObservableObject {
     private let feedback: FeedbackPlaying
     private let sleepTimer: SleepTimer
     private let telemetry: TelemetryReporting?
+    /// Tests control this delay so runner load cannot turn a prompt fake
+    /// response into a slow request with an extra progress cue.
+    private let progressDelay: @MainActor (Duration) async throws -> Void
     private var commandTask: Task<Void, Never>?
     private var commandID: UUID?
     private let sessionContext: VoiceSessionContext
@@ -146,7 +149,8 @@ final class VoiceController: ObservableObject {
     init(
         api: HearfulAPIProtocol, speech: SpeechRecognizing, speaker: Speaking,
         player: AudioPlaying, feedback: FeedbackPlaying, sleepTimer: SleepTimer = .shared,
-        telemetry: TelemetryReporting? = nil, sessionContext: VoiceSessionContext = VoiceSessionContext()
+        telemetry: TelemetryReporting? = nil, sessionContext: VoiceSessionContext = VoiceSessionContext(),
+        progressDelay: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.sessionContext = sessionContext
         self.conversation = sessionContext.conversation
@@ -157,6 +161,7 @@ final class VoiceController: ObservableObject {
         self.feedback = feedback
         self.sleepTimer = sleepTimer
         self.telemetry = telemetry
+        self.progressDelay = progressDelay
     }
 
     /// Listens, acts, and keeps going for as long as the answer was a question.
@@ -359,8 +364,8 @@ final class VoiceController: ObservableObject {
                 recentActions: recentActions, nowPlayingEpisodeID: nowPlaying, turns: Array(earlier))
             pendingRequest = request
             let progress = Task {
-                do { try await Task.sleep(for: .seconds(8)) } catch { return }
-                guard self.commandID == id else { return }
+                do { try await self.progressDelay(.seconds(8)) } catch { return }
+                guard !Task.isCancelled, self.commandID == id else { return }
                 self.feedback.play(.working)
             }
             defer { progress.cancel() }
