@@ -12,11 +12,16 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.4.1
 
+Publication pages now keep "Manage sources" and "Unsubscribe" in the three-dot
+menu beside the title. With VoiceOver, the button is called "Manage" followed
+by the publication's name. Please check both actions and the layout with larger
+text sizes.
+
 Publication sources can now be combined. Please try:
 
 - Subscribe to two feeds from the same publication, then open one and choose
-  "Manage sources". Combine the other subscription and check that Library
-  shows one publication with articles from both sources.
+  "Manage sources" from its three-dot menu. Combine the other subscription and
+  check that Library shows one publication with articles from both sources.
 - Read or dismiss an article available in both feeds. Its copies should share
   progress and reading state. Short posts and paywalled previews remain visible.
 - Use "Separate source" to return a source to Library. Its reading progress

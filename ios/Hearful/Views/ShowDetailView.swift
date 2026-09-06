@@ -6,6 +6,7 @@ struct ShowDetailView: View {
     @StateObject private var model = EpisodeListModel()
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// The episode whose page is open, if any.
     @State private var openEpisode: Episode?
     @State private var searchText = ""
@@ -16,19 +17,11 @@ struct ShowDetailView: View {
     var body: some View {
         List {
             Section {
-                HStack(alignment: .top, spacing: 14) {
-                    Artwork(url: show.artworkURL, title: show.title, size: 88)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(show.title).font(.title3.weight(.semibold))
-                        Text((refreshedShow ?? show).itemCountLabel)
-                            .font(.subheadline).foregroundStyle(.secondary)
-                    }
-                }
+                showHeader
                 if let description = show.description, !description.isEmpty {
                     Text(description).font(.callout).foregroundStyle(.secondary)
                 }
-                unsubscribeRow
-                Button("Manage sources") { managingSources = true }
+                subscriptionNotices
             }
 
             Section {
@@ -131,27 +124,70 @@ struct ShowDetailView: View {
         }
     }
 
-    /// The mirror of the preview page's Subscribe button. Unsubscribing is
-    /// cheap to undo — the catalog keeps the feed and her positions — so one
-    /// tap, no confirmation, same as the voice path.
-    @ViewBuilder
-    private var unsubscribeRow: some View {
-        Button(role: .destructive) {
-            Task {
-                if await model.unsubscribe(showID: show.id, title: show.title, forwarded: show.forwarded == true) {
-                    dismiss()
+    private var showHeader: some View {
+        // Give the title the full row at accessibility sizes, keeping the
+        // menu beside it without squeezing the text against the artwork.
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
+        return layout {
+            Artwork(url: show.artworkURL, title: show.title, size: 88)
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(show.title).font(.title3.weight(.semibold))
+                    Text((refreshedShow ?? show).itemCountLabel)
+                        .font(.subheadline).foregroundStyle(.secondary)
                 }
-            }
-        } label: {
-            if model.unsubscribing {
-                ProgressView()
-            } else {
-                Text("Unsubscribe")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                managementMenu
             }
         }
-        .buttonStyle(.bordered)
+    }
+
+    private var managementMenu: some View {
+        Menu {
+            Button {
+                managingSources = true
+            } label: {
+                Label("Manage sources", systemImage: "link")
+            }
+            Divider()
+            // The catalog keeps the feed and its positions, so unsubscribing
+            // stays one tap and reversible, just like the voice path.
+            Button(role: .destructive) {
+                Task {
+                    if await model.unsubscribe(showID: show.id, title: show.title, forwarded: show.forwarded == true) {
+                        dismiss()
+                    }
+                }
+            } label: {
+                Label("Unsubscribe", systemImage: "minus.circle")
+            }
+            .accessibilityLabel("Unsubscribe from \(show.title)")
+        } label: {
+            Group {
+                if model.unsubscribing {
+                    ProgressView()
+                } else {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 18, weight: .semibold))
+                }
+            }
+            .foregroundStyle(.primary)
+            .frame(width: 44, height: 44)
+            .background(.quaternary, in: Circle())
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .menuOrder(.fixed)
         .disabled(model.unsubscribing)
-        .accessibilityLabel("Unsubscribe from \(show.title)")
+        .accessibilityLabel(model.unsubscribing ? "Unsubscribing from \(show.title)" : "Manage \(show.title)")
+        .accessibilityHint("Manage sources or unsubscribe")
+    }
+
+    @ViewBuilder
+    private var subscriptionNotices: some View {
         if show.forwarded == true {
             // Magpie cannot reach the rule in her other inbox; without this
             // she would expect the emails to stop.

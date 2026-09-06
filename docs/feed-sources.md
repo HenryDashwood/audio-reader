@@ -1,9 +1,10 @@
 # Combining publication sources
 
 Subscribe to both sources in Library, open the publication whose name and
-artwork you want to keep, and choose **Manage sources**. Select the other
-subscription to combine it. The choice applies only to your account. A source
-can be separated again from that screen without unsubscribing.
+artwork you want to keep, tap the **…** menu beside its title, and choose
+**Manage sources**. Select the other subscription to combine it. The choice
+applies only to your account. A source can be separated again from that screen
+without unsubscribing.
 
 All sources continue refreshing independently. Articles with matching URLs
 appear once, using the copy with the most text. Read, dismissed and playback
