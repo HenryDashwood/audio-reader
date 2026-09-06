@@ -26,6 +26,15 @@ class FeedCreate(BaseModel):
     url: HttpUrl
 
 
+class FeedSourceRead(BaseModel):
+    id: int
+    title: str
+    url: str
+    source: str
+    is_primary: bool = False
+    is_failing: bool = False
+
+
 class FeedRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -48,6 +57,7 @@ class FeedRead(BaseModel):
     #: A newsletter that reaches her by way of another inbox's forwarding.
     #: Leaving it in Magpie cannot stop the emails; the rule there can.
     forwarded: bool = False
+    sources: list[FeedSourceRead] = Field(default_factory=list)
 
     @field_validator("description")
     @classmethod

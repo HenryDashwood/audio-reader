@@ -271,6 +271,21 @@ async def fold_subscription(session: AsyncSession, feed: Feed) -> bool:
     )
     if following is None:
         return False
+    # Explicit grouping is the listener's choice. Automatic newsletter
+    # discovery must not remove a group member or its displayed root.
+    explicit = await session.scalar(
+        select(Subscription.id)
+        .where(
+            Subscription.user_id == feed.owner_user_id,
+            or_(
+                Subscription.group_feed_id == feed.companion_feed_id,
+                (Subscription.feed_id == feed.companion_feed_id) & Subscription.group_feed_id.is_not(None),
+            ),
+        )
+        .limit(1)
+    )
+    if explicit is not None:
+        return False
     result = await session.execute(
         delete(Subscription).where(
             Subscription.user_id == feed.owner_user_id, Subscription.feed_id == feed.companion_feed_id
@@ -331,11 +346,15 @@ async def without_feed_copies(session: AsyncSession, episodes: list[Episode], us
     Across all her newsletters at once: the emailed copy is hers and, for
     a paid post, the whole of it; the feed's is a preview at best.
     """
+    from audioreader.feeds import groups
+
+    group = await groups.catalog(session, user_id)
+    episodes = [episode for episode in episodes if episode.id not in group.excluded_ids]
     pairs = (
         await session.execute(
             select(Feed.id, Feed.companion_feed_id)
             .join(Subscription, Subscription.feed_id == Feed.id)
-            .where(Subscription.user_id == user_id, Feed.companion_feed_id.is_not(None))
+            .where(Subscription.user_id == user_id, Feed.companion_feed_id.is_not(None), Feed.id.not_in(group.roots))
         )
     ).all()
     if not pairs:

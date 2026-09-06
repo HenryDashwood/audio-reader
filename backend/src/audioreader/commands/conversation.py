@@ -402,7 +402,7 @@ async def _converse(
         await session.scalars(
             select(Feed)
             .join(Subscription, Subscription.feed_id == Feed.id)
-            .where(Subscription.user_id == user.id)
+            .where(Subscription.user_id == user.id, Subscription.group_feed_id.is_(None))
             .order_by(Feed.title)
         )
     )
@@ -765,7 +765,7 @@ async def _execute_tool(
 
         if name == "load_show_episodes":
             feed = await feed_service.ensure_feed(session, str(args["feed_url"]))
-            loaded = await service.feed_candidates(session, feed.id, str(args.get("episode_query") or ""))
+            loaded = await service.feed_candidates(session, feed.id, str(args.get("episode_query") or ""), user=user)
             allowed_episode_ids.update(candidate.id for candidate in loaded)
             known_ids = {item.id for item in candidates}
             candidates.extend(candidate for candidate in loaded if candidate.id not in known_ids)

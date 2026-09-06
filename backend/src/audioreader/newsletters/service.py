@@ -689,6 +689,10 @@ async def leave(session: AsyncSession, feed: Feed) -> bool:
     writing anyway comes back as a question rather than as silence.
     Returns whether the sender was told.
     """
+    from audioreader.feeds import groups
+
+    if feed.owner_user_id is not None:
+        await groups.release_children(session, feed.owner_user_id, feed.id)
     told = await tell_sender_to_stop(session, feed)
     await session.execute(delete(Subscription).where(Subscription.feed_id == feed.id))
     feed.approval = APPROVAL_LEFT
@@ -857,6 +861,10 @@ async def tell_left_senders(session: AsyncSession, now: datetime | None = None) 
 
 
 async def _delete_contents(session: AsyncSession, feed: Feed) -> None:
+    from audioreader.feeds import groups
+
+    if feed.owner_user_id is not None:
+        await groups.release_children(session, feed.owner_user_id, feed.id)
     episode_ids = select(Episode.id).where(Episode.feed_id == feed.id)
     await session.execute(delete(PlaybackPosition).where(PlaybackPosition.episode_id.in_(episode_ids)))
     await session.execute(delete(InboundMessage).where(InboundMessage.feed_id == feed.id))

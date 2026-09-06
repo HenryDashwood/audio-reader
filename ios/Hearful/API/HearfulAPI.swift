@@ -43,6 +43,9 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     func previewFeed(url: URL) async throws -> FeedPreview
     func subscribe(feedURL: URL) async throws -> Show
     func unsubscribe(showID: Int) async throws
+    func feedSources(showID: Int) async throws -> [FeedSource]
+    func combineSource(showID: Int, sourceID: Int) async throws
+    func separateSource(showID: Int, sourceID: Int) async throws
     /// Her private newsletter address, minted by the backend on first request.
     func newsletterAddress() async throws -> NewsletterAddress
     /// Senders that have written to that address and await her answer.
@@ -78,6 +81,18 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
 }
 
 extension HearfulAPIProtocol {
+    func feedSources(showID: Int) async throws -> [FeedSource] {
+        throw APIError(underlying: "Managing sources is unavailable.")
+    }
+
+    func combineSource(showID: Int, sourceID: Int) async throws {
+        throw APIError(underlying: "Managing sources is unavailable.")
+    }
+
+    func separateSource(showID: Int, sourceID: Int) async throws {
+        throw APIError(underlying: "Managing sources is unavailable.")
+    }
+
     func cancelCommand(requestID: String) async {}
     nonisolated func commandStream(request: CommandRequest, traceparent: String?) -> AsyncThrowingStream<CommandStreamEvent, Error> {
         commandStream(transcript: request.transcript, nowPlayingEpisodeID: request.nowPlayingEpisodeID,
@@ -449,6 +464,22 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
     func unsubscribe(showID: Int) async throws {
         let url = baseURL.appendingPathComponent("feeds").appendingPathComponent("\(showID)")
         var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        try await perform(request)
+    }
+
+    func feedSources(showID: Int) async throws -> [FeedSource] {
+        try await send(URLRequest(url: baseURL.appendingPathComponent("feeds/\(showID)/sources")))
+    }
+
+    func combineSource(showID: Int, sourceID: Int) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("feeds/\(showID)/sources/\(sourceID)"))
+        request.httpMethod = "PUT"
+        try await perform(request)
+    }
+
+    func separateSource(showID: Int, sourceID: Int) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("feeds/\(showID)/sources/\(sourceID)"))
         request.httpMethod = "DELETE"
         try await perform(request)
     }

@@ -24,6 +24,7 @@ from audioreader.commands.intents import (
 )
 from audioreader.config import settings
 from audioreader.episode_search import mentions
+from audioreader.feeds import groups
 from audioreader.feeds import service as feed_service
 from audioreader.feeds.discovery import (
     DiscoveredFeed,
@@ -205,7 +206,10 @@ async def build_candidates(
     # Her subscriptions, and the companion feeds of her newsletters — minus a
     # companion's copy of a post she was sent, which is hers to hear in full.
     hers = Episode.feed_id.in_(companions.her_feed_ids(user.id))
-    episodes = await _recent_and_matching(session, select(Episode), hers, transcript, limit, search_limit)
+    group = await groups.catalog(session, user.id)
+    episodes = await _recent_and_matching(
+        session, select(Episode).where(Episode.id.not_in(group.excluded_ids)), hers, transcript, limit, search_limit
+    )
     return _to_candidates(await companions.without_feed_copies(session, episodes, user.id))
 
 
@@ -215,6 +219,7 @@ async def feed_candidates(
     transcript: str | None = None,
     limit: int | None = None,
     search_limit: int | None = None,
+    user: User | None = None,
 ) -> list[Candidate]:
     """One show's playable items, newest first, subscription not required.
 
@@ -222,9 +227,15 @@ async def feed_candidates(
     catalogue is out of reach of a recency window whether she subscribes to
     it or not.
     """
+    group = await groups.catalog(session, user.id) if user is not None else groups.Catalog()
     return _to_candidates(
         await _recent_and_matching(
-            session, select(Episode), Episode.feed_id == feed_id, transcript, limit, search_limit
+            session,
+            select(Episode).where(Episode.id.not_in(group.excluded_ids)),
+            Episode.feed_id.in_(group.feed_ids(group.roots.get(feed_id, feed_id))),
+            transcript,
+            limit,
+            search_limit,
         )
     )
 
@@ -934,7 +945,9 @@ async def _unsubscribe(session: AsyncSession, query: str | None, user: User) -> 
 
     feeds = (
         await session.scalars(
-            select(Feed).join(Subscription, Subscription.feed_id == Feed.id).where(Subscription.user_id == user.id)
+            select(Feed)
+            .join(Subscription, Subscription.feed_id == Feed.id)
+            .where(Subscription.user_id == user.id, Subscription.group_feed_id.is_(None))
         )
     ).all()
     if not feeds:

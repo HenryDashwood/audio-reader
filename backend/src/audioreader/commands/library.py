@@ -4,17 +4,26 @@ from sqlalchemy import exists, select
 from sqlalchemy.orm import joinedload
 
 from audioreader.commands import service
+from audioreader.feeds import groups
 from audioreader.models import PLAYABLE_EPISODE, Episode, PlaybackPosition
 from audioreader.newsletters import companions
 
 
 async def search(session, user, *, query: str, unheard: bool, kind: str | None, max_seconds: int | None):
-    conditions = [Episode.feed_id.in_(companions.her_feed_ids(user.id)), PLAYABLE_EPISODE]
+    group = await groups.catalog(session, user.id)
+    states = await service.positions.positions_for(session, user, group.copies)
+    hidden = [item_id for item_id, state in states.items() if state.dismissed or (unheard and state.completed)]
+    conditions = [
+        Episode.feed_id.in_(companions.her_feed_ids(user.id)),
+        PLAYABLE_EPISODE,
+        Episode.id.not_in(group.excluded_ids + hidden),
+    ]
     if unheard:
         conditions.append(
             ~exists().where(
                 PlaybackPosition.user_id == user.id,
                 PlaybackPosition.episode_id == Episode.id,
+                Episode.feed_id.not_in(group.roots),
                 PlaybackPosition.completed.is_(True),
             )
         )
@@ -22,6 +31,7 @@ async def search(session, user, *, query: str, unheard: bool, kind: str | None, 
         ~exists().where(
             PlaybackPosition.user_id == user.id,
             PlaybackPosition.episode_id == Episode.id,
+            Episode.feed_id.not_in(group.roots),
             PlaybackPosition.dismissed.is_(True),
         )
     )

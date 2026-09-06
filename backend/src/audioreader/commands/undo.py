@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
+from audioreader import positions
 from audioreader.commands.intents import Action, InterpretResult
 from audioreader.models import Episode, Feed, PlaybackPosition, Subscription, VoiceUndo, utcnow
 
@@ -13,7 +14,7 @@ from audioreader.models import Episode, Feed, PlaybackPosition, Subscription, Vo
 async def snapshot(session, user, name, args):
     if name == "file_episode":
         episode_id = int(args.get("episode_id", 0))
-        row = await session.get(PlaybackPosition, (user.id, episode_id))
+        row = (await positions.positions_for(session, user, [episode_id])).get(episode_id)
         return {"kind": "filing", "episode_id": episode_id, "before": state(row)}
     if name in {"subscribe_to_feed", "unsubscribe_from_feed"}:
         rows = list(await session.scalars(select(Subscription).where(Subscription.user_id == user.id)))
@@ -81,7 +82,8 @@ async def undo_last(session, user):
     if saved["kind"] == "filing":
         episode_id = saved["episode_id"]
         position = await session.get(PlaybackPosition, (user.id, episode_id))
-        if state(position) != saved["after"]:
+        effective = (await positions.positions_for(session, user, [episode_id])).get(episode_id)
+        if state(effective) != saved["after"]:
             return InterpretResult(Action.UNKNOWN, "That item has changed since then. I left it as it is.")
         episode = await session.get(Episode, episode_id, options=[joinedload(Episode.feed)])
         if position is None or episode is None:

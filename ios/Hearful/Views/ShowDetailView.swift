@@ -9,6 +9,8 @@ struct ShowDetailView: View {
     /// The episode whose page is open, if any.
     @State private var openEpisode: Episode?
     @State private var searchText = ""
+    @State private var managingSources = false
+    @State private var refreshedShow: Show?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -18,7 +20,7 @@ struct ShowDetailView: View {
                     Artwork(url: show.artworkURL, title: show.title, size: 88)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(show.title).font(.title3.weight(.semibold))
-                        Text(show.itemCountLabel)
+                        Text((refreshedShow ?? show).itemCountLabel)
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
@@ -26,6 +28,7 @@ struct ShowDetailView: View {
                     Text(description).font(.callout).foregroundStyle(.secondary)
                 }
                 unsubscribeRow
+                Button("Manage sources") { managingSources = true }
             }
 
             Section {
@@ -79,6 +82,14 @@ struct ShowDetailView: View {
         // No title in the bar: the show's name is the first thing on the page
         // already, in the header a few points below it.
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $managingSources, onDismiss: {
+            Task {
+                refreshedShow = try? await HearfulAPI().shows().first { $0.id == show.id }
+                await model.load(showID: show.id)
+            }
+        }) {
+            FeedSourcesView(show: refreshedShow ?? show)
+        }
         .navigationDestination(item: $openEpisode) { episode in
             ArticleView(episode: episode) { wordCount in
                 model.learnedWordCount(wordCount, for: episode.id, showID: show.id)

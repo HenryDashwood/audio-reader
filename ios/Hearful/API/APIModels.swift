@@ -303,13 +303,35 @@ nonisolated struct Show: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// inbox. Unsubscribing here cannot stop the emails; the rule can.
     /// Optional for older payloads and the offline cache.
     var forwarded: Bool?
+    var sources: [FeedSource]?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, description, source, forwarded
+        case id, title, description, source, forwarded, sources
         case artworkURL = "image_url"
         case episodeCount = "episode_count"
         case isArticleFeed = "is_article_feed"
         case isFailing = "is_failing"
+    }
+}
+
+nonisolated struct FeedSource: Codable, Identifiable, Equatable, Hashable, Sendable {
+    let id: Int
+    let title: String
+    let url: String
+    let source: String
+    let isPrimary: Bool
+    let isFailing: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, url, source
+        case isPrimary = "is_primary"
+        case isFailing = "is_failing"
+    }
+
+    // A feed address may contain a private subscription token. Display only
+    // its host, which still distinguishes public and subscriber sources.
+    var locationLabel: String {
+        source == "email" ? "Email newsletter" : (URL(string: url)?.host ?? "Feed")
     }
 }
 

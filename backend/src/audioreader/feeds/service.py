@@ -182,6 +182,20 @@ async def unsubscribe(session: AsyncSession, feed_id: int, user: User) -> Feed |
     if subscription is None:
         return None
     feed = await session.get(Feed, feed_id)
+    # Removing the displayed publication stops following every explicit
+    # source. Individual sources can instead be separated in Manage sources.
+    if subscription.group_feed_id is None:
+        children = list(
+            await session.scalars(
+                select(Subscription).where(Subscription.user_id == user.id, Subscription.group_feed_id == feed_id)
+            )
+        )
+        if children:
+            from audioreader.feeds import groups
+
+            await groups.preserve_states(session, user.id, feed_id)
+        for child in children:
+            await unsubscribe(session, child.feed_id, user)
     if feed is not None and feed.source == FEED_SOURCE_EMAIL:
         # Hers alone. The sender is asked to stop, and what it sent is kept
         # for a while in case she comes back or it keeps writing anyway.

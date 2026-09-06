@@ -10,7 +10,7 @@ from audioreader import episode_search, positions
 from audioreader.auth.dependencies import get_current_user
 from audioreader.config import settings
 from audioreader.db import get_session
-from audioreader.feeds import articles, service
+from audioreader.feeds import articles, groups, service
 from audioreader.feeds.discovery import (
     FeedDiscoveryError,
     FeedDiscoveryTimeout,
@@ -36,6 +36,7 @@ from audioreader.schemas import (
     FeedDiscoveryRead,
     FeedPreview,
     FeedRead,
+    FeedSourceRead,
     PodcastSearchResult,
     PositionUpdate,
     PublicationSearchRequest,
@@ -129,11 +130,15 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
     error, not a query.
     """
     stored = await positions.positions_for(session, user, (episode.id for episode in episodes))
+    group = await groups.catalog(session, user.id)
     reads = []
     for episode in episodes:
         read = EpisodeRead.model_validate(episode)
         read.feed_title = episode.feed.title
         read.feed_url = episode.feed.url
+        if (root := group.feeds.get(group.roots.get(episode.feed_id, 0))) is not None:
+            read.feed_title = root.title
+            read.feed_url = root.url
         # Item-level artwork is the exception; most feeds only set show art.
         read.image_url = secure_url(episode.image_url or episode.feed.image_url or episode.feed.site_image_url)
         # Mirrors the fallback chain in feeds/articles.py: anything that can
@@ -240,12 +245,23 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
     except (FeedFetchError, FeedParseError) as exc:
         _raise_discovery_error(exc)
 
+    group = await groups.catalog(session, user.id)
+    if feed.id in group.roots:
+        feed = group.feeds[group.roots[feed.id]]
     episode_count, audio_count = await counts_for(session, feed.id)
+    if feed.id in group.roots:
+        episode_count, audio_count = (
+            await session.execute(
+                select(func.count(Episode.id), func.count(Episode.audio_url)).where(
+                    Episode.feed_id.in_(group.feed_ids(feed.id)), Episode.id.not_in(group.excluded_ids)
+                )
+            )
+        ).one()
     episodes = (
         await session.scalars(
             select(Episode)
             .options(joinedload(Episode.feed))
-            .where(Episode.feed_id == feed.id)
+            .where(Episode.feed_id.in_(group.feed_ids(feed.id)), Episode.id.not_in(group.excluded_ids))
             .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
             .limit(50)
         )
@@ -259,6 +275,7 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
 
 @router.get("")
 async def list_feeds(session: Session, user: CurrentUser) -> list[FeedRead]:
+    group = await groups.catalog(session, user.id)
     counts = (
         select(
             Episode.feed_id,
@@ -271,16 +288,80 @@ async def list_feeds(session: Session, user: CurrentUser) -> list[FeedRead]:
     rows = await session.execute(
         select(Feed, func.coalesce(counts.c.count, 0), func.coalesce(counts.c.audio_count, 0))
         .join(Subscription, Subscription.feed_id == Feed.id)
-        .where(Subscription.user_id == user.id)
+        .where(Subscription.user_id == user.id, Subscription.group_feed_id.is_(None))
         .outerjoin(counts, counts.c.feed_id == Feed.id)
         .order_by(Feed.title)
     )
     shows = []
     for feed, count, audio_count in rows.all():
-        if feed.companion_feed_id is not None:
+        if feed.id in group.roots:
+            count, audio_count = (
+                await session.execute(
+                    select(func.count(Episode.id), func.count(Episode.audio_url)).where(
+                        Episode.feed_id.in_(group.feed_ids(feed.id)), Episode.id.not_in(group.excluded_ids)
+                    )
+                )
+            ).one()
+        elif feed.companion_feed_id is not None:
             count, audio_count = await companions.item_counts(session, feed)
-        shows.append(to_feed_read(feed, count, audio_count))
+        read = to_feed_read(feed, count, audio_count)
+        sources = [group.feeds[source_id] for source_id in group.feed_ids(feed.id) if source_id in group.feeds]
+        read.sources = [_source_read(source, feed.id) for source in sources or [feed]]
+        read.is_failing = any(source.is_failing for source in read.sources)
+        shows.append(read)
     return shows
+
+
+def _source_read(feed: Feed, root_id: int) -> FeedSourceRead:
+    return FeedSourceRead(
+        id=feed.id,
+        title=feed.title,
+        url=feed.url,
+        source=feed.source,
+        is_primary=feed.id == root_id,
+        is_failing=feed_is_failing(feed),
+    )
+
+
+@router.get("/{feed_id}/sources")
+async def list_sources(feed_id: int, session: Session, user: CurrentUser) -> list[FeedSourceRead]:
+    subscription = await session.scalar(
+        select(Subscription).where(
+            Subscription.user_id == user.id, Subscription.feed_id == feed_id, Subscription.group_feed_id.is_(None)
+        )
+    )
+    if subscription is None:
+        raise HTTPException(status_code=404, detail="publication not found")
+    feeds = list(
+        await session.scalars(
+            select(Feed)
+            .join(Subscription, Subscription.feed_id == Feed.id)
+            .where(
+                Subscription.user_id == user.id,
+                or_(Subscription.feed_id == feed_id, Subscription.group_feed_id == feed_id),
+            )
+            .order_by(Feed.id)
+        )
+    )
+    return [_source_read(feed, feed_id) for feed in feeds]
+
+
+@router.put("/{feed_id}/sources/{source_id}", status_code=204)
+async def combine_sources(feed_id: int, source_id: int, session: Session, user: CurrentUser) -> None:
+    try:
+        await groups.combine(session, user.id, feed_id, source_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete("/{feed_id}/sources/{source_id}", status_code=204)
+async def separate_source(feed_id: int, source_id: int, session: Session, user: CurrentUser) -> None:
+    try:
+        await groups.separate(session, user.id, feed_id, source_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete("/{feed_id}", status_code=204)
@@ -316,22 +397,24 @@ async def list_episodes(
     # per post — an issue she received and the feed's copy of it are the same
     # thing, and hers is the one kept.
     feed = await session.get(Feed, feed_id)
-    feed_ids = [feed_id]
+    group = await groups.catalog(session, user.id)
+    feed_ids = group.feed_ids(subscribed.group_feed_id or feed_id)
     if feed is not None and feed.companion_feed_id is not None:
         feed_ids.append(feed.companion_feed_id)
     statement = (
         select(Episode)
         .options(joinedload(Episode.feed))
         .where(Episode.feed_id.in_(feed_ids))
+        .where(Episode.id.not_in(group.excluded_ids))
         .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
         .limit(limit if len(feed_ids) == 1 else limit * 2)
     )
     if q and q.strip():
         statement = episode_search.matching(q, statement)
     episodes = list((await session.scalars(statement)).all())
-    if len(feed_ids) > 1:
+    if len(feed_ids) > 1 and feed_id not in group.roots:
         episodes = companions.without_duplicates(episodes, own_feed_id=feed_id)[:limit]
-    return await episodes_read(session, user, episodes)
+    return await episodes_read(session, user, episodes[:limit])
 
 
 search_router = APIRouter(prefix="/search", tags=["search"])
@@ -382,11 +465,18 @@ async def search_library_episodes(
     query = q.strip()
     if not query:
         return []
+    group = await groups.catalog(session, user.id)
     statement = (
         select(Episode)
-        .join(Subscription, Subscription.feed_id == Episode.feed_id)
         .options(joinedload(Episode.feed))
-        .where(Subscription.user_id == user.id, PLAYABLE_EPISODE)
+        .where(
+            or_(
+                Episode.feed_id.in_(select(Subscription.feed_id).where(Subscription.user_id == user.id)),
+                Episode.feed_id.in_(group.roots),
+            ),
+            PLAYABLE_EPISODE,
+            Episode.id.not_in(group.excluded_ids),
+        )
         .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
         .limit(limit)
     )
@@ -435,6 +525,7 @@ async def recent_episodes(
     lost — only the "what's new" list stops repeating itself.
     """
     newest = (Episode.published_at.desc().nulls_last(), Episode.id.desc())
+    group = await groups.catalog(session, user.id)
     episodes = list(
         await session.scalars(
             select(Episode)
@@ -442,6 +533,7 @@ async def recent_episodes(
             .join(Subscription, Subscription.feed_id == Episode.feed_id)
             .where(
                 Subscription.user_id == user.id,
+                Episode.feed_id.not_in(group.roots),
                 PLAYABLE_EPISODE,
                 or_(
                     Subscription.latest_after_episode_id.is_(None),
@@ -461,6 +553,7 @@ async def recent_episodes(
             companions.companion_news(user.id)
             .options(joinedload(Episode.feed))
             .where(PLAYABLE_EPISODE, Episode.id.not_in(positions.filed_away(user)))
+            .where(Episode.feed_id.not_in(group.roots))
             .order_by(*newest)
             .limit(limit)
         )
@@ -468,6 +561,18 @@ async def recent_episodes(
     if from_companions:
         from_companions = await companions.without_feed_copies(session, from_companions, user.id)
         episodes = sorted(episodes + from_companions, key=companions.newest_first, reverse=True)[:limit]
+    if group.roots:
+        filed_ids = await positions.grouped_filed_ids(session, user, group)
+        grouped_news = list(
+            await session.scalars(
+                select(Episode)
+                .options(joinedload(Episode.feed))
+                .where(Episode.id.in_(group.latest_ids()), Episode.id.not_in(filed_ids), PLAYABLE_EPISODE)
+                .order_by(*newest)
+                .limit(limit)
+            )
+        )
+        episodes = sorted(episodes + grouped_news, key=companions.newest_first, reverse=True)[:limit]
     return await episodes_read(session, user, episodes)
 
 

@@ -239,6 +239,9 @@ class Subscription(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     feed_id: Mapped[int] = mapped_column(ForeignKey("feeds.id", ondelete="CASCADE"))
+    # Explicit, per-listener grouping. Every source retains its subscription
+    # and inbox cursor; only the root is displayed in the library.
+    group_feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id", ondelete="SET NULL"), index=True)
     # The Latest screen is an inbox, not the show's archive. Episodes at or
     # below this cursor were already present when the listener subscribed —
     # or when she last cleared Latest — and stay available on the show's page
@@ -247,7 +250,7 @@ class Subscription(Base):
     latest_after_episode_id: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    feed: Mapped[Feed] = relationship()
+    feed: Mapped[Feed] = relationship(foreign_keys=[feed_id])
 
 
 class PlaybackPosition(Base):

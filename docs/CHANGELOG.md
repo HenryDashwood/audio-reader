@@ -12,6 +12,16 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.4.1
 
+Publication sources can now be combined. Please try:
+
+- Subscribe to two feeds from the same publication, then open one and choose
+  "Manage sources". Combine the other subscription and check that Library
+  shows one publication with articles from both sources.
+- Read or dismiss an article available in both feeds. Its copies should share
+  progress and reading state. Short posts and paywalled previews remain visible.
+- Use "Separate source" to return a source to Library. Its reading progress
+  should be preserved, and older articles should not refill Latest.
+
 This internal build improves voice control. Please try:
 
 - Start a voice request. The listening vibration should be stronger, and a
