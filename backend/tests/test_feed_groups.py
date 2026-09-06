@@ -39,7 +39,11 @@ async def pair(session, user):
         user,
         "subscriber",
         [
-            ("Shared article", "https://publisher.test/story/", "<p>Full article. " + "Words " * 100 + "</p>"),
+            (
+                "Shared article",
+                "https://publisher.test/story/?access_token=subscriber-access",
+                "<p>Full article. " + "Words " * 100 + "</p>",
+            ),
             ("Subscriber only", "https://publisher.test/private", "Private text"),
         ],
     )
@@ -76,6 +80,9 @@ async def test_combines_counts_and_pages_but_keeps_previews(client, session, pai
     # Source records, identifiers and subscriptions remain intact.
     assert len(list(await session.scalars(select(Subscription)))) == 2
     assert len(list(await session.scalars(select(Episode)))) == 5
+    assert (await session.get(Episode, own[0].id)).link == (
+        "https://publisher.test/story/?access_token=subscriber-access"
+    )
     preview = (await client.post("/feeds/preview", json={"url": other.url})).json()
     assert preview["feed"]["id"] == root.id
     assert preview["feed"]["episode_count"] == 4
@@ -215,6 +222,9 @@ async def test_unsubscribe_removes_whole_group_without_deleting_articles(client,
     ("a", "b", "same"),
     [
         ("https://example.test/post/?utm_source=x#section", "http://EXAMPLE.test/post", True),
+        ("https://example.test/post?access_token=private", "https://example.test/post", True),
+        ("https://example.test/post?access_token=old", "https://example.test/post?access_token=new", True),
+        ("https://example.test/?p=1&access_token=private", "https://example.test/?p=2", False),
         ("https://example.test/?p=1", "https://example.test/?p=2", False),
         ("https://example.test/post?a=1&b=2", "https://example.test/post?b=2&a=1", True),
         ("https://example.test/Post", "https://example.test/post", False),

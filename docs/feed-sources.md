@@ -19,8 +19,10 @@ posts remain available and refresh waits before trying again.
 
 Short posts and paywalled previews remain visible. There are no publisher
 specific rules or automatic merges based on publication names. URL matching
-ignores fragments, common tracking parameters and trailing slashes, while
-preserving content-identifying query parameters. Different URLs are not
+ignores fragments, common tracking parameters, `access_token` authentication
+parameters and trailing slashes, while preserving content-identifying query
+parameters. Original authenticated links remain available for opening articles.
+Different URLs are not
 treated as duplicates merely because their titles match. Existing automatic
 email/RSS companion pairs retain their previous tracking-link handling.
 

@@ -28,11 +28,15 @@ def article_key(link: str | None) -> str | None:
     host = url.hostname.lower()
     if port not in {None, 80, 443}:
         host = f"{host}:{port}"
-    # Keep content-identifying query parameters (notably WordPress's ?p=).
+    # An access token grants permission to the same article; it does not
+    # identify a different one. Ignore it only in this comparison key, keeping
+    # the original authenticated link for opening the article. Keep content-
+    # identifying query parameters (notably WordPress's ?p=).
     query = sorted(
         (key, value)
         for key, value in parse_qsl(url.query, keep_blank_values=True)
-        if not key.lower().startswith("utm_") and key.lower() not in {"fbclid", "gclid", "mc_cid", "mc_eid"}
+        if not key.lower().startswith("utm_")
+        and key.lower() not in {"fbclid", "gclid", "mc_cid", "mc_eid", "access_token"}
     )
     return urlunsplit(("https", host, url.path.rstrip("/") or "/", urlencode(query), ""))
 

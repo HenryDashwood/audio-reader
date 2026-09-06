@@ -12,6 +12,10 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.4.1
 
+Combined sources now recognize the same article when a subscriber link adds an
+access token. Please check that public and subscriber copies appear once and
+keep their shared reading progress.
+
 Reopening a feed preview now checks for new posts when its cached copy is more
 than fifteen minutes old, even if nobody follows that feed yet. Please try a
 publication you previewed a few days ago. Its new posts should appear without
