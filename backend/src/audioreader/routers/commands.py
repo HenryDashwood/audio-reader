@@ -12,6 +12,7 @@ from audioreader import telemetry
 from audioreader.auth.dependencies import get_current_user
 from audioreader.commands import service
 from audioreader.commands.conversation import AssistantDelta, ConversationFinished, converse
+from audioreader.commands.receipts import cancel_request, recoverable_events
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.llm.client import LLMClient, LLMError
@@ -204,7 +205,8 @@ async def command_stream(
             detail={"spoken_response": "Before using voice commands, open Magpie and allow AI data sharing."},
         )
 
-    async def events() -> AsyncIterator[bytes]:
+    async def events(active_session: AsyncSession = session) -> AsyncIterator[bytes]:
+        session = active_session
         # StreamingResponse consumes this generator after the route function
         # returns, so the span must live inside it. Otherwise all OpenAI, web,
         # tool and database work becomes a set of unrelated traces and the
@@ -235,6 +237,9 @@ async def command_stream(
                     now_playing_episode_id=body.now_playing_episode_id,
                     turns=body.turns,
                     country=body.country,
+                    supports_compound_actions=body.supports_compound_actions,
+                    viewed_episode_id=body.viewed_episode_id,
+                    recent_actions=body.recent_actions,
                 ):
                     if isinstance(event, AssistantDelta):
                         yield _line({"type": "assistant_delta", "text": event.text})
@@ -255,6 +260,7 @@ async def command_stream(
                             span.set_attribute("feed_title", result.episode.feed.title or "")
                             episode = (await episodes_read(session, user, [result.episode]))[0]
                         response = CommandResponse(
+                            actions=[await _action_response(session, user, item) for item in result.actions],
                             action=result.action.value,
                             spoken_response=result.spoken_response,
                             episode=episode,
@@ -263,13 +269,14 @@ async def command_stream(
                         )
                         yield _line({"type": "result", "response": response.model_dump(mode="json")})
                         return
-            except LLMError as exc:
+            except (LLMError, TimeoutError) as exc:
                 span.set_attribute("failure", "llm_error")
                 logger.warning("streamed command failed: %s", exc)
                 yield _line({"type": "error", "spoken_response": OUTAGE_RESPONSE})
 
+    await session.commit()  # Release the authentication read transaction while streaming.
     return StreamingResponse(
-        events(),
+        recoverable_events(body, user.id, session, events) if body.request_id else events(),
         media_type="application/x-ndjson",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -277,3 +284,22 @@ async def command_stream(
 
 def _line(value: dict) -> bytes:
     return (json.dumps(value, separators=(",", ":")) + "\n").encode()
+
+
+async def _action_response(session, user, result) -> CommandResponse:
+    episode = (await episodes_read(session, user, [result.episode]))[0] if result.episode else None
+    return CommandResponse(
+        action=result.action.value,
+        spoken_response=result.spoken_response,
+        episode=episode,
+        speed=result.speed,
+        expects_reply=result.expects_reply,
+    )
+
+
+@router.delete("/command/{request_id}")
+async def cancel_voice_command(request_id: str, session: Session, user: CurrentUser):
+    if not request_id or len(request_id) > 64:
+        raise HTTPException(status_code=422, detail="Invalid request identifier")
+    await cancel_request(session, user.id, request_id)
+    return {"status": "cancel_requested"}

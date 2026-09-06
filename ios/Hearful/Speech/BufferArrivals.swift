@@ -21,6 +21,10 @@ nonisolated final class BufferArrivals: @unchecked Sendable {
 
     private let lock = NSLock()
     private var buffers = 0
+    private var didOverflow = false
+
+    func markOverflow() { lock.lock(); didOverflow = true; lock.unlock() }
+    var overflowed: Bool { lock.lock(); defer { lock.unlock() }; return didOverflow }
 
     func record() {
         lock.lock()
@@ -50,6 +54,7 @@ nonisolated final class BufferArrivals: @unchecked Sendable {
         let started = ContinuousClock.now
         let deadline = started + .seconds(Self.wait)
         while ContinuousClock.now < deadline {
+            guard !Task.isCancelled else { return false }
             if count > 0 {
                 // How long the route took to come up. Recorded on success as
                 // well as failure: an outlier is only recognisable against the

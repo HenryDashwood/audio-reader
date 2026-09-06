@@ -6,9 +6,12 @@ surfaces text as it is written and hands completed function calls back to the
 tool loop.
 """
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -54,6 +57,7 @@ class OpenAIResponsesClient:
         timeout: float = 60.0,
         web_search: bool = False,
     ) -> None:
+        self._connection: ContextVar[httpx.AsyncClient | None] = ContextVar("responses_connection", default=None)
         self.model = model
         self.url = url
         self.reasoning_effort = reasoning_effort
@@ -63,6 +67,19 @@ class OpenAIResponsesClient:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+
+    @asynccontextmanager
+    async def connection(self):
+        current = self._connection.get()
+        if current is not None:
+            yield current
+            return
+        async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout, read=30)) as client:
+            token = self._connection.set(client)
+            try:
+                yield client
+            finally:
+                self._connection.reset(token)
 
     def payload(
         self,
@@ -141,8 +158,7 @@ class OpenAIResponsesClient:
         started = time.perf_counter()
         completed: dict[str, Any] | None = None
         try:
-            timeout = httpx.Timeout(self.timeout, read=None)
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with asyncio.timeout(60), self.connection() as client:
                 async with client.stream("POST", self.url, headers=self._headers, json=payload) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
@@ -162,7 +178,7 @@ class OpenAIResponsesClient:
                             case "error" | "response.failed" | "response.incomplete":
                                 detail = event.get("error") or event.get("response", {}).get("error") or event
                                 raise LLMError(f"OpenAI response failed: {detail}")
-        except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        except (httpx.HTTPError, json.JSONDecodeError, TimeoutError) as exc:
             raise LLMError(f"{type(exc).__name__}: {exc}") from exc
         finally:
             if completed is not None:

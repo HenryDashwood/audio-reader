@@ -88,7 +88,7 @@ struct ContentView: View {
             NowPlayingView(openArticle: openArticleFromPlayer)
         }
         .sheet(isPresented: $showingVoice) {
-            VoiceSheet(accountID: auth.user?.id)
+            VoiceSheet(accountID: auth.user?.id, viewedEpisode: selectedTab == .shows ? showsOpenEpisode : latestOpenEpisode)
                 // Consent needs a little more room than the microphone, but
                 // still opens as a compact app-owned permission sheet rather
                 // than a full-screen document. Once accepted, the familiar
@@ -207,9 +207,13 @@ struct VoiceSheet: View {
     @EnvironmentObject private var auth: AuthController
     @Environment(\.dismiss) private var dismiss
 
-    init(accountID: String?) {
-        _controller = StateObject(
-            wrappedValue: VoiceController.live(telemetryAccountID: accountID))
+    init(accountID: String?, viewedEpisode: Episode? = nil) {
+        let controller = VoiceController.live(telemetryAccountID: accountID)
+        controller.viewedEpisode = viewedEpisode
+        let shows = OfflineCache.shared.load([Show].self, for: .shows) ?? []
+        let episodes = OfflineCache.shared.load([Episode].self, for: .recentEpisodes) ?? []
+        controller.vocabulary = Array((shows.map(\.title) + episodes.prefix(50).map(\.title)).prefix(100))
+        _controller = StateObject(wrappedValue: controller)
     }
 
     var body: some View {
@@ -240,7 +244,7 @@ struct VoiceSheet: View {
                 // a control VoiceOver can find and describe, instead of an
                 // invisible gesture sitting on top of some text.
                 Button {
-                    Task { await controller.beginCommand() }
+                    Task { await controller.activate() }
                 } label: {
                     VStack(spacing: 24) {
                         Image(systemName: icon)
@@ -259,7 +263,7 @@ struct VoiceSheet: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Ask Magpie")
                 .accessibilityValue(caption)
-                .accessibilityHint("Double tap to ask for something to listen to")
+                .accessibilityHint(controller.state == .listening ? "Double tap when you have finished speaking" : "Double tap to interrupt and ask for something to listen to")
 
                 // What the app believes it heard, which is the one thing she
                 // cannot check by listening — and the thing that explains most
@@ -356,7 +360,7 @@ struct VoiceSheet: View {
         case .idle: "mic.circle.fill"
         case .preparing: "mic.circle"
         case .listening: "waveform.circle.fill"
-        case .thinking: "ellipsis.circle.fill"
+        case .finalizing, .thinking: "ellipsis.circle.fill"
         case .playing: "speaker.wave.2.circle.fill"
         }
     }
@@ -375,6 +379,7 @@ struct VoiceSheet: View {
                 : controller.lastSpokenResponse
         case .preparing: "Getting ready…"
         case .listening: "Listening…"
+        case .finalizing: "Finishing transcription…"
         case .thinking: "Thinking…"
         case .playing(let episode): "Playing \(episode.title)"
         }
@@ -482,7 +487,8 @@ extension VoiceController {
             speaker: Speaker(),
             player: PlaybackCoordinator.shared,
             feedback: Feedback.shared,
-            telemetry: TelemetryReporter(api: api, accountID: telemetryAccountID))
+            telemetry: TelemetryReporter(api: api, accountID: telemetryAccountID),
+            sessionContext: VoiceSessionContext.forAccount(telemetryAccountID, server: api.baseURL))
     }
 }
 

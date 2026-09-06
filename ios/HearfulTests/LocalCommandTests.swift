@@ -61,7 +61,6 @@ struct LocalCommandTests {
         "stop playing joe rogan and put on in our time",
         "go back to the episode about Rome",
         "skip to the one with Annie Jacobsen",
-        "play at one and a half speed",
         "double speed",
         "",
         "   ",

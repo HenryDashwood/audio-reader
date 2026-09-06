@@ -7,7 +7,7 @@ a second sentence. A wrong episode costs her the trust that anything she says
 lands, and she has no way to check.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from audioreader.commands.intents import Action, InterpretResult
@@ -39,6 +39,7 @@ class Observed:
     episode_show: str | None = None
     episode_title: str | None = None
     speed: float | None = None
+    steps: tuple["Observed", ...] = ()
     subscribed_added: frozenset[str] = frozenset()
     subscribed_removed: frozenset[str] = frozenset()
 
@@ -51,6 +52,7 @@ class Observed:
     ) -> "Observed":
         episode = result.episode
         return cls(
+            steps=tuple(cls.of(step, before, after) for step in result.actions),
             action=result.action,
             spoken=result.spoken_response,
             episode_guid=episode.guid if episode else None,
@@ -100,6 +102,20 @@ def grade(case: Case, observed: Observed) -> tuple[Grade, str]:
     """The verdict, and one line saying why."""
     expect = case.expect
     did = observed.describe()
+    if expect.steps:
+        if len(observed.steps) != len(expect.steps):
+            return Grade.FAIL, f"expected {len(expect.steps)} actions, received {len(observed.steps)}"
+        # Speed may precede playback. Require every effect exactly once,
+        # without requiring an arbitrary order for independent effects.
+        remaining = list(observed.steps)
+        for expected in expect.steps:
+            match = next(
+                (step for step in remaining if grade(replace(case, expect=expected), step)[0] is Grade.PASS), None
+            )
+            if match is None:
+                return Grade.FAIL, f"missing or incorrect {expected.action} action"
+            remaining.remove(match)
+        return Grade.PASS, "all requested actions completed"
 
     if observed.episode_guid and observed.episode_guid in case.never:
         return Grade.FAIL, f"{did} — the one outcome this case rules out"

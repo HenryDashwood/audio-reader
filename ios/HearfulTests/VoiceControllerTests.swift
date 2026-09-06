@@ -32,6 +32,7 @@ final class FakeSpeech: SpeechRecognizing {
     var error: Error?
     var listenCount = 0
     var cancelCount = 0
+    var finishCount = 0
     /// Keeps the microphone open instead of answering, as it is while she is
     /// still deciding what to say — the state the sheet gets closed in.
     var keepsListening = false
@@ -71,6 +72,13 @@ final class FakeSpeech: SpeechRecognizing {
 
     private func next() -> String {
         transcripts.isEmpty ? transcript : transcripts.removeFirst()
+    }
+
+    func finishListening() {
+        finishCount += 1
+        let pending = self.pending
+        self.pending = nil
+        pending?.resume(returning: next())
     }
 
     func cancel() {
@@ -176,6 +184,13 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     var responses: [CommandResponse] = []
     var error: Error?
     var transcripts: [String] = []
+    var requests: [CommandRequest] = []
+
+    func commandStream(request: CommandRequest, traceparent: String?) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+        requests.append(request)
+        return commandStream(transcript: request.transcript, nowPlayingEpisodeID: request.nowPlayingEpisodeID,
+                             turns: request.turns, traceparent: traceparent)
+    }
     /// How long the backend takes to answer.
     var delay: Duration = .zero
     /// Holds an answer until a timing-sensitive test has observed the state
@@ -302,7 +317,7 @@ private func episode(id: Int = 104, audio: String? = "https://cdn.example.com/10
 private func makeController(
     speech: FakeSpeech? = nil,
     api: FakeAPI = FakeAPI(),
-    holdsTheConfirmation: Bool = false
+    holdsTheConfirmation: Bool = false, sessionContext: VoiceSessionContext = VoiceSessionContext()
 ) -> (VoiceController, Recorder, FakeSpeech, FakeAPI, FakePlayer) {
     let recorder = Recorder()
     let speech = speech ?? FakeSpeech()
@@ -318,7 +333,7 @@ private func makeController(
         feedback: FakeFeedback(recorder))
     let controller = VoiceController(
         api: api, speech: speech, speaker: speaker, player: player,
-        feedback: FakeFeedback(recorder), sleepTimer: sleepTimer)
+        feedback: FakeFeedback(recorder), sleepTimer: sleepTimer, sessionContext: sessionContext)
     return (controller, recorder, speech, api, player)
 }
 
@@ -480,9 +495,8 @@ struct VoiceControllerTests {
         #expect(player.playbackRate == 1.0)
     }
 
-    @Test func backendSetSpeedIsAppliedAndConfirmed() async {
-        // "play at one and a half speed" is not a local phrase; the model
-        // resolves it and the app applies the multiplier it sends back.
+    @Test func absoluteSpeedIsAppliedAndConfirmedLocally() async {
+        // A complete absolute speed command no longer needs the network.
         let speech = FakeSpeech()
         speech.transcript = "play at one and a half speed"
         let (controller, recorder, _, api, player) = makeController(speech: speech)
@@ -1455,5 +1469,120 @@ struct VoiceFilingTests {
 
         #expect(recorder.spoken.contains("Which episode?"))
         #expect(recorder.events.contains(.resumed))
+    }
+}
+
+@Suite("Voice request recovery and compound actions")
+@MainActor
+struct VoicePipelineTests {
+    @Test func interruptingAConfirmationKeepsUnappliedPlaybackRecoverable() async {
+        let context = VoiceSessionContext()
+        let recorder = Recorder()
+        let speaker = FakeSpeaker(recorder)
+        speaker.keepsSpeaking = true
+        let speech = FakeSpeech()
+        let api = FakeAPI()
+        api.response = CommandResponse(action: .playEpisode, spokenResponse: "Playing it.", episode: episode())
+        let player = FakePlayer(recorder)
+        let controller = VoiceController(
+            api: api, speech: speech, speaker: speaker, player: player,
+            feedback: FakeFeedback(recorder), sessionContext: context)
+        let first = Task { await controller.beginCommand() }
+        await wait { !recorder.spoken.isEmpty }
+        controller.cancel()
+        await first.value
+        #expect(context.pendingRequest?.requestID == api.requests.first?.requestID)
+        #expect(context.recentActions.isEmpty)
+        #expect(recorder.playedIDs.isEmpty)
+
+        speaker.keepsSpeaking = false
+        speech.transcript = "did that work?"
+        await controller.beginCommand()
+        #expect(recorder.playedIDs == [104])
+        #expect(api.requests.first?.requestID == api.requests.last?.requestID)
+        #expect(context.pendingRequest == nil)
+        #expect(context.recentActions.count == 1)
+    }
+
+    @Test func tappingWhileListeningFinishesCaptureWithoutAnotherRequest() async {
+        let (controller, _, speech, api, _) = makeController()
+        speech.keepsListening = true
+        let running = Task { await controller.beginCommand() }
+        await wait { speech.isListening }
+        await controller.activate()
+        await running.value
+        #expect(speech.finishCount == 1)
+        #expect(speech.listenCount == 1)
+        #expect(api.transcripts.count == 1)
+    }
+
+    @Test func reopeningTheSheetRecoversTheOriginalRequestIdentifier() async {
+        let context = VoiceSessionContext()
+        let api = FakeAPI()
+        let gate = CommandGate()
+        api.commandGate = gate
+        let (first, _, _, _, _) = makeController(api: api, sessionContext: context)
+        let old = Task { await first.beginCommand() }
+        await wait { !api.transcripts.isEmpty }
+        first.cancel()
+        api.commandGate = nil
+        let speech = FakeSpeech()
+        speech.transcript = "did that work?"
+        let (second, _, _, _, _) = makeController(speech: speech, api: api, sessionContext: context)
+        await second.beginCommand()
+        #expect(api.requests.count == 2)
+        #expect(api.requests.first?.requestID != nil)
+        #expect(api.requests.first?.requestID == api.requests.last?.requestID)
+        await gate.release()
+        await old.value
+    }
+
+    @Test func aCancelledNetworkWaitDoesNotBlockTheNextRequest() async {
+        let (controller, recorder, speech, api, _) = makeController()
+        let gate = CommandGate()
+        api.commandGate = gate
+        api.response = CommandResponse(action: .unknown, spokenResponse: "Old response", episode: nil)
+        let old = Task { await controller.beginCommand() }
+        await wait { !api.transcripts.isEmpty }
+        controller.cancel()
+        speech.transcript = "go back two minutes"
+        await controller.beginCommand()
+        #expect(recorder.events.contains(.skipped(-120)))
+        await gate.release()
+        await old.value
+        #expect(!recorder.spoken.contains("Old response"))
+        #expect(controller.state == .idle)
+    }
+
+    @Test func appliesPlaybackAndSpeedFromTheSameRequest() async {
+        let (controller, recorder, _, api, player) = makeController()
+        api.response = CommandResponse(
+            action: .setSpeed, spokenResponse: "Playing it at one and a half times.", episode: nil,
+            actions: [
+                CommandResponse(action: .playEpisode, spokenResponse: "Playing it.", episode: episode()),
+                CommandResponse(action: .setSpeed, spokenResponse: "Speed set.", episode: nil, speed: 1.5),
+            ])
+        await controller.beginCommand()
+        #expect(player.currentEpisode?.id == 104)
+        #expect(player.playbackRate == 1.5)
+        #expect(recorder.spoken == ["Playing it at one and a half times."])
+        #expect(controller.state == .playing(episode()))
+    }
+
+    @Test func parameterizedControlsDoNotDiscardNumbers() {
+        #expect(TransportCommand.match("skip forward 90 seconds") == .seek(90))
+        #expect(TransportCommand.match("go back two minutes please") == .seek(-120))
+        #expect(TransportCommand.match("play at 1.5 times") == .speed(1.5))
+        #expect(TransportCommand.match("play at one and a half speed") == .speed(1.5))
+        #expect(TransportCommand.match("skip forward 90") == nil)
+        #expect(TransportCommand.match("play the episode about two minutes") == nil)
+    }
+
+    @Test func deadlineReturnsWithoutWaitingForAnUncooperativeOperation() async {
+        let gate = CommandGate()
+        await #expect(throws: VoiceTimeout.self) {
+            try await withVoiceDeadline(seconds: 0.01) { await gate.wait(); return "late" }
+        }
+        await gate.release()
     }
 }

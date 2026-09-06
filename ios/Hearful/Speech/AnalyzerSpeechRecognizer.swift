@@ -22,6 +22,24 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
             attributeOptions: progressive.attributeOptions)
     }()
 
+    private var activeID: UUID?
+    private var vocabulary: [String] = []
+    private var onCaptureEnded: (@MainActor () -> Void)?
+    private var tapInstalled = false
+    private var captureDeadline: Task<Void, Never>?
+    private var detectorTask: Task<Void, Never>?
+    private var detectorSpeaking = false
+
+    func configure(vocabulary: [String], onCaptureEnded: @escaping @MainActor () -> Void) {
+        self.vocabulary = vocabulary
+        self.onCaptureEnded = onCaptureEnded
+    }
+
+    private func checkActive(_ id: UUID) throws {
+        try Task.checkCancellation()
+        guard activeID == id else { throw CancellationError() }
+    }
+
     private let locale: Locale
     private var engine = AVAudioEngine()
     private var analyzer: SpeechAnalyzer?
@@ -51,28 +69,39 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         onReady: @MainActor () -> Void,
         onPartial: @escaping @MainActor (String) -> Void
     ) async throws -> String {
+        let id = UUID()
+        activeID = id
         hasHeardSpeech = false
         self.onPartial = onPartial
-        defer { self.onPartial = nil }
+        defer { if activeID == id { cancel() } }
         VoiceAttempt.current?.recogniser = "dictation-transcriber"
         try await requestMicrophonePermission()
+        try checkActive(id)
 
         let transcriber = DictationTranscriber(locale: locale, preset: Self.accuracyBiasedPreset)
         try await ensureModelInstalled(for: transcriber)
+        try checkActive(id)
+        let detector = SpeechDetector(detectionOptions: .init(sensitivityLevel: .medium), reportResults: true)
 
         guard
             let format = await SpeechAnalyzer.bestAvailableAudioFormat(
-                compatibleWith: [transcriber])
+                compatibleWith: [transcriber, detector])
         else {
             throw SpeechError.noCompatibleAudioFormat
         }
 
-        let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
+        try checkActive(id)
+        let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .bufferingOldest(256))
         inputContinuation = continuation
 
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        let analyzer = SpeechAnalyzer(modules: [transcriber, detector])
         self.analyzer = analyzer
+        let context = AnalysisContext()
+        context.contextualStrings[.general] = vocabulary
+        try await analyzer.setContext(context)
+        try checkActive(id)
         try await analyzer.start(inputSequence: stream)
+        try checkActive(id)
 
         arrivals = BufferArrivals()
         try startCapture(convertingTo: format, into: continuation)
@@ -92,13 +121,38 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
             log.error("no audio arrived from the microphone within \(BufferArrivals.wait)s")
             throw SpeechError.microphoneSilent
         }
+        try checkActive(id)
         log.info("analyzer listening")
         onReady()
 
-        defer {
-            cancel()
+        detectorSpeaking = false
+        detectorTask = Task { [weak self] in
+            var endpoint = SpeechEndpoint()
+            do {
+                for try await result in detector.results {
+                    guard let self, self.activeID == id else { return }
+                    self.detectorSpeaking = result.speechDetected
+                    let end = result.range.end.seconds
+                    let text = self.finalised + self.volatile
+                    if endpoint.shouldFinish(speechDetected: result.speechDetected, audioEnd: end,
+                        hasTranscript: self.hasHeardSpeech,
+                        settledControl: self.isSettled && TransportCommand.match(text) != nil) {
+                        self.finishListening()
+                    }
+                }
+            } catch { /* Transcript-based endpointing remains available. */ }
         }
-        return try await collectTranscript(from: transcriber)
+        captureDeadline = Task {
+            do { try await Task.sleep(for: .seconds(45)) } catch { return }
+            guard self.activeID == id else { return }
+            self.finishListening()
+        }
+        do {
+            return try await collectTranscript(from: transcriber, id: id)
+        } catch {
+            try checkActive(id)
+            throw CapturedSpeechFailure()
+        }
     }
 
     /// Live transcription so far. On the actor rather than captured locals:
@@ -112,15 +166,22 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     /// load-bearing: silence commonly arrives while DictationTranscriber is
     /// still holding a plausible-but-wrong guess, and returning that volatile
     /// text is how names such as "Dattani" became "attorney".
-    private func collectTranscript(from transcriber: DictationTranscriber) async throws -> String {
+    private func collectTranscript(from transcriber: DictationTranscriber, id: UUID) async throws -> String {
         finalised = ""
         volatile = ""
 
         let reader = Task { @MainActor in
-            try await self.readResults(from: transcriber)
+            do { return try await self.readResults(from: transcriber, id: id) }
+            catch {
+                if self.activeID == id { self.finishListening() }
+                throw error
+            }
         }
 
+        defer { reader.cancel() }
         await waitForSilence()
+        try checkActive(id)
+        guard !arrivals.overflowed else { throw CapturedSpeechFailure() }
         let provisional = finalised + volatile
         VoiceAttempt.current?.settledBeforeFinalization = isSettled
 
@@ -128,6 +189,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         // its end. This preserves all captured audio while preventing another
         // microphone buffer from moving the finishing line underneath it.
         stopCapture()
+        onCaptureEnded?()
         guard let analyzer else {
             // The sheet was closed while the silence timer was pending.
             reader.cancel()
@@ -136,9 +198,12 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
 
         let startedFinalizing = ContinuousClock.now
         do {
-            try await analyzer.finalizeAndFinishThroughEndOfInput()
+            let transcript = try await withVoiceDeadline(seconds: 5) {
+                try await analyzer.finalizeAndFinishThroughEndOfInput()
+                return try await reader.value
+            }
+            try checkActive(id)
             self.analyzer = nil
-            let transcript = try await reader.value
             let elapsed = ContinuousClock.now - startedFinalizing
             VoiceAttempt.current?.finalizationSeconds =
                 Double(elapsed.components.seconds)
@@ -157,8 +222,9 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         }
     }
 
-    private func readResults(from transcriber: DictationTranscriber) async throws -> String {
+    private func readResults(from transcriber: DictationTranscriber, id: UUID) async throws -> String {
         for try await result in transcriber.results {
+            try checkActive(id)
             let text = String(result.text.characters)
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 hasHeardSpeech = true
@@ -196,6 +262,10 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
             [weak self] _ in
             Task { @MainActor in
                 guard let self, let pending = self.silenceContinuation else { return }
+                if self.detectorSpeaking {
+                    self.restartSilenceTimer()
+                    return
+                }
                 self.silenceContinuation = nil
                 pending.resume()
             }
@@ -238,11 +308,14 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         let arrivals = self.arrivals
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
             @Sendable buffer, _ in
-            arrivals.record()
             guard let converted = Self.convert(buffer, using: tap.converter, to: tap.format)
             else { return }
-            continuation.yield(AnalyzerInput(buffer: converted))
+            if case .dropped = continuation.yield(AnalyzerInput(buffer: converted)) {
+                arrivals.markOverflow()
+            }
+            arrivals.record()
         }
+        tapInstalled = true
         engine.prepare()
         try engine.start()
     }
@@ -258,7 +331,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     private nonisolated static func convert(
         _ buffer: AVAudioPCMBuffer, using converter: AVAudioConverter?, to format: AVAudioFormat
     ) -> AVAudioPCMBuffer? {
-        guard let converter else { return buffer }
+        guard let converter else { return nil }
         let ratio = format.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1024
         guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
@@ -334,16 +407,29 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     private func stopCapture() {
         silenceTimer?.invalidate()
         silenceTimer = nil
-        if engine.isRunning {
-            engine.stop()
+        captureDeadline?.cancel()
+        captureDeadline = nil
+        detectorTask?.cancel()
+        detectorTask = nil
+        engine.stop()
+        if tapInstalled {
             engine.inputNode.removeTap(onBus: 0)
-            AudioSession.releaseRecording()
+            tapInstalled = false
         }
+        AudioSession.releaseRecording()
         inputContinuation?.finish()
         inputContinuation = nil
     }
 
+    func finishListening() {
+        let pending = silenceContinuation
+        silenceContinuation = nil
+        pending?.resume()
+    }
+
     func cancel() {
+        activeID = nil
+        onPartial = nil
         silenceContinuation?.resume()
         silenceContinuation = nil
         stopCapture()

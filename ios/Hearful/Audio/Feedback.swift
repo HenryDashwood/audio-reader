@@ -10,6 +10,7 @@ enum Cue: Equatable {
     case acknowledged
     case listening
     /// Speech was captured; the app is now handling the request.
+    case working
     case processing
     case failed
     /// An episode or article has reached its end.
@@ -78,6 +79,8 @@ final class Feedback: FeedbackPlaying {
             // under VoiceOver, a noisy room, or headphones she is not wearing.
             ready.impactOccurred(intensity: 1.0)
             AudioServicesPlaySystemSound(1114)  // end record: "go ahead"
+        case .working:
+            AudioServicesPlaySystemSound(1113)
         case .processing:
             // The companion recording tone bookends the go-ahead. A lighter
             // pulse confirms receipt without implying the command succeeded.

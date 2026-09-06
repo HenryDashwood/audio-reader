@@ -332,3 +332,38 @@ class TestObserved:
         after = await subscribed_urls(session, user)
 
         assert after - before == {"https://new.example/feed"}
+
+
+def test_compound_grader_rejects_a_missing_action():
+    case = corpus.by_id("compound-play-and-speed")
+    observed = Observed(action=Action.SET_SPEED, spoken="1.5 times speed.", speed=1.5)
+    assert grade(case, observed)[0] is Grade.FAIL
+
+
+async def test_eval_can_drive_the_production_streaming_pipeline(world):
+    from audioreader.llm.openai_responses import ResponseCompleted
+
+    class StreamingModel(FakeLLMClient):
+        async def stream(self, **kwargs):
+            yield ResponseCompleted(
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "name": "set_playback_speed",
+                            "call_id": "speed",
+                            "arguments": '{"speed":1.5}',
+                        }
+                    ]
+                }
+            )
+
+    case = corpus.Case(
+        id="stream-test",
+        said="one and a half speed",
+        expect=corpus.Expect(Action.SET_SPEED, speed=1.5),
+        why="The eval must exercise the app's actual tool loop.",
+    )
+    with stub_world(world):
+        result = await run_case(case, world, StreamingModel({}), pipeline="conversation")
+    assert result.grade is Grade.PASS

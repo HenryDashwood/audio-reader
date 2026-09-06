@@ -126,3 +126,13 @@ grader — with no model and no money. That runs in the ordinary suite.
 - **Feed discovery over the open web.** The world is closed, so discovery of a
   publication by name can only resolve to something defined in `world.py`. The
   domain-spelling path is covered; open-ended web search is not.
+
+## Streaming pipeline and recordings
+
+The CLI now defaults to `--pipeline conversation`, the tool loop used by the
+app. Use `--pipeline legacy` to compare the old interpreter. Compound cases
+require every requested action to pass. `--audio-results path.json` substitutes
+transcripts from the iOS recording benchmark into cases with matching IDs,
+so the same run measures whether transcription errors changed the task outcome.
+See [the voice pipeline guide](../../docs/voice/pipeline.md) for local recording
+format, privacy, migration, and device verification details.

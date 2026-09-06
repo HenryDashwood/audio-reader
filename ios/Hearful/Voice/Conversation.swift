@@ -6,7 +6,7 @@ import Foundation
 /// Encodable only. Turns travel outwards with every request and never come
 /// back — the phone is the one holding the exchange, and the backend answers
 /// from what it was sent.
-nonisolated struct ConversationTurn: Encodable, Equatable {
+nonisolated struct ConversationTurn: Encodable, Equatable, Sendable {
     nonisolated enum Speaker: String, Encodable {
         case her
         case app

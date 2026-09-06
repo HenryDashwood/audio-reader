@@ -7,6 +7,8 @@ passed through a second name-matching classifier after the model has resolved
 it to a feed.
 """
 
+import asyncio
+import copy
 import json
 import logging
 from collections.abc import AsyncIterator, Sequence
@@ -19,8 +21,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from audioreader.commands import service
+from audioreader.commands import library, service, undo
 from audioreader.commands.intents import Action, Candidate, InterpretResult, Speaker, Turn
+from audioreader.commands.receipts import check_cancelled
 from audioreader.config import settings
 from audioreader.feeds import service as feed_service
 from audioreader.feeds.discovery import resolve_feed
@@ -30,6 +33,7 @@ from audioreader.feeds.search import PodcastSearchError, search_podcasts
 from audioreader.feeds.service import AlreadySubscribedError
 from audioreader.llm.client import LLMError
 from audioreader.llm.openai_responses import (
+    OpenAIResponsesClient,
     ResponseCompleted,
     ResponsesStreamingClient,
     ResponseTextDelta,
@@ -258,6 +262,89 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+TOOLS.append(
+    {
+        "type": "function",
+        "name": "search_library",
+        "description": (
+            "Search the subscribed library by topic, unheard status, kind and duration. "
+            "Unknown durations cannot satisfy a maximum."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "unheard": {"type": "boolean"},
+                "kind": {"type": ["string", "null"], "enum": ["article", "audio", None]},
+                "max_seconds": {"type": ["integer", "null"]},
+            },
+            "required": ["query", "unheard", "kind", "max_seconds"],
+            "additionalProperties": False,
+        },
+    }
+)
+
+TOOLS.append(
+    {
+        "type": "function",
+        "name": "undo_last_action",
+        "description": "Undo the last voice filing or RSS subscription change. Does not undo email submissions.",
+        "strict": True,
+        "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+    }
+)
+
+# Single actions return immediately. Compound requests explicitly continue
+# after an action, preserving the fast path without throwing away later work.
+_ACTION_TOOLS = {
+    "undo_last_action",
+    "subscribe_to_feed",
+    "unsubscribe_from_feed",
+    "approve_newsletter",
+    "block_newsletter",
+    "sign_up_for_newsletter",
+    "read_newsletter_address",
+    "play_episode",
+    "set_playback_speed",
+    "file_episode",
+}
+for _tool in TOOLS:
+    if _tool.get("name") in _ACTION_TOOLS:
+        _tool["parameters"]["properties"]["continue_request"] = {
+            "type": "boolean",
+            "description": (
+                "True if any part of this request still needs another tool after this action; "
+                "false only for the last action."
+            ),
+        }
+        _tool["parameters"]["required"].append("continue_request")
+
+INSTRUCTIONS += """
+For a compound request, carry out EVERY part in order. Set continue_request
+true on each action except the last. For example, 'subscribe and play it'
+needs subscribe, load episodes, then play. 'Play it at 1.5 times' needs play
+then set speed. Do not ask the user to repeat the unfinished part.
+Use the supplied duration, kind and listening state for requests like an
+unheard article under twenty minutes. Unknown duration is not a known match.
+'On screen' is distinct from 'now playing': 'read this' refers to the viewed
+item when supplied. Recent completed actions provide context for corrections;
+never claim to undo an action unless an available tool actually reverses it.
+"""
+
+
+def _combined(actions: list[InterpretResult], text: str = "", expects_reply: bool = False) -> InterpretResult:
+    last = actions[-1]
+    return InterpretResult(
+        action=last.action,
+        spoken_response=" ".join(item.spoken_response for item in actions) + (" " + text if text else ""),
+        episode=last.episode,
+        speed=last.speed,
+        expects_reply=expects_reply,
+        actions=list(actions) if len(actions) > 1 else [],
+    )
+
+
 @dataclass(frozen=True)
 class AssistantDelta:
     text: str
@@ -278,6 +365,19 @@ class _ToolResult:
 
 
 async def converse(
+    session: AsyncSession, client: ResponsesStreamingClient, **kwargs
+) -> AsyncIterator[ConversationEvent]:
+    async with asyncio.timeout(120):
+        if isinstance(client, OpenAIResponsesClient):
+            async with client.connection():
+                async for event in _converse(session, client, **kwargs):
+                    yield event
+        else:
+            async for event in _converse(session, client, **kwargs):
+                yield event
+
+
+async def _converse(
     session: AsyncSession,
     client: ResponsesStreamingClient,
     *,
@@ -286,11 +386,17 @@ async def converse(
     now_playing_episode_id: int | None = None,
     turns: Sequence[Turn] = (),
     country: str | None = None,
+    supports_compound_actions: bool = True,
+    viewed_episode_id: int | None = None,
+    recent_actions: Sequence[str] = (),
 ) -> AsyncIterator[ConversationEvent]:
     candidates = await service.build_candidates(session, user, service.spoken_so_far(transcript, turns))
     now_playing = await service._now_playing(session, now_playing_episode_id)
     if now_playing is not None and all(candidate.id != now_playing.id for candidate in candidates):
         candidates.append(now_playing)
+    viewed = await service._now_playing(session, viewed_episode_id)
+    if viewed is not None and all(item.id != viewed.id for item in candidates):
+        candidates.append(viewed)
     allowed = {candidate.id for candidate in candidates}
     subscriptions = list(
         await session.scalars(
@@ -311,74 +417,129 @@ async def converse(
         now_playing=now_playing,
         pending=pending,
     )
-    terminal: InterpretResult | None = None
+    states = await service.positions.positions_for(session, user, allowed)
+    details = ["Listening details (unknown duration must not be guessed):"]
+    for item in candidates:
+        state = states.get(item.id)
+        details.append(
+            f"[{item.id}] kind={'article' if item.is_article else 'audio'}; "
+            f"duration_seconds={item.duration_seconds}; completed={bool(state and state.completed)}; "
+            f"dismissed={bool(state and state.dismissed)}; position_seconds={state.position_seconds if state else 0}"
+        )
+    if viewed:
+        details.append(f"On screen: [{viewed.id}] {viewed.title}")
+    details.extend(f"Previously completed action: {item[:500]}" for item in recent_actions[-8:])
+    input_items[-1]["content"] += "\n" + "\n".join(details)
+    await session.commit()  # Release the read transaction before waiting on the model.
+    completed_actions: list[InterpretResult] = []
     assistant_text = ""
     tools: list[dict[str, Any]] = TOOLS
+    instructions = INSTRUCTIONS
+    if not supports_compound_actions:
+        tools = copy.deepcopy(TOOLS)
+        for tool in tools:
+            if tool.get("name") in _ACTION_TOOLS:
+                tool["parameters"]["properties"]["continue_request"]["enum"] = [False]
+        instructions += (
+            " This older app supports one action per request. For compound requests, "
+            "ask the user to update Magpie or ask for each step separately; "
+            "do not perform only part of a compound request."
+        )
 
-    for _ in range(6):
-        completed: dict[str, Any] | None = None
-        round_text = ""
-        async for event in client.stream(instructions=INSTRUCTIONS, input_items=input_items, tools=tools):
-            if isinstance(event, ResponseTextDelta):
-                round_text += event.text
-                assistant_text += event.text
-                yield AssistantDelta(event.text)
-            elif isinstance(event, ResponseCompleted):
-                completed = event.response
-        if completed is None:
-            raise LLMError("OpenAI ended the response without completing it")
+    try:
+        for _ in range(12):
+            await check_cancelled(session)
+            completed: dict[str, Any] | None = None
+            round_text = ""
+            async for event in client.stream(instructions=instructions, input_items=input_items, tools=tools):
+                if isinstance(event, ResponseTextDelta):
+                    round_text += event.text
+                    assistant_text += event.text
+                    yield AssistantDelta(event.text)
+                elif isinstance(event, ResponseCompleted):
+                    completed = event.response
+            if completed is None:
+                raise LLMError("OpenAI ended the response without completing it")
 
-        output = completed.get("output") or []
-        calls = [item for item in output if item.get("type") == "function_call"]
-        if not calls:
-            text = round_text.strip() or assistant_text.strip()
-            if not text:
-                raise LLMError("OpenAI returned neither text nor an app action")
-            result = terminal or InterpretResult(
-                action=Action.UNKNOWN,
-                spoken_response=text,
-                expects_reply=text.rstrip().endswith("?"),
-            )
-            if terminal is not None:
-                result.spoken_response = text
-            yield ConversationFinished(result)
-            return
-
-        input_items.extend(output)
-        for call in calls:
-            name = call.get("name", "")
-            arguments = call.get("arguments", "{}")
-            with logfire.span("conversation tool", tool_name=name) as span:
-                _annotate_tool_arguments(span, arguments)
-                tool_result = await _call_tool(
-                    session,
-                    name=name,
-                    arguments=arguments,
-                    user=user,
-                    allowed_episode_ids=allowed,
-                    candidates=candidates,
-                    country=country,
+            output = completed.get("output") or []
+            calls = [item for item in output if item.get("type") == "function_call"]
+            if not calls:
+                text = round_text.strip() or assistant_text.strip()
+                if not text:
+                    raise LLMError("OpenAI returned neither text nor an app action")
+                result = (
+                    _combined(completed_actions, text, text.rstrip().endswith("?"))
+                    if completed_actions
+                    else InterpretResult(
+                        action=Action.UNKNOWN,
+                        spoken_response=text,
+                        expects_reply=text.rstrip().endswith("?"),
+                    )
                 )
-                _annotate_tool_result(span, tool_result)
-            input_items.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": call.get("call_id"),
-                    "output": json.dumps(tool_result.output),
-                }
+                yield ConversationFinished(result)
+                return
+
+            input_items.extend(output)
+            # A lookup between actions must not reuse the previous round's
+            # terminal result and prematurely finish a compound request.
+            terminal: InterpretResult | None = None
+            continue_request = False
+            if not supports_compound_actions and sum(call.get("name") in _ACTION_TOOLS for call in calls) > 1:
+                yield ConversationFinished(
+                    InterpretResult(Action.UNKNOWN, "Please update Magpie to carry out several actions together.")
+                )
+                return
+            for call in calls:
+                name = call.get("name", "")
+                arguments = call.get("arguments", "{}")
+                with logfire.span("conversation tool", tool_name=name) as span:
+                    _annotate_tool_arguments(span, arguments)
+                    async with asyncio.timeout(30):
+                        tool_result = await _call_tool(
+                            session,
+                            name=name,
+                            arguments=arguments,
+                            user=user,
+                            allowed_episode_ids=allowed,
+                            candidates=candidates,
+                            country=country,
+                        )
+                    _annotate_tool_result(span, tool_result)
+                input_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": call.get("call_id"),
+                        "output": json.dumps(tool_result.output),
+                    }
+                )
+                if tool_result.terminal is not None:
+                    terminal = tool_result.terminal
+                    completed_actions.append(terminal)
+                    continue_request = supports_compound_actions and bool(
+                        json.loads(arguments).get("continue_request", False)
+                    )
+
+            if terminal is not None and not continue_request:
+                terminal = _combined(completed_actions)
+                # The backend knows the actual title and outcome now. A second
+                # model round trip merely paraphrases that fact and was adding
+                # several seconds to every successful command.
+                yield AssistantDelta(terminal.spoken_response)
+                yield ConversationFinished(terminal)
+                return
+
+        if completed_actions:
+            yield ConversationFinished(
+                _combined(completed_actions, "The remaining steps did not finish. Please ask for those again.")
             )
-            if tool_result.terminal is not None:
-                terminal = tool_result.terminal
-
-        if terminal is not None:
-            # The backend knows the actual title and outcome now. A second
-            # model round trip merely paraphrases that fact and was adding
-            # several seconds to every successful command.
-            yield AssistantDelta(terminal.spoken_response)
-            yield ConversationFinished(terminal)
             return
-
-    raise LLMError("OpenAI exceeded the app tool-call limit")
+        raise LLMError("OpenAI exceeded the app tool-call limit")
+    except (LLMError, TimeoutError):
+        if not completed_actions:
+            raise
+        yield ConversationFinished(
+            _combined(completed_actions, "The remaining steps did not finish. Please ask for those again.")
+        )
 
 
 def _annotate_tool_arguments(span: Any, arguments: str) -> None:
@@ -460,7 +621,20 @@ def _conversation_input(
     return items
 
 
-async def _call_tool(
+async def _call_tool(session, **kwargs) -> _ToolResult:
+    await check_cancelled(session)
+    try:
+        args = json.loads(kwargs["arguments"])
+        before = await undo.snapshot(session, kwargs["user"], kwargs["name"], args)
+    except (ValueError, TypeError, AttributeError):
+        before = None
+    result = await _execute_tool(session, **kwargs)
+    if result.terminal is not None and result.output.get("ok"):
+        await undo.remember(session, kwargs["user"], before)
+    return result
+
+
+async def _execute_tool(
     session: AsyncSession,
     *,
     name: str,
@@ -476,6 +650,27 @@ async def _call_tool(
         return _ToolResult({"ok": False, "error": "Tool arguments were not valid JSON."})
 
     try:
+        if name == "search_library":
+            maximum = args.get("max_seconds")
+            if maximum is not None and (type(maximum) is not int or maximum <= 0):
+                return _ToolResult({"ok": False, "error": "Duration must be positive seconds."})
+            loaded = await library.search(
+                session,
+                user,
+                query=str(args.get("query", "")),
+                unheard=bool(args.get("unheard")),
+                kind=args.get("kind"),
+                max_seconds=maximum,
+            )
+            allowed_episode_ids.update(item.id for item in loaded)
+            known = {item.id for item in candidates}
+            candidates.extend(item for item in loaded if item.id not in known)
+            return _ToolResult({"ok": True, "episodes": await _candidate_details(session, user, loaded)})
+
+        if name == "undo_last_action":
+            result = await undo.undo_last(session, user)
+            return _ToolResult({"ok": True}, result)
+
         if name == "search_podcast_directory":
             matches = await search_podcasts(str(args["query"]), limit=8, strict=False, country=country)
             return _ToolResult(
@@ -578,14 +773,7 @@ async def _call_tool(
                 {
                     "ok": True,
                     "show": feed.title,
-                    "episodes": [
-                        {
-                            "id": item.id,
-                            "title": item.title,
-                            "published_at": item.published_at.isoformat() if item.published_at else None,
-                        }
-                        for item in loaded
-                    ],
+                    "episodes": await _candidate_details(session, user, loaded),
                 }
             )
 
@@ -624,3 +812,20 @@ async def _call_tool(
     except (FeedFetchError, FeedParseError, PodcastSearchError) as exc:
         logger.info("conversation tool %s failed: %s", name, exc)
         return _ToolResult({"ok": False, "error": "The publication could not be loaded."})
+
+
+async def _candidate_details(session, user, candidates):
+    states = await service.positions.positions_for(session, user, [item.id for item in candidates])
+    return [
+        {
+            "id": item.id,
+            "title": item.title,
+            "description": item.description,
+            "kind": "article" if item.is_article else "audio",
+            "duration_seconds": item.duration_seconds,
+            "completed": bool(states.get(item.id) and states[item.id].completed),
+            "dismissed": bool(states.get(item.id) and states[item.id].dismissed),
+            "published_at": item.published_at.isoformat() if item.published_at else None,
+        }
+        for item in candidates
+    ]

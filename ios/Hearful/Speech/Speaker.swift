@@ -5,6 +5,8 @@ import AVFoundation
 final class Speaker: NSObject, Speaking, AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
     private var continuation: CheckedContinuation<Void, Never>?
+    private var utteranceID: ObjectIdentifier?
+    private var attempt: VoiceAttempt?
 
     override init() {
         super.init()
@@ -24,6 +26,8 @@ final class Speaker: NSObject, Speaking, AVSpeechSynthesizerDelegate {
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             self.continuation = continuation
+            self.utteranceID = ObjectIdentifier(utterance)
+            self.attempt = VoiceAttempt.current
             synthesizer.speak(utterance)
         }
     }
@@ -38,19 +42,39 @@ final class Speaker: NSObject, Speaking, AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(
         _ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance
     ) {
-        Task { @MainActor in self.finish() }
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in
+            guard self.utteranceID == id else { return }
+            self.finish()
+        }
     }
 
     nonisolated func speechSynthesizer(
         _ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance
     ) {
-        Task { @MainActor in self.finish() }
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in
+            guard self.utteranceID == id else { return }
+            self.finish()
+        }
+    }
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance
+    ) {
+        let id = ObjectIdentifier(utterance)
+        Task { @MainActor in
+            guard self.utteranceID == id else { return }
+            self.attempt?.markAudibleResponse()
+        }
     }
 
     private func finish() {
         // Resuming twice would trap, so the continuation is cleared first.
         let pending = continuation
         continuation = nil
+        utteranceID = nil
+        attempt = nil
         pending?.resume()
     }
 }

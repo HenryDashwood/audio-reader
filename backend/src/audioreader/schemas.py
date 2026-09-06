@@ -300,6 +300,11 @@ class EpisodeStateUpdate(BaseModel):
 
 
 class CommandRequest(BaseModel):
+    supports_compound_actions: bool = False
+    request_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,64}$")
+    viewed_episode_id: int | None = None
+    recent_actions: list[str] = Field(default_factory=list, max_length=8)
+
     transcript: str = Field(max_length=2_000)
     #: Device storefront used for public-directory ranking. Optional for old
     #: clients and hand-written requests, which retain Apple's default.
@@ -346,6 +351,7 @@ class CommandRequest(BaseModel):
 
 
 class CommandResponse(BaseModel):
+    actions: list["CommandResponse"] = Field(default_factory=list)
     action: str
     spoken_response: str
     episode: EpisodeRead | None = None
@@ -386,6 +392,9 @@ class VoiceAttemptEvent(BaseModel):
     #: minutes rather than a night: it is null exactly when the microphone
     #: never came up.
     audio_first_buffer_ms: int | None = None
+    capture_ended_seconds: float | None = None
+    response_seconds: float | None = None
+    first_audible_response_seconds: float | None = None
     listen_seconds: float | None = None
     transcript_empty: bool | None = None
     #: Whether the recogniser had committed to its transcript when the turn

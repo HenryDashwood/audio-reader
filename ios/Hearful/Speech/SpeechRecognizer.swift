@@ -19,6 +19,24 @@ final class SpeechRecognizer: SpeechRecognizing {
     private var transcript = ""
     private var onPartial: (@MainActor (String) -> Void)?
 
+    private var activeID: UUID?
+    private var tapInstalled = false
+    private var finalizing = false
+    private var finalizationTimer: Task<Void, Never>?
+    private var captureDeadline: Task<Void, Never>?
+    private var vocabulary: [String] = []
+    private var onCaptureEnded: (@MainActor () -> Void)?
+
+    func configure(vocabulary: [String], onCaptureEnded: @escaping @MainActor () -> Void) {
+        self.vocabulary = vocabulary
+        self.onCaptureEnded = onCaptureEnded
+    }
+
+    private func checkActive(_ id: UUID) throws {
+        try Task.checkCancellation()
+        guard activeID == id else { throw CancellationError() }
+    }
+
     private let timeouts = ListeningTimeouts()
     private var hasHeardSpeech = false
     private var arrivals = BufferArrivals()
@@ -31,11 +49,14 @@ final class SpeechRecognizer: SpeechRecognizing {
         onReady: @MainActor () -> Void,
         onPartial: @escaping @MainActor (String) -> Void
     ) async throws -> String {
+        let id = UUID()
+        activeID = id
         self.onPartial = onPartial
-        defer { self.onPartial = nil }
+        defer { if activeID == id { cancel() } }
         VoiceAttempt.current?.recogniser = "fallback"
         VoiceAttempt.current?.usedFallback = true
         try await requestPermissions()
+        try checkActive(id)
         guard let recognizer else {
             log.error("no recogniser for this locale")
             throw SpeechError.unavailable
@@ -45,21 +66,26 @@ final class SpeechRecognizer: SpeechRecognizing {
             throw SpeechError.unavailable
         }
 
+        var captured = false
+        let ready: @MainActor () -> Void = { captured = true; onReady() }
         let preferOnDevice = recognizer.supportsOnDeviceRecognition
         do {
             return try await recognise(
-                using: recognizer, onDevice: preferOnDevice, onReady: onReady)
-        } catch SpeechError.recognitionFailed where preferOnDevice {
+                using: recognizer, onDevice: preferOnDevice, id: id, onReady: ready)
+        } catch SpeechError.recognitionFailed where preferOnDevice && !captured {
+            try checkActive(id)
             // The device claims on-device support but has no models installed.
             log.notice("on-device recognition failed; retrying server-based")
-            return try await recognise(using: recognizer, onDevice: false, onReady: onReady)
+            return try await recognise(using: recognizer, onDevice: false, id: id, onReady: ready)
         }
     }
 
     private func recognise(
-        using recognizer: SFSpeechRecognizer, onDevice: Bool, onReady: @MainActor () -> Void
+        using recognizer: SFSpeechRecognizer, onDevice: Bool, id: UUID, onReady: @MainActor () -> Void
     ) async throws -> String {
-        cancel()
+        tearDown()
+        try checkActive(id)
+        finalizing = false
         transcript = ""
         hasHeardSpeech = false
         try AudioSession.configureForListening()
@@ -67,6 +93,7 @@ final class SpeechRecognizer: SpeechRecognizing {
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
+        request.contextualStrings = vocabulary
         request.requiresOnDeviceRecognition = onDevice
         self.request = request
 
@@ -93,6 +120,7 @@ final class SpeechRecognizer: SpeechRecognizing {
             arrivals.record()
             requestSink.append(buffer)
         }
+        tapInstalled = true
         engine.prepare()
         try engine.start()
 
@@ -104,14 +132,20 @@ final class SpeechRecognizer: SpeechRecognizing {
             log.error("no audio arrived from the microphone within \(BufferArrivals.wait)s")
             throw SpeechError.microphoneSilent
         }
+        try checkActive(id)
         onReady()
 
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             self.restartSilenceTimer()
+            self.captureDeadline = Task {
+                do { try await Task.sleep(for: .seconds(45)) } catch { return }
+                guard self.activeID == id else { return }
+                self.finishListening()
+            }
             self.task = recognizer.recognitionTask(with: request) { [weak self] result, error in
                 Task { @MainActor in
-                    guard let self else { return }
+                    guard let self, self.activeID == id else { return }
                     if let result {
                         self.transcript = result.bestTranscription.formattedString
                         self.onPartial?(self.transcript)
@@ -124,13 +158,9 @@ final class SpeechRecognizer: SpeechRecognizing {
                     }
                     if let error {
                         log.error("recognition error: \(error.localizedDescription)")
-                        // An error after she has spoken still leaves a usable
-                        // transcript; only fail outright if we have nothing.
-                        if self.transcript.isEmpty {
-                            self.finish(with: .failure(SpeechError.recognitionFailed))
-                        } else {
-                            self.finish(with: .success(self.transcript))
-                        }
+                        // An error does not establish that a partial guess is
+                        // final, so it must not be executed as a command.
+                        self.finish(with: .failure(CapturedSpeechFailure()))
                     }
                 }
             }
@@ -138,14 +168,48 @@ final class SpeechRecognizer: SpeechRecognizing {
     }
 
     func cancel() {
+        activeID = nil
+        let pending = continuation
+        continuation = nil
+        tearDown()
+        onPartial = nil
+        pending?.resume(throwing: CancellationError())
+    }
+
+    private func stopCapture() {
+        engine.stop()
+        if tapInstalled {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        AudioSession.releaseRecording()
+        request?.endAudio()
+    }
+
+    func finishListening() {
+        guard continuation != nil, !finalizing else { return }
+        finalizing = true
+        silenceTimer?.invalidate()
+        captureDeadline?.cancel()
+        stopCapture()
+        onCaptureEnded?()
+        let id = activeID
+        finalizationTimer = Task {
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            guard self.activeID == id else { return }
+            // A partial guess is not safe to execute as a settled request.
+            self.finish(with: self.transcript.isEmpty ? .success("") : .failure(CapturedSpeechFailure()))
+        }
+    }
+
+    private func tearDown() {
         silenceTimer?.invalidate()
         silenceTimer = nil
-        if engine.isRunning {
-            engine.stop()
-            engine.inputNode.removeTap(onBus: 0)
-            AudioSession.releaseRecording()
-        }
-        request?.endAudio()
+        captureDeadline?.cancel()
+        finalizationTimer?.cancel()
+        captureDeadline = nil
+        finalizationTimer = nil
+        stopCapture()
         task?.cancel()
         request = nil
         task = nil
@@ -156,13 +220,14 @@ final class SpeechRecognizer: SpeechRecognizing {
     /// turn, the transcript is by definition unsettled. A final result
     /// finishes immediately and never reaches here.
     private func restartSilenceTimer() {
+        guard !finalizing else { return }
         silenceTimer?.invalidate()
         let interval = timeouts.interval(hasHeardSpeech: hasHeardSpeech, isSettled: false)
         silenceTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) {
             [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.finish(with: .success(self.transcript))
+                self.finishListening()
             }
         }
     }
@@ -171,7 +236,7 @@ final class SpeechRecognizer: SpeechRecognizing {
         // Resuming a continuation twice traps, so clear it before tearing down.
         guard let pending = continuation else { return }
         continuation = nil
-        cancel()
+        tearDown()
         switch result {
         case .success(let text): pending.resume(returning: text)
         case .failure(let error): pending.resume(throwing: error)

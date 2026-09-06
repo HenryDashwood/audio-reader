@@ -134,9 +134,10 @@ nonisolated struct CommandResponse: Decodable, Sendable {
     /// field existed still decodes, and reads as "no" — exactly how the app
     /// behaved before any of this.
     var expectsReply: Bool?
+    var actions: [CommandResponse]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case action, episode, speed
+        case action, episode, speed, actions
         case spokenResponse = "spoken_response"
         case expectsReply = "expects_reply"
     }
@@ -232,8 +233,12 @@ nonisolated struct UserInfo: Decodable, Equatable {
 }
 
 /// Body of POST /command.
-nonisolated struct CommandRequest: Encodable {
+nonisolated struct CommandRequest: Encodable, Sendable {
+    var supportsCompoundActions = true
     let transcript: String
+    var requestID: String? = nil
+    var viewedEpisodeID: Int? = nil
+    var recentActions: [String] = []
     /// What is coming out of the speaker as she talks, so "mark this as
     /// played" has something to refer to.
     var nowPlayingEpisodeID: Int?
@@ -243,7 +248,11 @@ nonisolated struct CommandRequest: Encodable {
     var country: String? = nil
 
     enum CodingKeys: String, CodingKey {
+        case supportsCompoundActions = "supports_compound_actions"
         case transcript, turns, country
+        case requestID = "request_id"
+        case viewedEpisodeID = "viewed_episode_id"
+        case recentActions = "recent_actions"
         case nowPlayingEpisodeID = "now_playing_episode_id"
     }
 }

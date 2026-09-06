@@ -22,6 +22,8 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
         transcript: String, nowPlayingEpisodeID: Int?, turns: [ConversationTurn],
         traceparent: String?
     ) -> AsyncThrowingStream<CommandStreamEvent, Error>
+    func commandStream(request: CommandRequest, traceparent: String?) -> AsyncThrowingStream<CommandStreamEvent, Error>
+    func cancelCommand(requestID: String) async
     func episode(id: Int) async throws -> Episode
     func articleText(episodeID: Int) async throws -> EpisodeText
     func recentEpisodes(limit: Int) async throws -> [Episode]
@@ -76,6 +78,12 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
 }
 
 extension HearfulAPIProtocol {
+    func cancelCommand(requestID: String) async {}
+    nonisolated func commandStream(request: CommandRequest, traceparent: String?) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+        commandStream(transcript: request.transcript, nowPlayingEpisodeID: request.nowPlayingEpisodeID,
+                      turns: request.turns, traceparent: traceparent)
+    }
+
     nonisolated func commandStream(
         transcript: String, nowPlayingEpisodeID: Int?, turns: [ConversationTurn],
         traceparent: String?
@@ -217,6 +225,13 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         transcript: String, nowPlayingEpisodeID: Int? = nil,
         turns: [ConversationTurn] = [], traceparent: String? = nil
     ) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+        commandStream(request: CommandRequest(transcript: transcript, nowPlayingEpisodeID: nowPlayingEpisodeID, turns: turns, country: Self.countryCode), traceparent: traceparent)
+    }
+
+    nonisolated func commandStream(request command: CommandRequest, traceparent: String?) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+        let transcript = command.transcript
+        let nowPlayingEpisodeID = command.nowPlayingEpisodeID
+        let turns = command.turns
         guard let session = transport as? URLSession else {
             return fallbackCommandStream(
                 transcript: transcript, nowPlayingEpisodeID: nowPlayingEpisodeID,
@@ -234,12 +249,9 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
                     if let token = Self.tokenProvider() {
                         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                     }
-                    request.httpBody = try JSONEncoder().encode(
-                        CommandRequest(
-                            transcript: transcript,
-                            nowPlayingEpisodeID: nowPlayingEpisodeID,
-                            turns: turns,
-                            country: Self.countryCode))
+                    var body = command
+                    body.country = body.country ?? Self.countryCode
+                    request.httpBody = try JSONEncoder().encode(body)
 
                     let (bytes, response) = try await session.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else {
@@ -311,6 +323,14 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
             }
             continuation.onTermination = { @Sendable _ in task.cancel() }
         }
+    }
+
+    func cancelCommand(requestID: String) async {
+        var request = URLRequest(url: baseURL.appendingPathComponent("command").appendingPathComponent(requestID))
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 10
+        struct Outcome: Decodable { let status: String }
+        let _: Outcome? = try? await send(request)
     }
 
     func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String?) async throws {

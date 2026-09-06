@@ -1,6 +1,6 @@
 """What the model is allowed to decide, and what we hand back to the app."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 
@@ -143,3 +143,4 @@ class InterpretResult:
     #: either strands a question nobody can answer, or opens the microphone
     #: after a remark that was the end of the matter.
     expects_reply: bool = False
+    actions: list["InterpretResult"] = field(default_factory=list)

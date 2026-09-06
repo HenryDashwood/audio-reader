@@ -1,0 +1,14 @@
+[
+  {
+    "id": "deep-catalogue-by-topic",
+    "path": "/path/to/recordings/athelstan-quiet.wav",
+    "expected": "Play the In Our Time episode about Athelstan",
+    "vocabulary": ["In Our Time", "Athelstan"]
+  },
+  {
+    "id": "compound-play-and-speed",
+    "path": "/path/to/recordings/play-and-speed-airpods.wav",
+    "expected": "Play the latest In Our Time at one and a half speed",
+    "vocabulary": ["In Our Time"]
+  }
+]

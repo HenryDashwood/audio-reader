@@ -2,15 +2,26 @@ import OSLog
 
 private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "speech")
 
-/// Tries the preferred recogniser, then the backup. Once the preferred one has
-/// failed it is not tried again for the lifetime of the app: a recogniser that
-/// cannot initialise fails the same way every time, and retrying costs a
-/// second or two on every command.
+/// Falls back only before announcing readiness. Known capability failures
+/// disable the preferred recognizer for this launch; unknown startup errors
+/// get a short cooldown before it is tried again.
 @MainActor
 final class FallbackSpeechRecognizer: SpeechRecognizing {
     private let preferred: SpeechRecognizing
     private let backup: SpeechRecognizing
     private var preferredHasFailed = false
+    private var retryPreferredAfter: ContinuousClock.Instant?
+    private var activeID: UUID?
+
+    func configure(vocabulary: [String], onCaptureEnded: @escaping @MainActor () -> Void) {
+        preferred.configure(vocabulary: vocabulary, onCaptureEnded: onCaptureEnded)
+        backup.configure(vocabulary: vocabulary, onCaptureEnded: onCaptureEnded)
+    }
+
+    func finishListening() {
+        preferred.finishListening()
+        backup.finishListening()
+    }
 
     init(preferred: SpeechRecognizing, backup: SpeechRecognizing) {
         self.preferred = preferred
@@ -25,9 +36,14 @@ final class FallbackSpeechRecognizer: SpeechRecognizing {
         onReady: @MainActor () -> Void,
         onPartial: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        if !preferredHasFailed {
+        let id = UUID()
+        activeID = id
+        var captured = false
+        if !preferredHasFailed, retryPreferredAfter == nil || ContinuousClock.now >= retryPreferredAfter! {
             do {
-                return try await preferred.listen(onReady: onReady, onPartial: onPartial)
+                return try await preferred.listen(onReady: { captured = true; onReady() }, onPartial: onPartial)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch is SpeechPermissionDenied {
                 // Not a reason to try the backup — it needs the same
                 // permission and would fail the same way, a second or two
@@ -36,7 +52,9 @@ final class FallbackSpeechRecognizer: SpeechRecognizing {
                 // simply not allowed to listen yet.
                 throw SpeechPermissionDenied()
             } catch let error {
-                if error is any RecognitionFailureAfterCapture {
+                preferred.cancel()
+                guard activeID == id, !Task.isCancelled else { throw CancellationError() }
+                if captured || error is any RecognitionFailureAfterCapture {
                     throw error
                 }
                 // A failure about this attempt rather than about the
@@ -49,16 +67,24 @@ final class FallbackSpeechRecognizer: SpeechRecognizing {
                         "preferred recogniser failed this time, using backup: \(error.localizedDescription)"
                     )
                 } else {
-                    preferredHasFailed = true
+                    if (error as? any TransientRecognitionFailure)?.isTransient == false {
+                        preferredHasFailed = true
+                    } else {
+                        // A download or framework outage is not evidence that
+                        // this recognizer will never work during this launch.
+                        retryPreferredAfter = .now + .seconds(60)
+                    }
                     log.notice(
                         "preferred recogniser failed, using backup: \(error.localizedDescription)")
                 }
             }
         }
+        guard activeID == id, !Task.isCancelled else { throw CancellationError() }
         return try await backup.listen(onReady: onReady, onPartial: onPartial)
     }
 
     func cancel() {
+        activeID = nil
         preferred.cancel()
         backup.cancel()
     }

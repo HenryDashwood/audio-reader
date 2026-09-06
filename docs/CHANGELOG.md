@@ -12,6 +12,29 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.4.1
 
+This internal build improves voice control. Please try:
+
+- Start a voice request. The listening vibration should be stronger, and a
+  different tone should mark the end of listening. For a slow request, a short
+  sound after a few seconds means Magpie is still working.
+- Say a show or author's name, pause briefly while thinking, then finish your
+  request. Check the transcript and whether Magpie carried out the whole request.
+- Tap the voice button while listening to finish your sentence. Tap it during
+  a response to interrupt and ask something else, or close and reopen voice.
+- Say "go back two minutes", "skip forward ninety seconds", or "play at one
+  and a half speed". These controls should work without an internet connection.
+- Ask for two things together, such as "subscribe to that show and play its
+  latest episode" or "play this at one and a half speed".
+- Ask for something unheard, or open an article and say "read this". A request
+  for an item under a particular length uses items with a known duration.
+- After filing an item or following an RSS show by voice, say "undo that".
+  Email signup and unsubscribe requests cannot be undone.
+- If the connection drops during a request, reopen voice and say "did that
+  work?" to recover its result. Please report any repeated action or misleading
+  confirmation, and whether you were using the phone speaker or headphones.
+
+Earlier 1.4.1 changes are still worth checking:
+
 A small follow-up to 1.4.0, mostly about what happens around a phone call.
 Worth trying:
 

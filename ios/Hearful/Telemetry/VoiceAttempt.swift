@@ -38,6 +38,15 @@ final class VoiceAttempt {
     /// long time was indistinguishable from her saying nothing.
     var audioFirstBufferMs: Int?
     var listenSeconds: Double?
+    var captureEndedSeconds: Double?
+    var responseSeconds: Double?
+    var firstAudibleResponseSeconds: Double?
+
+    func markCaptureEnded() { captureEndedSeconds = seconds(since: started) }
+    func markResponse() { responseSeconds = seconds(since: started) }
+    func markAudibleResponse() {
+        if firstAudibleResponseSeconds == nil { firstAudibleResponseSeconds = seconds(since: started) }
+    }
     var transcriptEmpty: Bool?
     /// Whether the recogniser had committed to its transcript, or was still
     /// revising when the turn ended.
@@ -135,6 +144,9 @@ final class VoiceAttempt {
         fields["recogniser"] = recogniser
         fields["audio_first_buffer_ms"] = audioFirstBufferMs
         fields["listen_seconds"] = listenSeconds
+        fields["capture_ended_seconds"] = captureEndedSeconds
+        fields["response_seconds"] = responseSeconds
+        fields["first_audible_response_seconds"] = firstAudibleResponseSeconds
         fields["transcript_empty"] = transcriptEmpty
         fields["settled_at_end"] = settledAtEnd
         fields["settled_before_finalization"] = settledBeforeFinalization

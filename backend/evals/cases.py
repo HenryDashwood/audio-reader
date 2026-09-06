@@ -90,6 +90,7 @@ class Expect:
     #: content of the sentence is the behaviour, as when it must ask which of
     #: two shows she meant.
     says: tuple[str, ...] = ()
+    steps: tuple["Expect", ...] = ()
 
     @property
     def episodes(self) -> tuple[str, ...]:
@@ -594,6 +595,35 @@ CASES: tuple[Case, ...] = (
             "app just asked for cannot be acted on."
         ),
         tags=("conversation", "back-catalogue", "play"),
+        question_is_acceptable=False,
+    ),
+)
+
+
+CASES += (
+    Case(
+        id="compound-play-and-speed",
+        said="Play the latest In Our Time at one and a half speed",
+        expect=Expect(
+            Action.SET_SPEED,
+            steps=(Expect(Action.PLAY_EPISODE, episode=_latest("in_our_time")), Expect(Action.SET_SPEED, speed=1.5)),
+        ),
+        why="Playback and speed must both reach the phone, not just the final tool result.",
+        tags=("compound", "play", "speed"),
+        question_is_acceptable=False,
+    ),
+    Case(
+        id="compound-subscribe-and-play",
+        said="Subscribe to The Infinite Monkey Cage and play its latest episode",
+        expect=Expect(
+            Action.PLAY_EPISODE,
+            steps=(
+                Expect(Action.SUBSCRIBED, feed=INFINITE_MONKEY_CAGE),
+                Expect(Action.PLAY_EPISODE, episode=_latest("infinite_monkey_cage")),
+            ),
+        ),
+        why="Subscribing must not end a request that also asked for playback.",
+        tags=("compound", "subscribe", "play"),
         question_is_acceptable=False,
     ),
 )

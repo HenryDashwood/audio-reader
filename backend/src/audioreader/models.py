@@ -350,3 +350,21 @@ def _fill_search_text(_mapper, _connection, episode: Episode) -> None:
     episode she can never ask for by name.
     """
     episode.search_text = search_key(episode.title, episode.description)
+
+
+class VoiceCommandReceipt(Base):
+    """Durable claim: a retry never repeats a possibly committed action."""
+
+    __tablename__ = "voice_command_receipts"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    request_id: Mapped[str] = mapped_column(primary_key=True)
+    fingerprint: Mapped[str]
+    cancel_requested: Mapped[bool] = mapped_column(default=False, server_default=false())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    result_json: Mapped[str | None] = mapped_column(Text)
+
+
+class VoiceUndo(Base):
+    __tablename__ = "voice_undo"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    payload: Mapped[str] = mapped_column(Text)

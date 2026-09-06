@@ -16,3 +16,6 @@ protocol TransientRecognitionFailure: Error {
 /// backup at that point would silently ask her to repeat words that have
 /// already gone, so the fallback must surface the failure instead.
 protocol RecognitionFailureAfterCapture: Error {}
+
+/// No backup can recover audio that was already discarded.
+struct CapturedSpeechFailure: RecognitionFailureAfterCapture {}

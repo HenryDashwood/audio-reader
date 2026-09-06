@@ -13,11 +13,12 @@ import asyncio
 import json
 import logging
 import sys
+from dataclasses import replace
 from datetime import date
 
 from audioreader.commands.intents import Speaker
 from audioreader.config import settings
-from audioreader.llm.provider import build_llm_client
+from audioreader.llm.provider import build_llm_client, get_conversation_llm_client
 from audioreader.settings_types import LLMProvider
 from evals import cases as corpus
 from evals.grading import Grade
@@ -40,6 +41,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         nargs="*",
         help="Only run cases whose id or tags contain one of these substrings.",
     )
+    parser.add_argument("--pipeline", choices=["conversation", "legacy"], default="conversation")
     parser.add_argument("--model", help="Override the model id for this run.")
     parser.add_argument(
         "--provider",
@@ -76,6 +78,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=date.fromisoformat,
         help="Pin the world's dates (YYYY-MM-DD) instead of counting back from today.",
     )
+    parser.add_argument("--audio-results", help="Use transcripts from the iOS recorded-speech benchmark.")
     parser.add_argument("--json", metavar="PATH", help="Also write the results as JSON.")
     parser.add_argument("--quiet", action="store_true", help="Summary only.")
     return parser.parse_args(argv)
@@ -180,8 +183,20 @@ async def main(argv: list[str] | None = None) -> int:
         print(f"No cases match {args.patterns}", file=sys.stderr)
         return 2
 
+    if args.audio_results:
+        with open(args.audio_results) as handle:
+            recordings = json.load(handle)
+        by_id = {case.id: case for case in selected}
+        selected = tuple(
+            replace(by_id[item["id"]], id=f"{item['id']}@{item['recognizer']}", said=item["transcript"])
+            for item in recordings
+            if item["id"] in by_id
+        )
+        if not selected:
+            raise ValueError("No audio recording IDs matched selected eval cases")
+
     world = build_world(args.reference_date)
-    client = build_llm_client()
+    client = get_conversation_llm_client() if args.pipeline == "conversation" else build_llm_client()
     colour = sys.stdout.isatty()
 
     def show(run_: Run) -> None:
@@ -195,6 +210,7 @@ async def main(argv: list[str] | None = None) -> int:
         repeat=args.repeat,
         concurrency=args.concurrency,
         on_result=show,
+        pipeline=args.pipeline,
     )
     print_report(report, selected, colour)
 

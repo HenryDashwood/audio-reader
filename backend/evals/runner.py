@@ -10,15 +10,17 @@ import asyncio
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from audioreader.commands import service
+from audioreader.commands.conversation import ConversationFinished, converse
 from audioreader.config import settings
 from audioreader.llm.client import LLMClient, LLMError
+from audioreader.llm.openai_responses import ResponsesStreamingClient
 from audioreader.models import Base, Episode, Feed, Subscription, User
 from evals.cases import Case
 from evals.grading import Grade, Observed, grade
@@ -43,6 +45,17 @@ class MeteredClient:
         started = time.monotonic()
         try:
             return await self.inner.decide(system=system, user=user, output_model=output_model)
+        finally:
+            self.seconds += time.monotonic() - started
+
+    async def stream(self, *, instructions, input_items, tools=None):
+        self.calls += 1
+        started = time.monotonic()
+        try:
+            async for event in cast(ResponsesStreamingClient, self.inner).stream(
+                instructions=instructions, input_items=input_items, tools=tools
+            ):
+                yield event
         finally:
             self.seconds += time.monotonic() - started
 
@@ -84,7 +97,7 @@ class Report:
         return Grade.PASS
 
 
-async def run_case(case: Case, world: tuple[Show, ...], client: LLMClient) -> Run:
+async def run_case(case: Case, world: tuple[Show, ...], client: LLMClient, *, pipeline: str = "legacy") -> Run:
     """One case against a database of its own, so nothing leaks between cases."""
     engine = create_async_engine("sqlite+aiosqlite://")
     metered = MeteredClient(client)
@@ -101,15 +114,30 @@ async def run_case(case: Case, world: tuple[Show, ...], client: LLMClient) -> Ru
 
             before = await subscribed_urls(session, user)
             try:
-                result = await service.interpret(
-                    session,
-                    metered,
-                    transcript=case.said,
-                    user=user,
-                    discovery_llm=metered,
-                    now_playing_episode_id=await episode_id(session, case.now_playing),
-                    turns=case.context,
-                )
+                if pipeline == "conversation":
+                    result = None
+                    async for event in converse(
+                        session,
+                        metered,
+                        transcript=case.said,
+                        user=user,
+                        now_playing_episode_id=await episode_id(session, case.now_playing),
+                        turns=case.context,
+                    ):
+                        if isinstance(event, ConversationFinished):
+                            result = event.result
+                    if result is None:
+                        raise LLMError("Conversation ended without an outcome")
+                else:
+                    result = await service.interpret(
+                        session,
+                        metered,
+                        transcript=case.said,
+                        user=user,
+                        discovery_llm=metered,
+                        now_playing_episode_id=await episode_id(session, case.now_playing),
+                        turns=case.context,
+                    )
             except LLMError as exc:
                 return Run(
                     case=case,
@@ -164,6 +192,7 @@ async def run(
     repeat: int = 1,
     concurrency: int = 4,
     on_result=None,
+    pipeline: str = "legacy",
 ) -> Report:
     report = Report(
         model=getattr(client, "model", type(client).__name__),
@@ -175,7 +204,7 @@ async def run(
 
     async def one(case: Case) -> Run:
         async with limiter:
-            result = await run_case(case, world, client)
+            result = await run_case(case, world, client, pipeline=pipeline)
         if on_result:
             on_result(result)
         return result
