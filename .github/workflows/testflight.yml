@@ -150,6 +150,7 @@ jobs:
         id: profile
         env:
           PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+          CONTROLS_PROFILE_B64: ${{ secrets.APPLE_CONTROLS_PROVISIONING_PROFILE }}
         run: |
           set -euo pipefail
           install_profile() {
@@ -176,13 +177,19 @@ jobs:
             echo "Installed '$name' ($uuid)"
           }
 
+          if [ -z "$CONTROLS_PROFILE_B64" ]; then
+            echo "::error::Set APPLE_CONTROLS_PROVISIONING_PROFILE to the distribution profile for com.henrydashwood.hearful.controls."
+            exit 1
+          fi
           install_profile "$PROFILE_B64" app app_uuid
+          install_profile "$CONTROLS_PROFILE_B64" controls controls_uuid
 
       - name: Archive
         env:
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
           MARKETING_ARG: ${{ steps.version.outputs.marketing_arg }}
           APP_PROFILE_UUID: ${{ steps.profile.outputs.app_uuid }}
+          CONTROLS_PROFILE_UUID: ${{ steps.profile.outputs.controls_uuid }}
         run: |
           set -euo pipefail
           # Signed manually against the profile installed above. No
@@ -199,6 +206,7 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             HEARFUL_APP_PROFILE_UUID="$APP_PROFILE_UUID" \
+            HEARFUL_CONTROLS_PROFILE_UUID="$CONTROLS_PROFILE_UUID" \
             DEVELOPMENT_TEAM=67F2439F4X \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             $MARKETING_ARG
@@ -223,6 +231,7 @@ jobs:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_PROFILE_UUID: ${{ steps.profile.outputs.app_uuid }}
+          CONTROLS_PROFILE_UUID: ${{ steps.profile.outputs.controls_uuid }}
         run: |
           set -euo pipefail
           # Apple's /usr/bin/rsync (openrsync) reads -E as --extended-attributes,
@@ -238,6 +247,9 @@ jobs:
           cp ios/ExportOptions.plist "$options"
           plutil -replace 'provisioningProfiles.com\.henrydashwood\.hearful' \
             -string "$APP_PROFILE_UUID" "$options"
+
+          plutil -insert 'provisioningProfiles.com\.henrydashwood\.hearful\.controls' \
+            -string "$CONTROLS_PROFILE_UUID" "$options"
 
           # The key still authenticates the upload; it is only provisioning that
           # must not go through it.

@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
@@ -307,6 +308,12 @@ class EpisodeStateUpdate(BaseModel):
 
     played: bool | None = None
     dismissed: bool | None = None
+
+
+class LibraryActionRequest(BaseModel):
+    action: Literal["mark_played", "dismiss", "restore", "undo"]
+    episode_id: int | None = Field(default=None, gt=0)
+    request_id: str = Field(pattern=r"^[a-zA-Z0-9-]{1,64}$")
 
 
 class CommandRequest(BaseModel):

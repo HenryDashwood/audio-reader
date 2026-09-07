@@ -6,10 +6,16 @@ import Foundation
 final class VoiceSessionContext {
     private static var sessions: [String: VoiceSessionContext] = [:]
     private var lastUsed = ContinuousClock.now
+    var executionID: UUID?
+    var isExecuting: Bool { executionID != nil }
     var pendingRequest: CommandRequest?
     var recentActions: [String] = []
     var conversation = Conversation()
     var undoSpeed: Float?
+
+    static func clearUndoSpeeds() { for session in sessions.values { session.undoSpeed = nil } }
+
+    static func clearAll() { sessions.removeAll() }
 
     static func forAccount(_ account: String?, server: URL) -> VoiceSessionContext {
         sessions = sessions.filter { ContinuousClock.now - $0.value.lastUsed < .seconds(600) }

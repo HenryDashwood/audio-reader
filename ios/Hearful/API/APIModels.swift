@@ -168,6 +168,7 @@ nonisolated struct APIError: Error {
     /// True for a 401: the session is dead, and the caller should suggest
     /// signing in rather than "try again in a moment".
     let isAuthFailure: Bool
+    var statusCode: Int? = nil
 
     static let genericSpokenResponse =
         "Sorry, something went wrong. Please try again in a moment."
@@ -175,11 +176,12 @@ nonisolated struct APIError: Error {
     init(
         spokenResponse: String = APIError.genericSpokenResponse,
         underlying: String,
-        isAuthFailure: Bool = false
+        isAuthFailure: Bool = false, statusCode: Int? = nil
     ) {
         self.spokenResponse = spokenResponse
         self.underlying = underlying
         self.isAuthFailure = isAuthFailure
+        self.statusCode = statusCode
     }
 }
 
@@ -219,10 +221,11 @@ nonisolated struct UserInfo: Decodable, Equatable {
         // A build may reach an older server briefly during a rolling deploy.
         // Treat a missing consent field as no consent, which is both backwards
         // compatible and the privacy-preserving default.
-        aiDataSharingConsented = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .aiDataSharingConsented
-        ) ?? false
+        aiDataSharingConsented =
+            try container.decodeIfPresent(
+                Bool.self,
+                forKey: .aiDataSharingConsented
+            ) ?? false
     }
 
     enum CodingKeys: String, CodingKey {

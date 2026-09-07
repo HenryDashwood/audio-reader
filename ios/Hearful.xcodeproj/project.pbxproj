@@ -6,6 +6,15 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXCopyFilesBuildPhase section */
+        BB0000000000000000000005 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (BB0000000000000000000001, ); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXBuildFile section */
+        BB0000000000000000000001 = {isa = PBXBuildFile; fileRef = BB0000000000000000000002; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+        BB0000000000000000000003 = {isa = PBXBuildFile; fileRef = BB0000000000000000000004; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		AA00000000000000000000F3 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -14,11 +23,14 @@
 			remoteGlobalIDString = AA00000000000000000000D1;
 			remoteInfo = Hearful;
 		};
+        BB000000000000000000000E = {isa = PBXContainerItemProxy; containerPortal = AA00000000000000000000C0; proxyType = 1; remoteGlobalIDString = BB000000000000000000000A; remoteInfo = HearfulControls; };
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		AA00000000000000000000D2 /* Magpie.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Magpie.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00000000000000000000D4 /* HearfulTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HearfulTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        BB0000000000000000000002 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HearfulControls.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+        BB0000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hearful/Intents/MagpieControlIntents.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -32,6 +44,7 @@
 			path = HearfulTests;
 			sourceTree = "<group>";
 		};
+        BB0000000000000000000006 = {isa = PBXFileSystemSynchronizedRootGroup; path = HearfulControls; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -49,6 +62,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+        BB0000000000000000000008 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -57,6 +71,8 @@
 			children = (
 				AA00000000000000000000A1 /* Hearful */,
 				AA00000000000000000000A2 /* HearfulTests */,
+                BB0000000000000000000006,
+                BB0000000000000000000004,
 				AA00000000000000000000C2 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -66,6 +82,7 @@
 			children = (
 				AA00000000000000000000D2 /* Magpie.app */,
 				AA00000000000000000000D4 /* HearfulTests.xctest */,
+                BB0000000000000000000002,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -80,10 +97,12 @@
 				AA00000000000000000000B2 /* Sources */,
 				AA00000000000000000000B1 /* Frameworks */,
 				AA00000000000000000000B3 /* Resources */,
+                BB0000000000000000000005 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+                BB000000000000000000000F,
 			);
 			fileSystemSynchronizedGroups = (
 				AA00000000000000000000A1 /* Hearful */,
@@ -115,6 +134,13 @@
 			productReference = AA00000000000000000000D4 /* HearfulTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+        BB000000000000000000000A = {
+            isa = PBXNativeTarget; buildConfigurationList = BB000000000000000000000B;
+            buildPhases = (BB0000000000000000000007, BB0000000000000000000008, BB0000000000000000000009, );
+            buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (BB0000000000000000000006, );
+            name = HearfulControls; productName = HearfulControls; productReference = BB0000000000000000000002;
+            productType = "com.apple.product-type.app-extension";
+        };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -152,6 +178,7 @@
 			targets = (
 				AA00000000000000000000D1 /* Hearful */,
 				AA00000000000000000000D3 /* HearfulTests */,
+                BB000000000000000000000A,
 			);
 		};
 /* End PBXProject section */
@@ -164,6 +191,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+        BB0000000000000000000009 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -181,6 +209,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+        BB0000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (BB0000000000000000000003, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -189,6 +218,7 @@
 			target = AA00000000000000000000D1 /* Hearful */;
 			targetProxy = AA00000000000000000000F3 /* PBXContainerItemProxy */;
 		};
+        BB000000000000000000000F = {isa = PBXTargetDependency; target = BB000000000000000000000A; targetProxy = BB000000000000000000000E; };
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -324,6 +354,7 @@
 				PRODUCT_MODULE_NAME = Hearful;
 				PRODUCT_NAME = Magpie;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+                SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(HEARFUL_SIRI_AUDIO_FLAGS)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -361,6 +392,7 @@
 				PRODUCT_NAME = Magpie;
 				PROVISIONING_PROFILE_SPECIFIER = "$(HEARFUL_APP_PROFILE_UUID)";
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+                SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) $(HEARFUL_SIRI_AUDIO_FLAGS)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -403,6 +435,34 @@
 			};
 			name = Release;
 		};
+        BB000000000000000000000C = {isa = XCBuildConfiguration; buildSettings = {
+            APPLICATION_EXTENSION_API_ONLY = YES;
+            CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 67F2439F4X;
+            CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 1.4.0;
+            GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = "HearfulControls-Info.plist";
+            INFOPLIST_KEY_CFBundleDisplayName = "Magpie Controls";
+            PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful.controls;
+            PRODUCT_NAME = "$(TARGET_NAME)";
+            SKIP_INSTALL = YES; SWIFT_VERSION = 6.0;
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) HEARFUL_CONTROLS_EXTENSION";
+            SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2";
+            LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+
+        }; name = Debug; };
+        BB000000000000000000000D = {isa = XCBuildConfiguration; buildSettings = {
+            APPLICATION_EXTENSION_API_ONLY = YES;
+            CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 67F2439F4X;
+            CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 1.4.0;
+            GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = "HearfulControls-Info.plist";
+            INFOPLIST_KEY_CFBundleDisplayName = "Magpie Controls";
+            PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful.controls;
+            PRODUCT_NAME = "$(TARGET_NAME)";
+            SKIP_INSTALL = YES; SWIFT_VERSION = 6.0;
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) HEARFUL_CONTROLS_EXTENSION";
+            SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2";
+            LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+            PROVISIONING_PROFILE_SPECIFIER = "$(HEARFUL_CONTROLS_PROFILE_UUID)";
+        }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -433,6 +493,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+        BB000000000000000000000B = {isa = XCConfigurationList; buildConfigurations = (BB000000000000000000000C, BB000000000000000000000D, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = AA00000000000000000000C0 /* Project object */;

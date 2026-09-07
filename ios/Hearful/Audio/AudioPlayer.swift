@@ -94,6 +94,8 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         updateNowPlayingPosition()
     }
 
+    var isReadyToPlay: Bool { player.currentItem?.status == .readyToPlay }
+
     // MARK: - Playback
 
     /// Loads the item without starting it, so buffering overlaps the spoken

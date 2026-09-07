@@ -32,7 +32,27 @@ struct AskHearfulIntent: AppIntent {
 /// presents the sheet immediately.
 @MainActor
 enum VoicePrompt {
+    struct Input {
+        let transcript: String?
+        let recovering: Bool
+    }
     private(set) static var pending = false
+    private static var input: Input?
+
+    static func takeInput() -> Input? {
+        defer { input = nil }
+        return input
+    }
+
+    static func clear() {
+        pending = false
+        input = nil
+    }
+
+    static func request(transcript: String, recovering: Bool = false) {
+        input = Input(transcript: transcript, recovering: recovering)
+        request()
+    }
 
     static func request() {
         pending = true

@@ -1,3 +1,4 @@
+import AppIntents
 import Combine
 import SwiftUI
 import WebKit
@@ -57,6 +58,11 @@ struct ArticleView: View {
         // of the way of a scroll only while something is scrolling underneath
         // them, so this is the difference between bars that get out of the way
         // and bars that sit there.
+        .appEntityIdentifier(EntityIdentifier(for: EpisodeEntity.self, identifier: episode.id))
+        .onAppear { ShortcutNavigation.viewedEpisodeID = episode.id }
+        .onDisappear {
+            if ShortcutNavigation.viewedEpisodeID == episode.id { ShortcutNavigation.viewedEpisodeID = nil }
+        }
         .ignoresSafeArea()
         // No title in the bar: it is the same sentence as the heading the
         // article opens with, a foot below it, and the article's own is the
@@ -490,10 +496,12 @@ final class ArticleChromeController: UIViewController {
                 hidden: ArticleControlsModel.shared.hidden
             )
         case .changed:
-            guard let hidden = scrollTracker.changed(
-                translationY: translationY,
-                contentOffsetY: scrollView.contentOffset.y
-            ) else { return }
+            guard
+                let hidden = scrollTracker.changed(
+                    translationY: translationY,
+                    contentOffsetY: scrollView.contentOffset.y
+                )
+            else { return }
             setBarsHidden(hidden, animated: true)
             withAnimation(.easeOut(duration: 0.25)) {
                 ArticleControlsModel.shared.hidden = hidden
@@ -913,9 +921,9 @@ private struct ArticleWebView: UIViewRepresentable {
 
             followButton.isHidden = followState.isFollowing
 
-            guard (forceFollow || followState.isFollowing),
-                (forceFollow || !UIAccessibility.isVoiceOverRunning),
-                (forceFollow || (!scrollView.isDragging && !scrollView.isDecelerating))
+            guard forceFollow || followState.isFollowing,
+                forceFollow || !UIAccessibility.isVoiceOverRunning,
+                forceFollow || (!scrollView.isDragging && !scrollView.isDecelerating)
             else { return }
             let upperBand = max(webView.safeAreaInsets.top + 64, webView.bounds.height * 0.2)
             let lowerBand = webView.bounds.height * 0.72
@@ -1008,9 +1016,10 @@ enum ArticleDocument {
             // Feeds sometimes fall back to their own publication-level author.
             // Repeating the same name on either side of a dot adds no useful
             // information; item-specific authors still appear here.
-            let duplicatesPublication = publication.map {
-                $0.caseInsensitiveCompare(author) == .orderedSame
-            } ?? false
+            let duplicatesPublication =
+                publication.map {
+                    $0.caseInsensitiveCompare(author) == .orderedSame
+                } ?? false
             if !duplicatesPublication {
                 meta.append(ArticleTextModel.escaped(author))
             }

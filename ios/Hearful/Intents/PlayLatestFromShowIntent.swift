@@ -1,50 +1,26 @@
 import AppIntents
-import Foundation
 
-/// "Hey Siri, play the latest Average Joe on Magpie."
-///
-/// The show is a phrase parameter matched against her subscriptions, so one
-/// breath works — no follow-up question — for any show she already follows.
-/// The newest item plays whether it is a podcast episode or an article.
 struct PlayLatestFromShowIntent: AppIntent {
     static let title: LocalizedStringResource = "Play the Latest from a Show"
-    static let description = IntentDescription(
-        "Plays the newest episode or article from one of your shows.")
-    /// Background first, coming forward only if the audio session refuses.
+    static let description = IntentDescription("Plays the newest episode or article from a show you follow.")
     static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
+    static var parameterSummary: some ParameterSummary { Summary("Play the latest from \(\.$show)") }
 
-    @Parameter(title: "Show", requestValueDialog: "Which show?")
-    var show: ShowEntity
-
+    @Parameter(title: "Show", requestValueDialog: "Which show or publication?") var show: ShowEntity
     init() {}
     init(show: ShowEntity) { self.show = show }
 
     @MainActor
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        let api = HearfulAPI()
-        let episodes: [Episode]
+    func perform() async throws -> some IntentResult & ReturnsValue<EpisodeEntity> & ProvidesDialog {
         do {
-            episodes = try await api.episodes(showID: show.id)
-        } catch let error as APIError where error.isAuthFailure {
-            return .result(dialog: IntentDialog("Please open Magpie and sign in first."))
-        } catch {
-            return .result(dialog: IntentDialog("I could not reach \(show.title) just now."))
-        }
-
-        guard let episode = episodes.first(where: {
-            $0.audioURL != nil || $0.hasText == true
-        }) else {
-            return .result(dialog: IntentDialog("\(show.title) has nothing I can play yet."))
-        }
-
-        do {
-            try PlaybackCoordinator.shared.play(episode)
-        } catch {
-            // iOS would not let us take the audio session from the background.
-            try await continueInForeground(
-                IntentDialog("Opening Magpie to play \(episode.title)."))
-            try PlaybackCoordinator.shared.play(episode)
-        }
-        return .result(dialog: IntentDialog("Playing \(episode.title)."))
+            guard let episode = try await ShortcutLibrary.shared.find("", showID: show.id).first else {
+                throw ShortcutFailure(message: "\(show.title) has nothing available to listen to yet.")
+            }
+            let chosen = ShortcutPlayback.chooseFresh(episode)
+            try await ShortcutPlayback.start(chosen) {
+                try await continueInForeground(IntentDialog("Opening Magpie to start listening."))
+            }
+            return .result(value: EpisodeEntity(chosen), dialog: IntentDialog("Starting \(chosen.title)."))
+        } catch { throw ShortcutFailure.explaining(error) }
     }
 }

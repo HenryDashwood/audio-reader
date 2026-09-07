@@ -463,6 +463,18 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
             self?.skip(by: -15)
             return .success
         }
+        centre.changePlaybackRateCommand.isEnabled = true
+        centre.changePlaybackRateCommand.supportedPlaybackRates = PlaybackSpeedPreference.rates.map {
+            NSNumber(value: $0)
+        }
+        centre.changePlaybackRateCommand.addTarget { [weak self] event in
+            guard let self, self.currentEpisode != nil else { return .noActionableNowPlayingItem }
+            guard let event = event as? MPChangePlaybackRateCommandEvent,
+                event.playbackRate.isFinite, (0.5...3).contains(event.playbackRate)
+            else { return .commandFailed }
+            self.setPlaybackRate(event.playbackRate)
+            return .success
+        }
         centre.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else {
                 return .commandFailed

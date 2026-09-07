@@ -18,6 +18,9 @@ struct ContentView: View {
 
     @EnvironmentObject private var auth: AuthController
     @State private var showingVoice = false
+    @State private var voiceInput: VoicePrompt.Input?
+    @State private var shortcutsPresented = false
+    @State private var openShow: Show?
     @State private var showingNowPlaying = false
     @State private var selectedTab: AppTab = Self.initialTab
     @State private var lastContentTab: AppTab = Self.initialTab
@@ -52,7 +55,7 @@ struct ContentView: View {
                 Tab("Following", systemImage: "square.stack", value: .shows) {
                     LibraryView(
                         showingVoice: $showingVoice,
-                        openEpisode: $showsOpenEpisode)
+                        openEpisode: $showsOpenEpisode, openShow: $openShow)
                 }
                 Tab("Latest", systemImage: "clock", value: .latest) {
                     LatestView(
@@ -87,28 +90,46 @@ struct ContentView: View {
         .sheet(isPresented: $showingNowPlaying) {
             NowPlayingView(openArticle: openArticleFromPlayer)
         }
-        .sheet(isPresented: $showingVoice) {
-            VoiceSheet(accountID: auth.user?.id, viewedEpisode: selectedTab == .shows ? showsOpenEpisode : latestOpenEpisode)
-                // Consent needs a little more room than the microphone, but
-                // still opens as a compact app-owned permission sheet rather
-                // than a full-screen document. Once accepted, the familiar
-                // medium voice sheet takes over.
-                .presentationDetents(
-                    auth.user?.aiDataSharingConsented == true
-                        ? [.medium, .large]
-                        : [.fraction(0.68), .large]
-                )
+        .sheet(isPresented: $shortcutsPresented) {
+            NavigationStack {
+                SiriShortcutsView().toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { shortcutsPresented = false }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingVoice, onDismiss: { voiceInput = nil }) {
+            VoiceSheet(
+                accountID: auth.user?.id, initialInput: voiceInput,
+                viewedEpisode: selectedTab == .shows ? showsOpenEpisode : latestOpenEpisode
+            )
+            // Consent needs a little more room than the microphone, but
+            // still opens as a compact app-owned permission sheet rather
+            // than a full-screen document. Once accepted, the familiar
+            // medium voice sheet takes over.
+            .presentationDetents(
+                auth.user?.aiDataSharingConsented == true
+                    ? [.medium, .large]
+                    : [.fraction(0.68), .large]
+            )
         }
         .task {
             // The Ask Magpie intent may have run before this view existed.
             if VoicePrompt.consume() {
+                voiceInput = VoicePrompt.takeInput()
                 showingVoice = true
             }
+            applyShortcutNavigation()
             await PlaybackRestore.restore()
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulAskByVoice)) { _ in
             _ = VoicePrompt.consume()
+            voiceInput = VoicePrompt.takeInput()
             showingVoice = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulShortcutNavigation)) { _ in
+            applyShortcutNavigation()
         }
         // Subscribing in the app (or by voice) changes which show names Siri
         // should recognise in phrases; tell it to refetch them.
@@ -125,6 +146,31 @@ struct ContentView: View {
         // tiny sibling means those ticks update the player without rebuilding
         // the tab and navigation hierarchy around a scrolling article.
         .background(PlaybackFailurePresenter())
+    }
+
+    private func applyShortcutNavigation() {
+        guard let route = ShortcutNavigation.consume() else { return }
+        switch route {
+        case .destination(let destination):
+            switch destination {
+            case .latest:
+                selectedTab = .latest
+                latestOpenEpisode = nil
+            case .following:
+                selectedTab = .shows
+                showsOpenEpisode = nil
+                openShow = nil
+            case .nowPlaying: showingNowPlaying = true
+            case .shortcuts: shortcutsPresented = true
+            }
+        case .episode(let episode):
+            selectedTab = .latest
+            latestOpenEpisode = episode
+        case .show(let show):
+            selectedTab = .shows
+            showsOpenEpisode = nil
+            openShow = show
+        }
     }
 
     /// Takes the player away and opens the episode without interrupting it.
@@ -204,10 +250,12 @@ struct MicToolbarButton: View {
 /// listens straight away; tapping it again asks for the next thing.
 struct VoiceSheet: View {
     @StateObject private var controller: VoiceController
+    private let initialInput: VoicePrompt.Input?
     @EnvironmentObject private var auth: AuthController
     @Environment(\.dismiss) private var dismiss
 
-    init(accountID: String?, viewedEpisode: Episode? = nil) {
+    init(accountID: String?, initialInput: VoicePrompt.Input? = nil, viewedEpisode: Episode? = nil) {
+        self.initialInput = initialInput
         let controller = VoiceController.live(telemetryAccountID: accountID)
         controller.viewedEpisode = viewedEpisode
         let shows = OfflineCache.shared.load([Show].self, for: .shows) ?? []
@@ -263,7 +311,10 @@ struct VoiceSheet: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Ask Magpie")
                 .accessibilityValue(caption)
-                .accessibilityHint(controller.state == .listening ? "Double tap when you have finished speaking" : "Double tap to interrupt and ask for something to listen to")
+                .accessibilityHint(
+                    controller.state == .listening
+                        ? "Double tap when you have finished speaking"
+                        : "Double tap to interrupt and ask for something to listen to")
 
                 // What the app believes it heard, which is the one thing she
                 // cannot check by listening — and the thing that explains most
@@ -277,11 +328,12 @@ struct VoiceSheet: View {
                     TranscriptView(
                         turns: controller.conversation.turns,
                         liveUserText: controller.liveUserText,
-                        liveAssistantText: controller.liveAssistantText)
-                        // Between the microphone and the close button: it is
-                        // the record of what happened, which matters more than
-                        // the escape hatch and less than the thing she came for.
-                        .accessibilitySortPriority(0.5)
+                        liveAssistantText: controller.liveAssistantText
+                    )
+                    // Between the microphone and the close button: it is
+                    // the record of what happened, which matters more than
+                    // the escape hatch and less than the thing she came for.
+                    .accessibilitySortPriority(0.5)
                 }
 
                 // Only when listening has actually been refused: the trip to
@@ -296,7 +348,8 @@ struct VoiceSheet: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .accessibilityHint(
-                        "Opens Magpie's settings, where you can turn on the microphone")
+                        "Opens Magpie's settings, where you can turn on the microphone"
+                    )
                     .padding(.bottom, 32)
                 }
             }
@@ -350,8 +403,13 @@ struct VoiceSheet: View {
         // model is focus-then-activate, and the button is the first thing she
         // lands on, so let her start it.
         .task {
-            guard !UIAccessibility.isVoiceOverRunning else { return }
-            await controller.beginCommand()
+            if let initialInput {
+                await controller.beginCommand(
+                    transcript: initialInput.transcript, recovering: initialInput.recovering)
+            } else {
+                guard !UIAccessibility.isVoiceOverRunning else { return }
+                await controller.beginCommand()
+            }
         }
     }
 

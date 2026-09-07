@@ -6,6 +6,7 @@ struct HearfulApp: App {
     /// Subscribed for the life of the app. iOS delivers crash and hang reports
     /// in a daily batch at a moment of its choosing, so there is no later point
     /// at which registering would still catch them.
+    private let shortcutLifecycle = ShortcutLifecycle.shared
     private let diagnostics = DiagnosticsReporter(api: HearfulAPI())
 
     var body: some Scene {

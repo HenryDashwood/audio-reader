@@ -22,8 +22,11 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
         transcript: String, nowPlayingEpisodeID: Int?, turns: [ConversationTurn],
         traceparent: String?
     ) -> AsyncThrowingStream<CommandStreamEvent, Error>
-    func commandStream(request: CommandRequest, traceparent: String?) -> AsyncThrowingStream<CommandStreamEvent, Error>
+    func commandStream(request: CommandRequest, traceparent: String?) -> AsyncThrowingStream<
+        CommandStreamEvent, Error
+    >
     func cancelCommand(requestID: String) async
+    func libraryAction(_ action: String, episodeID: Int?, requestID: String) async throws -> CommandResponse
     func episode(id: Int) async throws -> Episode
     func articleText(episodeID: Int) async throws -> EpisodeText
     func recentEpisodes(limit: Int) async throws -> [Episode]
@@ -93,10 +96,17 @@ extension HearfulAPIProtocol {
         throw APIError(underlying: "Managing sources is unavailable.")
     }
 
+    func libraryAction(_ action: String, episodeID: Int?, requestID: String) async throws -> CommandResponse {
+        throw APIError(underlying: "Library actions are unavailable.")
+    }
+
     func cancelCommand(requestID: String) async {}
-    nonisolated func commandStream(request: CommandRequest, traceparent: String?) -> AsyncThrowingStream<CommandStreamEvent, Error> {
-        commandStream(transcript: request.transcript, nowPlayingEpisodeID: request.nowPlayingEpisodeID,
-                      turns: request.turns, traceparent: traceparent)
+    nonisolated func commandStream(request: CommandRequest, traceparent: String?) -> AsyncThrowingStream<
+        CommandStreamEvent, Error
+    > {
+        commandStream(
+            transcript: request.transcript, nowPlayingEpisodeID: request.nowPlayingEpisodeID,
+            turns: request.turns, traceparent: traceparent)
     }
 
     nonisolated func commandStream(
@@ -240,10 +250,15 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         transcript: String, nowPlayingEpisodeID: Int? = nil,
         turns: [ConversationTurn] = [], traceparent: String? = nil
     ) -> AsyncThrowingStream<CommandStreamEvent, Error> {
-        commandStream(request: CommandRequest(transcript: transcript, nowPlayingEpisodeID: nowPlayingEpisodeID, turns: turns, country: Self.countryCode), traceparent: traceparent)
+        commandStream(
+            request: CommandRequest(
+                transcript: transcript, nowPlayingEpisodeID: nowPlayingEpisodeID, turns: turns,
+                country: Self.countryCode), traceparent: traceparent)
     }
 
-    nonisolated func commandStream(request command: CommandRequest, traceparent: String?) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+    nonisolated func commandStream(request command: CommandRequest, traceparent: String?)
+        -> AsyncThrowingStream<CommandStreamEvent, Error>
+    {
         let transcript = command.transcript
         let nowPlayingEpisodeID = command.nowPlayingEpisodeID
         let turns = command.turns
@@ -311,7 +326,8 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
                 } catch {
                     continuation.finish(
                         throwing: APIError(
-                            spokenResponse: "I cannot reach the internet right now. Please try again shortly.",
+                            spokenResponse:
+                                "I cannot reach the internet right now. Please try again shortly.",
                             underlying: error.localizedDescription))
                 }
             }
@@ -341,7 +357,8 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
     }
 
     func cancelCommand(requestID: String) async {
-        var request = URLRequest(url: baseURL.appendingPathComponent("command").appendingPathComponent(requestID))
+        var request = URLRequest(
+            url: baseURL.appendingPathComponent("command").appendingPathComponent(requestID))
         request.httpMethod = "DELETE"
         request.timeoutInterval = 10
         struct Outcome: Decodable { let status: String }
@@ -521,8 +538,7 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         return try await send(request)
     }
 
-    func login(appleIdentityToken: String, authorizationCode: String?) async throws -> AuthResponse
-    {
+    func login(appleIdentityToken: String, authorizationCode: String?) async throws -> AuthResponse {
         var request = URLRequest(url: baseURL.appendingPathComponent("auth/apple"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -538,6 +554,21 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         var request = URLRequest(url: baseURL.appendingPathComponent("auth/logout"))
         request.httpMethod = "POST"
         try await perform(request)
+    }
+
+    func libraryAction(_ action: String, episodeID: Int?, requestID: String) async throws -> CommandResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("actions"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        struct Body: Encodable {
+            let action: String
+            let episode_id: Int?
+            let request_id: String
+        }
+        request.httpBody = try JSONEncoder().encode(
+            Body(action: action, episode_id: episodeID, request_id: requestID))
+        return try await send(request)
     }
 
     func me() async throws -> UserInfo {
@@ -621,13 +652,13 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
                 spokenResponse: Self.spokenResponse(from: data)
                     ?? "Please open Magpie and sign in.",
                 underlying: "HTTP 401",
-                isAuthFailure: true)
+                isAuthFailure: true, statusCode: 401)
         }
         guard (200..<300).contains(http.statusCode) else {
             throw APIError(
                 // Prefer the sentence the backend wrote; fall back to a generic one.
                 spokenResponse: Self.spokenResponse(from: data) ?? APIError.genericSpokenResponse,
-                underlying: "HTTP \(http.statusCode)")
+                underlying: "HTTP \(http.statusCode)", statusCode: http.statusCode)
         }
         return data
     }

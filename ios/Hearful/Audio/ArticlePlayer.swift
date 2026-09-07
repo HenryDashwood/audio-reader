@@ -47,6 +47,8 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
     private let defaults: UserDefaults
+    private(set) var loadingError: String?
+    var isReadyToPlay: Bool { script != nil }
     private var script: ArticleScript?
     private var chunkIndex = 0
     /// True once she asked for sound: speech starts as soon as text arrives.
@@ -232,6 +234,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         loadTask = nil
         deactivate()
         currentEpisode = nil
+        loadingError = nil
         script = nil
         chunkIndex = 0
         currentTime = 0
@@ -245,6 +248,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         deactivate()
         wantsPlayback = andPlay
         currentEpisode = episode
+        loadingError = nil
         script = nil
         chunkIndex = 0
         // Resume where she left off, same rules as audio: not if finished,
@@ -303,6 +307,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     }
 
     private func scriptLoaded(_ loaded: ArticleScript) {
+        loadingError = nil
         guard !loaded.isEmpty else {
             loadFailed(with: APIError(underlying: "article text was empty"))
             return
@@ -322,6 +327,8 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     }
 
     private func loadFailed(with error: Error) {
+        loadingError =
+            (error as? APIError)?.spokenResponse ?? "Sorry, I could not get the text of that article."
         let shouldSpeak = wantsPlayback
         wantsPlayback = false
         isPlaying = false

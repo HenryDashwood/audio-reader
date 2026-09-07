@@ -139,6 +139,8 @@ These resolve on the phone with no network. Try them **in aeroplane mode** to pr
 
 ## 5. Siri and Shortcuts
 
+The expanded action catalog and device acceptance checks are in [Siri and Shortcuts](voice/siri-shortcuts.md).
+
 📱 all of these — Siri does not work properly in the simulator.
 
 - [ ] Magpie appears in the **Shortcuts** app. If not, reboot the phone before debugging phrases; the index goes stale after repeated installs

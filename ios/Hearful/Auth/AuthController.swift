@@ -54,6 +54,7 @@ final class AuthController: ObservableObject {
             return
         }
         state = .signedIn
+        HearfulShortcuts.updateAppShortcutParameters()
         Task { await refreshUser() }
     }
 
@@ -99,6 +100,8 @@ final class AuthController: ObservableObject {
                 KeychainTokenStore.token = response.token
                 user = response.user
                 state = .signedIn
+                ShortcutLibrary.shared.invalidate()
+                HearfulShortcuts.updateAppShortcutParameters()
             } catch let error as APIError {
                 signInError = error.spokenResponse
             } catch {
@@ -135,6 +138,7 @@ final class AuthController: ObservableObject {
 
     private func forgetSession() {
         KeychainTokenStore.clear()
+        ShortcutLifecycle.resetSession()
         // The next person to sign in on this phone must not be shown the last
         // person's library out of the cache.
         OfflineCache.shared.clear()

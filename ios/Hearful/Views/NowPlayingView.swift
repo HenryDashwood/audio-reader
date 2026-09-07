@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 
 /// Full-screen player: artwork, scrubber, and the transport controls people
@@ -40,9 +41,11 @@ struct NowPlayingView: View {
             .padding(.top, 8)
             .padding(.horizontal, 8)
 
-            Artwork(url: player.currentEpisode?.imageURL, title: player.currentEpisode?.feedTitle ?? "", size: 260)
-                .shadow(radius: 12, y: 6)
-                .padding(.top, 12)
+            Artwork(
+                url: player.currentEpisode?.imageURL, title: player.currentEpisode?.feedTitle ?? "", size: 260
+            )
+            .shadow(radius: 12, y: 6)
+            .padding(.top, 12)
 
             if let episode = player.currentEpisode {
                 Button {
@@ -80,6 +83,9 @@ struct NowPlayingView: View {
 
             Spacer(minLength: 0)
         }
+        .appEntityIdentifier(
+            player.currentEpisode.map { EntityIdentifier(for: EpisodeEntity.self, identifier: $0.id) }
+        )
         .padding(.bottom, 32)
         .presentationDragIndicator(.hidden)
         // The episode can go away underneath this screen — it ended, or she
@@ -123,18 +129,24 @@ struct NowPlayingView: View {
 
     private var transport: some View {
         HStack(spacing: 44) {
-            Button { player.skip(by: -15) } label: {
+            Button {
+                player.skip(by: -15)
+            } label: {
                 Image(systemName: "gobackward.15").font(.title)
             }
             .accessibilityLabel("Back 15 seconds")
 
-            Button { player.toggle() } label: {
+            Button {
+                player.toggle()
+            } label: {
                 Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                     .font(.system(size: 68))
             }
             .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
 
-            Button { player.skip(by: 30) } label: {
+            Button {
+                player.skip(by: 30)
+            } label: {
                 Image(systemName: "goforward.30").font(.title)
             }
             .accessibilityLabel("Forward 30 seconds")
@@ -217,7 +229,8 @@ struct NowPlayingView: View {
 
     private func speedLabel(_ rate: Float) -> String {
         // "1×", "1.5×" — trailing zeros stripped so the chip stays narrow.
-        let number = rate.truncatingRemainder(dividingBy: 1) == 0
+        let number =
+            rate.truncatingRemainder(dividingBy: 1) == 0
             ? String(Int(rate)) : String(format: "%g", rate)
         return "\(number)×"
     }
@@ -264,7 +277,9 @@ struct MiniPlayer: View {
                 .accessibilityLabel("Now playing: \(episode.title)")
                 .accessibilityHint("Opens the player, with the scrubber and sleep timer")
 
-                Button { player.toggle() } label: {
+                Button {
+                    player.toggle()
+                } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.body)
                         .frame(width: 38, height: 44)
@@ -278,7 +293,9 @@ struct MiniPlayer: View {
                 // be rid of it. Deliberately a button and not a swipe: a
                 // gesture here would be reachable by sight only, and this is
                 // the one control whose absence left her stuck.
-                Button { player.clear() } label: {
+                Button {
+                    player.clear()
+                } label: {
                     Image(systemName: "xmark")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(.secondary)

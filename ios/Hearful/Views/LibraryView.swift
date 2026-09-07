@@ -9,6 +9,7 @@ struct LibraryView: View {
     @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
     @Binding var openEpisode: Episode?
+    @Binding var openShow: Show?
     @State private var searchText = ""
     @State private var searchScope: LibrarySearchScope = .all
     @State private var showingAIConsent = false
@@ -28,6 +29,7 @@ struct LibraryView: View {
             // A fixed inline title does not change size or position as the
             // library scrolls.
             .toolbarTitleDisplayMode(.inline)
+            .navigationDestination(item: $openShow) { ShowDetailView(show: $0) }
             .navigationDestination(for: Show.self) { ShowDetailView(show: $0) }
             .navigationDestination(for: PodcastResult.self) { PodcastPreviewView(podcast: $0) }
             .navigationDestination(item: $openEpisode) { episode in
@@ -42,7 +44,9 @@ struct LibraryView: View {
                         focused: $searchFocused)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { openVoiceSheet($showingVoice) } label: {
+                    Button {
+                        openVoiceSheet($showingVoice)
+                    } label: {
                         Image(systemName: "mic.fill")
                     }
                     .accessibilityLabel("Ask for something to listen to")
@@ -51,7 +55,8 @@ struct LibraryView: View {
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .automatic),
-                prompt: "Podcasts, publications, episodes, or a web address")
+                prompt: "Podcasts, publications, episodes, or a web address"
+            )
             .searchScopes($searchScope) {
                 Text("All").tag(LibrarySearchScope.all)
                 Text("Sources").tag(LibrarySearchScope.shows)
@@ -142,10 +147,12 @@ struct LibraryView: View {
     @ViewBuilder
     private var searchResults: some View {
         let pastedFeed = pastedFeedURL(searchText)
-        let localShows = searchScope.includesShows
+        let localShows =
+            searchScope.includesShows
             ? showsMatching(model.availableShows, query: searchText) : []
         let localTitles = Set(localShows.map { searchIdentity($0.title) })
-        let directoryResults = searchScope.includesShows
+        let directoryResults =
+            searchScope.includesShows
             ? searchModel.podcasts.filter { !localTitles.contains(searchIdentity($0.title)) } : []
         let episodeResults = searchScope.includesEpisodes ? searchModel.episodes : []
         let webResult = searchScope.includesShows ? searchModel.webPublication : nil
@@ -343,7 +350,7 @@ nonisolated func pastedFeedURL(_ text: String) -> URL? {
         components.password == nil,
         components.port == nil || components.port == 80 || components.port == 443,
         let host = components.host,
-        (host.contains(".") || host.contains(":")),
+        host.contains(".") || host.contains(":"),
         !host.hasSuffix("."),
         let url = components.url
     else { return nil }

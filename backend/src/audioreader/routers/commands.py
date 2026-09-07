@@ -6,13 +6,15 @@ from typing import Annotated
 import logfire
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
-from audioreader import telemetry
+from audioreader import positions, telemetry
 from audioreader.auth.dependencies import get_current_user
-from audioreader.commands import service
+from audioreader.commands import service, undo
 from audioreader.commands.conversation import AssistantDelta, ConversationFinished, converse
-from audioreader.commands.receipts import cancel_request, recoverable_events
+from audioreader.commands.receipts import cancel_request, check_cancelled, recoverable_events
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.llm.client import LLMClient, LLMError
@@ -22,11 +24,11 @@ from audioreader.llm.provider import (
     get_discovery_llm_client,
     get_llm_client,
 )
-from audioreader.models import User, utcnow
+from audioreader.models import Episode, Subscription, User, utcnow
 from audioreader.ratelimit import SlidingWindow
 from audioreader.routers.auth import has_current_ai_data_sharing_consent
 from audioreader.routers.feeds import episodes_read
-from audioreader.schemas import CommandRequest, CommandResponse
+from audioreader.schemas import CommandRequest, CommandResponse, LibraryActionRequest
 from audioreader.settings_types import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -303,3 +305,53 @@ async def cancel_voice_command(request_id: str, session: Session, user: CurrentU
         raise HTTPException(status_code=422, detail="Invalid request identifier")
     await cancel_request(session, user.id, request_id)
     return {"status": "cancel_requested"}
+
+
+@router.post("/actions", dependencies=[Depends(check_rate_limit)])
+async def library_action(body: LibraryActionRequest, session: Session, user: CurrentUser) -> CommandResponse:
+    """Typed, model-free actions with the same receipts and undo as voice."""
+    if body.action != "undo" and body.episode_id is None:
+        raise HTTPException(status_code=422, detail="An episode is required")
+    request = CommandRequest(transcript=f"library-action:{body.action}:{body.episode_id}", request_id=body.request_id)
+
+    async def events(active: AsyncSession) -> AsyncIterator[bytes]:
+        await check_cancelled(active)
+        if body.action == "undo":
+            result = await undo.undo_last(active, user)
+            response = await _action_response(active, user, result)
+        else:
+            episode = await active.scalar(
+                select(Episode)
+                .options(joinedload(Episode.feed))
+                .where(
+                    Episode.id == body.episode_id,
+                    Episode.feed_id.in_(select(Subscription.feed_id).where(Subscription.user_id == user.id)),
+                )
+            )
+            if episode is None:
+                yield _line({"type": "error", "spoken_response": "That item is no longer in your library."})
+                return
+            before = await undo.snapshot(active, user, "file_episode", {"episode_id": episode.id})
+            await positions.set_episode_state(
+                active,
+                user,
+                episode.id,
+                played=True if body.action == "mark_played" else False if body.action == "restore" else None,
+                dismissed=True if body.action == "dismiss" else False if body.action == "restore" else None,
+            )
+            await undo.remember(active, user, before)
+            response = CommandResponse(
+                action=body.action,
+                spoken_response=f"Updated {episode.title}.",
+                episode=(await episodes_read(active, user, [episode]))[0],
+            )
+        yield _line({"type": "result", "response": response.model_dump(mode="json")})
+
+    await session.commit()
+    async for line in recoverable_events(request, user.id, session, events):
+        envelope = json.loads(line)
+        if envelope["type"] == "result":
+            return CommandResponse.model_validate(envelope["response"])
+        if envelope["type"] == "error":
+            raise HTTPException(status_code=409, detail={"spoken_response": envelope["spoken_response"]})
+    raise HTTPException(status_code=503, detail={"spoken_response": OUTAGE_RESPONSE})

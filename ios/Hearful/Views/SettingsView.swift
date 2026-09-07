@@ -100,6 +100,14 @@ struct SettingsView: View {
                     }
                 }
 
+                Section {
+                    NavigationLink {
+                        SiriShortcutsView()
+                    } label: {
+                        Label("Siri and Shortcuts", systemImage: "mic.badge.plus")
+                    }
+                }
+
                 NewsletterAddressSection()
 
                 Section {
@@ -190,9 +198,10 @@ struct SettingsView: View {
             .sheet(isPresented: $showingAIChoice) {
                 AIDataSharingConsentView(
                     onAllowed: { showingAIChoice = false },
-                    onNotNow: { showingAIChoice = false })
-                    .environmentObject(auth)
-                    .presentationDetents([.fraction(0.68), .large])
+                    onNotNow: { showingAIChoice = false }
+                )
+                .environmentObject(auth)
+                .presentationDetents([.fraction(0.68), .large])
             }
             .disabled(deleting)
             .overlay {
@@ -218,7 +227,8 @@ struct SettingsView: View {
     }
 
     private func speedLabel(_ rate: Float) -> String {
-        let number = rate.truncatingRemainder(dividingBy: 1) == 0
+        let number =
+            rate.truncatingRemainder(dividingBy: 1) == 0
             ? String(Int(rate)) : String(format: "%g", rate)
         return "\(number)×"
     }

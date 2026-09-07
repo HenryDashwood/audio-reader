@@ -10,7 +10,7 @@ import Foundation
 /// spot.)
 struct ShowEntity: AppEntity {
     let id: Int
-    let title: String
+    @Property(title: "Title") var title: String
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Show")
     static let defaultQuery = ShowQuery()
@@ -31,18 +31,18 @@ struct ShowEntity: AppEntity {
 
 struct ShowQuery: EntityStringQuery {
     /// Siri asks for these when restoring a show it resolved earlier.
+    @MainActor
     func entities(for identifiers: [Int]) async throws -> [ShowEntity] {
         guard HearfulAPI.tokenProvider() != nil else { return [] }
-        let api = HearfulAPI()
-        let shows = (try? await api.shows()) ?? []
+        let shows = try await ShortcutLibrary.shared.shows()
         return shows.filter { identifiers.contains($0.id) }.map(ShowEntity.init)
     }
 
     /// Spoken text from Siri's follow-up question, matched loosely against
     /// her subscriptions: "average joe" should find "An Average Joe".
+    @MainActor
     func entities(matching string: String) async throws -> [ShowEntity] {
-        let api = HearfulAPI()
-        let shows = try await api.shows()
+        let shows = try await ShortcutLibrary.shared.shows()
         let spoken = Self.normalise(string)
         guard !spoken.isEmpty else { return [] }
         return shows.filter { show in
@@ -55,10 +55,10 @@ struct ShowQuery: EntityStringQuery {
     /// The names Siri matches phrase parameters against. The system fetches
     /// these in the background, possibly before she has ever signed in; an
     /// empty list is right then, a thrown error is noise.
+    @MainActor
     func suggestedEntities() async throws -> [ShowEntity] {
         guard HearfulAPI.tokenProvider() != nil else { return [] }
-        let api = HearfulAPI()
-        return try await api.shows().map(ShowEntity.init)
+        return (try? await ShortcutLibrary.shared.shows().map(ShowEntity.init)) ?? []
     }
 
     private static func normalise(_ value: String) -> String {

@@ -222,10 +222,13 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     var transcripts: [String] = []
     var requests: [CommandRequest] = []
 
-    func commandStream(request: CommandRequest, traceparent: String?) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+    func commandStream(request: CommandRequest, traceparent: String?) -> AsyncThrowingStream<
+        CommandStreamEvent, Error
+    > {
         requests.append(request)
-        return commandStream(transcript: request.transcript, nowPlayingEpisodeID: request.nowPlayingEpisodeID,
-                             turns: request.turns, traceparent: traceparent)
+        return commandStream(
+            transcript: request.transcript, nowPlayingEpisodeID: request.nowPlayingEpisodeID,
+            turns: request.turns, traceparent: traceparent)
     }
     /// How long the backend takes to answer.
     var delay: Duration = .zero
@@ -243,7 +246,8 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
         transcript: String, nowPlayingEpisodeID: Int? = nil, turns: [ConversationTurn] = [],
         traceparent: String? = nil
     ) async throws
-        -> CommandResponse {
+        -> CommandResponse
+    {
         transcripts.append(transcript)
         nowPlayingIDs.append(nowPlayingEpisodeID)
         turnsSent.append(turns)
@@ -293,7 +297,16 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     }
     func logout() async throws {}
     func deleteAccount() async throws {}
-    func me() async throws -> UserInfo { UserInfo(id: "u1", displayName: nil) }
+    var libraryActionError: Error?
+    var libraryActionRequests: [(String, Int?, String)] = []
+    func libraryAction(_ action: String, episodeID: Int?, requestID: String) async throws -> CommandResponse {
+        libraryActionRequests.append((action, episodeID, requestID))
+        if let libraryActionError { throw libraryActionError }
+        return response ?? CommandResponse(action: .unknown, spokenResponse: "Done.", episode: nil)
+    }
+
+    var userInfo = UserInfo(id: "u1", displayName: nil)
+    func me() async throws -> UserInfo { userInfo }
 
     var reportedPositions: [(episodeID: Int, seconds: Double, completed: Bool)] = []
     var incompletePositionReportDelay: Duration = .zero
@@ -797,10 +810,11 @@ struct VoiceConversationTests {
         await controller.beginCommand()
 
         let cues = recorder.events.filter { if case .cue = $0 { true } else { false } }
-        #expect(cues == [
-            .cue(.acknowledged), .cue(.listening), .cue(.processing),
-            .cue(.listening), .cue(.processing),
-        ])
+        #expect(
+            cues == [
+                .cue(.acknowledged), .cue(.listening), .cue(.processing),
+                .cue(.listening), .cue(.processing),
+            ])
     }
 
     @Test func aQuestionReopensTheMicrophoneWithoutATap() async {
@@ -1580,7 +1594,8 @@ struct VoicePipelineTests {
         speaker.keepsSpeaking = true
         let speech = FakeSpeech()
         let api = FakeAPI()
-        api.response = CommandResponse(action: .playEpisode, spokenResponse: "Playing it.", episode: episode())
+        api.response = CommandResponse(
+            action: .playEpisode, spokenResponse: "Playing it.", episode: episode())
         let player = FakePlayer(recorder)
         let controller = VoiceController(
             api: api, speech: speech, speaker: speaker, player: player,
@@ -1679,7 +1694,10 @@ struct VoicePipelineTests {
     @Test func deadlineReturnsWithoutWaitingForAnUncooperativeOperation() async {
         let gate = CommandGate()
         await #expect(throws: VoiceTimeout.self) {
-            try await withVoiceDeadline(seconds: 0.01) { await gate.wait(); return "late" }
+            try await withVoiceDeadline(seconds: 0.01) {
+                await gate.wait()
+                return "late"
+            }
         }
         await gate.release()
     }

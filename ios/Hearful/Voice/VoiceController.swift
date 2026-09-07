@@ -150,7 +150,9 @@ final class VoiceController: ObservableObject {
         api: HearfulAPIProtocol, speech: SpeechRecognizing, speaker: Speaking,
         player: AudioPlaying, feedback: FeedbackPlaying, sleepTimer: SleepTimer = .shared,
         telemetry: TelemetryReporting? = nil, sessionContext: VoiceSessionContext = VoiceSessionContext(),
-        progressDelay: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+        progressDelay: @escaping @MainActor (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        }
     ) {
         self.sessionContext = sessionContext
         self.conversation = sessionContext.conversation
@@ -172,12 +174,14 @@ final class VoiceController: ObservableObject {
     /// two-sentence request and two requests, and the difference she was
     /// paying for before: every clarification the app asked for was a question
     /// it then could not use the answer to.
-    func beginCommand() async {
+    func beginCommand(transcript: String? = nil, recovering: Bool = false) async {
         // Taps are easy to double up when you cannot see the screen.
-        guard !isBusy else { return }
+        guard !isBusy, !sessionContext.isExecuting else { return }
         let id = UUID()
+        sessionContext.executionID = id
+        defer { if sessionContext.executionID == id { sessionContext.executionID = nil } }
         commandID = id
-        let task = Task { await self.runCommand(id: id) }
+        let task = Task { await self.runCommand(id: id, transcript: transcript, recovering: recovering) }
         commandTask = task
         await withTaskCancellationHandler {
             await task.value
@@ -190,7 +194,7 @@ final class VoiceController: ObservableObject {
         }
     }
 
-    private func runCommand(id: UUID) async {
+    private func runCommand(id: UUID, transcript: String?, recovering: Bool) async {
         guard !Task.isCancelled else { return }
         // A tap after a long silence starts a subject rather than continuing
         // one. Checked here rather than on a timer so the transcript stays on
@@ -212,13 +216,22 @@ final class VoiceController: ObservableObject {
         // turns that took.
         interruptedPlayback = player.isPlaying
         if player.isPlaying { player.pause() }
-        defer { if commandID == id { resumeInterruptedPlayback(); sessionContext.conversation = conversation } }
+        defer {
+            if commandID == id {
+                resumeInterruptedPlayback()
+                sessionContext.conversation = conversation
+            }
+        }
 
-        for _ in 0...Self.maxFollowUps {
+        for turn in 0...Self.maxFollowUps {
             // Anything but a question ends it: she got what she asked for, or
             // was told why not. Cancellation ends it too — a question asked of
             // a sheet that has gone is not one to reopen the microphone for.
-            guard await takeTurn(id: id) == .expectsReply, !isCancelled else { return }
+            guard
+                await takeTurn(
+                    id: id, suppliedTranscript: turn == 0 ? transcript : nil,
+                    recovering: turn == 0 && recovering) == .expectsReply, !isCancelled
+            else { return }
         }
     }
 
@@ -231,7 +244,9 @@ final class VoiceController: ObservableObject {
 
     /// One listen, one answer. Everything that can go wrong with a spoken
     /// request goes wrong in here, and each pass is its own telemetry row.
-    private func takeTurn(id: UUID) async -> TurnOutcome {
+    private func takeTurn(id: UUID, suppliedTranscript: String? = nil, recovering: Bool = false) async
+        -> TurnOutcome
+    {
         defer { if commandID == id { speech.cancel() } }
         // One wide event per spoken turn, opened here and sent once at the
         // end however it ends — including the ends that never reach the
@@ -252,35 +267,41 @@ final class VoiceController: ObservableObject {
             // take a moment. Calling that "Listening" invites her to speak
             // before a microphone exists, which loses the beginning of the
             // command. Only onReady is the real go-ahead.
-            state = .preparing
-            // A recogniser may start capture more than once — the older one
-            // retries server-side — but she should be told to speak only once.
-            var announced = false
             var bookended = false
             let listenStarted = ContinuousClock.now
-            liveUserText = ""
-            liveAssistantText = ""
-            speech.configure(vocabulary: recognitionVocabulary) { [weak self] in
-                guard let self, self.commandID == id else { return }
-                attempt.markCaptureEnded()
-                self.state = .finalizing
-                if !self.liveUserText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    bookended = true
-                    self.feedback.play(.processing)
+            let transcript: String
+            if let suppliedTranscript {
+                transcript = suppliedTranscript
+                liveAssistantText = ""
+            } else {
+                state = .preparing
+                // A recogniser may start capture more than once — the older one
+                // retries server-side — but she should be told to speak only once.
+                var announced = false
+                liveUserText = ""
+                liveAssistantText = ""
+                speech.configure(vocabulary: recognitionVocabulary) { [weak self] in
+                    guard let self, self.commandID == id else { return }
+                    attempt.markCaptureEnded()
+                    self.state = .finalizing
+                    if !self.liveUserText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        bookended = true
+                        self.feedback.play(.processing)
+                    }
                 }
-            }
-            let transcript = try await withVoiceDeadline(seconds: 90) {
-                try await self.speech.listen(
-                onReady: {
-                    guard !announced, self.commandID == id else { return }
-                    announced = true
-                    self.state = .listening
-                    self.feedback.play(.listening)
-                },
-                onPartial: { text in
-                    guard self.commandID == id else { return }
-                    self.liveUserText = text
-                })
+                transcript = try await withVoiceDeadline(seconds: 90) {
+                    try await self.speech.listen(
+                        onReady: {
+                            guard !announced, self.commandID == id else { return }
+                            announced = true
+                            self.state = .listening
+                            self.feedback.play(.listening)
+                        },
+                        onPartial: { text in
+                            guard self.commandID == id else { return }
+                            self.liveUserText = text
+                        })
+                }
             }
             attempt.listenSeconds = Self.seconds(since: listenStarted)
             // Cancelling a recogniser mid-turn is how closing the sheet ends
@@ -324,8 +345,15 @@ final class VoiceController: ObservableObject {
             // the more specific of the two ("stop" is a pause, "stop in
             // twenty minutes" is not).
             let simplePhrase = heard.lowercased().trimmingCharacters(in: .punctuationCharacters)
+            if ["undo that", "undo last action"].contains(simplePhrase),
+                let livePlayer = player as? PlaybackCoordinator,
+                try ShortcutUndo.undoSpeed(player: livePlayer)
+            {
+                await finish(saying: "Playback speed restored.")
+                return .done
+            }
             if ["undo that", "undo last action"].contains(simplePhrase), let rate = sessionContext.undoSpeed {
-                player.setPlaybackRate(rate)
+                setPlaybackRate(rate)
                 sessionContext.undoSpeed = nil
                 await finish(saying: "Back to \(rate) times speed.")
                 return .done
@@ -348,6 +376,7 @@ final class VoiceController: ObservableObject {
             }
 
             sessionContext.undoSpeed = nil
+            if player is PlaybackCoordinator { ShortcutUndo.clear() }
             attempt.commandSent = true
             // Captured before the request rather than read inside it: what is
             // playing is what she was listening to when she spoke, and by the
@@ -356,12 +385,16 @@ final class VoiceController: ObservableObject {
             // Everything except the line she has just spoken, which travels as
             // the transcript.
             let earlier = conversation.payload.dropLast()
-            var response: CommandResponse?
-            let recovery = ["try again", "did that work", "what happened", "check that request"].contains(
-                heard.lowercased().trimmingCharacters(in: .punctuationCharacters))
-            let request = recovery ? pendingRequest ?? CommandRequest(transcript: heard) : CommandRequest(
-                transcript: heard, requestID: UUID().uuidString, viewedEpisodeID: viewedEpisode?.id,
-                recentActions: recentActions, nowPlayingEpisodeID: nowPlaying, turns: Array(earlier))
+            let recovery =
+                recovering
+                || ["try again", "did that work", "what happened", "check that request"].contains(
+                    heard.lowercased().trimmingCharacters(in: .punctuationCharacters))
+            let request =
+                recovery
+                ? pendingRequest ?? CommandRequest(transcript: heard)
+                : CommandRequest(
+                    transcript: heard, requestID: UUID().uuidString, viewedEpisodeID: viewedEpisode?.id,
+                    recentActions: recentActions, nowPlayingEpisodeID: nowPlaying, turns: Array(earlier))
             pendingRequest = request
             let progress = Task {
                 do { try await self.progressDelay(.seconds(8)) } catch { return }
@@ -369,19 +402,9 @@ final class VoiceController: ObservableObject {
                 self.feedback.play(.working)
             }
             defer { progress.cancel() }
-            for try await event in api.commandStream(request: request, traceparent: attempt.traceparent())
-            {
-                guard !isCancelled else { return .done }
-                switch event {
-                case .assistantDelta(let text):
-                    liveAssistantText += text
-                case .result(let result):
-                    response = result
-                }
-            }
-            guard let response else {
-                throw APIError(underlying: "stream ended without a command result")
-            }
+            let response = try await CommandExecution.response(
+                api: api, request: request, traceparent: attempt.traceparent()
+            ) { self.liveAssistantText += $0 }
             guard !isCancelled else { return .done }
             progress.cancel()
             attempt.markResponse()
@@ -392,7 +415,8 @@ final class VoiceController: ObservableObject {
             guard !isCancelled else { return .done }
             pendingRequest = nil
             recentActions += (response.actions?.isEmpty == false ? response.actions! : [response]).map {
-                "\($0.action.rawValue): \($0.spokenResponse)" + ($0.episode.map { " [episode_id=\($0.id)]" } ?? "")
+                "\($0.action.rawValue): \($0.spokenResponse)"
+                    + ($0.episode.map { " [episode_id=\($0.id)]" } ?? "")
             }
             recentActions = Array(recentActions.suffix(8))
             return response.expectsReply == true ? .expectsReply : .done
@@ -442,6 +466,7 @@ final class VoiceController: ObservableObject {
             Task { await self.api.cancelCommand(requestID: requestID) }
         }
         commandTask?.cancel()
+        if sessionContext.executionID == commandID { sessionContext.executionID = nil }
         commandTask = nil
         commandID = nil
         sessionContext.conversation = conversation
@@ -491,6 +516,13 @@ final class VoiceController: ObservableObject {
     /// Acted on immediately and silently: the audio stopping, starting or
     /// jumping is itself the confirmation, and a spoken "paused" would only
     /// delay the thing she asked for.
+    private func setPlaybackRate(_ rate: Float) {
+        if let livePlayer = player as? PlaybackCoordinator {
+            ShortcutUndo.rememberSpeed(player.playbackRate, applied: rate, mode: livePlayer.mode)
+        }
+        player.setPlaybackRate(rate)
+    }
+
     private func perform(_ command: TransportCommand) {
         switch command {
         case .faster, .slower, .normalSpeed, .speed: sessionContext.undoSpeed = player.playbackRate
@@ -505,11 +537,11 @@ final class VoiceController: ObservableObject {
         case .skipForward: player.skip(by: 30)
         case .skipBack: player.skip(by: -15)
         // Quarter steps: enough to notice, small enough to nudge repeatedly.
-        case .faster: player.setPlaybackRate(min(player.playbackRate + 0.25, 2.0))
-        case .slower: player.setPlaybackRate(max(player.playbackRate - 0.25, 0.5))
-        case .normalSpeed: player.setPlaybackRate(1.0)
+        case .faster: setPlaybackRate(min(player.playbackRate + 0.25, 2.0))
+        case .slower: setPlaybackRate(max(player.playbackRate - 0.25, 0.5))
+        case .normalSpeed: setPlaybackRate(1.0)
         case .seek(let seconds): player.skip(by: seconds)
-        case .speed(let rate): player.setPlaybackRate(rate)
+        case .speed(let rate): setPlaybackRate(rate)
         }
         state = .idle
     }
@@ -551,17 +583,24 @@ final class VoiceController: ObservableObject {
                 switch action.action {
                 case .playEpisode:
                     guard let episode = action.episode else { continue }
-                    do { try player.play(episode); playing = episode }
-                    catch { await fail(saying: "Sorry, that episode would not play."); return }
+                    do {
+                        try player.play(episode)
+                        playing = episode
+                    } catch {
+                        await fail(saying: "Sorry, that episode would not play.")
+                        return
+                    }
                 case .setSpeed:
-                    if let speed = action.speed { player.setPlaybackRate(Float(speed)) }
+                    if let speed = action.speed { setPlaybackRate(Float(speed)) }
                 case .subscribed, .unsubscribed:
                     NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
                 case .markPlayed, .dismiss, .restore:
                     if let episode = action.episode, let filing = action.action.filing {
                         filing.broadcast(episodeID: episode.id)
                         if filing.hidesFromLatest, player.currentEpisode?.id == episode.id {
-                            player.pause(); interruptedPlayback = false; playing = nil
+                            player.pause()
+                            interruptedPlayback = false
+                            playing = nil
                         }
                     }
                 case .unknown: break
@@ -586,7 +625,7 @@ final class VoiceController: ObservableObject {
                 await finish(saying: response.spokenResponse)
                 return
             }
-            player.setPlaybackRate(Float(speed))
+            setPlaybackRate(Float(speed))
             // Confirm aloud: playback is paused while she speaks, so unlike
             // pause/skip there is no audible change to hear yet.
             await finish(saying: response.spokenResponse)
@@ -631,11 +670,11 @@ final class VoiceController: ObservableObject {
         // carrying on playing it, would answer "I have heard this" by playing
         // more of it — and thirty seconds later the position reporter would
         // write its own idea of the episode's state over hers.
+        filing.broadcast(episodeID: episode.id)
         if filing.hidesFromLatest, player.currentEpisode?.id == episode.id {
             interruptedPlayback = false
             player.pause()
         }
-        filing.broadcast(episodeID: episode.id)
         await finish(saying: response.spokenResponse)
     }
 

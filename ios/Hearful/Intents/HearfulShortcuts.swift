@@ -8,6 +8,31 @@ import AppIntents
 /// people do not say the same thing twice.
 struct HearfulShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: ContinueListeningIntent(),
+            phrases: [
+                "Continue listening in \(.applicationName)", "Resume listening in \(.applicationName)",
+            ], shortTitle: "Continue Listening", systemImageName: "play.fill")
+        AppShortcut(
+            intent: RunMagpieRequestIntent(),
+            phrases: [
+                "Run a request in \(.applicationName)", "Do something in \(.applicationName)",
+            ], shortTitle: "Run a Request", systemImageName: "text.bubble")
+        AppShortcut(
+            intent: SetListeningSpeedIntent(),
+            phrases: [
+                "Change the speed in \(.applicationName)", "Set playback speed in \(.applicationName)",
+            ], shortTitle: "Playback Speed", systemImageName: "speedometer")
+        AppShortcut(
+            intent: SetSleepTimerIntent(),
+            phrases: [
+                "Set a sleep timer in \(.applicationName)"
+            ], shortTitle: "Sleep Timer", systemImageName: "moon.zzz")
+        AppShortcut(
+            intent: GetListeningStatusIntent(),
+            phrases: [
+                "What am I listening to in \(.applicationName)", "Listening status in \(.applicationName)",
+            ], shortTitle: "Listening Status", systemImageName: "waveform")
         // The escape hatch from every Siri limitation below: opens the app
         // with the microphone live, and from there the request is free-form.
         AppShortcut(
