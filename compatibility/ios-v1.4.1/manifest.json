@@ -1,0 +1,9 @@
+{
+  "release": "v1.4.1",
+  "commit": "2a77d2798d47b51119fa8060bc2b93ded2e62ca3",
+  "sha256": {
+    "APIModels.swift": "ef97054fa670ddde1574662457a0a89d5ff6faefafc09472837d329a5d3b60ff",
+    "Conversation.swift": "59716a4d7d534f054fed8ccd6e2ce121e47a95e10cdd9c2b32db58ab72d45801",
+    "HearfulAPI.swift": "73d7a725f11628e172c2c22f2a9343820fe03e330e3db3fc91c23c86ecae779b"
+  }
+}

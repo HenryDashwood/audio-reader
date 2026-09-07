@@ -15,6 +15,13 @@ The system consists of a SwiftUI iOS client backed by a FastAPI service. The
 mobile client operates as a thin client, delegating feed ingestion and
 management, search, and the LLM-based voice action processing to the backend.
 
+## Backend releases
+
+Backend changes go through an isolated Railway staging environment before a manual
+production promotion. CI checks the current app and an unchanged released Swift client
+against the backend. See [the release workflow](docs/backend-releases.md) for deployment,
+phone testing, compatibility policy and rollback instructions.
+
 ## Layout
 
 - `backend/` — FastAPI + SQLAlchemy 2.0 + Alembic. Feed ingestion, episode

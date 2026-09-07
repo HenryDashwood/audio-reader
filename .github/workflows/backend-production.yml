@@ -1,0 +1,53 @@
+name: Promote backend to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      staging_deployment_id:
+        description: 'Railway staging deployment ID tested with the released and upcoming app'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: backend-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Verify the tested staging deployment
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: backend-staging
+    outputs:
+      sha: ${{ steps.staging.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require successful staging and main CI for the same commit
+        id: staging
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          STAGING_DEPLOYMENT_ID: ${{ inputs.staging_deployment_id }}
+        run: python3 scripts/deploy_backend.py validate-staging --deployment "$STAGING_DEPLOYMENT_ID"
+
+  production:
+    name: Deploy the verified commit to production
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: backend-production
+      url: https://audio-reader-production.up.railway.app
+    steps:
+      # Use trusted workflow tooling from main, not scripts from an arbitrary input ref.
+      - uses: actions/checkout@v7
+      - name: Deploy and verify the commit tested in staging
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          DEPLOY_SHA: ${{ needs.validate.outputs.sha }}
+        run: python3 scripts/deploy_backend.py deploy --environment production --sha "$DEPLOY_SHA"

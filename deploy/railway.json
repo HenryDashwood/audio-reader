@@ -1,0 +1,15 @@
+{
+  "project_id": "a79c8968-581d-4297-8769-b23dfc0d2be1",
+  "service_id": "dc3f76d0-9382-4d4c-83ce-0958b3892be1",
+  "repository": "HenryDashwood/audio-reader",
+  "environments": {
+    "staging": {
+      "id": "843c29b1-00e5-441a-a4fc-44eb93617ed1",
+      "url": "https://audio-reader-staging.up.railway.app"
+    },
+    "production": {
+      "id": "c84b9923-0929-4692-8454-871c764c57fd",
+      "url": "https://audio-reader-production.up.railway.app"
+    }
+  }
+}

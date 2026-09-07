@@ -5,6 +5,13 @@
 - Preserve unrelated working-tree changes. This repository is often used for parallel backend and iOS work.
 - Do not tag, publish, upload to TestFlight, change credentials, or modify production services unless the user explicitly asks.
 - Treat API contract changes as cross-platform: update and verify both the FastAPI backend and the Swift client when either side changes.
+- Backend releases follow `docs/backend-releases.md`: CI deploys tested `main`
+  commits to staging; `.github/workflows/backend-production.yml` owns manual
+  production promotion of a verified staging deployment. Do not restore Railway
+  push-to-production autodeploys.
+- Preserve frozen released-client sources under `compatibility/`. Never update a
+  baseline just to make a backend change pass. For API/compatibility changes, run
+  `make backend-compatibility` on macOS as well as `make backend-check`.
 - GitHub Actions owns automatic pull-request and `main` CI. The Xcode Cloud Test workflow is manual-only, and `.github/workflows/testflight.yml` owns releases.
 
 ## Backend

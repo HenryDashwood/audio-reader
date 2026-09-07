@@ -10,7 +10,9 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A cancelled workflow cannot cancel a Railway deployment already submitted.
+  # Serialize main runs so an older build cannot finish after a newer one.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -56,3 +58,44 @@ jobs:
 
       - name: Run the iOS tests
         run: make ios-test
+
+  compatibility:
+    name: Released iOS client compatibility
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: '3.13'
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          xcode=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+      - name: Install frozen backend dependencies
+        run: cd backend && uv sync --frozen
+      - name: Test current backend with the frozen released client
+        run: make backend-compatibility
+
+  staging:
+    name: Deploy backend to staging
+    needs: [backend, ios, compatibility]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: backend-staging
+      url: https://audio-reader-staging.up.railway.app
+    concurrency:
+      group: backend-staging
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - name: Deploy and verify this exact commit
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: python3 scripts/deploy_backend.py deploy --environment staging --sha "$DEPLOY_SHA"
