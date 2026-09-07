@@ -1,6 +1,6 @@
 # Siri, Shortcuts, and system controls
 
-Magpie exposes listening and library actions in Shortcuts, plus ten suggested App Shortcuts with spoken phrases. Settings → Siri and Shortcuts explains the entry points and links to the action library. The current item is annotated on the article and Now Playing screens so the system can associate visible content with an item.
+Magpie exposes listening and library actions in Shortcuts, plus ten suggested App Shortcuts with spoken phrases. Settings → Siri and Shortcuts explains the entry points and links to the action library. The article and Now Playing screens associate the current item with a foreground `NSUserActivity` so Siri can identify visible content. This uses `NSUserActivity.appEntityIdentifier`, which is supported by the Xcode 26 SDK, rather than the newer SwiftUI modifier. The activities do not advertise Handoff.
 
 ## Available actions
 
@@ -52,6 +52,8 @@ Before a distribution build, configure an App Store distribution provisioning pr
 ## Optional iOS 27 audio prototype
 
 `NativeSiriAudio.swift` contains an opt-in MediaIntents prototype. Build with Xcode 27 and `HEARFUL_SIRI_AUDIO_FLAGS=HEARFUL_NATIVE_SIRI_AUDIO` to include it. Both SDK import and runtime availability are guarded; ordinary builds retain the established iOS 26 shortcut routing.
+
+Keep standard builds compatible with the Xcode 26 SDK used by CI. Testing on an iOS 26 simulator with Xcode 27 checks runtime behavior, but does not verify that the source compiles with the older SDK.
 
 The prototype supplies podcast show/episode schemas, structured read-only audio search, and the native play schema. It supports known library URLs and unspecified requests that can resume or choose a recent podcast. It does not pretend articles are podcasts or implement a playback queue. Unsupported queue, shuffle, repeat, and warmup requests fail explicitly. The prototype compiles and passes App Intents metadata extraction; enabling it for releases still requires physical-device Siri testing on the final OS.
 

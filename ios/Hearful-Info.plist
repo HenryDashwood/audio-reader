@@ -9,6 +9,13 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<!-- Foreground Siri context for the reader and player; these activities
+	     do not advertise Handoff to another device. -->
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>com.henrydashwood.hearful.readArticle</string>
+		<string>com.henrydashwood.hearful.viewNowPlaying</string>
+	</array>
 	<!-- iPhone ProMotion displays otherwise cap this app at the 60 Hz system
 	     default. UIKit and WebKit can pace scrolling at the display's current
 	     refresh rate once the full range is available. -->

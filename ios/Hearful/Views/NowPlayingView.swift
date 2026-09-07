@@ -83,9 +83,13 @@ struct NowPlayingView: View {
 
             Spacer(minLength: 0)
         }
-        .appEntityIdentifier(
-            player.currentEpisode.map { EntityIdentifier(for: EpisodeEntity.self, identifier: $0.id) }
-        )
+        // A nil episode removes this screen's Siri context automatically.
+        .userActivity("com.henrydashwood.hearful.viewNowPlaying", element: player.currentEpisode) {
+            episode, activity in
+            activity.title = episode.title
+            activity.appEntityIdentifier = EntityIdentifier(for: EpisodeEntity.self, identifier: episode.id)
+            activity.isEligibleForHandoff = false
+        }
         .padding(.bottom, 32)
         .presentationDragIndicator(.hidden)
         // The episode can go away underneath this screen — it ended, or she

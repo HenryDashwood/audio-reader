@@ -48,6 +48,17 @@ struct ArticleView: View {
         VStack(spacing: 0) {
             content
         }
+        // NSUserActivity provides Siri context on the Xcode 26 SDK too; the
+        // direct SwiftUI appEntityIdentifier modifier needs a newer SDK.
+        .userActivity("com.henrydashwood.hearful.readArticle", element: episode) { episode, activity in
+            activity.title = episode.title
+            activity.appEntityIdentifier = EntityIdentifier(for: EpisodeEntity.self, identifier: episode.id)
+            activity.isEligibleForHandoff = false
+        }
+        .onAppear { ShortcutNavigation.viewedEpisodeID = episode.id }
+        .onDisappear {
+            if ShortcutNavigation.viewedEpisodeID == episode.id { ShortcutNavigation.viewedEpisodeID = nil }
+        }
         // The article runs the whole height of the screen, under the back
         // button and the clock at one end and under the tab bar at the other,
         // rather than stopping dead against them. Prose that ends in a hard
@@ -58,11 +69,6 @@ struct ArticleView: View {
         // of the way of a scroll only while something is scrolling underneath
         // them, so this is the difference between bars that get out of the way
         // and bars that sit there.
-        .appEntityIdentifier(EntityIdentifier(for: EpisodeEntity.self, identifier: episode.id))
-        .onAppear { ShortcutNavigation.viewedEpisodeID = episode.id }
-        .onDisappear {
-            if ShortcutNavigation.viewedEpisodeID == episode.id { ShortcutNavigation.viewedEpisodeID = nil }
-        }
         .ignoresSafeArea()
         // No title in the bar: it is the same sentence as the heading the
         // article opens with, a foot below it, and the article's own is the
