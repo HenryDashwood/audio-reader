@@ -865,6 +865,17 @@ async def _delete_contents(session: AsyncSession, feed: Feed) -> None:
 
     if feed.owner_user_id is not None:
         await groups.release_children(session, feed.owner_user_id, feed.id)
+    from sqlalchemy import update
+
+    from audioreader.models import SavedArticle
+
+    # Saved issues outlive newsletter retention. Their detached identity stays
+    # accessible only through its user's selection.
+    await session.execute(
+        update(Episode)
+        .where(Episode.feed_id == feed.id, Episode.id.in_(select(SavedArticle.episode_id)))
+        .values(feed_id=None)
+    )
     episode_ids = select(Episode.id).where(Episode.feed_id == feed.id)
     await session.execute(delete(PlaybackPosition).where(PlaybackPosition.episode_id.in_(episode_ids)))
     await session.execute(delete(InboundMessage).where(InboundMessage.feed_id == feed.id))

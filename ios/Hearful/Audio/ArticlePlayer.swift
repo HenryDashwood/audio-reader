@@ -91,7 +91,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// Loads the article's text without speaking, so the network fetch
     /// overlaps the spoken confirmation instead of following it.
     func prepare(_ episode: Episode) {
-        guard episode.id != currentEpisode?.id else { return }
+        guard episode.id != currentEpisode?.id || episode.contentID != currentEpisode?.contentID else { return }
         load(episode, andPlay: false)
     }
 
@@ -106,7 +106,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     func play(_ episode: Episode) {
         try? AudioSession.configureForPlayback()
-        if episode.id == currentEpisode?.id, script != nil {
+        if episode.id == currentEpisode?.id, episode.contentID == currentEpisode?.contentID, script != nil {
             wantsPlayback = true
             speakCurrentChunk()
             return
@@ -264,10 +264,12 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             // it. Reading must use the same copy first: asking the server for
             // text we can see makes a brief outage turn a readable article
             // into a spoken network error.
-            let saved = cache.load(
+            let key: OfflineCache.Key = episode.contentID.map { .articleVersion(episodeID: episode.id, contentID: $0) } ?? .articleText(episodeID: episode.id)
+            let cached = cache.load(
                 EpisodeText.self,
-                for: .articleText(episodeID: episode.id)
+                for: key
             )
+            let saved = cached.flatMap { episode.contentID == nil || $0.contentID == episode.contentID ? $0 : nil }
             let savedMayBeFeedTeaser =
                 episode.link != nil
                 && (saved?.text.count ?? Self.likelyTeaserCharacterLimit)
@@ -276,17 +278,20 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
                 guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id else {
                     return
                 }
-                self.scriptLoaded(ArticleScript(text: saved.text))
+                self.textLoaded(saved)
                 return
             }
 
             do {
-                let article = try await api.articleText(episodeID: episode.id)
+                let article = try await api.articleText(episodeID: episode.id, contentID: episode.contentID)
                 guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id else {
                     return
                 }
-                cache.save(article, for: .articleText(episodeID: episode.id))
-                self.scriptLoaded(ArticleScript(text: article.text))
+                if let expected = episode.contentID, article.contentID != expected {
+                    throw APIError(underlying: "The server returned a different article version")
+                }
+                cache.save(article, for: key)
+                self.textLoaded(article)
             } catch {
                 guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id else {
                     return
@@ -298,12 +303,24 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
                     let saved,
                     !saved.text.isEmpty
                 {
-                    self.scriptLoaded(ArticleScript(text: saved.text))
+                    self.textLoaded(saved)
                     return
                 }
                 self.loadFailed(with: error)
             }
         }
+    }
+
+    private func textLoaded(_ article: EpisodeText) {
+        // A stale list can carry seconds from the old unversioned feed copy.
+        // Learning a different version must never apply those seconds to it.
+        if currentEpisode?.contentID != article.contentID {
+            currentTime = 0
+            currentEpisode?.positionSeconds = 0
+            currentEpisode?.completed = false
+        }
+        currentEpisode?.contentID = article.contentID
+        scriptLoaded(ArticleScript(text: article.text))
     }
 
     private func scriptLoaded(_ loaded: ArticleScript) {

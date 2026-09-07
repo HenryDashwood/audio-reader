@@ -25,7 +25,13 @@ final class AuthController: ObservableObject {
     }
     @Published private(set) var signInError: String?
     /// Nil only while a restored session's /me check is in flight.
-    @Published private(set) var user: UserInfo?
+    @Published private(set) var user: UserInfo? {
+        didSet {
+            if let user {
+                try? CaptureInbox.shared.configure(.init(userID: user.id, server: AppConfiguration.apiBaseURL))
+            }
+        }
+    }
 
     private let api: HearfulAPIProtocol
     private var authRequiredObserver: NSObjectProtocol?
@@ -141,6 +147,8 @@ final class AuthController: ObservableObject {
         ShortcutLifecycle.resetSession()
         // The next person to sign in on this phone must not be shown the last
         // person's library out of the cache.
+        CaptureInbox.shared.signOut()
+        SavedLibrary.shared.clear()
         OfflineCache.shared.clear()
         // Events are scoped by account, but removing all queues is the safest
         // boundary on a shared phone and fulfils deletion immediately.

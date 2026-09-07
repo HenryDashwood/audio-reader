@@ -73,6 +73,9 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
     /// True when the backend can supply article text to read aloud — the cue
     /// that an item with no audio URL is still playable, via text-to-speech.
     var hasText: Bool?
+    var contentID: Int? = nil
+    var savedAt: Date? = nil
+    var captureError: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, author, link, completed, dismissed
@@ -85,6 +88,9 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
         case imageURL = "image_url"
         case positionSeconds = "position_seconds"
         case hasText = "has_text"
+        case contentID = "content_id"
+        case savedAt = "saved_at"
+        case captureError = "capture_error"
     }
 
     /// An item the app reads aloud rather than streams.
@@ -99,6 +105,7 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
 /// of the offline cache elsewhere in the app.
 nonisolated struct EpisodeText: Codable, Equatable {
     let episodeID: Int
+    var contentID: Int? = nil
     let title: String
     /// Paragraphs separated by blank lines; the reader chunks on these.
     let text: String
@@ -115,6 +122,7 @@ nonisolated struct EpisodeText: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case title, text, html
         case episodeID = "episode_id"
+        case contentID = "content_id"
         case wordCount = "word_count"
     }
 }
@@ -269,6 +277,7 @@ nonisolated struct EpisodeStateUpdate: Encodable {
 
 /// Body of PUT /episodes/{id}/position.
 nonisolated struct PositionUpdate: Encodable {
+    var contentID: Int? = nil
     let positionSeconds: Double
     let completed: Bool
     /// The audio's measured length, sent once the player has loaded it so the
@@ -277,6 +286,7 @@ nonisolated struct PositionUpdate: Encodable {
     var durationSeconds: Int? = nil
 
     enum CodingKeys: String, CodingKey {
+        case contentID = "content_id"
         case completed
         case positionSeconds = "position_seconds"
         case durationSeconds = "duration_seconds"

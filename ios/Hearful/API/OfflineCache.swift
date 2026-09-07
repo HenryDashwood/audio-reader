@@ -20,6 +20,8 @@ nonisolated struct OfflineCache {
     static let shared = OfflineCache()
 
     enum Key: Equatable {
+        case savedArticles
+        case articleVersion(episodeID: Int, contentID: Int)
         case shows
         case recentEpisodes
         case episodes(showID: Int)
@@ -29,6 +31,8 @@ nonisolated struct OfflineCache {
 
         var filename: String {
             switch self {
+            case .savedArticles: "saved-articles.json"
+            case .articleVersion(let episodeID, let contentID): "article-\(episodeID)-version-\(contentID).json"
             case .shows: "shows.json"
             case .recentEpisodes: "recent-episodes.json"
             case .episodes(let showID): "show-\(showID)-episodes.json"

@@ -15,6 +15,9 @@ The system consists of a SwiftUI iOS client backed by a FastAPI service. The
 mobile client operates as a thin client, delegating feed ingestion and
 management, search, and the LLM-based voice action processing to the backend.
 
+Saved web articles, share-sheet capture, content versions, and release setup are
+documented in [Saved articles](docs/saved-articles.md).
+
 ## Backend releases
 
 Backend changes go through an isolated Railway staging environment before a manual

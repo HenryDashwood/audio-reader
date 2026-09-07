@@ -15,7 +15,7 @@ from audioreader.db import SessionMaker
 from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_feeds
 from audioreader.newsletters.companions import attach_missing_companions
 from audioreader.newsletters.service import prune_newsletters, tell_left_senders
-from audioreader.routers import auth, commands, events, feeds, inbound, newsletters
+from audioreader.routers import auth, commands, events, feeds, inbound, newsletters, saved
 from audioreader.settings_types import LLMProvider
 
 logging.basicConfig(level=logging.INFO)
@@ -133,6 +133,7 @@ def create_app() -> FastAPI:
         return FileResponse(STATIC_DIR / "support.html", media_type="text/html")
 
     app.include_router(auth.router)
+    app.include_router(saved.router)
     app.include_router(feeds.router)
     app.include_router(feeds.episodes_router)
     app.include_router(feeds.search_router)

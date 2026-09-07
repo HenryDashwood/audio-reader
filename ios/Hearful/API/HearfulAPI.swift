@@ -3,6 +3,9 @@ import Foundation
 // The API layer is deliberately nonisolated: it holds no mutable state and is
 // called from App Intents and background tasks as well as the UI.
 nonisolated protocol HearfulAPIProtocol: Sendable {
+    func articleText(episodeID: Int, contentID: Int?) async throws -> EpisodeText
+    func reportPosition(episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?, contentID: Int?) async throws
+
     /// `nowPlayingEpisodeID` is what she is listening to as she speaks.
     /// Without it "mark this as played" has no referent: the backend knows
     /// her whole library and nothing about which part of it is in her ears.
@@ -84,6 +87,13 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
 }
 
 extension HearfulAPIProtocol {
+    func articleText(episodeID: Int, contentID: Int?) async throws -> EpisodeText {
+        try await articleText(episodeID: episodeID)
+    }
+    func reportPosition(episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?, contentID: Int?) async throws {
+        try await reportPosition(episodeID: episodeID, seconds: seconds, completed: completed, durationSeconds: durationSeconds)
+    }
+
     func feedSources(showID: Int) async throws -> [FeedSource] {
         throw APIError(underlying: "Managing sources is unavailable.")
     }
@@ -392,10 +402,46 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
     }
 
     func articleText(episodeID: Int) async throws -> EpisodeText {
-        let url = baseURL.appendingPathComponent("episodes")
-            .appendingPathComponent("\(episodeID)")
-            .appendingPathComponent("text")
-        return try await send(URLRequest(url: url))
+        try await articleText(episodeID: episodeID, contentID: nil)
+    }
+
+    func articleText(episodeID: Int, contentID: Int?) async throws -> EpisodeText {
+        var components = URLComponents(url: baseURL.appendingPathComponent("episodes/\(episodeID)/text"), resolvingAgainstBaseURL: false)!
+        if let contentID { components.queryItems = [URLQueryItem(name: "content_id", value: "\(contentID)")] }
+        return try await send(URLRequest(url: components.url!))
+    }
+
+    func savedArticles() async throws -> [Episode] {
+        try await send(URLRequest(url: baseURL.appendingPathComponent("saved")))
+    }
+
+    func saveArticle(url: URL? = nil, episodeID: Int? = nil, title: String? = nil, html: String? = nil, savedAt: Date? = nil) async throws -> Episode {
+        var request = URLRequest(url: baseURL.appendingPathComponent("saved"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        struct Body: Encodable {
+            let url: URL?
+            let episode_id: Int?
+            let title: String?
+            let html: String?
+            let saved_at: Date?
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        request.httpBody = try encoder.encode(Body(url: url, episode_id: episodeID, title: title, html: html, saved_at: savedAt))
+        return try await send(request)
+    }
+
+    func removeSavedArticle(id: Int) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("saved/\(id)"))
+        request.httpMethod = "DELETE"
+        try await perform(request)
+    }
+
+    func retrySavedArticle(id: Int) async throws -> Episode {
+        var request = URLRequest(url: baseURL.appendingPathComponent("saved/\(id)/retry"))
+        request.httpMethod = "POST"
+        return try await send(request)
     }
 
     func recentEpisodes(limit: Int = 30) async throws -> [Episode] {
@@ -590,9 +636,11 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         try await perform(request)
     }
 
-    func reportPosition(episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?)
-        async throws
-    {
+    func reportPosition(episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?) async throws {
+        try await reportPosition(episodeID: episodeID, seconds: seconds, completed: completed, durationSeconds: durationSeconds, contentID: nil)
+    }
+
+    func reportPosition(episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?, contentID: Int?) async throws {
         let url = baseURL.appendingPathComponent("episodes")
             .appendingPathComponent("\(episodeID)")
             .appendingPathComponent("position")
@@ -601,7 +649,7 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(
             PositionUpdate(
-                positionSeconds: seconds, completed: completed, durationSeconds: durationSeconds))
+                contentID: contentID, positionSeconds: seconds, completed: completed, durationSeconds: durationSeconds))
         try await perform(request)
     }
 

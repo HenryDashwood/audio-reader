@@ -169,7 +169,7 @@ async def command(
             # then may not still hold the row.
             span.set_attribute("episode_id", result.episode.id)
             span.set_attribute("episode_title", result.episode.title)
-            span.set_attribute("feed_title", result.episode.feed.title or "")
+            span.set_attribute("feed_title", result.episode.feed.title if result.episode.feed else "")
             # Whether the answer came out of the recency window or the back
             # catalogue. Feeds carry their whole archive, and reaching an old
             # episode is the thing the candidate search exists to do — this is
@@ -259,7 +259,7 @@ async def command_stream(
                         if result.episode is not None:
                             span.set_attribute("episode_id", result.episode.id)
                             span.set_attribute("episode_title", result.episode.title)
-                            span.set_attribute("feed_title", result.episode.feed.title or "")
+                            span.set_attribute("feed_title", result.episode.feed.title if result.episode.feed else "")
                             episode = (await episodes_read(session, user, [result.episode]))[0]
                         response = CommandResponse(
                             actions=[await _action_response(session, user, item) for item in result.actions],

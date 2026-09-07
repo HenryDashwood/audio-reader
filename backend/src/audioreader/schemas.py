@@ -136,6 +136,9 @@ class EpisodeRead(BaseModel):
     # True when the episode can be read aloud as an article — the app's cue
     # that an item with no audio_url is still playable, via text-to-speech.
     has_text: bool = False
+    content_id: int | None = None
+    saved_at: datetime | None = None
+    capture_error: str | None = None
 
     @field_validator("description")
     @classmethod
@@ -152,6 +155,7 @@ class EpisodeTextRead(BaseModel):
     """An article's full content, to be read aloud or read on screen."""
 
     episode_id: int
+    content_id: int | None = None
     title: str
     # Paragraphs separated by blank lines; the app chunks on these.
     text: str
@@ -276,6 +280,7 @@ class AuthResponse(BaseModel):
 
 
 class PositionUpdate(BaseModel):
+    content_id: int | None = None
     position_seconds: float
     completed: bool = False
     #: How long the audio actually is, measured by the player once it loaded.

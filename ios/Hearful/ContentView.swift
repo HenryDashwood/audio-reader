@@ -13,9 +13,11 @@ struct ContentView: View {
     private enum AppTab: Hashable {
         case shows
         case latest
+        case saved
         case settings
     }
 
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var auth: AuthController
     @State private var showingVoice = false
     @State private var voiceInput: VoicePrompt.Input?
@@ -26,6 +28,7 @@ struct ContentView: View {
     @State private var lastContentTab: AppTab = Self.initialTab
     @State private var showsOpenEpisode: Episode?
     @State private var latestOpenEpisode: Episode?
+    @State private var savedOpenEpisode: Episode?
     @State private var serverGeneration = 0
 
     @ObservedObject private var metrics = TabBarMetrics.shared
@@ -61,6 +64,9 @@ struct ContentView: View {
                     LatestView(
                         showingVoice: $showingVoice,
                         openEpisode: $latestOpenEpisode)
+                }
+                Tab("Saved", systemImage: "bookmark", value: .saved) {
+                    SavedView(showingVoice: $showingVoice, openEpisode: $savedOpenEpisode)
                 }
                 Tab("Settings", systemImage: "gearshape", value: .settings) {
                     SettingsView()
@@ -102,7 +108,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingVoice, onDismiss: { voiceInput = nil }) {
             VoiceSheet(
                 accountID: auth.user?.id, initialInput: voiceInput,
-                viewedEpisode: selectedTab == .shows ? showsOpenEpisode : latestOpenEpisode
+                viewedEpisode: selectedTab == .shows ? showsOpenEpisode : (selectedTab == .saved ? savedOpenEpisode : latestOpenEpisode)
             )
             // Consent needs a little more room than the microphone, but
             // still opens as a compact app-owned permission sheet rather
@@ -113,6 +119,12 @@ struct ContentView: View {
                     ? [.medium, .large]
                     : [.fraction(0.68), .large]
             )
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await SavedLibrary.shared.load() } }
+        }
+        .task(id: auth.user?.id) {
+            if auth.user != nil { await SavedLibrary.shared.load() }
         }
         .task {
             // The Ask Magpie intent may have run before this view existed.
@@ -137,6 +149,7 @@ struct ContentView: View {
             HearfulShortcuts.updateAppShortcutParameters()
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulServerChanged)) { _ in
+            SavedLibrary.shared.clear()
             serverGeneration += 1
         }
         .onChange(of: selectedTab) { _, tab in
@@ -186,6 +199,8 @@ struct ContentView: View {
             showsOpenEpisode = episode
         case .latest:
             latestOpenEpisode = episode
+        case .saved:
+            savedOpenEpisode = episode
         case .settings:
             // lastContentTab is only ever Following or Latest.
             break
@@ -251,6 +266,7 @@ struct MicToolbarButton: View {
 struct VoiceSheet: View {
     @StateObject private var controller: VoiceController
     private let initialInput: VoicePrompt.Input?
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var auth: AuthController
     @Environment(\.dismiss) private var dismiss
 

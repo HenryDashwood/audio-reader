@@ -114,8 +114,8 @@ class Feed(Base):
     last_modified: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    episodes: Mapped[list["Episode"]] = relationship(back_populates="feed", cascade="all, delete-orphan")
-    aliases: Mapped[list["FeedAlias"]] = relationship(back_populates="feed", cascade="all, delete-orphan")
+    episodes: Mapped[list["Episode"]] = relationship(back_populates="feed", passive_deletes=True)
+    aliases: Mapped[list["FeedAlias"]] = relationship(back_populates="feed", passive_deletes=True)
 
 
 class FeedAlias(Base):
@@ -136,7 +136,9 @@ class Episode(Base):
     __table_args__ = (UniqueConstraint("feed_id", "guid"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    feed_id: Mapped[int] = mapped_column(ForeignKey("feeds.id", ondelete="CASCADE"))
+    feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id", ondelete="SET NULL"))
+    # Exact normalized web identity; populated for standalone captures only.
+    canonical_url: Mapped[str | None] = mapped_column(Text, unique=True)
     guid: Mapped[str]
     title: Mapped[str]
     description: Mapped[str | None] = mapped_column(Text)
@@ -164,7 +166,34 @@ class Episode(Base):
     image_url: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    feed: Mapped[Feed] = relationship(back_populates="episodes")
+    feed: Mapped[Feed | None] = relationship(back_populates="episodes")
+
+
+class ArticleContent(Base):
+    """Immutable sanitized capture. Private bodies never enter Episode's shared fields."""
+
+    __tablename__ = "article_contents"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), index=True)
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str]
+    text: Mapped[str] = mapped_column(Text)
+    html: Mapped[str] = mapped_column(Text)
+    digest: Mapped[str]
+    source: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SavedArticle(Base):
+    """Per-user selection. Un-saving retains the pin for playback restoration."""
+
+    __tablename__ = "saved_articles"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), primary_key=True)
+    content_id: Mapped[int | None] = mapped_column(ForeignKey("article_contents.id", ondelete="SET NULL"))
+    saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    capture_error: Mapped[str | None]
+    content: Mapped[ArticleContent | None] = relationship()
 
 
 class User(Base):
@@ -265,6 +294,7 @@ class PlaybackPosition(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), primary_key=True)
     position_seconds: Mapped[float]
+    content_id: Mapped[int | None] = mapped_column(ForeignKey("article_contents.id", ondelete="SET NULL"))
     completed: Mapped[bool] = mapped_column(default=False)
     #: She has asked for this one to go, without having heard it. Kept apart
     #: from `completed` deliberately: both take an episode out of the feed, but

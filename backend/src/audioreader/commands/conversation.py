@@ -267,7 +267,8 @@ TOOLS.append(
         "type": "function",
         "name": "search_library",
         "description": (
-            "Search the subscribed library by topic, unheard status, kind and duration. "
+            "Search subscriptions and saved articles by topic, unheard status, kind and duration. "
+            "Set saved_only for articles the user saved. "
             "Unknown durations cannot satisfy a maximum."
         ),
         "strict": True,
@@ -276,10 +277,11 @@ TOOLS.append(
             "properties": {
                 "query": {"type": "string"},
                 "unheard": {"type": "boolean"},
+                "saved_only": {"type": "boolean"},
                 "kind": {"type": ["string", "null"], "enum": ["article", "audio", None]},
                 "max_seconds": {"type": ["integer", "null"]},
             },
-            "required": ["query", "unheard", "kind", "max_seconds"],
+            "required": ["query", "unheard", "kind", "max_seconds", "saved_only"],
             "additionalProperties": False,
         },
     }
@@ -391,10 +393,10 @@ async def _converse(
     recent_actions: Sequence[str] = (),
 ) -> AsyncIterator[ConversationEvent]:
     candidates = await service.build_candidates(session, user, service.spoken_so_far(transcript, turns))
-    now_playing = await service._now_playing(session, now_playing_episode_id)
+    now_playing = await service._now_playing(session, now_playing_episode_id, user)
     if now_playing is not None and all(candidate.id != now_playing.id for candidate in candidates):
         candidates.append(now_playing)
-    viewed = await service._now_playing(session, viewed_episode_id)
+    viewed = await service._now_playing(session, viewed_episode_id, user)
     if viewed is not None and all(item.id != viewed.id for item in candidates):
         candidates.append(viewed)
     allowed = {candidate.id for candidate in candidates}
@@ -659,6 +661,7 @@ async def _execute_tool(
                 user,
                 query=str(args.get("query", "")),
                 unheard=bool(args.get("unheard")),
+                saved_only=bool(args.get("saved_only")),
                 kind=args.get("kind"),
                 max_seconds=maximum,
             )

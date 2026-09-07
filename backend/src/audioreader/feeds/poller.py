@@ -15,7 +15,7 @@ from audioreader.feeds.artwork import site_artwork_is_due, supplement_feed_artwo
 from audioreader.feeds.fetcher import FeedFetchError, FeedRateLimitedError, fetch_feed_update
 from audioreader.feeds.parser import FeedParseError, parse_feed
 from audioreader.feeds.service import apply_feed_metadata, new_episodes
-from audioreader.models import FEED_SOURCE_RSS, Episode, Feed, PlaybackPosition, Subscription, utcnow
+from audioreader.models import FEED_SOURCE_RSS, Episode, Feed, PlaybackPosition, SavedArticle, Subscription, utcnow
 from audioreader.newsletters.companions import refresh_dependents
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,9 @@ async def poll_feed(session: AsyncSession, feed: Feed, *, only_if_stale: bool = 
     ):
         parsed = await supplement_feed_artwork(parsed, fetched.final_url)
     known_guids = set(await session.scalars(select(Episode.guid).where(Episode.feed_id == feed.id)))
-    episodes = new_episodes(parsed, known_guids)
+    from audioreader.saved import reconcile
+
+    episodes = await reconcile(session, new_episodes(parsed, known_guids))
     for episode in episodes:
         episode.feed_id = feed.id
     session.add_all(episodes)
@@ -296,7 +298,14 @@ async def prune_orphaned_feeds(session: AsyncSession, now: datetime | None = Non
                 # A feed a newsletter borrows from is in use, subscribed or not.
                 Feed.id.not_in(select(Feed.companion_feed_id).where(Feed.companion_feed_id.is_not(None))),
                 Feed.id.not_in(
-                    select(Episode.feed_id).join(PlaybackPosition, PlaybackPosition.episode_id == Episode.id)
+                    select(Episode.feed_id)
+                    .join(PlaybackPosition, PlaybackPosition.episode_id == Episode.id)
+                    .where(Episode.feed_id.is_not(None))
+                ),
+                Feed.id.not_in(
+                    select(Episode.feed_id)
+                    .join(SavedArticle, SavedArticle.episode_id == Episode.id)
+                    .where(Episode.feed_id.is_not(None))
                 ),
                 Feed.created_at < cutoff,
             )

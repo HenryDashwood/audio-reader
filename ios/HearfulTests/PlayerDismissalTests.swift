@@ -18,7 +18,12 @@ struct PlayerDismissalTests {
         let synthesizer = SilentSynthesizer()
         let coordinator = PlaybackCoordinator(
             audio: AudioPlayer(),
-            article: ArticlePlayer(api: api, synthesizer: synthesizer))
+            article: ArticlePlayer(
+                api: api,
+                // Completion must use this test's one-paragraph fixture, not
+                // an article another parallel test wrote to the shared cache.
+                cache: OfflineCache(directory: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+                synthesizer: synthesizer))
         return (coordinator, synthesizer, api)
     }
 

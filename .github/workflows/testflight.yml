@@ -151,6 +151,7 @@ jobs:
         env:
           PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
           CONTROLS_PROFILE_B64: ${{ secrets.APPLE_CONTROLS_PROVISIONING_PROFILE }}
+          SHARE_PROFILE_B64: ${{ secrets.APPLE_SHARE_PROVISIONING_PROFILE }}
         run: |
           set -euo pipefail
           install_profile() {
@@ -181,6 +182,11 @@ jobs:
             echo "::error::Set APPLE_CONTROLS_PROVISIONING_PROFILE to the distribution profile for com.henrydashwood.hearful.controls."
             exit 1
           fi
+          if [ -z "$SHARE_PROFILE_B64" ]; then
+            echo "::error::Set APPLE_SHARE_PROVISIONING_PROFILE for com.henrydashwood.hearful.share with the Magpie app group enabled."
+            exit 1
+          fi
+          install_profile "$SHARE_PROFILE_B64" share share_uuid
           install_profile "$PROFILE_B64" app app_uuid
           install_profile "$CONTROLS_PROFILE_B64" controls controls_uuid
 
@@ -190,6 +196,7 @@ jobs:
           MARKETING_ARG: ${{ steps.version.outputs.marketing_arg }}
           APP_PROFILE_UUID: ${{ steps.profile.outputs.app_uuid }}
           CONTROLS_PROFILE_UUID: ${{ steps.profile.outputs.controls_uuid }}
+          SHARE_PROFILE_UUID: ${{ steps.profile.outputs.share_uuid }}
         run: |
           set -euo pipefail
           # Signed manually against the profile installed above. No
@@ -207,6 +214,7 @@ jobs:
             CODE_SIGN_IDENTITY="Apple Distribution" \
             HEARFUL_APP_PROFILE_UUID="$APP_PROFILE_UUID" \
             HEARFUL_CONTROLS_PROFILE_UUID="$CONTROLS_PROFILE_UUID" \
+            HEARFUL_SHARE_PROFILE_UUID="$SHARE_PROFILE_UUID" \
             DEVELOPMENT_TEAM=67F2439F4X \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             $MARKETING_ARG
@@ -232,6 +240,7 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_PROFILE_UUID: ${{ steps.profile.outputs.app_uuid }}
           CONTROLS_PROFILE_UUID: ${{ steps.profile.outputs.controls_uuid }}
+          SHARE_PROFILE_UUID: ${{ steps.profile.outputs.share_uuid }}
         run: |
           set -euo pipefail
           # Apple's /usr/bin/rsync (openrsync) reads -E as --extended-attributes,
@@ -250,6 +259,9 @@ jobs:
 
           plutil -insert 'provisioningProfiles.com\.henrydashwood\.hearful\.controls' \
             -string "$CONTROLS_PROFILE_UUID" "$options"
+
+          plutil -insert 'provisioningProfiles.com\.henrydashwood\.hearful\.share' \
+            -string "$SHARE_PROFILE_UUID" "$options"
 
           # The key still authenticates the upload; it is only provisioning that
           # must not go through it.

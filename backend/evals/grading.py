@@ -56,7 +56,7 @@ class Observed:
             action=result.action,
             spoken=result.spoken_response,
             episode_guid=episode.guid if episode else None,
-            episode_show=episode.feed.title if episode else None,
+            episode_show=episode.feed.title if episode and episode.feed else None,
             episode_title=episode.title if episode else None,
             speed=result.speed,
             subscribed_added=after - before,

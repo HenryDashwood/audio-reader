@@ -1,12 +1,13 @@
 from collections.abc import Sequence
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from audioreader import episode_search, positions
+from audioreader import episode_search, positions, saved
 from audioreader.auth.dependencies import get_current_user
 from audioreader.config import settings
 from audioreader.db import get_session
@@ -23,7 +24,7 @@ from audioreader.feeds.poller import feed_is_failing
 from audioreader.feeds.search import PodcastSearchError, search_podcasts
 from audioreader.llm.client import LLMClient
 from audioreader.llm.provider import get_discovery_llm_client
-from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, Subscription, User
+from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, SavedArticle, Subscription, User
 from audioreader.newsletters import companions
 from audioreader.ratelimit import SlidingWindow
 from audioreader.routers.auth import has_current_ai_data_sharing_consent
@@ -134,13 +135,15 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
     reads = []
     for episode in episodes:
         read = EpisodeRead.model_validate(episode)
-        read.feed_title = episode.feed.title
-        read.feed_url = episode.feed.url
-        if (root := group.feeds.get(group.roots.get(episode.feed_id, 0))) is not None:
+        read.feed_title = episode.feed.title if episode.feed else (urlsplit(episode.link or "").hostname or "Saved")
+        read.feed_url = episode.feed.url if episode.feed else None
+        if (root := group.feeds.get(group.roots.get(episode.feed_id or 0, 0))) is not None:
             read.feed_title = root.title
             read.feed_url = root.url
         # Item-level artwork is the exception; most feeds only set show art.
-        read.image_url = secure_url(episode.image_url or episode.feed.image_url or episode.feed.site_image_url)
+        read.image_url = secure_url(
+            episode.image_url or ((episode.feed.image_url or episode.feed.site_image_url) if episode.feed else None)
+        )
         # Mirrors the fallback chain in feeds/articles.py: anything that can
         # yield text marks the episode readable, so articles are playable.
         read.has_text = bool(episode.article_text or episode.content_html or episode.link or episode.description)
@@ -150,7 +153,7 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
             read.position_seconds = position.position_seconds
             read.completed = position.completed
             read.dismissed = position.dismissed
-        reads.append(read)
+        reads.append(await saved.decorate(session, user, read))
     return reads
 
 
@@ -473,6 +476,11 @@ async def search_library_episodes(
             or_(
                 Episode.feed_id.in_(select(Subscription.feed_id).where(Subscription.user_id == user.id)),
                 Episode.feed_id.in_(group.roots),
+                Episode.id.in_(
+                    select(SavedArticle.episode_id).where(
+                        SavedArticle.user_id == user.id, SavedArticle.saved_at.is_not(None)
+                    )
+                ),
             ),
             PLAYABLE_EPISODE,
             Episode.id.not_in(group.excluded_ids),
@@ -480,8 +488,14 @@ async def search_library_episodes(
         .order_by(Episode.published_at.desc().nulls_last(), Episode.id.desc())
         .limit(limit)
     )
-    episodes = (await session.scalars(episode_search.matching(query, statement))).all()
-    return await episodes_read(session, user, episodes)
+    episodes = list((await session.scalars(episode_search.matching(query, statement))).all())
+    captures = await saved.voice_candidates(session, user, query)
+    ids = [candidate.id for candidate in captures if candidate.id not in {episode.id for episode in episodes}]
+    if ids:
+        episodes.extend(
+            await session.scalars(select(Episode).where(Episode.id.in_(ids)).options(joinedload(Episode.feed)))
+        )
+    return await episodes_read(session, user, episodes[:limit])
 
 
 @search_router.post("/publications", dependencies=[Depends(check_feed_operation_limit)])
@@ -588,21 +602,39 @@ async def get_episode(episode_id: int, session: Session, user: CurrentUser) -> E
     earlier, so it must work without any of the surrounding context — the
     user's token is required, but a subscription is deliberately not: the
     entity may be from a feed she has since unsubscribed from."""
-    episode = await session.get(Episode, episode_id, options=[joinedload(Episode.feed)])
+    episode = await saved.accessible_episode(session, user, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
     return (await episodes_read(session, user, [episode]))[0]
 
 
 @episodes_router.get("/{episode_id}/text", dependencies=[Depends(check_feed_operation_limit)])
-async def get_episode_text(episode_id: int, session: Session, user: CurrentUser) -> EpisodeTextRead:
+async def get_episode_text(
+    episode_id: int, session: Session, user: CurrentUser, content_id: int | None = None
+) -> EpisodeTextRead:
     """The full article for a written episode — speech-ready text and the
     sanitised HTML behind it — extracted on first request and cached. Like
     get_episode, a subscription is deliberately not required: articles can be
     played from previews and old voice picks."""
-    episode = await session.get(Episode, episode_id)
+    episode = await saved.accessible_episode(session, user, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
+    content = await saved.selected_content(session, user, episode_id, content_id)
+    if content is not None:
+        from audioreader.text import word_count
+
+        return EpisodeTextRead(
+            episode_id=episode.id,
+            content_id=content.id,
+            title=content.title,
+            text=content.text,
+            html=articles.rendered(content.html),
+            word_count=word_count(content.text),
+        )
+    if episode.feed_id is None:
+        raise HTTPException(
+            422, detail={"spoken_response": "The link is saved, but the article is not ready. Retry from Saved."}
+        )
     text, html = await articles.content_for(session, episode)
     if not text:
         raise HTTPException(
@@ -626,7 +658,7 @@ async def put_state(episode_id: int, body: EpisodeStateUpdate, session: Session,
     thirty seconds: a deliberate "I have heard this" must not be something a
     later tick can quietly undo.
     """
-    episode = await session.get(Episode, episode_id)
+    episode = await saved.accessible_episode(session, user, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
     await positions.set_episode_state(session, user, episode_id, played=body.played, dismissed=body.dismissed)
@@ -635,11 +667,25 @@ async def put_state(episode_id: int, body: EpisodeStateUpdate, session: Session,
 @episodes_router.put("/{episode_id}/position", status_code=204)
 async def put_position(episode_id: int, body: PositionUpdate, session: Session, user: CurrentUser) -> None:
     """Record where the user is in an episode. Last write wins."""
-    episode = await session.get(Episode, episode_id)
+    episode = await saved.accessible_episode(session, user, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
-    if body.duration_seconds is not None and body.duration_seconds != episode.duration_seconds:
+    selected = await saved.selection(session, user, episode_id)
+    expected = selected.content_id if selected else None
+    if body.content_id is not None and body.content_id != expected:
+        raise HTTPException(409, detail={"spoken_response": "This progress belongs to a different article copy."})
+    if expected is not None and body.content_id is None:
+        # Older clients do not identify cached text. Do not let their seconds
+        # overwrite a newer saved version's progress.
+        return
+    if (
+        body.duration_seconds is not None
+        and episode.audio_url is not None
+        and body.duration_seconds != episode.duration_seconds
+    ):
         # The player has measured the audio; the feed only claimed a length.
         # Committed with the position below.
         episode.duration_seconds = body.duration_seconds
-    await positions.upsert_position(session, user, episode_id, body.position_seconds, body.completed)
+    await positions.upsert_position(
+        session, user, episode_id, body.position_seconds, body.completed, content_id=body.content_id
+    )

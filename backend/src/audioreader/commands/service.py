@@ -210,7 +210,15 @@ async def build_candidates(
     episodes = await _recent_and_matching(
         session, select(Episode).where(Episode.id.not_in(group.excluded_ids)), hers, transcript, limit, search_limit
     )
-    return _to_candidates(await companions.without_feed_copies(session, episodes, user.id))
+    from audioreader.saved import voice_candidates
+
+    candidates = _to_candidates(await companions.without_feed_copies(session, episodes, user.id))
+    captures = await voice_candidates(session, user)
+    if transcript:
+        captures += await voice_candidates(session, user, " ".join(spoken_keywords(transcript)))
+    by_id = {candidate.id: candidate for candidate in candidates}
+    by_id.update({candidate.id: candidate for candidate in captures})
+    return list(by_id.values())
 
 
 async def feed_candidates(
@@ -369,7 +377,7 @@ def _to_candidates(episodes) -> list[Candidate]:
         Candidate(
             id=episode.id,
             title=episode.title,
-            feed_title=episode.feed.title,
+            feed_title=episode.feed.title if episode.feed else "Saved",
             # The model sees stripped, truncated text: feed descriptions are
             # HTML soup and would otherwise dominate the token bill.
             description=summarise(episode.description, limit=300),
@@ -501,7 +509,7 @@ async def interpret(
     # matches none of the words in "mark this as played". Without this, the
     # one command she is most likely to give about the thing in her ears
     # would be the one command that cannot name it.
-    now_playing = await _now_playing(session, now_playing_episode_id)
+    now_playing = await _now_playing(session, now_playing_episode_id, user)
     if now_playing is not None and all(candidate.id != now_playing.id for candidate in candidates):
         candidates.append(now_playing)
     pending = await newsletters.pending_senders(session, user)
@@ -628,17 +636,29 @@ _FILING: dict[Action, tuple[tuple[bool | None, bool | None], str]] = {
 }
 
 
-async def _now_playing(session: AsyncSession, episode_id: int | None) -> Candidate | None:
+async def _now_playing(session: AsyncSession, episode_id: int | None, user: User | None = None) -> Candidate | None:
     """What the phone says is playing, as a candidate the model can choose."""
     if episode_id is None:
         return None
-    episode = await session.get(Episode, episode_id, options=[joinedload(Episode.feed)])
+    from fastapi import HTTPException
+
+    from audioreader.saved import accessible_episode
+
+    try:
+        episode = await accessible_episode(session, user, episode_id) if user else None
+    except HTTPException:
+        episode = None
     if episode is None:
         # The phone is ahead of us, or the episode has been pruned. Not worth
         # failing the whole command over: everything else still works.
         logger.warning("now-playing episode %r is not in the catalog", episode_id)
         return None
-    return _to_candidates([episode])[0]
+    from audioreader.saved import selection
+
+    candidate = _to_candidates([episode])[0]
+    if user and (record := await selection(session, user, episode.id)) and record.content:
+        candidate.title = record.content.title
+    return candidate
 
 
 async def _file_episode(

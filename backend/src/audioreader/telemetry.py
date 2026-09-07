@@ -190,4 +190,7 @@ def _request_attributes(request, attributes: dict) -> dict | None:
     errors = attributes.get("errors")
     if not errors:
         return None
+    if request.url.path.startswith("/saved"):
+        # Validation errors can contain the full input, including private HTML.
+        return {"errors": [{"type": error.get("type"), "loc": error.get("loc")} for error in errors]}
     return {"errors": errors}

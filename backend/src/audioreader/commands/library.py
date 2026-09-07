@@ -9,7 +9,14 @@ from audioreader.models import PLAYABLE_EPISODE, Episode, PlaybackPosition
 from audioreader.newsletters import companions
 
 
-async def search(session, user, *, query: str, unheard: bool, kind: str | None, max_seconds: int | None):
+async def search(
+    session, user, *, query: str, unheard: bool, kind: str | None, max_seconds: int | None, saved_only: bool = False
+):
+    from audioreader.saved import voice_candidates
+
+    captures = await voice_candidates(session, user, query, unheard=unheard, kind=kind, max_seconds=max_seconds)
+    if saved_only:
+        return captures
     group = await groups.catalog(session, user.id)
     states = await service.positions.positions_for(session, user, group.copies)
     hidden = [item_id for item_id, state in states.items() if state.dismissed or (unheard and state.completed)]
@@ -53,4 +60,7 @@ async def search(session, user, *, query: str, unheard: bool, kind: str | None, 
             select(Episode).where(*conditions).options(joinedload(Episode.feed)).order_by(*order).limit(40)
         )
     )
-    return service._to_candidates(await companions.without_feed_copies(session, episodes, user.id))
+    candidates = service._to_candidates(await companions.without_feed_copies(session, episodes, user.id))
+    by_id = {candidate.id: candidate for candidate in candidates}
+    by_id.update({candidate.id: candidate for candidate in captures})
+    return list(by_id.values())

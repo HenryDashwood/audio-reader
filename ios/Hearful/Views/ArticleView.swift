@@ -82,6 +82,7 @@ struct ArticleView: View {
         // to it, leaving for it, sharing it, looking through it, then asking for
         // something else entirely.
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { SaveArticleButton(episode: episode) }
             ToolbarItem(placement: .topBarTrailing) {
                 ArticlePlaybackButton(episode: episode)
             }
@@ -117,7 +118,7 @@ struct ArticleView: View {
         .background(ArticleChrome(tracking: articleWebView?.scrollView))
         .navigationDestination(item: $openFeed) { PodcastPreviewView(podcast: $0) }
         .task {
-            if let wordCount = await model.load(episodeID: episode.id) {
+            if let wordCount = await model.load(episodeID: episode.id, contentID: episode.contentID) {
                 learnedWordCount(wordCount)
             }
         }
@@ -1191,10 +1192,14 @@ final class ArticleTextModel: ObservableObject {
     }
 
     @discardableResult
-    func load(episodeID: Int) async -> Int? {
+    func load(episodeID: Int, contentID: Int? = nil) async -> Int? {
+        let key: OfflineCache.Key = contentID.map { .articleVersion(episodeID: episodeID, contentID: $0) } ?? .articleText(episodeID: episodeID)
         do {
-            let article = try await api.articleText(episodeID: episodeID)
-            cache.save(article, for: .articleText(episodeID: episodeID))
+            let article = try await api.articleText(episodeID: episodeID, contentID: contentID)
+            if let contentID, article.contentID != contentID {
+                throw APIError(underlying: "The server returned a different article version")
+            }
+            cache.save(article, for: key)
             isOffline = false
             state = .loaded(Article(text: article.text, html: article.html))
             return article.wordCount
@@ -1203,7 +1208,8 @@ final class ArticleTextModel: ObservableObject {
             // Same rule as everywhere else: an expired session is the one
             // failure the cache must not paper over.
             if (error as? APIError)?.isAuthFailure != true,
-                let cached = cache.load(EpisodeText.self, for: .articleText(episodeID: episodeID)),
+                let cached = cache.load(EpisodeText.self, for: key),
+                contentID == nil || cached.contentID == contentID,
                 !cached.text.isEmpty
             {
                 isOffline = true

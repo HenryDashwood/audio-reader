@@ -189,8 +189,17 @@ async def delete_user(session: AsyncSession, user: User) -> None:
     not hers, other subscribers still need them. Everything that identifies
     her, or records what she listened to, goes.
     """
-    for table in (PlaybackPosition, Subscription, AuthSession, UserIdentity):
+    from audioreader.models import ArticleContent, Episode, SavedArticle
+
+    saved_ids = list(await session.scalars(select(SavedArticle.episode_id).where(SavedArticle.user_id == user.id)))
+    for table in (SavedArticle, PlaybackPosition, Subscription, AuthSession, UserIdentity):
         await session.execute(delete(table).where(table.user_id == user.id))
+    await session.execute(delete(ArticleContent).where(ArticleContent.owner_user_id == user.id))
+    await session.execute(
+        delete(Episode).where(
+            Episode.id.in_(saved_ids), Episode.feed_id.is_(None), Episode.id.not_in(select(SavedArticle.episode_id))
+        )
+    )
     # Her newsletter feeds and every issue in them are hers alone, unlike the
     # shared catalog, and go with her.
     await newsletters.delete_all_for_user(session, user)

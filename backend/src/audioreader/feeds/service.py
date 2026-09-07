@@ -39,7 +39,9 @@ async def ensure_feed(session: AsyncSession, url: str) -> Feed:
         return feed
     feed = Feed(url=resolved_url, title=parsed.title)
     apply_feed_metadata(feed, parsed)
-    feed.episodes.extend(new_episodes(parsed, known_guids=set()))
+    from audioreader.saved import reconcile
+
+    feed.episodes.extend(await reconcile(session, new_episodes(parsed, known_guids=set())))
     session.add(feed)
     await session.flush()
     await _remember_aliases(session, feed, aliases)

@@ -119,7 +119,7 @@ def known_word_count(episode: Episode) -> int | None:
     return word_count(text) or None
 
 
-async def content_for(session: AsyncSession, episode: Episode) -> tuple[str, str | None]:
+async def content_for(session: AsyncSession, episode: Episode, *, commit: bool = True) -> tuple[str, str | None]:
     """The article as (speech-ready text, HTML ready to show), or ("", None).
 
     Caches on first success. Failures are not cached, so a page that was
@@ -159,7 +159,10 @@ async def content_for(session: AsyncSession, episode: Episode) -> tuple[str, str
     if cacheable:
         episode.article_text = text
         episode.article_html = html or None
-        await session.commit()
+        if commit:
+            await session.commit()
+        else:
+            await session.flush()
     return text, rendered(html or None)
 
 

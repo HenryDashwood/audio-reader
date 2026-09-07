@@ -65,7 +65,7 @@ final class PositionReporter {
         self.player = player
 
         player.$currentEpisode
-            .removeDuplicates { $0?.id == $1?.id }
+            .removeDuplicates { $0?.id == $1?.id && $0?.contentID == $1?.contentID }
             .sink { [weak self] episode in
                 MainActor.assumeIsolated { self?.episodeChanged(to: episode) }
             }
@@ -100,6 +100,10 @@ final class PositionReporter {
     // AudioPlayer's published state cannot be forced without real audio.
 
     func episodeChanged(to episode: Episode?) {
+        if let episode, trackedEpisode?.id == episode.id {
+            trackedEpisode = episode
+            return
+        }
         if let outgoing = trackedEpisode, outgoing.id != episode?.id, hasPlayed {
             report(episode: outgoing, seconds: lastTime)
         }
@@ -168,7 +172,7 @@ final class PositionReporter {
             await precedingReport?.value
             try? await api.reportPosition(
                 episodeID: report.episodeID, seconds: report.seconds,
-                completed: report.completed, durationSeconds: report.durationSeconds)
+                completed: report.completed, durationSeconds: report.durationSeconds, contentID: episode.contentID)
         }
     }
 }

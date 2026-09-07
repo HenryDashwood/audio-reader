@@ -417,12 +417,12 @@ class _Posts:
     alone, because an email's link is often a tracking redirect.
     """
 
-    def __init__(self, own_feed_id: int, rows: list[tuple[int, str, str | None]]) -> None:
+    def __init__(self, own_feed_id: int, rows: list[tuple[int | None, str, str | None]]) -> None:
         self.own_feed_id = own_feed_id
         self.links = {link for feed_id, _, link in rows if feed_id == own_feed_id and link}
         self.titles = {_title_key(title) for feed_id, title, _ in rows if feed_id == own_feed_id}
 
-    def is_the_feeds_copy(self, feed_id: int, title: str, link: str | None) -> bool:
+    def is_the_feeds_copy(self, feed_id: int | None, title: str, link: str | None) -> bool:
         return feed_id != self.own_feed_id and (link in self.links or _title_key(title) in self.titles)
 
 
