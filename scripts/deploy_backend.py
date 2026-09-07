@@ -39,10 +39,14 @@ class DeploymentError(RuntimeError):
 
 
 def request_json(url, *, headers, data=None):
-    request = urllib.request.Request(url, headers=headers, data=data)
+    # Railway's edge rejects urllib's default Python-urllib client identifier.
+    request = urllib.request.Request(url, headers={"User-Agent": "magpie-backend-deploy/1.0", **headers}, data=data)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
+    except urllib.error.HTTPError as error:
+        # Status codes are safe to log; error bodies and headers can contain secrets.
+        raise DeploymentError(f"Request to {request.host} failed: HTTP {error.code}") from None
     except (urllib.error.URLError, TimeoutError) as error:
         # Avoid printing request headers, response bodies or tokens.
         raise DeploymentError(f"Request to {request.host} failed: {type(error).__name__}") from None

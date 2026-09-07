@@ -1,6 +1,8 @@
 """Deployment safety checks: fail closed on wrong commits, scopes and CI state."""
 
 import importlib.util
+import io
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,36 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 SHA = "a" * 40
 DEPLOYMENT_ID = "11111111-1111-4111-8111-111111111111"
+
+
+def test_railway_requests_identify_client_to_edge(monkeypatch):
+    monkeypatch.setenv("RAILWAY_TOKEN", "test-project-token")
+
+    def urlopen(request, timeout):
+        agent = request.get_header("User-agent", "")
+        if not agent or agent.startswith("Python-urllib"):
+            raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, None)
+        assert request.get_header("Project-access-token") == "test-project-token"
+        return io.BytesIO(b'{"data":{"__typename":"Query"}}')
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", urlopen)
+    assert module.railway("query { __typename }", {}) == {"__typename": "Query"}
+
+
+def test_http_error_reports_status_without_leaking_secrets_or_retrying(monkeypatch):
+    calls = []
+
+    def urlopen(request, timeout):
+        calls.append(request)
+        raise urllib.error.HTTPError(
+            request.full_url, 403, "secret-reason", {"secret-header": "secret-value"}, io.BytesIO(b"secret-body")
+        )
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", urlopen)
+    with pytest.raises(module.DeploymentError) as error:
+        module.request_json(module.RAILWAY_API, headers={"Project-Access-Token": "secret-token"}, data=b"{}")
+    assert str(error.value) == "Request to backboard.railway.com failed: HTTP 403"
+    assert len(calls) == 1
 
 
 def deployment(environment="staging", **changes):
