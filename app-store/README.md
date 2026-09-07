@@ -60,7 +60,8 @@ The fixture command uses an isolated SQLite database under the ignored
 rebuilds only that dedicated database with records under the reserved
 `hearful.invalid` domain. It gives phone and iPad captures the same three
 feeds, one followed email newsletter, one sender waiting for an answer, their
-episodes and issues, a newsletter address and a listening position every time;
+episodes and issues, three captured web pages in Saved, a newsletter address
+and a listening position every time;
 the app itself still fetches and renders them through its real backend and
 production views. The backend target switches newsletters on with the real
 inbound domain and an invented address, so the Settings screen shows the

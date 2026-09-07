@@ -29,6 +29,7 @@ from audioreader.models import (
     PlaybackPosition,
     Subscription,
 )
+from audioreader.saved import SaveRequest, save
 
 FIXTURE_PREFIX = "https://hearful.invalid/app-store/"
 
@@ -359,8 +360,26 @@ async def seed() -> None:
         )
         await session.commit()
 
+        # Captured pages from outside the followed feeds, using the same save
+        # path as the share extension. No network fetch or personal data.
+        for url, title, body in (
+            ("https://fieldnotes.example/attention", "In praise of doing one thing at a time", SUNDAY_ESSAY_ATTENTION),
+            ("https://smallhours.example/rain", "Listening for the rain", SLOW_LETTER_ISSUE_ONE),
+            ("https://commonplace.example/objects", "The objects we keep", SUNDAY_ESSAY_OBJECTS),
+        ):
+            await save(
+                session,
+                user,
+                SaveRequest(
+                    url=url,
+                    title=title,
+                    html=f"<html><head><title>{title}</title></head><body><article>"
+                    f"<h1>{title}</h1>{paragraphs(body)}</article></body></html>",
+                ),
+            )
+
     await engine.dispose()
-    print("Seeded 4 fictional shows, 8 episodes and 1 waiting newsletter sender for the simulator account")
+    print("Seeded 4 fictional shows, 8 episodes, 3 saved pages and 1 waiting newsletter sender")
 
 
 if __name__ == "__main__":
