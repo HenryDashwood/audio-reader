@@ -1,4 +1,4 @@
-.PHONY: backend-dev backend-check backend-compatibility ios-phone-staging ios-doctor ios-build ios-index ios-test ios-test-latest ios-phone ios-phone-debug ios-phone-debug-stop app-store-validate app-store-fixtures app-store-backend app-store-screenshot app-store-sync
+.PHONY: backend-dev backend-check backend-compatibility ios-phone-staging ios-phone-production ios-doctor ios-build ios-index ios-test ios-test-latest ios-phone ios-phone-debug ios-phone-debug-stop app-store-validate app-store-fixtures app-store-backend app-store-screenshot app-store-sync
 
 backend-dev:
 	docker compose up -d db
@@ -18,6 +18,9 @@ backend-compatibility:
 
 ios-phone-staging:
 	@IOS_DEVICE_API_URL=https://audio-reader-staging.up.railway.app ./scripts/ios-dev.sh device
+
+ios-phone-production:
+	@IOS_DEVICE_API_URL=https://audio-reader-production.up.railway.app ./scripts/ios-dev.sh device
 
 ios-doctor:
 	@./scripts/ios-dev.sh doctor

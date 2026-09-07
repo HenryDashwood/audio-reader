@@ -1,3 +1,4 @@
+import Combine
 import UIKit
 import WebKit
 
@@ -17,52 +18,46 @@ final class ArticleReadingMarkerView: UIView {
     required init?(coder: NSCoder) { nil }
 }
 
-/// A small, native way back to the spoken word after the reader has chosen to
-/// inspect another part of the article. It stays outside the scroll view, so
-/// it remains available even when the marker itself is off screen.
+/// Shares the visible reader's return-to-word action with the mini player.
+/// Ownership prevents an older reader from clearing a newer reader's action.
 @MainActor
-final class ArticleReadingFollowButton: UIButton {
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        var appearance = UIButton.Configuration.filled()
-        appearance.title = "Follow reading"
-        appearance.image = UIImage(systemName: "scope")
-        appearance.imagePadding = 8
-        appearance.contentInsets = NSDirectionalEdgeInsets(
-            top: 12, leading: 16, bottom: 12, trailing: 16)
-        appearance.cornerStyle = .capsule
-        configuration = appearance
-        titleLabel?.adjustsFontForContentSizeCategory = true
-        layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.18
-        layer.shadowRadius = 8
-        layer.shadowOffset = CGSize(width: 0, height: 3)
-        accessibilityIdentifier = "article-follow-reading"
-        accessibilityLabel = "Follow the reading position"
-        accessibilityHint = "Returns to the current word and keeps it on screen"
+final class ArticleFollowControl: ObservableObject {
+    static let shared = ArticleFollowControl()
+    @Published private(set) var visibleEpisodeID: Int?
+    @Published private(set) var offeredEpisodeID: Int?
+    private var owner: UUID?
+    private var action: (() -> Void)?
+
+    func showReader(episodeID: Int) {
+        visibleEpisodeID = episodeID
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { nil }
-}
+    func hideReader(episodeID: Int) {
+        if visibleEpisodeID == episodeID { visibleEpisodeID = nil }
+    }
 
-/// Keeps the return-to-reading control clear of the playback capsule while
-/// the article chrome is visible. When the chrome leaves during a downward
-/// read, the button settles back to the ordinary edge inset instead of
-/// leaving a player-sized hole beneath it.
-enum ArticleReadingFollowLayout {
-    static let edgeInset: CGFloat = 12
-    static let miniPlayerClearance: CGFloat = 12
+    func offer(owner: UUID, episodeID: Int, action: @escaping () -> Void) {
+        self.owner = owner
+        self.action = action
+        if offeredEpisodeID != episodeID { offeredEpisodeID = episodeID }
+    }
 
-    static func bottomConstraintConstant(
-        chromeHidden: Bool,
-        miniPlayerHeight: CGFloat,
-        gap: CGFloat
-    ) -> CGFloat {
-        let obstruction = chromeHidden
-            ? 0
-            : miniPlayerHeight + gap + miniPlayerClearance
-        return -(edgeInset + obstruction)
+    func clear(owner: UUID) {
+        guard self.owner == owner else { return }
+        self.owner = nil
+        action = nil
+        offeredEpisodeID = nil
+    }
+
+    func isAvailable(for episodeID: Int) -> Bool {
+        visibleEpisodeID == episodeID && offeredEpisodeID == episodeID && action != nil
+    }
+
+    func resume(episodeID: Int) {
+        guard isAvailable(for: episodeID), let owner, let action else { return }
+        clear(owner: owner)
+        action()
+        UIAccessibility.post(notification: .announcement, argument: "Following the reading position")
     }
 }
 
@@ -184,7 +179,7 @@ enum ArticleReadingMarkerScript {
             let node;
             while ((node = walker.nextNode())) {
               const parent = node.parentElement;
-              if (!parent || parent.closest("script, style, math")) continue;
+              if (!parent || parent.closest("script, style, math, [data-hearful-metadata]")) continue;
               const urlRanges = [];
               for (const url of node.data.matchAll(/https?:\/\/\S+/giu)) {
                 urlRanges.push({ start: url.index, end: url.index + url[0].length });

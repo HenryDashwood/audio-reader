@@ -25,6 +25,7 @@ struct ArticleShareButton: View {
             preview: SharePreview(episode.title, image: previewImage)
         ) {
             Image(systemName: "square.and.arrow.up")
+                .frame(width: 44, height: 44)
         }
         .accessibilityLabel("Share article")
         .accessibilityHint("Opens the share sheet for this article’s original link")

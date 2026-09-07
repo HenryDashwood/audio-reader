@@ -10,7 +10,7 @@ minimum_os="${IOS_MINIMUM_OS:-26.0}"
 preferred_name="${IOS_SIMULATOR_NAME:-iPhone 17}"
 device_derived_data="${IOS_DEVICE_DERIVED_DATA_PATH:-$repo_root/build/Device}"
 bundle_id="com.henrydashwood.hearful"
-device_api_url="${IOS_DEVICE_API_URL:-https://audio-reader-production.up.railway.app}"
+device_api_url="${IOS_DEVICE_API_URL:-https://audio-reader-staging.up.railway.app}"
 
 usage() {
   echo "Usage: $0 {doctor|build|index|test|test-latest|device|device-local}"

@@ -55,7 +55,8 @@ make ios-build        # compile on the oldest installed iOS 26+ runtime
 make ios-index        # refresh Cursor's local SourceKit-LSP build settings
 make ios-test         # run the full Swift test suite there
 make ios-test-latest  # also check the newest installed runtime
-make ios-phone        # Release build, install over Wi-Fi, and launch on the paired iPhone
+make ios-phone        # Release build, install over Wi-Fi, and launch against staging
+make ios-phone-production # same Release install, pointed at production
 make ios-phone-debug  # same Release install, pointed at this Mac's local API
 ```
 
@@ -117,8 +118,11 @@ make ios-phone
 
 The command finds the one paired physical iPhone, builds a signed Release app,
 installs it over the existing copy, and opens it. The phone may connect by USB
-or over the same Wi-Fi network. It launches against the deployed Railway API,
-clearing any laptop address remembered by an older development run. Set
+or over the same Wi-Fi network. It launches against the staging Railway API,
+replacing any server address remembered by an older development run. Staging has
+a separate account and library, so sign in again if prompted. Use
+`make ios-phone-production` to install and launch against production, or
+`make ios-phone-staging` to select staging explicitly. Set
 `IOS_DEVICE_API_URL=http://<mac-lan-ip>:8000` when local phone-to-Mac testing is
 intentional. If more than one iPhone is paired, select one with
 `IOS_DEVICE_ID=<udid> make ios-phone`. To verify device selection without

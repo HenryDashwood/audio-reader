@@ -55,8 +55,12 @@ struct ArticleView: View {
             activity.appEntityIdentifier = EntityIdentifier(for: EpisodeEntity.self, identifier: episode.id)
             activity.isEligibleForHandoff = false
         }
-        .onAppear { ShortcutNavigation.viewedEpisodeID = episode.id }
+        .onAppear {
+            ShortcutNavigation.viewedEpisodeID = episode.id
+            ArticleFollowControl.shared.showReader(episodeID: episode.id)
+        }
         .onDisappear {
+            ArticleFollowControl.shared.hideReader(episodeID: episode.id)
             if ShortcutNavigation.viewedEpisodeID == episode.id { ShortcutNavigation.viewedEpisodeID = nil }
         }
         // The article runs the whole height of the screen, under the back
@@ -82,34 +86,40 @@ struct ArticleView: View {
         // to it, leaving for it, sharing it, looking through it, then asking for
         // something else entirely.
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { SaveArticleButton(episode: episode) }
             ToolbarItem(placement: .topBarTrailing) {
-                ArticlePlaybackButton(episode: episode)
-            }
-            if let link = episode.link {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Link(destination: link) { Image(systemName: "safari") }
+                // Keep the controls in one item so the navigation bar does
+                // not move Find and Ask into its automatic overflow menu.
+                HStack(spacing: 12) {
+                    ArticlePlaybackButton(episode: episode)
+                    if let link = episode.link {
+                        Link(destination: link) {
+                            Image(systemName: "safari")
+                                .frame(width: 44, height: 44)
+                        }
                         .accessibilityLabel("Open the original")
                         .accessibilityHint("Opens this page in your browser")
+                        ArticleShareButton(episode: episode, link: link)
+                    }
+                    Button {
+                        articleWebView?.findInteraction?.presentFindNavigator(showingReplace: false)
+                    } label: {
+                        Label("Find in this page", systemImage: "magnifyingglass")
+                            .frame(width: 44, height: 44)
+                    }
+                    .disabled(articleWebView == nil)
+                    Button {
+                        Feedback.shared.play(.opened)
+                        NotificationCenter.default.post(name: .hearfulAskByVoice, object: nil)
+                    } label: {
+                        Label("Ask Magpie", systemImage: "mic.fill")
+                            .frame(width: 44, height: 44)
+                    }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    ArticleShareButton(episode: episode, link: link)
-                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .font(.title3)
+                .fixedSize()
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    // WebKit's own find bar: it knows where the words are, and
-                    // it highlights and steps through them without the page
-                    // being handed any script of ours.
-                    articleWebView?.findInteraction?.presentFindNavigator(showingReplace: false)
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-                .disabled(articleWebView == nil)
-                .accessibilityLabel("Find in this page")
-                .accessibilityHint("Searches the words on this page")
-            }
-            ToolbarItem(placement: .topBarTrailing) { MicToolbarButton() }
         }
         // Both bars get out of the way when she scrolls, and the capsule with
         // them. Their views stay in the layout and fade rather than being
@@ -229,6 +239,7 @@ private struct ArticlePlaybackButton: View {
             if isPlayingThis { player.toggle() } else { player.playReportingFailure(episode) }
         } label: {
             Image(systemName: isPlayingThis ? "pause.fill" : "play.fill")
+                .frame(width: 44, height: 44)
         }
         .accessibilityLabel(isPlayingThis ? "Pause" : "Listen")
         .accessibilityHint(isPlayingThis ? "Stops reading this aloud" : "Reads this aloud")
@@ -617,6 +628,7 @@ private struct ArticleWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        ArticleHeadlineScript.add(to: configuration)
         // Article images still come from their publishers, but cookies and
         // other website data must not become a lasting browsing profile inside
         // a podcast app.
@@ -715,9 +727,7 @@ private struct ArticleWebView: UIViewRepresentable {
         private var navigationGeneration = 0
         private var followState = ArticleReadingFollowState()
         private let marker = ArticleReadingMarkerView()
-        private let followButton = ArticleReadingFollowButton()
-        private var followBottomConstraint: NSLayoutConstraint?
-        private var chromeSubscription: AnyCancellable?
+        private let followOwner = UUID()
 
         init(openFeed: @escaping @MainActor () -> Void) {
             self.openFeed = openFeed
@@ -729,34 +739,11 @@ private struct ArticleWebView: UIViewRepresentable {
             self.speechText = speechText
             marker.alpha = 0
             view.scrollView.addSubview(marker)
-            followButton.translatesAutoresizingMaskIntoConstraints = false
-            followButton.isHidden = true
-            view.addSubview(followButton)
-            let followBottomConstraint = followButton.bottomAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-                constant: ArticleReadingFollowLayout.bottomConstraintConstant(
-                    chromeHidden: ArticleControlsModel.shared.hidden,
-                    miniPlayerHeight: MiniPlayer.height,
-                    gap: ArticleView.gap))
-            self.followBottomConstraint = followBottomConstraint
-            NSLayoutConstraint.activate([
-                followButton.trailingAnchor.constraint(
-                    equalTo: view.safeAreaLayoutGuide.trailingAnchor,
-                    constant: -12),
-                followBottomConstraint,
-            ])
-            followButton.addTarget(
-                self, action: #selector(resumeFollowing), for: .touchUpInside)
             view.scrollView.panGestureRecognizer.addTarget(
                 self, action: #selector(scrollGestureChanged(_:)))
             markerSubscription = ArticlePlayer.shared.$spokenLocation
                 .removeDuplicates()
                 .sink { [weak self] location in self?.receive(location) }
-            chromeSubscription = ArticleControlsModel.shared.$hidden
-                .removeDuplicates()
-                .sink { [weak self] hidden in
-                    self?.positionFollowButton(chromeHidden: hidden, animated: true)
-                }
         }
 
         func update(episodeID: Int, speechText: String?, pageWillReload: Bool) {
@@ -766,13 +753,13 @@ private struct ArticleWebView: UIViewRepresentable {
             self.speechText = speechText
             if episodeChanged {
                 followState.reset()
-                followButton.isHidden = true
+                ArticleFollowControl.shared.clear(owner: followOwner)
             }
             if pageWillReload {
                 navigationGeneration += 1
                 pageIsReady = false
                 marker.alpha = 0
-                followButton.isHidden = true
+                ArticleFollowControl.shared.clear(owner: followOwner)
                 return
             }
             guard contentChanged else { return }
@@ -784,34 +771,9 @@ private struct ArticleWebView: UIViewRepresentable {
             view.scrollView.panGestureRecognizer.removeTarget(
                 self, action: #selector(scrollGestureChanged(_:)))
             markerSubscription = nil
-            chromeSubscription = nil
             marker.removeFromSuperview()
-            followButton.removeTarget(
-                self, action: #selector(resumeFollowing), for: .touchUpInside)
-            followButton.removeFromSuperview()
-            followBottomConstraint = nil
+            ArticleFollowControl.shared.clear(owner: followOwner)
             webView = nil
-        }
-
-        private func positionFollowButton(chromeHidden: Bool, animated: Bool) {
-            guard let webView, let followBottomConstraint else { return }
-            let constant = ArticleReadingFollowLayout.bottomConstraintConstant(
-                chromeHidden: chromeHidden,
-                miniPlayerHeight: MiniPlayer.height,
-                gap: ArticleView.gap)
-            guard followBottomConstraint.constant != constant else { return }
-            webView.layoutIfNeeded()
-            followBottomConstraint.constant = constant
-            let changes = { webView.layoutIfNeeded() }
-            guard animated, !UIAccessibility.isReduceMotionEnabled else {
-                changes()
-                return
-            }
-            UIView.animate(
-                withDuration: 0.25,
-                delay: 0,
-                options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
-                animations: changes)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -859,7 +821,7 @@ private struct ArticleWebView: UIViewRepresentable {
                 let location, let webView, speechText != nil
             else {
                 marker.alpha = 0
-                followButton.isHidden = true
+                ArticleFollowControl.shared.clear(owner: followOwner)
                 return
             }
             let range = location.rangeInArticle
@@ -901,7 +863,6 @@ private struct ArticleWebView: UIViewRepresentable {
         ) {
             let scrollView = webView.scrollView
             scrollView.bringSubviewToFront(marker)
-            webView.bringSubviewToFront(followButton)
             marker.backgroundColor = webView.tintColor
             let visibleTop = ArticleReadingMarkerLayout.visibleTop(
                 domTop: top,
@@ -926,7 +887,7 @@ private struct ArticleWebView: UIViewRepresentable {
                     animations: changes)
             }
 
-            followButton.isHidden = followState.isFollowing
+            updateFollowControl()
 
             guard forceFollow || followState.isFollowing,
                 forceFollow || !UIAccessibility.isVoiceOverRunning,
@@ -958,13 +919,24 @@ private struct ArticleWebView: UIViewRepresentable {
             // A deliberate scroll stays detached. Nothing silently starts
             // pulling the page again after an arbitrary timeout.
             followState.userDidScroll(whileReading: true)
-            followButton.isHidden = false
-            webView?.bringSubviewToFront(followButton)
+            updateFollowControl()
         }
 
-        @objc private func resumeFollowing() {
+        private func updateFollowControl() {
+            guard !followState.isFollowing, pageIsReady,
+                spokenLocation?.episodeID == episodeID, speechText != nil
+            else {
+                ArticleFollowControl.shared.clear(owner: followOwner)
+                return
+            }
+            ArticleFollowControl.shared.offer(owner: followOwner, episodeID: episodeID) { [weak self] in
+                self?.resumeFollowing()
+            }
+        }
+
+        private func resumeFollowing() {
             followState.resume()
-            followButton.isHidden = true
+            ArticleFollowControl.shared.clear(owner: followOwner)
             show(spokenLocation, forceFollow: true)
         }
 

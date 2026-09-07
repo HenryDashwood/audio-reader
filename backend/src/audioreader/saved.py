@@ -122,6 +122,7 @@ async def capture(session: AsyncSession, user: User, episode: Episode, saved: Sa
         saved.capture_error = None
         return
     html = ""
+    capture_error = "Link saved. Could not retrieve the full article."
     title = body.title or episode.title
     source = "browser" if body.html else "web"
     if body.html:
@@ -140,12 +141,16 @@ async def capture(session: AsyncSession, user: User, episode: Episode, saved: Sa
             raw, _ = await fetch_public_bytes(episode.link, max_bytes=MAX_ARTICLE_BYTES)
             html, extracted_title = extract(raw.decode("utf-8", errors="replace"))
             title = extracted_title or title
-        except FeedFetchError:
-            pass
+        except FeedFetchError as exc:
+            if exc.status_code in {401, 403}:
+                capture_error = (
+                    "Link saved. This site refused Magpie's request. "
+                    "Open the page in Safari, then use Share → Magpie to save the page content."
+                )
     text = article_text(html)
     if not text:
         if saved.content_id is None:
-            saved.capture_error = "Link saved. Could not retrieve the full article."
+            saved.capture_error = capture_error
         return
     await store_capture(session, user, episode, saved, title, html, text, source)
 

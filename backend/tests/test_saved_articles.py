@@ -109,6 +109,29 @@ async def test_failed_extraction_keeps_link_then_retry_can_prepare_it(client, re
     assert response.json()["content_id"] and response.json()["capture_error"] is None
 
 
+@pytest.mark.parametrize("status", [401, 403])
+async def test_refused_web_fetch_recovers_by_sharing_browser_content(client, respx_mock, status):
+    route = respx_mock.get(URL).respond(status)
+    response = await client.post("/saved", json={"url": URL})
+    assert response.status_code == 200
+    item = response.json()
+    assert "refused Magpie's request" in item["capture_error"]
+    assert "Safari" in item["capture_error"]
+    assert not item["has_text"] and item["content_id"] is None
+
+    # Safari shares its loaded page; this must repair the existing link without
+    # another server fetch, a duplicate Saved item, or a changed save date.
+    repaired = await capture(client)
+    assert route.call_count == 1
+    assert repaired["id"] == item["id"]
+    assert repaired["saved_at"] == item["saved_at"]
+    assert repaired["has_text"] and repaired["content_id"]
+    assert repaired["capture_error"] is None
+    assert len((await client.get("/saved")).json()) == 1
+    text = (await client.get(f"/episodes/{item['id']}/text")).json()["text"]
+    assert "original private words" in text
+
+
 async def test_reconcile_preserves_identity_private_copy_and_position(client, session, user, respx_mock, make_client):
     first = await capture(client)
     await client.put(

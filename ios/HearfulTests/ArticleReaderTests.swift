@@ -425,27 +425,44 @@ struct ArticleDocumentTests {
         #expect(state.isFollowing)
     }
 
-    @Test func theFollowControlExplainsItsActionWithoutItsIcon() {
-        let button = ArticleReadingFollowButton()
-
-        #expect(button.configuration?.title == "Follow reading")
-        #expect(button.intrinsicContentSize.height >= 44)
-        #expect(button.accessibilityLabel == "Follow the reading position")
-        #expect(button.accessibilityHint?.contains("current word") == true)
+    @Test func theMiniPlayerOffersFollowingOnlyForItsVisibleArticle() {
+        let control = ArticleFollowControl()
+        let owner = UUID()
+        var resumed = false
+        control.offer(owner: owner, episodeID: 7) { resumed = true }
+        #expect(!control.isAvailable(for: 7))
+        control.showReader(episodeID: 7)
+        #expect(control.isAvailable(for: 7))
+        #expect(!control.isAvailable(for: 8))
+        control.resume(episodeID: 8)
+        #expect(!resumed)
+        control.resume(episodeID: 7)
+        #expect(resumed)
+        #expect(!control.isAvailable(for: 7))
     }
 
-    @Test func theFollowControlClearsTheMiniPlayerOnlyWhileItIsVisible() {
-        let abovePlayer = ArticleReadingFollowLayout.bottomConstraintConstant(
-            chromeHidden: false,
-            miniPlayerHeight: 52,
-            gap: 10)
-        let withoutPlayer = ArticleReadingFollowLayout.bottomConstraintConstant(
-            chromeHidden: true,
-            miniPlayerHeight: 52,
-            gap: 10)
+    @Test func returningToAPausedReaderRetainsItsFollowAction() {
+        let control = ArticleFollowControl()
+        control.showReader(episodeID: 7)
+        control.offer(owner: UUID(), episodeID: 7) {}
+        control.hideReader(episodeID: 7)
+        #expect(!control.isAvailable(for: 7))
+        control.showReader(episodeID: 7)
+        #expect(control.isAvailable(for: 7))
+    }
 
-        #expect(abovePlayer == -86)
-        #expect(withoutPlayer == -12)
+    @Test func anOldReaderCannotClearTheNewReadersFollowAction() {
+        let control = ArticleFollowControl()
+        let old = UUID()
+        let current = UUID()
+        control.offer(owner: old, episodeID: 7) {}
+        control.showReader(episodeID: 8)
+        control.offer(owner: current, episodeID: 8) {}
+        control.clear(owner: old)
+        control.hideReader(episodeID: 7)
+        #expect(control.isAvailable(for: 8))
+        control.clear(owner: current)
+        #expect(!control.isAvailable(for: 8))
     }
 
     @Test func thePageNeverScrollsSidewaysHoweverWideItsContent() async throws {
@@ -678,4 +695,100 @@ private final class FailingAPI: HearfulAPIProtocol, @unchecked Sendable {
     func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {}
     func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String?) async throws {}
     func reportDiagnostic(_ event: [String: any Sendable]) async throws {}
+}
+
+@Suite("Captured article headlines")
+@MainActor
+struct CapturedArticleHeadlineTests {
+    private func load(title: String, body: String) async -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        ArticleHeadlineScript.add(to: configuration)
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 700), configuration: configuration)
+        let document = ArticleDocument.page(
+            body: ArticleDocument.header(
+                title: title, feedTitle: "openai.com", feedURL: nil,
+                author: nil, publishedAt: nil) + ArticleDocument.articleBody(body),
+            pointSize: 17)
+        let waiter = ArticleWebViewLoadWaiter()
+        await waiter.load(document, in: webView)
+        return webView
+    }
+
+    @Test(arguments: ["", " | OpenAI"])
+    func theCapturedHeadlineAppearsOnceAndKeepsItsSpeechPosition(suffix: String) async throws {
+        let headline = "Research acceleration: The view inside OpenAI"
+        let speech = headline + "\n\nThe first paragraph."
+        let webView = await load(
+            title: headline + suffix,
+            body: "<div><h1>Research acceleration: The view inside <em>OpenAI</em></h1>"
+                + "<p>The first paragraph.</p></div>")
+        let result = try await webView.callAsyncJavaScript(
+            """
+            const headline = document.querySelector('h1');
+            return {
+              count: document.querySelectorAll('h1').length,
+              title: headline.textContent,
+              metadata: headline.nextElementSibling.textContent,
+              emphasis: headline.querySelector('em').textContent,
+              insideSpeech: !!headline.closest('#hearful-article-body')
+            };
+            """,
+            arguments: [:], in: nil, contentWorld: ArticleReadingMarkerScript.world)
+        let values = try #require(result as? [String: Any])
+        #expect((values["count"] as? NSNumber)?.intValue == 1)
+        #expect(values["title"] as? String == headline)
+        #expect(values["metadata"] as? String == "openai.com")
+        #expect(values["emphasis"] as? String == "OpenAI")
+        #expect(values["insideSpeech"] as? Bool == true)
+
+        try await ArticleReadingMarkerScript.install(in: webView)
+        let mapped = try await webView.callAsyncJavaScript(
+            "return globalThis.hearfulArticleMarker.configure(text);",
+            arguments: ["text": speech], in: nil,
+            contentWorld: ArticleReadingMarkerScript.world)
+        #expect((mapped as? NSNumber)?.intValue == speech.split(whereSeparator: \.isWhitespace).count)
+        for word in ["Research", "paragraph"] {
+            let range = (speech as NSString).range(of: word)
+            let result = try await webView.callAsyncJavaScript(
+                "return globalThis.hearfulArticleMarker.rectForRange(location, length);",
+                arguments: ["location": range.location, "length": range.length],
+                in: nil, contentWorld: ArticleReadingMarkerScript.world)
+            let rect = result as? [String: Any]
+            #expect((rect?["height"] as? NSNumber)?.doubleValue ?? 0 > 0)
+        }
+    }
+
+    @Test(arguments: [
+        "<h2>A different section</h2><p>Prose.</p>",
+        "<p>Opening prose.</p><h2>The article title</h2>",
+        "<h2>The article</h2><p>Prose.</p>",
+        "<p>The article title</p><p>Prose.</p>",
+    ])
+    func sectionHeadingsAndOrdinaryProseKeepTheGeneratedHeader(body: String) async throws {
+        let webView = await load(title: "The article title", body: body)
+        let result = try await webView.callAsyncJavaScript(
+            """
+            return document.querySelector('#hearful-page > h1')?.textContent === 'The article title'
+              && document.querySelector('#hearful-article-body').innerHTML === original;
+            """,
+            arguments: ["original": body], in: nil,
+            contentWorld: ArticleReadingMarkerScript.world)
+        #expect(result as? Bool == true)
+    }
+
+    @Test func entitiesWhitespaceAndAnOpeningH2UseOneAccessibleHeading() async throws {
+        let webView = await load(
+            title: "Research & progress | OpenAI",
+            body: "<h2> Research &amp;\n progress </h2><p>Prose.</p>")
+        let result = try await webView.callAsyncJavaScript(
+            """
+            return document.querySelectorAll('h1').length === 1
+              && document.querySelectorAll('h2').length === 0
+              && !!document.querySelector('#hearful-article-body h1');
+            """,
+            arguments: [:], in: nil, contentWorld: ArticleReadingMarkerScript.world)
+        #expect(result as? Bool == true)
+    }
 }

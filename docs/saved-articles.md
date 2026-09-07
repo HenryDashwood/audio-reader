@@ -22,6 +22,10 @@ Sites requiring login or JavaScript may need a Safari capture; full-text extract
 cannot be guaranteed for every publisher. PDFs, pasted text, and video transcripts
 are outside this first implementation.
 
+If a site refuses the backend request (HTTP 401 or 403), Saved directs the user to
+open the page in Safari and use Share → Magpie. Sharing the same URL with its page
+content repairs the saved link, preserving its identity and original save date.
+
 ## Identity, content, and progress
 
 - `episodes` remains the identity table. `feed_id` is nullable; `canonical_url`

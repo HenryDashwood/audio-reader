@@ -97,7 +97,18 @@ final class SavedLibrary: ObservableObject {
             guard currentAccount == account, self.generation == generation else { return }
             episodes.removeAll { $0.id == episode.id }
             OfflineCache.shared.save(episodes, for: .savedArticles)
+            AccessibilityNotification.Announcement("Removed from Saved: \(episode.title)").post()
         } catch { self.error = (error as? APIError)?.spokenResponse ?? error.localizedDescription }
+    }
+
+    func file(_ filing: EpisodeFiling, episode: Episode) async {
+        if filing == .dismissed {
+            // Dismissing this list's bookmark does not claim she read it, or
+            // dismiss an independently followed copy from Latest.
+            await remove(episode)
+        } else if await fileEpisode(filing, episode, api: api) {
+            await load()
+        }
     }
 
     func retry(_ episode: Episode) async {
@@ -179,46 +190,23 @@ struct SavedView: View {
                                 }
                             }.font(.footnote).buttonStyle(.borderless)
                         }
-                        if let contentID = episode.contentID {
-                            Text(
-                                OfflineCache.shared.load(
-                                    EpisodeText.self,
-                                    for: .articleVersion(
-                                        episodeID: episode.id, contentID: contentID)) != nil
-                                    ? "Available offline" : "Text not yet downloaded"
-                            )
-                            .font(.caption).foregroundStyle(.secondary)
-                        }
+                    }
+                    .episodeFilingActions(for: episode, allowsDismissal: true) { filing in
+                        Task { await model.file(filing, episode: episode) }
                     }
                     .contextMenu {
-                        Button(finished ? "Mark unread" : "Mark finished") {
-                            Task {
-                                do {
-                                    try await HearfulAPI().setEpisodeState(
-                                        episodeID: episode.id, played: !finished, dismissed: nil)
-                                    await model.load()
-                                } catch {
-                                    model.error =
-                                        (error as? APIError)?.spokenResponse
-                                        ?? error.localizedDescription
-                                }
+                        ForEach(
+                            EpisodeFiling.available(for: episode, allowsDismissal: false),
+                            id: \.self
+                        ) { filing in
+                            Button {
+                                Task { await model.file(filing, episode: episode) }
+                            } label: {
+                                Label(filing.actionTitle(for: episode), systemImage: filing.systemImage)
                             }
                         }
-                        Button("Remove from Saved", role: .destructive) {
+                        Button("Dismiss from Saved", role: .destructive) {
                             Task { await model.remove(episode) }
-                        }
-                    }
-                    .accessibilityAction(named: finished ? "Mark unread" : "Mark finished") {
-                        Task {
-                            do {
-                                try await HearfulAPI().setEpisodeState(
-                                    episodeID: episode.id, played: !finished, dismissed: nil)
-                                await model.load()
-                            } catch {
-                                model.error =
-                                    (error as? APIError)?.spokenResponse
-                                    ?? error.localizedDescription
-                            }
                         }
                     }
                 }
@@ -301,6 +289,9 @@ struct SavedView: View {
             OfflineCache.shared.save(model.episodes, for: .savedArticles)
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSavedChanged)) { _ in
+            Task { await model.load() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)) { _ in
             Task { await model.load() }
         }
     }

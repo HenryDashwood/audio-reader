@@ -54,8 +54,9 @@ deploys remain an emergency operator capability, outside the normal workflow.
 
 ## Test on an iPhone
 
-`make ios-phone-staging` builds and installs the current app in Release and launches
-it against staging. It uses the existing `HEARFUL_API_URL` override; no bundle ID,
+`make ios-phone` builds and installs the current app in Release and launches
+it against staging by default. `make ios-phone-staging` explicitly selects staging.
+These use the existing `HEARFUL_API_URL` override; no bundle ID,
 signing, version, entitlement, or App Store configuration changes are needed.
 The override is remembered between launches. Staging uses its own sign-in session;
 a production session token does not authenticate against staging.
@@ -70,7 +71,8 @@ Do this in a separate checkout at the release commit if testing an older release
 Install through the normal Release device workflow; never uninstall to switch servers.
 The same bundle ID replaces the installed build, so a dedicated test phone is preferable.
 
-To return to production, use Settings' existing server reset or run `make ios-phone`.
+To return to production, use Settings' existing server reset or run
+`make ios-phone-production`.
 Sign in again if prompted. App Store and TestFlight builds still default to production;
 this work does not silently redirect beta testers to staging. A remembered override
 on a development phone can survive an app update, so clear it when finished testing.

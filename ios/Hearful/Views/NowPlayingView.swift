@@ -253,6 +253,7 @@ struct NowPlayingView: View {
 /// capsules read as a different app's idea. Cut to the tab bar's own width so
 /// the three line up.
 struct MiniPlayer: View {
+    @ObservedObject private var follow = ArticleFollowControl.shared
     @ObservedObject private var player = PlaybackCoordinator.shared
     @ObservedObject private var metrics = TabBarMetrics.shared
     @Binding var showingNowPlaying: Bool
@@ -281,6 +282,20 @@ struct MiniPlayer: View {
                 .accessibilityLabel("Now playing: \(episode.title)")
                 .accessibilityHint("Opens the player, with the scrubber and sleep timer")
 
+                if follow.isAvailable(for: episode.id) {
+                    Button {
+                        follow.resume(episodeID: episode.id)
+                    } label: {
+                        Image(systemName: "scope")
+                            .font(.body)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("article-follow-reading")
+                    .accessibilityLabel("Follow the reading position")
+                    .accessibilityHint("Returns to the current word and keeps it on screen")
+                }
+
                 Button {
                     player.toggle()
                 } label: {
@@ -302,7 +317,6 @@ struct MiniPlayer: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
                         .frame(width: 34, height: 44)
                 }
                 .buttonStyle(.plain)
