@@ -12,6 +12,22 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.4.1
 
+Magpie now offers more ways to start and control listening through Siri and
+Shortcuts. Open Settings → Siri and Shortcuts for examples and the complete
+action list. Please try:
+
+- Say "Continue listening in Magpie" with the app open and closed. Podcasts
+  and articles should resume from your saved place.
+- Say "Run a request in Magpie", then describe what you want. If Siri asks a
+  follow-up question or opens Magpie, you should not need to repeat yourself.
+- Combine Find Listening Items, Play a Listening Item, Set Playback Speed,
+  and Set Sleep Timer in a shortcut. Try filing an item and undoing that action.
+- Add Ask Magpie and Continue Listening to Control Center or the Lock Screen.
+  Check both controls with VoiceOver and headphones.
+
+Please report missing Siri actions, requests that start twice, lost listening
+positions, or confirmations that do not match what the app did.
+
 Combined sources now recognize the same article when a subscriber link adds an
 access token. Please check that public and subscriber copies appear once and
 keep their shared reading progress.
@@ -37,7 +53,7 @@ Publication sources can now be combined. Please try:
 - Use "Separate source" to return a source to Library. Its reading progress
   should be preserved, and older articles should not refill Latest.
 
-This internal build improves voice control. Please try:
+This build improves voice control. Please try:
 
 - Start a voice request. The listening vibration should be stronger, and a
   different tone should mark the end of listening. For a slow request, a short
@@ -58,26 +74,10 @@ This internal build improves voice control. Please try:
   work?" to recover its result. Please report any repeated action or misleading
   confirmation, and whether you were using the phone speaker or headphones.
 
-Earlier 1.4.1 changes are still worth checking:
-
-A small follow-up to 1.4.0, mostly about what happens around a phone call.
-Worth trying:
-
-- Take a call while a podcast is playing, and again while an article is
-  being read. When the call ends, the podcast should carry on by itself, and
-  the article should start its current paragraph again rather than sit in
-  silence while claiming to be playing.
-- Pull your AirPods out during a call. When the call ends, nothing should
-  start playing out of the phone's speaker.
-- Press pause yourself before a call comes in. When it ends, the episode
-  should stay paused: only something you were listening to comes back.
-- Look at "minutes left" on an episode in Latest and then play it. The
-  figure should agree with the player, even for shows whose feeds
-  misreport their lengths.
-- If an episode fails to start, try it again. It should pick up from where
-  you actually were, not from where the list thought you were an hour ago.
-
-Everything from 1.4.0 below is still worth trying if you have not yet.
+Also check playback around phone calls: resume only if you were listening
+before the call, and never through the speaker after removing your AirPods.
+Articles should restart their current paragraph. Check that remaining-time
+estimates agree with the player and that retrying playback keeps your place.
 
 ## 1.4.0
 
