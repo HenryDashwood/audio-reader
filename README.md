@@ -54,6 +54,7 @@ make ios-doctor       # verify Xcode and choose a compatible simulator
 make ios-build        # compile on the oldest installed iOS 26+ runtime
 make ios-index        # refresh Cursor's local SourceKit-LSP build settings
 make ios-test         # run the full Swift test suite there
+make ios-test TEST=VoiceControllerTests # run one suite while iterating
 make ios-test-latest  # also check the newest installed runtime
 make ios-phone        # Release build, install over Wi-Fi, and launch against staging
 make ios-phone-production # same Release install, pointed at production
@@ -63,6 +64,26 @@ make ios-phone-debug  # same Release install, pointed at this Mac's local API
 The commands choose an available iPhone automatically and keep DerivedData in
 the ignored `build/` directory. Set `IOS_SIMULATOR_ID` to use a specific
 simulator. Direct `xcodebuild` commands remain useful for one-off destinations.
+
+`TEST` also accepts a single test, for example
+`make ios-test TEST='VoiceControllerTests/playsTheEpisodeTheBackendChose()'`,
+or a full `HearfulTests/...` identifier. It works with `ios-test-latest` too.
+Omit `TEST` for the complete suite before merging. Focused runs still compile
+the test bundle and check your current sources; they only filter execution.
+
+Index refreshes use `build/IndexDerivedData` so their clean build cannot clear
+the normal build/test output. Override that location with
+`IOS_INDEX_DERIVED_DATA_PATH`; `IOS_DERIVED_DATA_PATH` controls normal builds
+and tests. The separate index directory uses additional disk space.
+
+Local tests use a single incremental build-and-test invocation and print its
+elapsed time. To reproduce CI's phased run, use
+`IOS_TEST_PREBOOT=1 IOS_COMPILATION_CACHE=1 make ios-test`. This boots the selected
+simulator while building for testing, waits for both to succeed, then tests
+those freshly built products. The log reports build time, simulator boot
+details, any remaining boot wait, test-and-launch time, and total elapsed time.
+Keep the default local mode for a warm simulator to avoid a second Xcode
+invocation.
 
 Day to day, open `ios/Hearful.xcodeproj` and press ⌘R. The app and test targets
 use file-system synchronized groups, so files added under `ios/Hearful/` are
@@ -170,6 +191,14 @@ and push to `main`. Its Linux job installs the locked backend environment, runs
 Ruff formatting and linting, type-checks with ty, executes the backend and
 repository-script tests, and validates the App Store listing. Its macOS job
 selects Xcode 26 or newer and runs the full iOS simulator test suite.
+
+The iOS job restores Xcode's compilation cache, scoped to the macOS build,
+runner architecture, and exact Xcode build. Source changes produce a new cache
+snapshot with a fallback to the previous compatible snapshot; Xcode validates
+compiler inputs on every build. Tests always run, including on cache hits.
+Simulator boot overlaps compilation, and phase timings appear in the job
+summary. The first run populates the cache; compare later runs, including
+cache transfer time, to measure the benefit.
 
 The Xcode Cloud **Test** workflow is manual-only so it does not duplicate these
 checks. GitHub Actions also owns TestFlight releases.

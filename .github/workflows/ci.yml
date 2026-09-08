@@ -47,16 +47,32 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Select Xcode
+        id: xcode
         run: |
           set -euo pipefail
           xcode=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
           sudo xcode-select -s "$xcode"
           xcodebuild -version
+          echo "build=$(xcodebuild -version | awk '/Build version/ { print $3 }')" >> "$GITHUB_OUTPUT"
+          echo "macos=$(sw_vers -buildVersion)" >> "$GITHUB_OUTPUT"
+
+      # Cache compiler outputs, not a previous test result or build database.
+      # Xcode validates inputs on every build; the full suite always runs.
+      - name: Cache iOS compilations
+        uses: actions/cache@v6
+        with:
+          path: build/DerivedData/CompilationCache.noindex
+          key: ios-compilation-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.macos }}-${{ steps.xcode.outputs.build }}-${{ hashFiles('ios/**', 'scripts/ios-dev.sh', '.github/workflows/ci.yml') }}
+          restore-keys: |
+            ios-compilation-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.macos }}-${{ steps.xcode.outputs.build }}-
 
       - name: Verify the iOS toolchain
         run: make ios-doctor
 
       - name: Run the iOS tests
+        env:
+          IOS_COMPILATION_CACHE: '1'
+          IOS_TEST_PREBOOT: '1'
         run: make ios-test
 
   compatibility:

@@ -31,6 +31,8 @@ ios-build: app-store-validate
 ios-index:
 	@./scripts/ios-dev.sh index
 
+export TEST
+
 ios-test:
 	@./scripts/ios-dev.sh test
 

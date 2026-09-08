@@ -23,6 +23,8 @@
         CC000000000000000000000C = {isa = XCBuildConfiguration; buildSettings = {
             APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 67F2439F4X;
             CODE_SIGN_ENTITLEMENTS = HearfulShare.entitlements;
+            // The share extension defines no App Intents; only the app and controls need metadata.
+            LM_SKIP_METADATA_EXTRACTION = YES;
             CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 1.4.0;
             GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = "HearfulShare-Info.plist";
             INFOPLIST_KEY_CFBundleDisplayName = Magpie;
@@ -35,6 +37,8 @@
         CC000000000000000000000D = {isa = XCBuildConfiguration; buildSettings = {
             APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 67F2439F4X;
             CODE_SIGN_ENTITLEMENTS = HearfulShare.entitlements;
+            // The share extension defines no App Intents; only the app and controls need metadata.
+            LM_SKIP_METADATA_EXTRACTION = YES;
             CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 1.4.0;
             GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = "HearfulShare-Info.plist";
             INFOPLIST_KEY_CFBundleDisplayName = Magpie;

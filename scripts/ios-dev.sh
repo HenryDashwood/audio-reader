@@ -16,6 +16,9 @@ usage() {
   echo "Usage: $0 {doctor|build|index|test|test-latest|device|device-local}"
   echo
   echo "Overrides: IOS_SIMULATOR_ID, IOS_SIMULATOR_NAME, IOS_MINIMUM_OS, IOS_DERIVED_DATA_PATH"
+  echo "           IOS_INDEX_DERIVED_DATA_PATH, TEST (suite or suite/test identifier)"
+  echo "           IOS_TEST_PREBOOT=1 (overlap boot/build and report phase timings)"
+  echo "           IOS_COMPILATION_CACHE=1 (enable Xcode compilation caching)"
   echo "           IOS_DEVICE_ID, IOS_DEVICE_API_URL, IOS_DEVICE_DERIVED_DATA_PATH, IOS_DEVICE_DRY_RUN"
 }
 
@@ -32,6 +35,12 @@ local_device_build=0
 if [[ "$action" == "test-latest" ]]; then
   runtime_policy="latest"
   action="test"
+fi
+
+# Index refreshes need a clean build, so give them their own output even when
+# the caller overrides the normal build/test directory.
+if [[ "$action" == "index" ]]; then
+  derived_data="${IOS_INDEX_DERIVED_DATA_PATH:-$repo_root/build/IndexDerivedData}"
 fi
 
 if [[ "$action" == "device-local" ]]; then
@@ -83,6 +92,59 @@ run_xcodebuild() {
     xcodebuild "$@"
   fi
 }
+
+report_timing() {
+  local label="$1" elapsed="$2" status="$3"
+  echo "Timing: $label: ${elapsed}s (exit $status)"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    printf -- '- %s: %ss (exit %s)\n' "$label" "$elapsed" "$status" >> "$GITHUB_STEP_SUMMARY"
+  fi
+}
+
+timed_xcodebuild() {
+  local label="$1" started=$SECONDS status=0
+  shift
+  run_xcodebuild "$@" || status=$?
+  report_timing "$label" "$((SECONDS - started))" "$status"
+  return "$status"
+}
+
+test_with_preboot() (
+  local started=$SECONDS boot_started=$SECONDS build_status=0 boot_status=0
+  local boot_pid boot_log wait_started
+  boot_log="$(mktemp "${TMPDIR:-/tmp}/magpie-simulator-boot.XXXXXX")"
+
+  # bootstatus -b also handles an already booted simulator. Run it directly
+  # in the background so cleanup can stop this exact process on build failure.
+  xcrun simctl bootstatus "$simulator_id" -b > "$boot_log" 2>&1 &
+  boot_pid=$!
+  trap 'kill "$boot_pid" 2>/dev/null || true; wait "$boot_pid" 2>/dev/null || true; rm -f "$boot_log"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  timed_xcodebuild "Build for testing" build-for-testing \
+    "${common_args[@]}" -showBuildTimingSummary || build_status=$?
+  if [[ "$build_status" != 0 ]]; then
+    cat "$boot_log"
+    return "$build_status"
+  fi
+  wait_started=$SECONDS
+  wait "$boot_pid" || boot_status=$?
+  cat "$boot_log"
+  report_timing "Simulator wait after build" "$((SECONDS - wait_started))" "$boot_status"
+  # bootstatus's own log contains its actual boot elapsed time. This measures
+  # the combined readiness interval, since build and boot deliberately overlap.
+  report_timing "Build and simulator ready" "$((SECONDS - boot_started))" "$boot_status"
+  rm -f "$boot_log"
+  trap - EXIT INT TERM
+  [[ "$boot_status" == 0 ]] || return "$boot_status"
+
+  local test_status=0
+  timed_xcodebuild "Test without building (includes app launch)" \
+    test-without-building "${test_args[@]}" || test_status=$?
+  report_timing "Total phased test run" "$((SECONDS - started))" "$test_status"
+  return "$test_status"
+)
 
 choose_device() {
   local inventory matches count requested
@@ -301,10 +363,27 @@ common_args=(
   -derivedDataPath "$derived_data"
 )
 
+if [[ "${IOS_COMPILATION_CACHE:-0}" == "1" ]]; then
+  common_args+=(COMPILATION_CACHE_ENABLE_CACHING=YES)
+fi
+
+# Keep this array nonempty: macOS's Bash 3.2 treats an empty array as unset
+# under nounset, even when expanded with [@].
+test_args=("${common_args[@]}")
+if [[ "$action" == "test" && -n "${TEST:-}" ]]; then
+  test_identifier="$TEST"
+  if [[ "$test_identifier" != HearfulTests && "$test_identifier" != HearfulTests/* ]]; then
+    test_identifier="HearfulTests/$test_identifier"
+  fi
+  test_args+=("-only-testing:$test_identifier")
+  echo "Testing only: $test_identifier"
+fi
+
 if [[ "$action" == "build" ]]; then
   run_xcodebuild build "${common_args[@]}"
 elif [[ "$action" == "index" ]]; then
   index_log="$repo_root/build/xcodebuild-index.log"
+  mkdir -p "$repo_root/build"
   echo "Refreshing SourceKit-LSP build settings"
   # The build server needs a complete, unformatted xcodebuild log. A clean
   # build-for-testing covers both app and test sources and replaces stale
@@ -315,5 +394,9 @@ elif [[ "$action" == "index" ]]; then
   echo "Build-server config: $repo_root/buildServer.json"
   echo "Build log: $index_log"
 else
-  run_xcodebuild test "${common_args[@]}"
+  if [[ "${IOS_TEST_PREBOOT:-0}" == "1" ]]; then
+    test_with_preboot
+  else
+    timed_xcodebuild "Build and test" test "${test_args[@]}"
+  fi
 fi
