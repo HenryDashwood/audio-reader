@@ -12,9 +12,12 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.4.1
 
-Magpie now offers more ways to start and control listening through Siri and
-Shortcuts. Open Settings → Siri and Shortcuts for examples and the complete
-action list. Please try:
+This build fixes three listening problems. Please check that finished articles
+disappear from Latest, that the mini player's play/pause button responds when
+you tap around its icon, and that saying "fast forward three minutes" skips
+ahead three minutes without changing your playback speed.
+
+Open Settings → Siri and Shortcuts for the action list. Please try:
 
 - Say "Continue listening in Magpie" with the app open and closed. Podcasts
   and articles should resume from your saved place.
@@ -25,8 +28,7 @@ action list. Please try:
 - Add Ask Magpie and Continue Listening to Control Center or the Lock Screen.
   Check both controls with VoiceOver and headphones.
 
-Please report missing Siri actions, requests that start twice, lost listening
-positions, or confirmations that do not match what the app did.
+Report missing Siri actions, duplicate requests, lost positions, or wrong confirmations.
 
 Combined sources now recognize the same article when a subscriber link adds an
 access token. Please check that public and subscriber copies appear once and
@@ -74,10 +76,9 @@ This build improves voice control. Please try:
   work?" to recover its result. Please report any repeated action or misleading
   confirmation, and whether you were using the phone speaker or headphones.
 
-Also check playback around phone calls: resume only if you were listening
-before the call, and never through the speaker after removing your AirPods.
-Articles should restart their current paragraph. Check that remaining-time
-estimates agree with the player and that retrying playback keeps your place.
+After calls, playback should resume only if previously playing, never through
+the speaker after disconnecting AirPods. Articles should restart their
+paragraph; remaining time and retry position should stay correct.
 
 ## 1.4.0
 

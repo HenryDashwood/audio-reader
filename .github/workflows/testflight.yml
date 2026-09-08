@@ -74,20 +74,10 @@ jobs:
           fi
 
       - name: Run the iOS tests
-        run: |
-          set -euo pipefail
-          # Runner images change which simulators they ship, so pick whatever
-          # iPhone is actually present rather than naming one.
-          device=$(xcrun simctl list devices available | sed -nE 's/^ +(iPhone [^(]*[^ (]) +\(.*/\1/p' | sort -uV | tail -1)
-          if [ -z "$device" ]; then
-            echo "::error::no iPhone simulator available on this runner"
-            exit 1
-          fi
-          echo "Testing on $device"
-          xcodebuild test \
-            -project ios/Hearful.xcodeproj \
-            -scheme Hearful \
-            -destination "platform=iOS Simulator,OS=latest,name=$device"
+        # Match main CI's simulator selection and run the same full suite.
+        # Choosing a device by alphabetical order picked iPhone Air on a
+        # different runtime, where the article web-view tests could stall.
+        run: make ios-test
 
       - name: Work out the version numbers
         id: version
