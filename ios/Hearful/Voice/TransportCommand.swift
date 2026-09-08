@@ -32,9 +32,13 @@ enum TransportCommand: Equatable {
 
     private static func parameterized(_ phrase: String) -> TransportCommand? {
         for (prefix, direction) in [("go back ", -1.0), ("rewind ", -1.0), ("skip back ", -1.0),
-                                    ("skip forward ", 1.0), ("skip ahead ", 1.0), ("jump forward ", 1.0)] {
+                                    ("skip forward ", 1.0), ("skip ahead ", 1.0), ("jump forward ", 1.0),
+                                    ("fast forward ", 1.0)] {
             guard phrase.hasPrefix(prefix) else { continue }
-            let rest = String(phrase.dropFirst(prefix.count))
+            var rest = String(phrase.dropFirst(prefix.count))
+            if rest.hasPrefix("by ") { rest = String(rest.dropFirst(3)) }
+            // A time unit makes this a position change, including "fast
+            // forward three minutes"; it must never become a speed request.
             for (unit, multiplier) in [("seconds", 1.0), ("second", 1.0), ("minutes", 60.0), ("minute", 60.0), ("hours", 3600.0), ("hour", 3600.0)] {
                 guard rest.hasSuffix(" " + unit), let value = spokenNumber(String(rest.dropLast(unit.count + 1))),
                       value > 0, value * multiplier <= 7200 else { continue }

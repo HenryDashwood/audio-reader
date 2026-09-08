@@ -231,7 +231,7 @@ final class LatestModel: ObservableObject {
     /// change that never happened.
     func file(_ filing: EpisodeFiling, episode: Episode) async {
         guard await fileEpisode(filing, episode, api: api) else { return }
-        remove(episode.id)
+        await filed(.init(episodeID: episode.id, filing: filing))
     }
 
     /// The same thing having happened somewhere else — by voice, or on a
@@ -265,8 +265,13 @@ final class LatestModel: ObservableObject {
     }
 
     /// Where she has got to, as just reported to the backend: the row keeps
-    /// step with the player, and the offline copy with the row.
+    /// step with the player, and the offline copy with the row. Completed
+    /// items leave Latest, just as they do when marked played by hand.
     func progressed(_ report: PositionReport) {
+        if report.completed {
+            remove(report.episodeID)
+            return
+        }
         switch state {
         case .loaded(let episodes):
             let updated = episodesByApplyingPositionReport(episodes, report)

@@ -20,9 +20,27 @@ struct LocalCommandTests {
         #expect(TransportCommand.match(transcript) == .resume)
     }
 
-    @Test(arguments: ["skip", "skip forward", "skip ahead", "jump forward", "forward"])
+    @Test(arguments: ["skip", "skip forward", "skip ahead", "jump forward", "forward", "fast forward"])
     func recognisesSkipForward(_ transcript: String) {
         #expect(TransportCommand.match(transcript) == .skipForward)
+    }
+
+    @Test(arguments: [
+        "fast forward three minutes", "fast forward 3 minutes",
+        "Can you fast-forward three minutes, please?", "fast forward by three minutes",
+    ])
+    func fastForwardWithMinutesSeeksInsteadOfChangingSpeed(_ transcript: String) {
+        #expect(TransportCommand.match(transcript) == .seek(180))
+    }
+
+    @Test func fastForwardRespectsDurationUnits() {
+        #expect(TransportCommand.match("fast forward thirty seconds") == .seek(30))
+        #expect(TransportCommand.match("fast forward one hour") == .seek(3600))
+    }
+
+    @Test(arguments: ["play at three times speed", "set speed to 3x", "playback speed three"])
+    func explicitSpeedRequestsStillChangeSpeed(_ transcript: String) {
+        #expect(TransportCommand.match(transcript) == .speed(3))
     }
 
     @Test(arguments: [
@@ -62,6 +80,11 @@ struct LocalCommandTests {
         "go back to the episode about Rome",
         "skip to the one with Annie Jacobsen",
         "double speed",
+        "fast forward three",
+        "fast forward three times speed",
+        "fast forward three hours",
+        "fast forward to the episode about three minutes",
+        "fast forward three minutes and play another episode",
         "",
         "   ",
     ])

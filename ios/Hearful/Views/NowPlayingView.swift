@@ -276,6 +276,7 @@ struct MiniPlayer: View {
                         Text(episode.title).font(.subheadline).lineLimit(1)
                         Spacer(minLength: 2)
                     }
+                    .frame(minHeight: 44)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -289,6 +290,7 @@ struct MiniPlayer: View {
                         Image(systemName: "scope")
                             .font(.body)
                             .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("article-follow-reading")
@@ -301,7 +303,8 @@ struct MiniPlayer: View {
                 } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.body)
-                        .frame(width: 38, height: 44)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
@@ -317,7 +320,8 @@ struct MiniPlayer: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.footnote.weight(.semibold))
-                        .frame(width: 34, height: 44)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Stop and close player")
@@ -347,6 +351,7 @@ struct MiniPlayer: View {
                 // player screen. As a VoiceOver element it would just be an
                 // unlabelled shape between the buttons.
                 .accessibilityHidden(true)
+                .allowsHitTesting(false)
             }
         }
     }

@@ -1038,6 +1038,28 @@ struct VoiceConversationTests {
 @Suite("Transport commands never reach the network")
 @MainActor
 struct VoiceControllerTransportTests {
+    @Test(arguments: ["fast forward three minutes", "fast forward 3 minutes"])
+    func fastForwardingThreeMinutesPreservesPlaybackSpeed(_ transcript: String) async {
+        let speech = FakeSpeech()
+        speech.transcript = transcript
+        let (controller, recorder, _, api, player) = makeController(speech: speech)
+        player.currentEpisode = episode()
+        player.isPlaying = true
+        player.playbackRate = 1.5
+        // Reproduce the bad interpretation if this ever reaches the server.
+        api.response = CommandResponse(
+            action: .setSpeed, spokenResponse: "Three times speed.", episode: nil, speed: 3)
+
+        await controller.beginCommand()
+
+        #expect(api.transcripts.isEmpty)
+        #expect(recorder.events.filter { if case .skipped = $0 { true } else { false } } == [.skipped(180)])
+        #expect(!recorder.events.contains { if case .rateSet = $0 { true } else { false } })
+        #expect(player.playbackRate == 1.5)
+        #expect(player.isPlaying)
+        #expect(recorder.spoken.isEmpty)
+    }
+
     @Test func pauseIsHandledOnTheDevice() async {
         let speech = FakeSpeech()
         speech.transcript = "pause"

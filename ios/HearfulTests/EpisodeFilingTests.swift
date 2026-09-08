@@ -15,7 +15,10 @@ private final class FilingAPI: HearfulAPIProtocol, @unchecked Sendable {
         filings.append((episodeID, played, dismissed))
     }
 
-    func recentEpisodes(limit: Int) async throws -> [Episode] { episodes }
+    func recentEpisodes(limit: Int) async throws -> [Episode] {
+        if let failure { throw failure }
+        return episodes
+    }
     func clearLatest() async throws {
         if let failure { throw failure }
         clearCount += 1
@@ -228,6 +231,64 @@ struct LatestFilingTests {
         #expect(titles(model) == [7108])
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func finishingRemovesTheRowAndOfflineCopy(isArticle: Bool, offline: Bool) async {
+        let finished = isArticle ? article(id: 7120) : episode(id: 7120)
+        let remaining = episode(id: 7121)
+        let cache = makeCache()
+        let api = FilingAPI()
+        api.episodes = [finished, remaining]
+        let model = LatestModel(api: api, cache: cache)
+        await model.load()
+        if offline {
+            api.failure = APIError(underlying: "offline")
+            await model.load()
+        }
+
+        model.progressed(
+            PositionReport(
+                episodeID: finished.id, seconds: 3600, completed: true,
+                durationSeconds: isArticle ? nil : 3600))
+
+        #expect(model.availableEpisodes.map(\.id) == [remaining.id])
+        #expect(cache.load([Episode].self, for: .recentEpisodes)?.map(\.id) == [remaining.id])
+        switch model.state {
+        case .loaded: #expect(!offline)
+        case .stale: #expect(offline)
+        default: Issue.record("expected a loaded or offline list")
+        }
+
+        // A later offline load must not bring the finished item back.
+        api.failure = APIError(underlying: "offline")
+        await model.load()
+        #expect(model.availableEpisodes.map(\.id) == [remaining.id])
+    }
+
+    @Test func unfinishedPlaybackKeepsTheRowAndUpdatesItsProgress() async throws {
+        let (model, _) = await makeModel([episode(id: 7122), episode(id: 7123)])
+
+        model.progressed(
+            PositionReport(
+                episodeID: 7122, seconds: 1500, completed: false, durationSeconds: 3000))
+
+        #expect(titles(model) == [7122, 7123])
+        let updated = try #require(model.availableEpisodes.first)
+        #expect(updated.positionSeconds == 1500)
+        #expect(updated.durationSeconds == 3000)
+        #expect(updated.completed == false)
+    }
+
+    @Test func markingUnplayedKeepsTheRestoredRowInLatest() async {
+        let played = episode(id: 7124, played: true)
+        let (model, api) = await makeModel([played, episode(id: 7125)])
+        api.episodes = [episode(id: 7124, played: false), episode(id: 7125)]
+
+        await model.file(.restored, episode: played)
+
+        #expect(titles(model) == [7124, 7125])
+        #expect(model.availableEpisodes.first?.completed == false)
+    }
+
     @Test func clearingEmptiesTheWholeList() async {
         let (model, api) = await makeModel([episode(id: 7109), episode(id: 7110)])
 
@@ -293,6 +354,18 @@ struct ShowPageFilingTests {
 
         #expect(first(model)?.completed == true)
         #expect(first(model)?.dismissed != true)
+    }
+
+    @Test func finishingAnArticleKeepsItOnTheShowPageAsPlayed() async {
+        let (model, _) = await makeModel([article(id: 7205)])
+
+        model.progressed(
+            PositionReport(
+                episodeID: 7205, seconds: 120, completed: true, durationSeconds: nil),
+            showID: 1)
+
+        #expect(first(model)?.id == 7205)
+        #expect(first(model)?.completed == true)
     }
 
     @Test func aDismissedEpisodeIsNotMarkedHeard() async {
