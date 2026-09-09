@@ -19,11 +19,13 @@ protocol SpeechRecognizing {
     func cancel()
     func finishListening()
     func configure(vocabulary: [String], onCaptureEnded: @escaping @MainActor () -> Void)
+    func configure(timeouts: ListeningTimeouts)
 }
 
 extension SpeechRecognizing {
     func finishListening() {}
     func configure(vocabulary: [String], onCaptureEnded: @escaping @MainActor () -> Void) {}
+    func configure(timeouts: ListeningTimeouts) {}
 
     func listen() async throws -> String { try await listen(onReady: {}) }
 
@@ -75,7 +77,7 @@ final class VoiceController: ObservableObject {
     /// arrives on its own, short enough that the silence never feels broken.
     static let noticeAfter = Duration.milliseconds(600)
 
-    /// How many times one exchange may go round after the first question.
+    /// How many consecutive clarification replies to accept after a question.
     ///
     /// A ceiling rather than a loop, because the failure it guards against is
     /// the app asking her the same thing over and over with the microphone
@@ -111,6 +113,7 @@ final class VoiceController: ObservableObject {
     /// puts a button on screen so the trip to Settings is one tap rather than
     /// a hunt through someone else's app.
     @Published private(set) var needsPermission = false
+    @Published private(set) var conversationEnded = false
 
     private let api: HearfulAPIProtocol
     private let speech: SpeechRecognizing
@@ -119,6 +122,8 @@ final class VoiceController: ObservableObject {
     private let feedback: FeedbackPlaying
     private let sleepTimer: SleepTimer
     private let telemetry: TelemetryReporting?
+    private let conversationPreferences: @MainActor () -> VoiceConversationPreferences
+    private var responseFailed = false
     /// Tests control this delay so runner load cannot turn a prompt fake
     /// response into a slow request with an extra progress cue.
     private let progressDelay: @MainActor (Duration) async throws -> Void
@@ -150,6 +155,9 @@ final class VoiceController: ObservableObject {
         api: HearfulAPIProtocol, speech: SpeechRecognizing, speaker: Speaking,
         player: AudioPlaying, feedback: FeedbackPlaying, sleepTimer: SleepTimer = .shared,
         telemetry: TelemetryReporting? = nil, sessionContext: VoiceSessionContext = VoiceSessionContext(),
+        conversationPreferences: @escaping @MainActor () -> VoiceConversationPreferences = {
+            VoiceConversationPreferences()
+        },
         progressDelay: @escaping @MainActor (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         }
@@ -163,20 +171,16 @@ final class VoiceController: ObservableObject {
         self.feedback = feedback
         self.sleepTimer = sleepTimer
         self.telemetry = telemetry
+        self.conversationPreferences = conversationPreferences
         self.progressDelay = progressDelay
     }
 
-    /// Listens, acts, and keeps going for as long as the answer was a question.
-    ///
-    /// One tap is one exchange, not one sentence. When the backend asks which
-    /// show she meant, the microphone opens again on its own and her answer is
-    /// sent with the question attached — which is the difference between a
-    /// two-sentence request and two requests, and the difference she was
-    /// paying for before: every clarification the app asked for was a question
-    /// it then could not use the answer to.
+    /// Keeps the conversation open until silence, an explicit goodbye, playback,
+    /// or an error. Clarifications still work when optional follow-ups are off.
     func beginCommand(transcript: String? = nil, recovering: Bool = false) async {
         // Taps are easy to double up when you cannot see the screen.
         guard !isBusy, !sessionContext.isExecuting else { return }
+        conversationEnded = false
         let id = UUID()
         sessionContext.executionID = id
         defer { if sessionContext.executionID == id { sessionContext.executionID = nil } }
@@ -223,15 +227,23 @@ final class VoiceController: ObservableObject {
             }
         }
 
-        for turn in 0...Self.maxFollowUps {
-            // Anything but a question ends it: she got what she asked for, or
-            // was told why not. Cancellation ends it too — a question asked of
-            // a sheet that has gone is not one to reopen the microphone for.
-            guard
-                await takeTurn(
-                    id: id, suppliedTranscript: turn == 0 ? transcript : nil,
-                    recovering: turn == 0 && recovering) == .expectsReply, !isCancelled
-            else { return }
+        var firstTurn = true
+        var clarifications = 0
+        while !isCancelled {
+            let outcome = await takeTurn(
+                id: id, suppliedTranscript: firstTurn ? transcript : nil,
+                recovering: firstTurn && recovering, isFollowUp: !firstTurn)
+            guard !isCancelled, !player.isPlaying else { return }
+            switch outcome {
+            case .done: return
+            case .answered:
+                guard conversationPreferences().keepListening else { return }
+                clarifications = 0
+            case .expectsReply:
+                guard clarifications < Self.maxFollowUps else { return }
+                clarifications += 1
+            }
+            firstTurn = false
         }
     }
 
@@ -239,14 +251,18 @@ final class VoiceController: ObservableObject {
     /// her.
     private enum TurnOutcome {
         case done
+        case answered
         case expectsReply
     }
 
     /// One listen, one answer. Everything that can go wrong with a spoken
     /// request goes wrong in here, and each pass is its own telemetry row.
-    private func takeTurn(id: UUID, suppliedTranscript: String? = nil, recovering: Bool = false) async
+    private func takeTurn(
+        id: UUID, suppliedTranscript: String? = nil, recovering: Bool = false, isFollowUp: Bool = false
+    ) async
         -> TurnOutcome
     {
+        responseFailed = false
         defer { if commandID == id { speech.cancel() } }
         // One wide event per spoken turn, opened here and sent once at the
         // end however it ends — including the ends that never reach the
@@ -280,6 +296,8 @@ final class VoiceController: ObservableObject {
                 var announced = false
                 liveUserText = ""
                 liveAssistantText = ""
+                speech.configure(timeouts: ListeningTimeouts(
+                    beforeFirstWords: isFollowUp ? conversationPreferences().followUpWait : nil))
                 speech.configure(vocabulary: recognitionVocabulary) { [weak self] in
                     guard let self, self.commandID == id else { return }
                     attempt.markCaptureEnded()
@@ -316,11 +334,12 @@ final class VoiceController: ObservableObject {
             attempt.transcriptEmpty = heard.isEmpty
             guard !heard.isEmpty else {
                 attempt.outcome = .noSpeech
-                // Ends the exchange rather than asking again. A question she
-                // has answered with silence does not get a better answer for
-                // being repeated, and repeating it is how a clarification
-                // turns into the app talking to an empty room.
-                await fail(saying: "I did not hear anything. Tap and try again.")
+                if isFollowUp {
+                    state = .idle
+                    feedback.play(.listeningEnded)
+                } else {
+                    await fail(saying: "I did not hear anything. Tap and try again.")
+                }
                 return .done
             }
             // Bookend listening only when there is a request to handle. This
@@ -345,25 +364,32 @@ final class VoiceController: ObservableObject {
             // the more specific of the two ("stop" is a pause, "stop in
             // twenty minutes" is not).
             let simplePhrase = heard.lowercased().trimmingCharacters(in: .punctuationCharacters)
+            if VoiceConversationPreferences.endsConversation(heard) {
+                attempt.outcome = .spoken
+                state = .idle
+                feedback.play(.listeningEnded)
+                conversationEnded = true
+                return .done
+            }
             if ["undo that", "undo last action"].contains(simplePhrase),
                 let livePlayer = player as? PlaybackCoordinator,
                 try ShortcutUndo.undoSpeed(player: livePlayer)
             {
                 await finish(saying: "Playback speed restored.")
-                return .done
+                return .answered
             }
             if ["undo that", "undo last action"].contains(simplePhrase), let rate = sessionContext.undoSpeed {
                 setPlaybackRate(rate)
                 sessionContext.undoSpeed = nil
                 await finish(saying: "Back to \(rate) times speed.")
-                return .done
+                return .answered
             }
             if let sleep = SleepCommand.match(heard) {
                 sessionContext.undoSpeed = nil
                 attempt.outcome = .sleep
                 attempt.sleepCommand = sleep == .cancel ? "cancel" : "after"
                 await perform(sleep)
-                return .done
+                return .answered
             }
             if let transport = TransportCommand.match(heard) {
                 attempt.outcome = .transport
@@ -372,7 +398,10 @@ final class VoiceController: ObservableObject {
                 if case .speed(let rate) = transport {
                     await finish(saying: "\(rate) times speed.")
                 }
-                return .done
+                switch transport {
+                case .faster, .slower, .normalSpeed, .speed: return .answered
+                default: return .done
+                }
             }
 
             sessionContext.undoSpeed = nil
@@ -419,7 +448,9 @@ final class VoiceController: ObservableObject {
                     + ($0.episode.map { " [episode_id=\($0.id)]" } ?? "")
             }
             recentActions = Array(recentActions.suffix(8))
-            return response.expectsReply == true ? .expectsReply : .done
+            if responseFailed { return .done }
+            if case .playing = state { return .done }
+            return response.expectsReply == true ? .expectsReply : .answered
         } catch _ where isCancelled {
             // The recognisers that fail rather than return on cancellation end
             // up here. Our own doing, so it is neither announced nor counted
@@ -734,6 +765,7 @@ final class VoiceController: ObservableObject {
 
     private func fail(saying text: String) async {
         guard !isCancelled else { return }
+        responseFailed = true
         feedback.play(.failed)
         await finish(saying: text)
     }

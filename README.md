@@ -328,10 +328,48 @@ no useful microphone), launch with a canned transcript:
 SIMCTL_CHILD_HEARFUL_FAKE_TRANSCRIPT="play the one about the aliens lady" xcrun simctl launch booted com.henrydashwood.hearful
 ```
 
+The canned recogniser supplies the request once per voice sheet, then returns
+silence for follow-up listening so it cannot repeat an action indefinitely.
+
 That deterministic path bypasses every recogniser, so command-routing tests do
 not depend on acoustic transcription. Unit tests separately cover Realtime
 event parsing and the fallback boundary. A physical-device check is still
 required when changing microphone capture or provider session settings.
+
+### Conversations and Triple Back Tap
+
+Opening Ask Magpie starts listening automatically, including with VoiceOver
+after its opening instruction finishes. After a spoken reply, the listening
+sound and haptic invite another turn. The default follow-up window is 15
+seconds; change it (10, 15, 20 or 30 seconds), or turn off **Keep listening after
+replies**, under Magpie Settings → Conversation. Explicit clarification
+questions still reopen listening when optional follow-ups are off.
+
+Silence during a follow-up ends listening without an error and leaves the
+transcript available. Say “That’s all” or “Goodbye” to close the conversation.
+Starting playback ends listening immediately. Closing the sheet or moving
+Magpie to the background cancels capture. Within the conversation, VoiceOver’s
+two-finger double-tap finishes input, interrupts a response, or restarts
+listening; the app does not replace the player’s Magic Tap behaviour.
+
+Triple Back Tap is assigned by the user in iPhone Settings:
+
+1. In Shortcuts, create a shortcut containing Magpie’s **Ask Magpie** action
+   and save it as **Ask Magpie**.
+2. Open iPhone Settings → Accessibility → Touch → Back Tap → Triple Tap.
+3. Under Shortcuts, select the saved **Ask Magpie** shortcut.
+4. Tap the back of the iPhone three times. Unlock if asked, then wait for the
+   listening cue before speaking.
+
+The same instructions are in Magpie Settings → Siri and Shortcuts. Back Tap
+keeps the Action button’s existing assignment. Magpie cannot assign this
+system gesture itself.
+
+Check Back Tap, Siri handoff, and VoiceOver announcement timing on a physical
+iPhone: cold launch, app already open, voice sheet already open, a second
+spoken turn, silence, “That’s all”, interrupted speech, and starting playback.
+The simulator can verify conversation logic but not rear-tap recognition or
+the real microphone/audio handoff.
 
 ## Backend development
 

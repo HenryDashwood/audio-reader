@@ -21,7 +21,9 @@ final class Speaker: NSObject, Speaking, AVSpeechSynthesizerDelegate {
 
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = SpeechVoice.current
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        // Read the preference for each reply so changes take effect on the
+        // next utterance, using the same speed curve as article narration.
+        utterance.rate = ArticlePlayer.utteranceRate(for: PlaybackSpeedPreference.load(.article))
         utterance.postUtteranceDelay = 0.1
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in

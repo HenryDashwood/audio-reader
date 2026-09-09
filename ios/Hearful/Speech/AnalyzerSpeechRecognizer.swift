@@ -35,6 +35,10 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         self.onCaptureEnded = onCaptureEnded
     }
 
+    func configure(timeouts: ListeningTimeouts) {
+        self.timeouts = timeouts
+    }
+
     private func checkActive(_ id: UUID) throws {
         try Task.checkCancellation()
         guard activeID == id else { throw CancellationError() }
@@ -46,7 +50,7 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
     private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
     private var silenceTimer: Timer?
 
-    private let timeouts = ListeningTimeouts()
+    private var timeouts = ListeningTimeouts()
     /// Counts buffers arriving from the microphone tap. Zero is the one
     /// thing that cannot mean "she said nothing": the tap delivers audio
     /// continuously once capture is live, and silence is still audio. Zero

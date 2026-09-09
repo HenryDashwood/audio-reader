@@ -8,6 +8,11 @@ private final class ScriptedRecognizer: SpeechRecognizing {
     var result: Result<String, Error>
     private(set) var listenCount = 0
     private(set) var cancelCount = 0
+    private(set) var configuredWait: TimeInterval?
+
+    func configure(timeouts: ListeningTimeouts) {
+        configuredWait = timeouts.beforeFirstWords
+    }
 
     init(_ result: Result<String, Error>) { self.result = result }
 
@@ -37,6 +42,16 @@ private final class StartedThenFailedRecognizer: SpeechRecognizing {
 @Suite("Fallback speech recognizer")
 @MainActor
 struct FallbackSpeechRecognizerTests {
+    @Test func bothRecognizersReceiveTheFollowUpWindow() async throws {
+        let preferred = ScriptedRecognizer(.failure(Boom()))
+        let backup = ScriptedRecognizer(.success("another question"))
+        let recognizer = FallbackSpeechRecognizer(preferred: preferred, backup: backup)
+        recognizer.configure(timeouts: ListeningTimeouts(beforeFirstWords: 30))
+        _ = try await recognizer.listen()
+        #expect(preferred.configuredWait == 30)
+        #expect(backup.configuredWait == 30)
+    }
+
     @Test func usesThePreferredRecognizerWhenItWorks() async throws {
         let preferred = ScriptedRecognizer(.success("play the seashells one"))
         let backup = ScriptedRecognizer(.success("wrong one"))

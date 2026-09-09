@@ -33,6 +33,11 @@ final class FakeSpeech: SpeechRecognizing {
     var listenCount = 0
     var cancelCount = 0
     var finishCount = 0
+    var configuredWaits: [TimeInterval] = []
+
+    func configure(timeouts: ListeningTimeouts) {
+        configuredWaits.append(timeouts.beforeFirstWords)
+    }
     /// Keeps the microphone open instead of answering, as it is while she is
     /// still deciding what to say — the state the sheet gets closed in.
     var keepsListening = false
@@ -367,7 +372,8 @@ private func makeController(
     speech: FakeSpeech? = nil,
     api: FakeAPI = FakeAPI(),
     holdsTheConfirmation: Bool = false, sessionContext: VoiceSessionContext = VoiceSessionContext(),
-    progressDelay: ControlledProgressDelay = ControlledProgressDelay()
+    progressDelay: ControlledProgressDelay = ControlledProgressDelay(),
+    preferences: VoiceConversationPreferences = VoiceConversationPreferences(keepListening: false)
 ) -> (VoiceController, Recorder, FakeSpeech, FakeAPI, FakePlayer) {
     let recorder = Recorder()
     let speech = speech ?? FakeSpeech()
@@ -384,6 +390,7 @@ private func makeController(
     let controller = VoiceController(
         api: api, speech: speech, speaker: speaker, player: player,
         feedback: FakeFeedback(recorder), sleepTimer: sleepTimer, sessionContext: sessionContext,
+        conversationPreferences: { preferences },
         progressDelay: { try await progressDelay.wait(for: $0) })
     return (controller, recorder, speech, api, player)
 }
@@ -853,10 +860,7 @@ struct VoiceConversationTests {
         #expect(api.turnsSent.last?.contains { $0.text == "the one about Agincourt" } == false)
     }
 
-    @Test func aStatementDoesNotReopenTheMicrophone() async {
-        // "You are already subscribed to that" is the end of the matter. An
-        // open microphone after it is a listening tone she cannot explain, and
-        // then an apology for hearing nothing.
+    @Test func aStatementDoesNotReopenWhenFollowUpsAreDisabled() async {
         let speech = FakeSpeech()
         let api = FakeAPI()
         api.response = CommandResponse(
@@ -910,7 +914,8 @@ struct VoiceConversationTests {
         await controller.beginCommand()
 
         #expect(speech.listenCount == 2)
-        #expect(recorder.spoken.last == "I did not hear anything. Tap and try again.")
+        #expect(recorder.spoken == ["Which show?"])
+        #expect(recorder.events.last == .cue(.listeningEnded))
     }
 
     @Test func theAcknowledgementSoundsOnceForTheWholeExchange() async {
@@ -1722,5 +1727,135 @@ struct VoicePipelineTests {
             }
         }
         await gate.release()
+    }
+}
+
+@Suite("Open voice conversations")
+@MainActor
+struct OpenVoiceConversationTests {
+    @Test func ordinaryAnswersAllowAnotherQuestionAndSilenceEndsQuietly() async {
+        let api = FakeAPI()
+        api.responses = [
+            CommandResponse(action: .unknown, spokenResponse: "There are three history shows.", episode: nil),
+            CommandResponse(action: .unknown, spokenResponse: "The History Hour is the shortest.", episode: nil),
+        ]
+        let (controller, recorder, speech, _, player) = makeController(api: api, preferences: .init())
+        speech.transcripts = ["What history shows do I follow?", "Which is the shortest?", ""]
+        player.isPlaying = true
+        await controller.beginCommand()
+        #expect(api.transcripts == ["What history shows do I follow?", "Which is the shortest?"])
+        #expect(api.turnsSent.last?.last?.text == "There are three history shows.")
+        #expect(speech.listenCount == 3)
+        #expect(speech.configuredWaits.suffix(2) == [15, 15])
+        #expect(recorder.spoken.count == 2)
+        #expect(!recorder.events.contains(.cue(.failed)))
+        #expect(recorder.events.suffix(2) == [.cue(.listeningEnded), .resumed])
+        #expect(recorder.events.filter { $0 == .resumed }.count == 1)
+        #expect(controller.state == .idle)
+        #expect(!controller.conversationEnded)
+    }
+
+    @Test func normalConversationCanContinueBeyondClarificationLimit() async {
+        let api = FakeAPI()
+        api.response = CommandResponse(action: .unknown, spokenResponse: "Here is another suggestion.", episode: nil)
+        let (controller, _, speech, _, _) = makeController(api: api, preferences: .init())
+        speech.transcripts = Array(repeating: "Suggest another show", count: 6) + [""]
+        await controller.beginCommand()
+        #expect(api.transcripts.count == 6)
+        #expect(speech.listenCount == 7)
+    }
+
+    @Test func repeatedClarificationsStillHaveACeiling() async {
+        let api = FakeAPI()
+        api.response = CommandResponse(action: .unknown, spokenResponse: "Which show?", episode: nil, expectsReply: true)
+        let (controller, _, speech, _, _) = makeController(api: api, preferences: .init())
+        await controller.beginCommand()
+        #expect(speech.listenCount == VoiceController.maxFollowUps + 1)
+    }
+
+    @Test func explicitGoodbyeClosesWithoutCallingTheBackend() async {
+        let (controller, recorder, speech, api, player) = makeController(preferences: .init())
+        speech.transcript = "That’s all."
+        player.isPlaying = true
+        await controller.beginCommand()
+        #expect(controller.conversationEnded)
+        #expect(api.transcripts.isEmpty)
+        #expect(speech.listenCount == 1)
+        #expect(recorder.spoken.isEmpty)
+        #expect(player.isPlaying)
+    }
+
+    @Test func playbackAlwaysEndsListeningEvenIfResponseExpectsReply() async {
+        let api = FakeAPI()
+        api.response = CommandResponse(action: .playEpisode, spokenResponse: "Playing it.", episode: episode(), expectsReply: true)
+        let (controller, recorder, speech, _, _) = makeController(api: api, preferences: .init())
+        await controller.beginCommand()
+        #expect(speech.listenCount == 1)
+        #expect(recorder.playedIDs == [104])
+        #expect(controller.state == .playing(episode()))
+    }
+
+    @Test func playbackFailureDoesNotOpenAnotherWindow() async {
+        let api = FakeAPI()
+        api.response = CommandResponse(action: .playEpisode, spokenResponse: "Playing it.", episode: episode())
+        let (controller, recorder, speech, _, player) = makeController(api: api, preferences: .init())
+        player.failure = URLError(.badURL)
+        await controller.beginCommand()
+        #expect(speech.listenCount == 1)
+        #expect(recorder.spoken.last == "Sorry, that episode would not play.")
+    }
+
+    @Test func waitsForTheAnswerToFinishBeforeOpeningAnotherWindow() async {
+        let api = FakeAPI()
+        api.response = CommandResponse(action: .unknown, spokenResponse: "Three shows.", episode: nil)
+        let (controller, recorder, speech, _, _) = makeController(
+            api: api, holdsTheConfirmation: true, preferences: .init())
+        let running = Task { await controller.beginCommand() }
+        await wait { recorder.spoken == ["Three shows."] }
+        #expect(recorder.spoken == ["Three shows."])
+        #expect(speech.listenCount == 1)
+        controller.cancel()
+        await running.value
+        #expect(speech.listenCount == 1)
+    }
+
+    @Test func closingDuringFollowUpStopsListeningAndRestoresPlayback() async {
+        let api = FakeAPI()
+        api.response = CommandResponse(action: .unknown, spokenResponse: "Three shows.", episode: nil)
+        let (controller, recorder, speech, _, player) = makeController(api: api, preferences: .init())
+        player.isPlaying = true
+        speech.keepsListening = true
+        let running = Task { await controller.beginCommand() }
+        await wait { speech.isListening }
+        speech.finishListening()
+        await wait { speech.listenCount == 2 && speech.isListening }
+        #expect(speech.listenCount == 2)
+        #expect(!player.isPlaying)
+        controller.cancel()
+        await running.value
+        #expect(!speech.isListening)
+        #expect(player.isPlaying)
+        #expect(recorder.spoken == ["Three shows."])
+        #expect(!recorder.events.contains(.cue(.failed)))
+    }
+
+    @Test func usesChosenFollowUpWindow() async {
+        let api = FakeAPI()
+        api.response = CommandResponse(action: .unknown, spokenResponse: "Three shows.", episode: nil)
+        let (controller, _, speech, _, _) = makeController(api: api, preferences: .init(followUpWait: 30))
+        speech.transcripts = ["What shows?", ""]
+        await controller.beginCommand()
+        #expect(speech.configuredWaits.last == 30)
+    }
+
+    @Test func suppliedRequestCanContinueInTheOpenConversation() async {
+        let api = FakeAPI()
+        api.response = CommandResponse(action: .unknown, spokenResponse: "Three shows.", episode: nil)
+        let (controller, _, speech, _, _) = makeController(api: api, preferences: .init())
+        speech.transcript = "That's all"
+        await controller.beginCommand(transcript: "What shows do I follow?")
+        #expect(speech.listenCount == 1)
+        #expect(api.transcripts == ["What shows do I follow?"])
+        #expect(controller.conversationEnded)
     }
 }

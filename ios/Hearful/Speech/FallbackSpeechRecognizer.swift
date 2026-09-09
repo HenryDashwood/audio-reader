@@ -18,6 +18,11 @@ final class FallbackSpeechRecognizer: SpeechRecognizing {
         backup.configure(vocabulary: vocabulary, onCaptureEnded: onCaptureEnded)
     }
 
+    func configure(timeouts: ListeningTimeouts) {
+        preferred.configure(timeouts: timeouts)
+        backup.configure(timeouts: timeouts)
+    }
+
     func finishListening() {
         preferred.finishListening()
         backup.finishListening()

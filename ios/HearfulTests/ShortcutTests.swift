@@ -135,7 +135,8 @@ struct ShortcutTests {
         let speech = FakeSpeech()
         let controller = VoiceController(
             api: api, speech: speech, speaker: FakeSpeaker(recorder),
-            player: FakePlayer(recorder), feedback: FakeFeedback(recorder))
+            player: FakePlayer(recorder), feedback: FakeFeedback(recorder),
+            conversationPreferences: { VoiceConversationPreferences(keepListening: false) })
         await controller.beginCommand(transcript: "Find the history podcast")
         #expect(speech.listenCount == 0)
         #expect(api.transcripts == ["Find the history podcast"])
@@ -154,7 +155,8 @@ struct ShortcutTests {
         speech.transcript = "The History Hour"
         let controller = VoiceController(
             api: api, speech: speech, speaker: FakeSpeaker(recorder),
-            player: FakePlayer(recorder), feedback: FakeFeedback(recorder))
+            player: FakePlayer(recorder), feedback: FakeFeedback(recorder),
+            conversationPreferences: { VoiceConversationPreferences(keepListening: false) })
         await controller.beginCommand(transcript: "Find that show")
         #expect(speech.listenCount == 1)
         #expect(api.turnsSent.last?.contains(ConversationTurn(speaker: .app, text: "Which show?")) == true)
@@ -168,7 +170,8 @@ struct ShortcutTests {
         let speech = FakeSpeech()
         let controller = VoiceController(
             api: api, speech: speech, speaker: FakeSpeaker(recorder),
-            player: FakePlayer(recorder), feedback: FakeFeedback(recorder), sessionContext: context)
+            player: FakePlayer(recorder), feedback: FakeFeedback(recorder), sessionContext: context,
+            conversationPreferences: { VoiceConversationPreferences(keepListening: false) })
         await controller.beginCommand(transcript: "Follow History", recovering: true)
         #expect(api.requests.first?.requestID == "original-receipt")
         #expect(speech.listenCount == 0)

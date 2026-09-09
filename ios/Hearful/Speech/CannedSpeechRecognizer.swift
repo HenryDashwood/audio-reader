@@ -7,14 +7,17 @@ import Foundation
 @MainActor
 final class CannedSpeechRecognizer: SpeechRecognizing {
     let transcript: String
+    private var delivered = false
 
     init(transcript: String) {
         self.transcript = transcript
     }
 
     func listen(onReady: @MainActor () -> Void) async throws -> String {
-        try? await Task.sleep(nanoseconds: 300_000_000)  // feel like real capture
+        try await Task.sleep(nanoseconds: 300_000_000)  // feel like real capture
         onReady()
+        guard !delivered else { return "" }
+        delivered = true
         return transcript
     }
 

@@ -13,6 +13,8 @@ enum Cue: Equatable {
     case working
     case processing
     case failed
+    /// A follow-up window ended normally; no error or spoken interruption.
+    case listeningEnded
     /// An episode or article has reached its end.
     ///
     /// Without a marker, finishing sounds exactly like the app crashing, the
@@ -88,6 +90,9 @@ final class Feedback: FeedbackPlaying {
             AudioServicesPlaySystemSound(1113)
         case .failed:
             notice.notificationOccurred(.error)
+        case .listeningEnded:
+            tick.impactOccurred()
+            AudioServicesPlaySystemSound(1113)
         case .finished:
             // A short tone plus a buzz: audible with the phone in a pocket,
             // felt when it is in her hand. Any brief system sound would do —

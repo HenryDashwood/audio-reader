@@ -2,6 +2,9 @@ import AVFoundation
 import SwiftUI
 
 struct SettingsView: View {
+    @AppStorage(VoiceConversationPreferences.keepListeningKey) private var keepListening = true
+    @AppStorage(VoiceConversationPreferences.followUpWaitKey) private var followUpWait =
+        VoiceConversationPreferences.defaultFollowUpWait
     @EnvironmentObject private var auth: AuthController
     @ObservedObject private var player = PlaybackCoordinator.shared
     @State private var systemVoiceID: String = SpeechVoice.current?.identifier ?? ""
@@ -43,7 +46,8 @@ struct SettingsView: View {
                 } footer: {
                     Text(
                         "Magpie remembers separate speeds for recorded podcasts "
-                            + "and articles read by the system voice."
+                            + "and articles read by the system voice. "
+                            + "Article speed also applies to Magpie’s spoken replies."
                     )
                 }
 
@@ -98,6 +102,21 @@ struct SettingsView: View {
                                 + "Changing this takes effect immediately."
                         )
                     }
+                }
+
+                Section {
+                    Toggle("Keep listening after replies", isOn: $keepListening)
+                    if keepListening {
+                        Picker("Wait for a reply", selection: $followUpWait) {
+                            ForEach(VoiceConversationPreferences.waitOptions, id: \.self) { seconds in
+                                Text("\(Int(seconds)) seconds").tag(seconds)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Conversation")
+                } footer: {
+                    Text("After Magpie answers, wait for the listening sound and speak again. Silence ends listening; say “That’s all” to close the conversation. Starting playback also ends listening.")
                 }
 
                 Section {

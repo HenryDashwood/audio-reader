@@ -21,6 +21,7 @@ struct ContentView: View {
     @EnvironmentObject private var auth: AuthController
     @State private var showingVoice = false
     @State private var voiceInput: VoicePrompt.Input?
+    @State private var voiceLaunchID = UUID()
     @State private var shortcutsPresented = false
     @State private var openShow: Show?
     @State private var showingNowPlaying = false
@@ -108,6 +109,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingVoice, onDismiss: { voiceInput = nil }) {
             VoiceSheet(
                 accountID: auth.user?.id, initialInput: voiceInput,
+                launchID: voiceLaunchID,
                 viewedEpisode: selectedTab == .shows ? showsOpenEpisode : (selectedTab == .saved ? savedOpenEpisode : latestOpenEpisode)
             )
             // Consent needs a little more room than the microphone, but
@@ -138,6 +140,8 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .hearfulAskByVoice)) { _ in
             _ = VoicePrompt.consume()
             voiceInput = VoicePrompt.takeInput()
+            // Back Tap and Siri must also restart an already-open voice sheet.
+            voiceLaunchID = UUID()
             showingVoice = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulShortcutNavigation)) { _ in
@@ -265,13 +269,19 @@ struct MicToolbarButton: View {
 /// listens straight away; tapping it again asks for the next thing.
 struct VoiceSheet: View {
     @StateObject private var controller: VoiceController
+    @StateObject private var openingAnnouncement = VoiceOpeningAnnouncement()
     private let initialInput: VoicePrompt.Input?
+    private let launchID: UUID
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var auth: AuthController
     @Environment(\.dismiss) private var dismiss
 
-    init(accountID: String?, initialInput: VoicePrompt.Input? = nil, viewedEpisode: Episode? = nil) {
+    init(
+        accountID: String?, initialInput: VoicePrompt.Input? = nil, launchID: UUID = UUID(),
+        viewedEpisode: Episode? = nil
+    ) {
         self.initialInput = initialInput
+        self.launchID = launchID
         let controller = VoiceController.live(telemetryAccountID: accountID)
         controller.viewedEpisode = viewedEpisode
         let shows = OfflineCache.shared.load([Show].self, for: .shows) ?? []
@@ -308,7 +318,7 @@ struct VoiceSheet: View {
                 // a control VoiceOver can find and describe, instead of an
                 // invisible gesture sitting on top of some text.
                 Button {
-                    Task { await controller.activate() }
+                    activate()
                 } label: {
                     VStack(spacing: 24) {
                         Image(systemName: icon)
@@ -397,6 +407,11 @@ struct VoiceSheet: View {
             .padding(.top, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityAction(.magicTap) { activate() }
+        .accessibilityAction(.escape) { dismiss() }
+        .onChange(of: controller.conversationEnded) { _, ended in
+            if ended { dismiss() }
+        }
         .onChange(of: controller.state) { _, state in
             // Once something is playing, the sheet has done its job.
             if case .playing = state { dismiss() }
@@ -408,25 +423,29 @@ struct VoiceSheet: View {
         //
         // On disappear rather than in the close button, because swiping the
         // sheet away is the other half of how it gets closed.
-        .onDisappear { controller.cancel() }
-        // Reaching this screen at all means she wants to say something: making
-        // her find and tap it again is a step with no purpose.
-        //
-        // Except under VoiceOver, where it is the opposite. VoiceOver announces
-        // the sheet the instant it appears, and nobody speaks over their own
-        // screen reader — so she waits for it to finish, and the listening
-        // window closes on silence before she has said a word. VoiceOver's own
-        // model is focus-then-activate, and the button is the first thing she
-        // lands on, so let her start it.
-        .task {
-            if let initialInput {
-                await controller.beginCommand(
-                    transcript: initialInput.transcript, recovering: initialInput.recovering)
-            } else {
-                guard !UIAccessibility.isVoiceOverRunning else { return }
-                await controller.beginCommand()
-            }
+        .onDisappear { stopConversation() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { stopConversation() }
         }
+        .task(id: launchID) {
+            controller.cancel()
+            if initialInput?.transcript == nil {
+                guard await openingAnnouncement.prepare() else { return }
+            }
+            guard !Task.isCancelled, scenePhase != .background else { return }
+            await controller.beginCommand(
+                transcript: initialInput?.transcript, recovering: initialInput?.recovering ?? false)
+        }
+    }
+
+    private func activate() {
+        openingAnnouncement.cancel()
+        Task { await controller.activate() }
+    }
+
+    private func stopConversation() {
+        openingAnnouncement.cancel()
+        controller.cancel()
     }
 
     private var icon: String {
@@ -440,7 +459,8 @@ struct VoiceSheet: View {
     }
 
     private var caption: String {
-        switch controller.state {
+        if openingAnnouncement.isWaiting { return "Getting ready…" }
+        return switch controller.state {
         case .idle:
             // "Tap anywhere" is right when a tap is what starts it. Under
             // VoiceOver the gesture is a double tap on the focused control,
@@ -562,7 +582,8 @@ extension VoiceController {
             player: PlaybackCoordinator.shared,
             feedback: Feedback.shared,
             telemetry: TelemetryReporter(api: api, accountID: telemetryAccountID),
-            sessionContext: VoiceSessionContext.forAccount(telemetryAccountID, server: api.baseURL))
+            sessionContext: VoiceSessionContext.forAccount(telemetryAccountID, server: api.baseURL),
+            conversationPreferences: { .load() })
     }
 }
 

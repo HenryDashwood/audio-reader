@@ -32,12 +32,16 @@ final class SpeechRecognizer: SpeechRecognizing {
         self.onCaptureEnded = onCaptureEnded
     }
 
+    func configure(timeouts: ListeningTimeouts) {
+        self.timeouts = timeouts
+    }
+
     private func checkActive(_ id: UUID) throws {
         try Task.checkCancellation()
         guard activeID == id else { throw CancellationError() }
     }
 
-    private let timeouts = ListeningTimeouts()
+    private var timeouts = ListeningTimeouts()
     private var hasHeardSpeech = false
     private var arrivals = BufferArrivals()
 
