@@ -12,6 +12,30 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.4.1
 
+Conversations now keep listening after Magpie replies. Wait for the listening
+sound and vibration, then ask your next question. Staying quiet ends listening
+without an error; say "That's all" to close the conversation. Starting an
+article or podcast also ends listening. In Settings → Conversation, you can
+change the waiting time or turn off listening after replies.
+
+With VoiceOver, Magpie waits for its opening instruction before listening.
+Inside the conversation, double-tap with two fingers to finish speaking,
+interrupt a reply, or start listening again. Please try opening a conversation
+with Siri, asking several questions, staying quiet, and closing it while Magpie
+is speaking.
+
+Settings → Siri and Shortcuts now explains how to launch Ask Magpie by tapping
+the back of your iPhone three times. Save a shortcut containing the Ask Magpie
+action, then assign it in iPhone Settings → Accessibility → Touch → Back Tap →
+Triple Tap. Try it with Magpie closed, already open, and with a conversation
+already on screen. Unlock the phone if asked and wait for the listening cue.
+
+Magpie's spoken replies now use the Articles speed under Settings → Playback
+Speed. Change that speed, then ask another question; the next reply should use
+the same speaking speed as article narration.
+
+## 1.4.1 — earlier builds
+
 This build fixes three listening problems. Please check that finished articles
 disappear from Latest, that the mini player's play/pause button responds when
 you tap around its icon, and that saying "fast forward three minutes" skips
