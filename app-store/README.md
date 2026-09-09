@@ -34,6 +34,25 @@ existing App Store Connect set on their account.
 
 ## Local checks
 
+### Logo and app icon
+
+`assets/magpie-mark-transparent.png` is the approved logo master, a 1254 × 1254
+PNG with real transparency. Its identical copy in
+`ios/Hearful/Assets.xcassets/MagpieMark.imageset/` supplies the in-app artwork.
+The previous traced SVG has been retired because it does not match this logo.
+
+`ios/Hearful/Assets.xcassets/AppIcon.appiconset/icon-1024.png` uses the same
+artwork, centred at 820 pixels wide on the existing `#101317` background. This
+1024 × 1024 app icon is opaque; the logo master remains transparent.
+`assets/magpie-mark-background-preview.png` previews the master on white and
+dark backgrounds.
+
+Apple takes the App Store icon from the uploaded app build; it is not a
+separate listing upload. Updating the published icon requires a new app
+version and review. See [Apple's app icon guidance](https://developer.apple.com/help/app-store-connect/manage-app-information/add-an-app-icon/).
+
+### Listing validation
+
 Run this after editing any listing file or adding a screenshot:
 
 ```bash
