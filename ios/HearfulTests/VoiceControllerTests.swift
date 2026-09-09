@@ -181,42 +181,6 @@ actor CommandGate {
     }
 }
 
-/// A manually completed delay: elapsed wall time has no effect on cue tests.
-/// Each wait is tracked separately because a follow-up can start while the
-/// previous turn's cancelled delay is still unwinding.
-@MainActor
-final class ControlledProgressDelay {
-    private var pending: [UUID: CheckedContinuation<Void, Error>] = [:]
-    private(set) var durations: [Duration] = []
-    private(set) var finishedCount = 0
-    var pendingCount: Int { pending.count }
-
-    func wait(for duration: Duration) async throws {
-        let id = UUID()
-        durations.append(duration)
-        defer { finishedCount += 1 }
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                if Task.isCancelled {
-                    continuation.resume(throwing: CancellationError())
-                } else {
-                    pending[id] = continuation
-                }
-            }
-        } onCancel: {
-            Task { @MainActor in
-                self.pending.removeValue(forKey: id)?.resume(throwing: CancellationError())
-            }
-        }
-    }
-
-    func elapse() {
-        let waiting = pending.values
-        pending.removeAll()
-        for continuation in waiting { continuation.resume() }
-    }
-}
-
 final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     var response: CommandResponse?
     /// Answers in order, for exchanges that take more than one turn. Falls back
@@ -372,7 +336,7 @@ private func makeController(
     speech: FakeSpeech? = nil,
     api: FakeAPI = FakeAPI(),
     holdsTheConfirmation: Bool = false, sessionContext: VoiceSessionContext = VoiceSessionContext(),
-    progressDelay: ControlledProgressDelay = ControlledProgressDelay(),
+    progressDelay: ControlledDelay = ControlledDelay(),
     preferences: VoiceConversationPreferences = VoiceConversationPreferences(keepListening: false)
 ) -> (VoiceController, Recorder, FakeSpeech, FakeAPI, FakePlayer) {
     let recorder = Recorder()
@@ -699,7 +663,7 @@ struct VoiceControllerTests {
     }
 
     @Test func aSlowRequestGetsOneWorkingCueAfterTheDelay() async {
-        let delay = ControlledProgressDelay()
+        let delay = ControlledDelay()
         let gate = CommandGate()
         let (controller, recorder, _, api, _) = makeController(progressDelay: delay)
         api.commandGate = gate
@@ -720,7 +684,7 @@ struct VoiceControllerTests {
     }
 
     @Test func aResponseCancelsItsPendingWorkingCue() async {
-        let delay = ControlledProgressDelay()
+        let delay = ControlledDelay()
         let gate = CommandGate()
         let (controller, recorder, _, api, _) = makeController(progressDelay: delay)
         api.commandGate = gate
@@ -740,7 +704,7 @@ struct VoiceControllerTests {
     }
 
     @Test func closingTheSheetCancelsItsPendingWorkingCue() async {
-        let delay = ControlledProgressDelay()
+        let delay = ControlledDelay()
         let gate = CommandGate()
         let (controller, recorder, _, api, _) = makeController(progressDelay: delay)
         api.commandGate = gate

@@ -25,6 +25,9 @@ struct VoiceTimeout: Error {}
 @MainActor
 func withVoiceDeadline<Value: Sendable>(
     seconds: Double,
+    sleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
+        try await Task.sleep(for: $0)
+    },
     operation: @escaping @MainActor @Sendable () async throws -> Value
 ) async throws -> Value {
     let wait = VoiceWait<Value>()
@@ -37,7 +40,7 @@ func withVoiceDeadline<Value: Sendable>(
                 catch { wait.finish(.failure(error)) }
             }
             wait.timer = Task {
-                do { try await Task.sleep(for: .seconds(seconds)) }
+                do { try await sleep(.seconds(seconds)) }
                 catch { return }
                 wait.finish(.failure(VoiceTimeout()))
             }

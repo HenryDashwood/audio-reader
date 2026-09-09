@@ -8,9 +8,14 @@ import Testing
 private actor ShortcutTransport: DataTransport {
     let responses: [String: (Int, String)]
     var requests: [URLRequest] = []
-    init(_ responses: [String: (Int, String)]) { self.responses = responses }
+    let gate: CommandGate?
+    init(_ responses: [String: (Int, String)], gate: CommandGate? = nil) {
+        self.responses = responses
+        self.gate = gate
+    }
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         requests.append(request)
+        if let gate { await gate.wait() }
         let (status, json) = responses[request.url!.path] ?? (503, "{}")
         return (
             Data(json.utf8),
@@ -27,11 +32,13 @@ struct ShortcutTests {
          "position_seconds":321,"completed":false,"feed_title":"The History Show","has_text":false}
         """
     private func library(
-        _ transport: ShortcutTransport, scope: @escaping @Sendable () -> String? = { "account-one" }
+        _ transport: ShortcutTransport, scope: @escaping @Sendable () -> String? = { "account-one" },
+        deadline: ControlledDelay = ControlledDelay()
     ) -> ShortcutLibrary {
         ShortcutLibrary(
             api: HearfulAPI(baseURL: URL(string: "https://test.invalid")!, transport: transport),
-            directory: URL.temporaryDirectory.appending(path: UUID().uuidString), scope: scope)
+            directory: URL.temporaryDirectory.appending(path: UUID().uuidString), scope: scope,
+            deadlineSleep: { try await deadline.wait(for: $0) })
     }
     private func player(_ api: HearfulAPIProtocol = FakeAPI()) -> PlaybackCoordinator {
         PlaybackCoordinator(
@@ -106,6 +113,51 @@ struct ShortcutTests {
         identity.withLock { $0 = nil }
         await #expect(throws: ShortcutFailure.self) { try await library.suggestions() }
         library.invalidate()
+    }
+
+    @Test func batchDeadlineStillStopsAnUnresponsiveRequest() async throws {
+        let deadline = ControlledDelay()
+        let gate = CommandGate()
+        let transport = ShortcutTransport(["/episodes/104": (200, episodeJSON)], gate: gate)
+        let library = library(transport, deadline: deadline)
+        let request = Task { try await library.episodes(ids: [104]) }
+        defer {
+            request.cancel()
+            Task { await gate.release() }
+        }
+        for _ in 0..<1000 {
+            if deadline.pendingCount > 0 { break }
+            await Task.yield()
+        }
+        try #require(deadline.pendingCount == 1)
+        #expect(deadline.durations == [.seconds(12)])
+
+        deadline.elapse()
+        await #expect(throws: VoiceTimeout.self) { try await request.value }
+        // The transport deliberately ignores cancellation; timeout must return
+        // before the request is released, without waiting for the task group.
+        await gate.release()
+    }
+
+    @Test func cancellingABatchDoesNotWaitForItsDeadline() async throws {
+        let deadline = ControlledDelay()
+        let gate = CommandGate()
+        let transport = ShortcutTransport(["/episodes/104": (200, episodeJSON)], gate: gate)
+        let library = library(transport, deadline: deadline)
+        let request = Task { try await library.episodes(ids: [104]) }
+        defer {
+            request.cancel()
+            Task { await gate.release() }
+        }
+        for _ in 0..<1000 {
+            if deadline.pendingCount > 0 { break }
+            await Task.yield()
+        }
+        try #require(deadline.pendingCount == 1)
+
+        request.cancel()
+        await #expect(throws: CancellationError.self) { try await request.value }
+        await gate.release()
     }
 
     @Test func filtersExcludePlayedAndUnknownDuration() throws {

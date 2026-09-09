@@ -33,6 +33,9 @@ final class ShortcutLibrary {
     private let api: HearfulAPIProtocol
     private let scope: @Sendable () -> String?
     private let directory: URL
+    /// Tests advance the deadline explicitly so a busy simulator cannot time
+    /// out a mocked response. Real shortcut requests still get twelve seconds.
+    private let deadlineSleep: @MainActor @Sendable (Duration) async throws -> Void
     private var snapshot: Snapshot?
     private var loadedScope: String?
 
@@ -45,11 +48,15 @@ final class ShortcutLibrary {
     init(
         api: HearfulAPIProtocol = HearfulAPI(),
         directory: URL = URL.cachesDirectory.appending(path: "ShortcutLibrary"),
-        scope: @escaping @Sendable () -> String? = { ShortcutScope.current }
+        scope: @escaping @Sendable () -> String? = { ShortcutScope.current },
+        deadlineSleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        }
     ) {
         self.api = api
         self.directory = directory
         self.scope = scope
+        self.deadlineSleep = deadlineSleep
     }
 
     func invalidate() {
@@ -92,7 +99,7 @@ final class ShortcutLibrary {
     func shows() async throws -> [Show] {
         let key = try session()
         if let snapshot, !snapshot.shows.isEmpty { return snapshot.shows }
-        let result = try await withVoiceDeadline(seconds: 12) { try await self.api.shows() }
+        let result = try await withVoiceDeadline(seconds: 12, sleep: deadlineSleep) { try await self.api.shows() }
         try check(key)
         if snapshot == nil { snapshot = Snapshot(date: Date()) }
         snapshot?.shows = result
@@ -103,7 +110,7 @@ final class ShortcutLibrary {
     func suggestions() async throws -> [Episode] {
         let key = try session()
         if let snapshot, !snapshot.episodes.isEmpty { return snapshot.episodes }
-        let result = try await withVoiceDeadline(seconds: 12) { try await self.api.recentEpisodes(limit: 30) }
+        let result = try await withVoiceDeadline(seconds: 12, sleep: deadlineSleep) { try await self.api.recentEpisodes(limit: 30) }
         try check(key)
         if snapshot == nil { snapshot = Snapshot(date: Date()) }
         snapshot?.episodes = result
@@ -115,7 +122,7 @@ final class ShortcutLibrary {
     func find(_ query: String, showID: Int? = nil, latestLimit: Int = 100) async throws -> [Episode] {
         let key = try session()
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let result = try await withVoiceDeadline(seconds: 12) {
+        let result = try await withVoiceDeadline(seconds: 12, sleep: deadlineSleep) {
             if let showID {
                 return try await self.api.episodes(showID: showID, query: query.isEmpty ? nil : query)
             }
@@ -129,7 +136,7 @@ final class ShortcutLibrary {
     /// Resolve at execution, never recreate a playable Episode from an entity.
     func episode(id: Int) async throws -> Episode {
         let key = try session()
-        let result = try await withVoiceDeadline(seconds: 12) { try await self.api.episode(id: id) }
+        let result = try await withVoiceDeadline(seconds: 12, sleep: deadlineSleep) { try await self.api.episode(id: id) }
         try check(key)
         return result
     }
@@ -141,7 +148,7 @@ final class ShortcutLibrary {
         for start in stride(from: 0, to: ids.count, by: 4) {
             let batch = Array(ids[start..<min(start + 4, ids.count)])
             let api = self.api
-            let values = try await withVoiceDeadline(seconds: 12) {
+            let values = try await withVoiceDeadline(seconds: 12, sleep: deadlineSleep) {
                 try await withThrowingTaskGroup(of: Episode?.self) { group in
                     for id in batch {
                         group.addTask {
