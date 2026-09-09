@@ -38,6 +38,9 @@ enum ShortcutConversation {
         _ transcript: String, api: HearfulAPIProtocol = HearfulAPI(),
         requestTimeout: Double = 20,
         scopeProvider: @escaping @Sendable () -> String? = { ShortcutScope.current },
+        deadlineSleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        },
         clarify: @MainActor (String) async throws -> String,
         foreground: @MainActor (String) async throws -> Void
     ) async throws -> MagpieRequestResult {
@@ -87,7 +90,7 @@ enum ShortcutConversation {
                 ShortcutUndo.clear()
                 let response: CommandResponse
                 do {
-                    response = try await withVoiceDeadline(seconds: requestTimeout) {
+                    response = try await withVoiceDeadline(seconds: requestTimeout, sleep: deadlineSleep) {
                         try await CommandExecution.response(api: api, request: request)
                     }
                 } catch is VoiceTimeout {

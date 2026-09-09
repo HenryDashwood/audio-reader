@@ -262,6 +262,7 @@ struct ShortcutTests {
 @Suite("Siri conversation", .serialized)
 struct SiriConversationTests {
     @Test func asksClarificationAndSendsAnswerWithContext() async throws {
+        let deadline = ControlledDelay()
         let api = FakeAPI()
         api.userInfo = UserInfo(id: UUID().uuidString, displayName: nil, aiDataSharingConsented: true)
         api.responses = [
@@ -272,6 +273,9 @@ struct SiriConversationTests {
         var questions: [String] = []
         let result = try await ShortcutConversation.run(
             "Follow History", api: api, scopeProvider: { "test-session" },
+            // CI can leave the main actor busy beyond the real twenty-second
+            // deadline. Only the timeout test should advance that clock.
+            deadlineSleep: { try await deadline.wait(for: $0) },
             clarify: {
                 questions.append($0)
                 return "History Today"
@@ -323,10 +327,30 @@ struct SiriConversationTests {
         defer { VoicePrompt.clear() }
         let api = FakeAPI()
         api.userInfo = UserInfo(id: UUID().uuidString, displayName: nil, aiDataSharingConsented: true)
-        api.commandGate = CommandGate()
-        let result = try await ShortcutConversation.run(
-            "Follow that publication", api: api, requestTimeout: 0.01, scopeProvider: { "test-session" },
-            clarify: { _ in "" }, foreground: { _ in })
+        let gate = CommandGate()
+        api.commandGate = gate
+        let deadline = ControlledDelay()
+        let request = Task {
+            try await ShortcutConversation.run(
+                "Follow that publication", api: api, scopeProvider: { "test-session" },
+                deadlineSleep: { try await deadline.wait(for: $0) },
+                clarify: { _ in "" }, foreground: { _ in })
+        }
+        defer {
+            request.cancel()
+            Task { await gate.release() }
+        }
+        for _ in 0..<1000 {
+            if deadline.pendingCount == 1, !api.requests.isEmpty { break }
+            await Task.yield()
+        }
+        try #require(deadline.pendingCount == 1)
+        try #require(api.requests.count == 1)
+        #expect(deadline.durations == [.seconds(20)])
+        #expect(!VoicePrompt.pending)
+
+        deadline.elapse()
+        let result = try await request.value
         let input = VoicePrompt.takeInput()
         #expect(result.continuedInApp)
         #expect(input?.transcript == "Follow that publication")
@@ -334,6 +358,6 @@ struct SiriConversationTests {
         let context = VoiceSessionContext.forAccount(api.userInfo.id, server: AppConfiguration.apiBaseURL)
         #expect(context.pendingRequest?.requestID == api.requests.first?.requestID)
         #expect(!context.isExecuting)
-        await api.commandGate?.release()
+        await gate.release()
     }
 }
