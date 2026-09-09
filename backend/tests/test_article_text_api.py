@@ -286,6 +286,29 @@ class TestArticleHtml:
         # And the one inline in the sentence stays inline.
         assert 'display="inline"' in html
 
+    async def test_cached_wordpress_maths_is_fixed_without_rewriting_saved_text(self, client, session):
+        stored_html = r"<p>A new field, $latex \mathbb{Q}$($latex \sqrt{2}$).</p>"
+        stored_text = r"A new field, $latex \mathbb{Q}$($latex \sqrt{2}$)."
+        episode = Episode(
+            guid="quanta-maths",
+            title="Number fields",
+            link="https://example.com/number-fields",
+            article_html=stored_html,
+            article_text=stored_text,
+        )
+        session.add(Feed(url="https://example.com/maths-feed", title="Maths", episodes=[episode]))
+        await session.commit()
+
+        response = await client.get(f"/episodes/{episode.id}/text")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["html"] == articles.rendered(r"<p>A new field, \(\mathbb{Q}\)(\(\sqrt{2}\)).</p>")
+        assert body["text"] == stored_text
+        await session.refresh(episode)
+        assert episode.article_html == stored_html
+        assert episode.article_text == stored_text
+
     async def test_html_is_cached_with_the_text(self, client, respx_mock, article_xml):
         # One fetch between reading and listening, not one each.
         feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]

@@ -1,5 +1,7 @@
 """LaTeX in an article, set as MathML for the reader."""
 
+import pytest
+
 from audioreader.feeds.articles import rendered, sanitised
 from audioreader.latex import with_mathml
 
@@ -48,6 +50,40 @@ class TestFindingMaths:
 
         assert "<mtable" in html
         assert "&amp;" not in html
+
+
+class TestWordPressMaths:
+    @pytest.mark.parametrize(
+        "source",
+        [r"\mathbb{Q}", r"\sqrt{2}", r"-\sqrt{2}", "a", "b", r"a + b\sqrt{2}", r"x^{2}\kern0.5pt -2=0"],
+    )
+    def test_quanta_formulas_do_not_render_the_language_marker(self, source):
+        assert read(f"<p>$latex {source}$</p>") == read(f"<p>\\({source}\\)</p>")
+
+    @pytest.mark.parametrize("source", ["5", " x + 1 ", r"1.41421\ldots\ ", r"\text{for all } x \in S"])
+    def test_explicit_math_does_not_use_the_price_or_prose_heuristic(self, source):
+        assert read(f"<p>$latex {source}$</p>") == read(f"<p>\\({source}\\)</p>")
+
+    def test_adjacent_formulas_keep_their_surrounding_punctuation(self):
+        html = read(r"<p>A new field, $latex \mathbb{Q}$($latex \sqrt{2}$).</p>")
+
+        assert html == read(r"<p>A new field, \(\mathbb{Q}\)(\(\sqrt{2}\)).</p>")
+        assert read(html) == html
+
+    @pytest.mark.parametrize("tag", ["pre", "code", "math", "script", "style"])
+    def test_markers_inside_opaque_elements_are_untouched(self, tag):
+        html = f"<{tag}>$latex x$</{tag}>"
+
+        assert with_mathml(html) == html
+
+    def test_only_a_separate_leading_marker_is_removed(self):
+        for source in ["latex", "latexyz", "x + latex", r"\text{latex}"]:
+            assert with_mathml(f"<p>${source}$</p>") == with_mathml(f"<p>\\({source}\\)</p>")
+
+    def test_an_unparseable_formula_keeps_its_original_marker(self):
+        html = r"<p>$latex \begin{nonsense} \frac{$</p>"
+
+        assert with_mathml(html) == html
 
 
 class TestLeavingProseAlone:

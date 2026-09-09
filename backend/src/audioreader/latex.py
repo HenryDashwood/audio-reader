@@ -35,13 +35,14 @@ _OPAQUE = {"pre", "code", "math", "script", "style"}
 _TAG = re.compile(r"(<[^>]*>)")
 _TAG_NAME = re.compile(r"</?\s*([a-zA-Z0-9-]+)")
 
-#: The four ways an article writes a formula. Display forms come first so that
+#: The ways an article writes a formula. Display forms come first so that
 #: `$$` is never read as an empty `$...$`.
 _MATHS = re.compile(
     r"""
       \$\$(?P<display>[^$]+?)\$\$              # $$ ... $$
     | \\\[(?P<bracket>.+?)\\\]                 # \[ ... \]
     | \\\((?P<paren>.+?)\\\)                   # \( ... \)
+    | (?<![\\$])\$latex\s+(?P<wordpress>[^$\n]+?)\$(?!\$)
     | (?<![\\$])\$(?P<inline>[^\s$][^$\n]*?)(?<!\s)\$(?!\$)
     """,
     re.VERBOSE | re.DOTALL,
@@ -101,9 +102,11 @@ def _replaced(match: re.Match[str]) -> str:
     display = match["display"] or match["bracket"]
     # Text nodes arrive escaped, and TeX uses both `&` and `<` for its own
     # purposes — `&` aligns the rows of an `align*` block.
-    source = unescape(display or match["paren"] or match["inline"])
+    source = unescape(display or match["paren"] or match["wordpress"] or match["inline"])
     # Only a pair of single dollars is a guess about what the writer meant;
-    # the other three forms are only ever written on purpose.
+    # the other forms are only ever written on purpose. WordPress's `$latex
+    # ...$` (used by Quanta) explicitly marks maths: `latex` is metadata, and
+    # even a bare number or a formula ending in a space should be converted.
     if match["inline"] is not None and _looks_like_prose(source):
         return match[0]
     if "\\begin{" in source:

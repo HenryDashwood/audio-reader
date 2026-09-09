@@ -35,7 +35,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
 
     static let playbackRates = PlaybackSpeedPreference.rates
 
-    private let player = AVPlayer()
+    private let player: AVPlayer
+    private let activateAudioSession: @MainActor () throws -> Void
+    private var needsInterruptionRecovery = false
     private let defaults: UserDefaults
     private var timeObserver: Any?
     private var statusObservation: NSKeyValueObservation?
@@ -69,8 +71,14 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         self.init(defaults: .standard)
     }
 
-    init(defaults: UserDefaults) {
+    init(
+        defaults: UserDefaults,
+        player: AVPlayer = AVPlayer(),
+        activateAudioSession: @escaping @MainActor () throws -> Void = AudioSession.configureForPlayback
+    ) {
         self.defaults = defaults
+        self.player = player
+        self.activateAudioSession = activateAudioSession
         super.init()
         playbackRate = PlaybackSpeedPreference.load(.podcast, defaults: defaults)
         // defaultRate makes every play()/resume() come back at her speed
@@ -119,11 +127,12 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         guard let url = episode.audioURL else {
             throw PlaybackError.noAudio
         }
-        try AudioSession.configureForPlayback()
+        try activateAudioSession()
         playbackRequested = true
         // Usually already loaded by prepare(); only swap if it is a new episode.
         if currentEpisode?.id != episode.id || player.currentItem == nil
             || player.currentItem?.status == .failed || failedEpisodeID == episode.id
+            || needsInterruptionRecovery
         {
             // Trying the same episode again after a failure carries on from
             // the clock, not from the position the list was fetched with —
@@ -142,17 +151,25 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         updateNowPlayingPosition()
     }
 
-    /// AVPlayer stops itself when the system takes the audio; this just keeps
-    /// our own state honest about it.
+    /// AVPlayer stops itself when the system takes the audio. Its item can
+    /// remain unusable without reporting failure, so rebuild it at the live
+    /// position on the next successful activation instead of replaying it.
     func pauseForInterruption() {
+        needsInterruptionRecovery = currentEpisode != nil
         pause()
     }
 
     func resume() {
-        try? AudioSession.configureForPlayback()
+        guard currentEpisode != nil else { return }
         playbackRequested = true
+        do {
+            try activateAudioSession()
+        } catch {
+            playbackLog.notice("Audio session is not ready to resume: \(error.localizedDescription, privacy: .private)")
+            return
+        }
         if let episode = currentEpisode, let url = episode.audioURL,
-            player.currentItem?.status == .failed || failedEpisodeID == episode.id
+            needsInterruptionRecovery || player.currentItem?.status == .failed || failedEpisodeID == episode.id
         {
             replaceItem(url: url, episode: episode, resumeAt: currentTime > 0 ? currentTime : nil)
         }
@@ -238,6 +255,12 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     private func replaceItem(url: URL, episode: Episode, resumeAt: TimeInterval? = nil) {
         stallTask?.cancel()
         failedEpisodeID = nil
+        needsInterruptionRecovery = false
+        // A recovery keeps the live position, including the first/last few
+        // seconds. Do not publish the replacement item's temporary zero or
+        // accept a seek callback from the retired item while it loads.
+        seekGeneration += 1
+        isSeeking = resumeAt != nil
         let item = AVPlayerItem(url: url)
         // timeDomain keeps speech natural at raised speeds; the default
         // algorithm turns 1.5x podcasts into chipmunks-adjacent audio.
@@ -246,7 +269,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         observeEnd(of: item)
         currentEpisode = episode
         PlaybackRestore.remember(episodeID: episode.id)
-        currentTime = 0
+        currentTime = resumeAt ?? 0
         // The feed's stated duration is a good enough starting value; the real
         // one arrives once the asset has loaded.
         duration = episode.durationSeconds.map(Double.init) ?? 0
@@ -254,10 +277,11 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         // Resume where she left off — but not for an episode she finished,
         // not within the first moments (starting over costs nothing), and not
         // into the final seconds (an outro is worse than a fresh start).
+        let explicitResumeAt = resumeAt
         let resumeAt = resumeAt ?? (episode.completed == true ? 0 : (episode.positionSeconds ?? 0))
-        statusObservation = item.observe(\.status) { [weak self] item, _ in
+        statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.player.currentItem === item else { return }
                 if item.status == .failed {
                     if self.playbackRequested {
                         self.reportFailure(
@@ -272,7 +296,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                     self.duration = seconds
                     self.hasMeasuredDuration = true
                 }
-                if resumeAt > 5, resumeAt < self.duration - 10 {
+                if let explicitResumeAt {
+                    self.seek(to: explicitResumeAt)
+                } else if resumeAt > 5, resumeAt < self.duration - 10 {
                     self.seek(to: resumeAt)
                 }
                 // The asset's real duration replaces the feed's estimate.

@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import MediaPlayer
+import OSLog
 import UIKit
 
 /// The word the system voice is about to speak, in the complete plain-text
@@ -44,6 +45,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     @Published private(set) var spokenLocation: ArticleSpokenLocation?
 
     private var synthesizer: SpeechSynthesizing
+    private let makeSynthesizer: @MainActor () -> SpeechSynthesizing
+    private let activateAudioSession: @MainActor () throws -> Void
+    private var needsInterruptionRecovery = false
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
     private let defaults: UserDefaults
@@ -71,12 +75,17 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     init(
         api: HearfulAPIProtocol = HearfulAPI(),
         cache: OfflineCache = .shared,
-        synthesizer: SpeechSynthesizing = SpeechSynthesizers.make(),
-        defaults: UserDefaults = .standard
+        synthesizer: SpeechSynthesizing? = nil,
+        defaults: UserDefaults = .standard,
+        makeSynthesizer: @escaping @MainActor () -> SpeechSynthesizing = SpeechSynthesizers.make,
+        activateAudioSession: @escaping @MainActor () throws -> Void = AudioSession.configureForPlayback
     ) {
         self.api = api
         self.cache = cache
+        let synthesizer = synthesizer ?? makeSynthesizer()
         self.synthesizer = synthesizer
+        self.makeSynthesizer = makeSynthesizer
+        self.activateAudioSession = activateAudioSession
         self.defaults = defaults
         synthesizer.delegate = self
         playbackRate = PlaybackSpeedPreference.load(.article, defaults: defaults)
@@ -105,7 +114,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     }
 
     func play(_ episode: Episode) {
-        try? AudioSession.configureForPlayback()
         if episode.id == currentEpisode?.id, episode.contentID == currentEpisode?.contentID, script != nil {
             wantsPlayback = true
             speakCurrentChunk()
@@ -126,29 +134,25 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     /// A call or an alarm has taken the audio.
     ///
-    /// The passage is stopped rather than paused. The synthesiser does not
-    /// reliably carry on after the system has silenced it: continueSpeaking()
-    /// reports success and no sound follows, leaving a player that says it is
-    /// playing while nothing on screen can explain the silence — and pressing
-    /// pause and play again only repeats the trick. Stopped, resume() finds no
-    /// paused speech and reads the current passage from its start, which
-    /// costs her at most a paragraph heard twice.
+    /// Retire the speech engine as well as its utterance: after Siri, even a
+    /// new utterance on the old engine can be silently ignored. Recreate it
+    /// once the session can activate again, keeping the article and passage.
     func pauseForInterruption() {
         wantsPlayback = false
+        needsInterruptionRecovery = true
         cancelSpeech(clearingLocation: false)
         isPlaying = false
         updateNowPlayingPosition()
     }
 
-    /// The synthesiser gives no such signal; a stuck reader is handled by
-    /// starting the passage again rather than by asking twice.
-    var isStuckAfterPlayRequest: Bool { false }
+    /// A refused audio-session activation is retriable by the coordinator.
+    var isStuckAfterPlayRequest: Bool { wantsPlayback && script != nil && !isPlaying }
 
     func resume() {
         guard let episode = currentEpisode else { return }
-        try? AudioSession.configureForPlayback()
         wantsPlayback = true
-        if synthesizer.isPaused {
+        if synthesizer.isPaused, !needsInterruptionRecovery {
+            guard activateSessionForSpeech() else { return }
             synthesizer.continueSpeaking()
             isPlaying = true
             updateNowPlayingPosition()
@@ -369,6 +373,14 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     private func speakCurrentChunk() {
         guard let script, chunkIndex < script.chunks.count else { return }
+        guard activateSessionForSpeech() else { return }
+        if needsInterruptionRecovery {
+            cancelSpeech(clearingLocation: false)
+            synthesizer.delegate = nil
+            synthesizer = makeSynthesizer()
+            synthesizer.delegate = self
+            needsInterruptionRecovery = false
+        }
         // Keep the marker present while one utterance replaces another; the
         // exact first word follows with the synthesiser's next callback.
         cancelSpeech(clearingLocation: false)
@@ -382,6 +394,23 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         synthesizer.speak(utterance)
         isPlaying = true
         updateNowPlayingPosition()
+    }
+
+    private func activateSessionForSpeech() -> Bool {
+        do {
+            try activateAudioSession()
+            return true
+        } catch {
+            // Siri can announce its end before releasing the audio session.
+            // Keep Play available, and do not enqueue speech into that session.
+            cancelSpeech(clearingLocation: false)
+            needsInterruptionRecovery = true
+            isPlaying = false
+            updateNowPlayingPosition()
+            Logger(subsystem: "com.henrydashwood.hearful", category: "playback")
+                .notice("Speech session is not ready to resume: \(error.localizedDescription, privacy: .private)")
+            return false
+        }
     }
 
     /// Stops the synthesiser without letting stale delegate callbacks act:

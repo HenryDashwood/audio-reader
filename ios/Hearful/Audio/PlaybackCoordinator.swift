@@ -47,7 +47,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     /// not race: nothing but she changes it.
     private var wantsPlayback = false
     /// The follow-up attempts after an interruption ends; see
-    /// `resumeAfterInterruption`.
+    /// `resumeWithRetries`.
     private var resumeNudge: Task<Void, Never>?
     /// Seconds after the first attempt at which to ask again if it went
     /// nowhere. Internal so the tests can read them.
@@ -194,8 +194,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         // session — silencing whatever else is playing — for no sound at all.
         guard currentEpisode != nil else { return }
         sheTookOver()
-        wantsPlayback = true
-        active.resume()
+        resumeWithRetries()
     }
 
     /// Her own play, pause or new episode: any interruption still remembered
@@ -398,21 +397,21 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
             resumeNudge?.cancel()
             active.pauseForInterruption()
         case .resume:
-            resumeAfterInterruption()
+            resumeWithRetries()
         case .nothing:
             break
         }
     }
 
-    /// Puts playback back on once whatever took the audio has finished — and
-    /// asks again over the next few seconds if the first ask went nowhere.
+    /// Puts playback back on after an interruption or a manual Play request,
+    /// and asks again over the next few seconds if the first ask went nowhere.
     ///
     /// The system announces a call's end a moment before the phone has let go
     /// of the audio hardware, so the first play() after a call can be refused
     /// outright: the session does not activate, the player stays paused, and
     /// she is left with an episode that silently never came back. Each retry
     /// goes through resume(), which activates the session afresh.
-    private func resumeAfterInterruption() {
+    private func resumeWithRetries() {
         guard currentEpisode != nil else { return }
         wantsPlayback = true
         active.resume()
