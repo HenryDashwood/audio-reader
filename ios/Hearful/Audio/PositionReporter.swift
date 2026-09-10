@@ -15,6 +15,7 @@ nonisolated struct PositionReport: Equatable, Sendable {
     /// known. Never set for an article: the reader's length is an estimate
     /// at her chosen speed, not something to write over the feed's.
     let durationSeconds: Int?
+    var contentID: Int? = nil
 }
 
 extension Notification.Name {
@@ -163,7 +164,7 @@ final class PositionReporter {
         let completed = duration > 0 && seconds / duration > 0.95
         let report = PositionReport(
             episodeID: episode.id, seconds: seconds, completed: completed,
-            durationSeconds: player.measuredDuration.map { Int($0.rounded()) })
+            durationSeconds: player.measuredDuration.map { Int($0.rounded()) }, contentID: episode.contentID)
         // The lists hear first: what she sees must not wait on the network.
         NotificationCenter.default.post(name: .hearfulPositionReported, object: report)
         let api = self.api

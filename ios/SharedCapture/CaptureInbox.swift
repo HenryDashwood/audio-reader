@@ -20,6 +20,9 @@ nonisolated struct CaptureInbox {
         let url: URL
         let title: String?
         let html: String?
+        // Optional fields keep captures from older app versions decodable.
+        var contentFormat: String? = nil
+        var replaceExisting: Bool? = nil
         let createdAt: Date
     }
 
@@ -52,7 +55,10 @@ nonisolated struct CaptureInbox {
     }
 
     @discardableResult
-    func save(url: URL, title: String? = nil, html: String? = nil) throws -> Capture {
+    func save(
+        url: URL, title: String? = nil, html: String? = nil,
+        contentFormat: String? = nil, replaceExisting: Bool = false
+    ) throws -> Capture {
         guard let account else { throw InboxError.signedOut }
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
             url.user == nil, url.password == nil
@@ -61,7 +67,7 @@ nonisolated struct CaptureInbox {
         guard let directory else { throw InboxError.unavailable }
         let capture = Capture(
             id: UUID(), account: account, url: url, title: title.map { String($0.prefix(500)) },
-            html: html, createdAt: Date())
+            html: html, contentFormat: contentFormat, replaceExisting: replaceExisting, createdAt: Date())
         try JSONEncoder().encode(capture).write(
             to: directory.appendingPathComponent("capture-\(capture.id).json"),
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])

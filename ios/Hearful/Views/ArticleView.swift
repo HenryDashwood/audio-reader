@@ -21,7 +21,9 @@ import WebKit
 /// every article cost a third of a phone screen on the one screen whose whole
 /// job is to show as much prose as it can.
 struct ArticleView: View {
-    let episode: Episode
+    private let originalEpisode: Episode
+    @State private var replacementEpisode: Episode?
+    private var episode: Episode { replacementEpisode ?? originalEpisode }
     /// Hands the newly available length back to whichever list opened the
     /// article. Its row otherwise keeps the older episode snapshot whose
     /// count was unknown before extraction.
@@ -40,7 +42,7 @@ struct ArticleView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     init(episode: Episode, learnedWordCount: @escaping (Int) -> Void = { _ in }) {
-        self.episode = episode
+        self.originalEpisode = episode
         self.learnedWordCount = learnedWordCount
     }
 
@@ -127,7 +129,14 @@ struct ArticleView: View {
         // a drag is visible as a jump in the article.
         .background(ArticleChrome(tracking: articleWebView?.scrollView))
         .navigationDestination(item: $openFeed) { PodcastPreviewView(podcast: $0) }
-        .task {
+        .onReceive(SavedLibrary.shared.$episodes) { saved in
+            if let updated = saved.first(where: { $0.id == episode.id }),
+                updated.contentID != episode.contentID
+            {
+                replacementEpisode = updated
+            }
+        }
+        .task(id: episode.contentID) {
             if let wordCount = await model.load(episodeID: episode.id, contentID: episode.contentID) {
                 learnedWordCount(wordCount)
             }
@@ -1168,9 +1177,13 @@ final class ArticleTextModel: ObservableObject {
 
     @discardableResult
     func load(episodeID: Int, contentID: Int? = nil) async -> Int? {
+        loadGeneration += 1
+        let generation = loadGeneration
+        state = .loading
         let key: OfflineCache.Key = contentID.map { .articleVersion(episodeID: episodeID, contentID: $0) } ?? .articleText(episodeID: episodeID)
         do {
             let article = try await api.articleText(episodeID: episodeID, contentID: contentID)
+            guard generation == loadGeneration, !Task.isCancelled else { return nil }
             if let contentID, article.contentID != contentID {
                 throw APIError(underlying: "The server returned a different article version")
             }
@@ -1179,6 +1192,7 @@ final class ArticleTextModel: ObservableObject {
             state = .loaded(Article(text: article.text, html: article.html))
             return article.wordCount
         } catch {
+            guard generation == loadGeneration, !Task.isCancelled else { return nil }
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             // Same rule as everywhere else: an expired session is the one
             // failure the cache must not paper over.
@@ -1197,6 +1211,8 @@ final class ArticleTextModel: ObservableObject {
             }
         }
     }
+
+    private var loadGeneration = 0
 
     /// Text on its way into a document, so an article about `<script>` reads
     /// as one rather than becoming one.

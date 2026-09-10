@@ -39,6 +39,12 @@ async def retry(episode_id: int, session: Session, user: CurrentUser) -> Episode
     return (await episodes_read(session, user, [episode]))[0]
 
 
+@router.post("/replace", dependencies=[Depends(check_feed_operation_limit)])
+async def replace_article(body: saved.SaveRequest, session: Session, user: CurrentUser) -> EpisodeRead:
+    episode = await saved.save(session, user, body, replace=True)
+    return (await episodes_read(session, user, [episode]))[0]
+
+
 @router.delete("/{episode_id}", status_code=204)
 async def remove(episode_id: int, session: Session, user: CurrentUser) -> None:
     record = await saved.selection(session, user, episode_id)

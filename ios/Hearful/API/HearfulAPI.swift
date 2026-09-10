@@ -415,8 +415,13 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         try await send(URLRequest(url: baseURL.appendingPathComponent("saved")))
     }
 
-    func saveArticle(url: URL? = nil, episodeID: Int? = nil, title: String? = nil, html: String? = nil, savedAt: Date? = nil) async throws -> Episode {
-        var request = URLRequest(url: baseURL.appendingPathComponent("saved"))
+    func saveArticle(
+        url: URL? = nil, episodeID: Int? = nil, title: String? = nil, html: String? = nil,
+        savedAt: Date? = nil, contentFormat: String? = nil, replaceExisting: Bool = false
+    ) async throws -> Episode {
+        // A distinct route makes an older backend fail visibly instead of silently
+        // ignoring a replacement flag and keeping the incorrect selected version.
+        var request = URLRequest(url: baseURL.appendingPathComponent(replaceExisting ? "saved/replace" : "saved"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         struct Body: Encodable {
@@ -425,10 +430,13 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
             let title: String?
             let html: String?
             let saved_at: Date?
+            let content_format: String?
         }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        request.httpBody = try encoder.encode(Body(url: url, episode_id: episodeID, title: title, html: html, saved_at: savedAt))
+        request.httpBody = try encoder.encode(Body(
+            url: url, episode_id: episodeID, title: title, html: html,
+            saved_at: savedAt, content_format: contentFormat))
         return try await send(request)
     }
 

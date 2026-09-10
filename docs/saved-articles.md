@@ -14,10 +14,23 @@ storage; opening Magpie syncs captures and downloads prepared text. The inbox
 removes a file only after the server acknowledges it. Original save dates survive
 offline capture. Signing out clears that account's pending captures.
 
-Safari preprocessing supplies page HTML after removing scripts, forms, and hidden
-nodes and resolving relative links. Other apps generally supply a URL. Large
-Safari pages fall back to URL capture. The backend extracts readable content and
-sanitizes it. A failed extraction retains the link with an explicit Retry action.
+Safari preprocessing runs bundled Mozilla Readability on a clone of the loaded
+page. It removes hidden content using Safari's computed styles before discarding
+stylesheets, retains paragraphs below the fold, and resolves relative links.
+Competing article bodies need a unique matching headline; ambiguous pages and
+stale canonical URLs fall back to saving the current link. Publishers that split
+one story into multiple article elements can retain their common article ID.
+This uses the loaded page, not Safari's private Reader implementation.
+
+The share sheet previews the extracted title and opening paragraph before Save.
+Other apps generally supply a URL. Limits apply to the extracted article, so
+large navigation sections do not discard an otherwise small article. Failed,
+oversized, or uncertain extraction falls back to URL capture without truncation.
+The backend sanitizes an identified browser article without re-extracting its
+body, and verifies that its canonical URL matches the saved link. Legacy page
+captures and URL fetches still use server extraction, with explicit hidden-node
+removal and a guard against ambiguous competing articles. A failed extraction
+retains the link with an explicit Retry action.
 Sites requiring login or JavaScript may need a Safari capture; full-text extraction
 cannot be guaranteed for every publisher. PDFs, pasted text, and video transcripts
 are outside this first implementation.
@@ -40,8 +53,16 @@ content repairs the saved link, preserving its identity and original save date.
   selected copy for restoration. Account deletion erases private copies.
 - Changed captures create additional versions. Duplicate captures within one
   owner and article reuse the existing version. Re-saving does not automatically
-  switch the selected copy. A version picker and explicit refresh/switch UI are
-  intentionally deferred.
+  switch the selected copy. **Replace saved text** in a Saved item's context menu
+  fetches a fresh copy from its original link. The same option in Safari's share
+  sheet queues a replacement using the previewed browser capture, useful for
+  signed-in pages. Replacement requires an existing saved item owned by the user,
+  preserves its original save date, and keeps the old immutable content version.
+  A failed replacement leaves the selected copy and progress unchanged. Changed
+  spoken text resets progress and completion; identical speech keeps progress,
+  including after an offline replacement is delivered again. The client clears
+  playback of a superseded version and reloads an open reader. A version picker
+  remains deferred.
 - Progress includes `content_id`. A report for a different selection is rejected;
   an old client's unversioned tick cannot overwrite selected-version progress.
   Saving an existing feed article preserves its exact historical speech and
@@ -65,7 +86,14 @@ The UI does not yet provide an automatic continuous Saved playlist.
 
 - `GET /saved` returns the user's saved episode payloads, newest save first.
 - `POST /saved` accepts exactly one of `url` or `episode_id`, plus optional
-  `title`, captured `html`, and timezone-aware `saved_at`.
+  `title`, captured `html`, timezone-aware `saved_at`, and `content_format`
+  (`page`, the default, or `article`). An `article` envelope has one body-level
+  article, its title, and a canonical link matching the save URL. All HTML is
+  untrusted and sanitized regardless of format.
+- `POST /saved/replace` accepts the same payload and explicitly replaces an
+  existing saved selection. It returns 404 for an absent save and 422 for a failed
+  replacement. It has its own route so older servers cannot silently ignore a
+  replacement flag. No released-client payload or default save behavior changes.
 - `POST /saved/{id}/retry` retries an item without captured content.
 - `DELETE /saved/{id}` removes it from Saved without deleting playback history.
 - Episode payloads add optional `content_id`, `saved_at`, and `capture_error`.
@@ -99,6 +127,13 @@ Run `make backend-check`, `make backend-compatibility`, `make ios-build`,
 accounts, capture deduplication, immutable selection, mismatched progress, failed
 extraction/retry, feed reconciliation, newsletter retention, account deletion,
 private search, migration preservation, durable local capture, and cache versions.
+WebKit tests execute the bundled Safari script against hidden and competing
+articles, split publisher markup, stale page identity, relative links, and large
+page chrome. Backend tests cover replacement privacy, replay, failure, old-version
+access, progress, browser envelope identity, and sanitization. The script test
+gate verifies that `CapturePage.js` matches the pinned Readability source and
+`scripts/safari_capture.js`; regenerate it with
+`python3 scripts/build_safari_capture.py` after changing either source.
 
 A physical-device share-sheet check is still required before release, especially
 signed-in Safari capture, offline saving, VoiceOver, and the new provisioning

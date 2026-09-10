@@ -82,6 +82,151 @@ async def test_multiple_private_captures_keep_selection_and_progress(client, ses
     assert (await client.get(f"/episodes/{first['id']}")).json()["position_seconds"] == 42
 
 
+async def test_explicit_replacement_preserves_identity_date_and_old_version(client, session):
+    first = await capture(client)
+    await client.put(
+        f"/episodes/{first['id']}/position",
+        json={"position_seconds": 42, "completed": True, "content_id": first["content_id"]},
+    )
+    response = await client.post("/saved/replace", json={"url": URL, "html": page(text="Corrected article words")})
+    assert response.status_code == 200, response.text
+    updated = response.json()
+    assert updated["id"] == first["id"]
+    assert updated["saved_at"] == first["saved_at"]
+    assert updated["content_id"] != first["content_id"]
+    assert updated["position_seconds"] == 0
+    assert not updated["completed"]
+    old = (await client.get(f"/episodes/{first['id']}/text?content_id={first['content_id']}")).json()
+    assert "original private words" in old["text"]
+    assert "Corrected article words" in (await client.get(f"/episodes/{first['id']}/text")).json()["text"]
+    assert (
+        await client.put(
+            f"/episodes/{first['id']}/position",
+            json={"position_seconds": 99, "content_id": first["content_id"]},
+        )
+    ).status_code == 409
+    await client.put(
+        f"/episodes/{first['id']}/position", json={"position_seconds": 12, "content_id": updated["content_id"]}
+    )
+    # Retrying an acknowledged offline replacement cannot reset newly made progress.
+    again = await client.post("/saved/replace", json={"url": URL, "html": page(text="Corrected article words")})
+    assert again.json()["content_id"] == updated["content_id"]
+    assert again.json()["position_seconds"] == 12
+
+
+async def test_replacement_with_same_speech_keeps_progress(client):
+    first = await capture(client)
+    await client.put(
+        f"/episodes/{first['id']}/position", json={"position_seconds": 42, "content_id": first["content_id"]}
+    )
+    response = await client.post("/saved/replace", json={"url": URL, "title": "Revised title", "html": page()})
+    assert response.status_code == 200
+    assert response.json()["title"] == "Revised title"
+    assert response.json()["position_seconds"] == 42
+
+
+async def test_failed_replacement_keeps_current_copy_and_progress(client, respx_mock):
+    first = await capture(client)
+    await client.put(
+        f"/episodes/{first['id']}/position", json={"position_seconds": 42, "content_id": first["content_id"]}
+    )
+    respx_mock.get(URL).respond(403)
+    response = await client.post("/saved/replace", json={"episode_id": first["id"]})
+    assert response.status_code == 422
+    assert "unchanged" in response.json()["detail"]
+    current = (await client.get(f"/episodes/{first['id']}")).json()
+    assert current["content_id"] == first["content_id"]
+    assert current["position_seconds"] == 42
+    assert current["capture_error"] is None
+
+
+async def test_replace_fetches_again_and_does_not_use_selected_copy(client, respx_mock):
+    first = await capture(client)
+    route = respx_mock.get(URL).respond(200, text=page(text="Freshly fetched body"))
+    response = await client.post("/saved/replace", json={"episode_id": first["id"]})
+    assert response.status_code == 200
+    assert route.call_count == 1
+    assert response.json()["content_id"] != first["content_id"]
+    assert response.json()["saved_at"] == first["saved_at"]
+
+
+async def test_replacement_requires_an_existing_owned_save(client, session, make_client):
+    assert (await client.post("/saved/replace", json={"url": URL, "html": page()})).status_code == 404
+    first = await capture(client)
+    other = User(display_name="Other")
+    session.add(other)
+    await session.commit()
+    async with make_client(other) as outsider:
+        assert (
+            await outsider.post("/saved/replace", json={"episode_id": first["id"], "html": page()})
+        ).status_code == 404
+        assert (await outsider.post("/saved/replace", json={"url": URL, "html": page()})).status_code == 404
+
+
+@pytest.mark.parametrize(
+    "hidden", ['style="display:none"', 'style="visibility: hidden !important"', 'aria-hidden="true"', "hidden"]
+)
+def test_hidden_article_cannot_displace_main_body(hidden):
+    main = page(title="City gardens provide shade", text="Visible garden story")
+    other = page(title="Satellite technology", text="Unrelated satellite story")
+    raw = main.replace("</body>", f"<div {hidden}>{other}</div></body>")
+    html, _ = saved.extract(raw, browser=True)
+    assert "Visible garden story" in html
+    assert "Unrelated satellite story" not in html
+
+
+def test_multiple_articles_require_a_matching_headline():
+    first = page(title="City gardens provide shade", text="Visible garden story")
+    other = (
+        "<article><h1>Satellite technology is changing</h1>" + "<p>Unrelated satellite story. " * 40 + "</p></article>"
+    )
+    raw = first.replace("</body>", other + "</body>")
+    html, _ = saved.extract(raw, browser=True)
+    assert "Visible garden story" in html
+    assert "Unrelated satellite story" not in html
+    raw = raw.replace("<title>City gardens provide shade</title>", "<title>News page</title>")
+    assert saved.extract(raw, browser=True)[0] == ""
+
+
+def test_publisher_comments_and_processing_instructions_do_not_break_extraction():
+    raw = page().replace("<body>", "<body><!-- publisher widget --><?publisher metadata?>")
+    html, _ = saved.extract(raw)
+    assert "original private words" in html
+
+
+async def test_reader_capture_preserves_body_and_checks_identity(client):
+    raw = (
+        f'<html><head><title>Reader headline</title><link rel="canonical" href="{URL}"></head>'
+        "<body><article><h2>Opening section</h2><p>A short opening that must not be re-extracted away.</p>"
+        "<p>Second paragraph with <em>emphasis</em>.</p><script>alert(1)</script></article></body></html>"
+    )
+    response = await client.post(
+        "/saved",
+        json={
+            "url": URL,
+            "title": "Unrelated transport title",
+            "html": raw,
+            "content_format": "article",
+        },
+    )
+    assert response.status_code == 200
+    first = response.json()
+    assert first["title"] == "Reader headline"
+    text = (await client.get(f"/episodes/{first['id']}/text")).json()
+    assert "short opening" in text["text"] and "Second paragraph" in text["text"]
+    assert "<em>emphasis</em>" in text["html"] and "<script" not in text["html"]
+    response = await client.post(
+        "/saved/replace",
+        json={
+            "url": URL,
+            "html": raw.replace(URL, "https://example.com/other"),
+            "content_format": "article",
+        },
+    )
+    assert response.status_code == 422
+    assert (await client.get(f"/episodes/{first['id']}")).json()["content_id"] == first["content_id"]
+
+
 async def test_same_url_different_users_never_share_private_text(client, session, make_client):
     first = await capture(client)
     other = User(display_name="Other")

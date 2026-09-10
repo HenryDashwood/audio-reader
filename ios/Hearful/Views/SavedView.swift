@@ -11,6 +11,7 @@ final class SavedLibrary: ObservableObject {
     @Published var pending: [CaptureInbox.Capture] = []
     @Published var error: String?
     @Published var loading = false
+    @Published private(set) var replacing = false
     private let api = HearfulAPI()
     private var generation = 0
     private var currentAccount: CaptureInbox.Account? {
@@ -21,7 +22,7 @@ final class SavedLibrary: ObservableObject {
     }
 
     func load() async {
-        guard !loading, let account = currentAccount else { return }
+        guard !loading, !replacing, let account = currentAccount else { return }
         let generation = self.generation
         loading = true
         defer { if self.generation == generation { loading = false } }
@@ -33,10 +34,12 @@ final class SavedLibrary: ObservableObject {
                 do {
                     let episode = try await api.saveArticle(
                         url: capture.url, title: capture.title, html: capture.html,
-                        savedAt: capture.createdAt)
+                        savedAt: capture.createdAt, contentFormat: capture.contentFormat,
+                        replaceExisting: capture.replaceExisting == true)
                     // Signing out or switching servers during a request must not
                     // write the previous account's response into the next cache.
                     guard currentAccount == account, self.generation == generation else { return }
+                    invalidateReplacedPlayback(episode)
                     await download(episode)
                     guard currentAccount == account, self.generation == generation else { return }
                     try CaptureInbox.shared.remove(capture)
@@ -53,6 +56,7 @@ final class SavedLibrary: ObservableObject {
             let loaded = try await api.savedArticles()
             guard currentAccount == account, self.generation == generation else { return }
             episodes = loaded
+            for episode in loaded { invalidateReplacedPlayback(episode) }
             OfflineCache.shared.save(loaded, for: .savedArticles)
             for episode in loaded where episode.contentID != nil {
                 guard currentAccount == account, self.generation == generation else { return }
@@ -118,9 +122,40 @@ final class SavedLibrary: ObservableObject {
         } catch { self.error = (error as? APIError)?.spokenResponse ?? error.localizedDescription }
     }
 
+    func replace(_ episode: Episode) async {
+        guard !loading, !replacing, let account = currentAccount else { return }
+        let generation = self.generation
+        replacing = true
+        defer { if self.generation == generation { replacing = false } }
+        do {
+            let updated = try await api.saveArticle(episodeID: episode.id, replaceExisting: true)
+            guard currentAccount == account, self.generation == generation else { return }
+            invalidateReplacedPlayback(updated)
+            if let index = episodes.firstIndex(where: { $0.id == updated.id }) { episodes[index] = updated }
+            OfflineCache.shared.save(episodes, for: .savedArticles)
+            await download(updated)
+            guard currentAccount == account, self.generation == generation else { return }
+            AccessibilityNotification.Announcement("Saved text replaced: \(updated.title)").post()
+            NotificationCenter.default.post(name: .hearfulSavedChanged, object: updated)
+        } catch {
+            guard currentAccount == account, self.generation == generation else { return }
+            self.error = (error as? APIError)?.spokenResponse ?? error.localizedDescription
+        }
+    }
+
+    private func invalidateReplacedPlayback(_ updated: Episode) {
+        let player = PlaybackCoordinator.shared
+        if let current = player.currentEpisode, current.id == updated.id,
+            current.contentID != updated.contentID
+        {
+            player.clear()
+        }
+    }
+
     func clear() {
         generation += 1
         loading = false
+        replacing = false
         episodes = []
         pending = []
         error = nil
@@ -137,6 +172,7 @@ struct SavedView: View {
     @State private var adding = false
     @State private var link = ""
     @State private var addError: String?
+    @State private var replacing: Episode?
 
     private var visible: [Episode] {
         model.episodes.filter {
@@ -195,6 +231,11 @@ struct SavedView: View {
                         Task { await model.file(filing, episode: episode) }
                     }
                     .contextMenu {
+                        if episode.audioURL == nil, episode.link != nil {
+                            Button("Replace saved text", systemImage: "arrow.clockwise") {
+                                replacing = episode
+                            }.disabled(model.loading || model.replacing)
+                        }
                         ForEach(
                             EpisodeFiling.available(for: episode, allowsDismissal: false),
                             id: \.self
@@ -223,6 +264,17 @@ struct SavedView: View {
             .navigationTitle("Saved")
             .toolbarTitleDisplayMode(.inline)
             .searchable(text: $query, prompt: "Search saved articles")
+            .confirmationDialog(
+                "Replace saved text?",
+                isPresented: Binding(get: { replacing != nil }, set: { if !$0 { replacing = nil } }),
+                titleVisibility: .visible,
+                presenting: replacing
+            ) { episode in
+                Button("Replace saved text") { Task { await model.replace(episode) } }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("Download a fresh copy from the original link. If the text changes, listening starts from the beginning. If it fails, your current copy is kept. For pages requiring sign-in, share from Safari and choose Replace saved text.")
+            }
             .refreshable { await model.load() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -282,7 +334,9 @@ struct SavedView: View {
         .task { await model.load() }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulPositionReported)) { note in
             guard let report = note.object as? PositionReport,
-                let index = model.episodes.firstIndex(where: { $0.id == report.episodeID })
+                let index = model.episodes.firstIndex(where: {
+                    $0.id == report.episodeID && $0.contentID == report.contentID
+                })
             else { return }
             model.episodes[index].positionSeconds = report.seconds
             model.episodes[index].completed = report.completed

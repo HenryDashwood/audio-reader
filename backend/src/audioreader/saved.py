@@ -3,10 +3,12 @@
 import hashlib
 import re
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
 import trafilatura
 from fastapi import HTTPException
+from lxml import html as lxml_html
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -25,6 +27,7 @@ class SaveRequest(BaseModel):
     episode_id: int | None = None
     title: str | None = Field(default=None, max_length=500)
     html: str | None = Field(default=None, max_length=2_000_000)
+    content_format: Literal["page", "article"] = "page"
 
     @model_validator(mode="after")
     def one_identity(self):
@@ -71,7 +74,7 @@ async def selection(session: AsyncSession, user: User, episode_id: int) -> Saved
     return await session.get(SavedArticle, (user.id, episode_id), options=[joinedload(SavedArticle.content)])
 
 
-async def save(session: AsyncSession, user: User, body: SaveRequest) -> Episode:
+async def save(session: AsyncSession, user: User, body: SaveRequest, *, replace: bool = False) -> Episode:
     # Serialize this user's duplicate captures, including retries from a share extension.
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
     if body.episode_id is not None:
@@ -89,6 +92,8 @@ async def save(session: AsyncSession, user: User, body: SaveRequest) -> Episode:
                 .order_by(Episode.id)
                 .limit(1)
             )
+        if episode is None and replace:
+            raise HTTPException(404, detail="Save this article before replacing its text.")
         if episode is None:
             try:
                 async with session.begin_nested():
@@ -99,6 +104,11 @@ async def save(session: AsyncSession, user: User, body: SaveRequest) -> Episode:
                 episode = await session.scalar(select(Episode).where(Episode.canonical_url == url))
                 assert episode is not None
     saved = await selection(session, user, episode.id)
+    if replace:
+        if saved is None or saved.saved_at is None:
+            raise HTTPException(404, detail="Save this article before replacing its text.")
+        if episode.audio_url or not (body.html or episode.link):
+            raise HTTPException(422, detail="This item has no web article to replace.")
     if saved is None:
         saved = SavedArticle(
             user_id=user.id,
@@ -109,15 +119,23 @@ async def save(session: AsyncSession, user: User, body: SaveRequest) -> Episode:
     elif saved.saved_at is None:
         saved.saved_at = utcnow()
     # Capturing new material does not switch a selected snapshot, even before playback.
-    if body.html or saved.content_id is None:
-        await capture(session, user, episode, saved, body)
+    if replace or body.html or saved.content_id is None:
+        await capture(session, user, episode, saved, body, replace=replace)
     await session.commit()
     # Ensure the nullable feed relationship is available to response rendering.
     await session.refresh(episode, attribute_names=["feed"])
     return episode
 
 
-async def capture(session: AsyncSession, user: User, episode: Episode, saved: SavedArticle, body: SaveRequest) -> None:
+async def capture(
+    session: AsyncSession,
+    user: User,
+    episode: Episode,
+    saved: SavedArticle,
+    body: SaveRequest,
+    *,
+    replace: bool = False,
+) -> None:
     if episode.audio_url and not body.html:
         saved.capture_error = None
         return
@@ -126,9 +144,11 @@ async def capture(session: AsyncSession, user: User, episode: Episode, saved: Sa
     title = body.title or episode.title
     source = "browser" if body.html else "web"
     if body.html:
-        html, extracted_title = extract(body.html, browser=True)
-        title = body.title or extracted_title or title
-    elif episode.feed_id is not None:
+        html, extracted_title = extract(
+            body.html, browser=True, url=episode.link, article=body.content_format == "article"
+        )
+        title = (extracted_title if body.content_format == "article" else body.title) or extracted_title or title
+    elif episode.feed_id is not None and not replace:
         text, html_value = await articles.content_for(session, episode, commit=False)
         if articles.known_word_count(episode):
             html = html_value or ""
@@ -139,7 +159,7 @@ async def capture(session: AsyncSession, user: User, episode: Episode, saved: Sa
     elif episode.link:
         try:
             raw, _ = await fetch_public_bytes(episode.link, max_bytes=MAX_ARTICLE_BYTES)
-            html, extracted_title = extract(raw.decode("utf-8", errors="replace"))
+            html, extracted_title = extract(raw.decode("utf-8", errors="replace"), url=episode.link)
             title = extracted_title or title
         except FeedFetchError as exc:
             if exc.status_code in {401, 403}:
@@ -149,29 +169,96 @@ async def capture(session: AsyncSession, user: User, episode: Episode, saved: Sa
                 )
     text = article_text(html)
     if not text:
+        if replace:
+            raise HTTPException(
+                422,
+                detail="Could not replace the text. Your saved copy is unchanged. "
+                "Open the original in Safari, then share to Magpie and choose Replace saved text.",
+            )
         if saved.content_id is None:
             saved.capture_error = capture_error
         return
-    await store_capture(session, user, episode, saved, title, html, text, source)
+    await store_capture(session, user, episode, saved, title, html, text, source, replace=replace)
 
 
-def extract(raw: str, *, browser: bool = False) -> tuple[str, str | None]:
+def extract(
+    raw: str, *, browser: bool = False, url: str | None = None, article: bool = False
+) -> tuple[str, str | None]:
     # Subscription/login interstitials are not complete articles. Structured metadata
     # is useful evidence; absence of that signal is not a guarantee of completeness.
     if not browser and '"isAccessibleForFree":false' in raw.replace(" ", "").replace("\n", ""):
         return "", None
-    html = (
-        trafilatura.extract(
-            raw,
-            output_format="html",
-            include_comments=False,
-            include_formatting=True,
-            include_links=True,
-            include_images=True,
-            include_tables=True,
+    try:
+        page = lxml_html.document_fromstring(raw)
+    except Exception:
+        # lxml exposes platform-specific parser exception classes from its C module.
+        return "", None
+    metadata = trafilatura.extract_metadata(raw)
+    # Also protect URL saves and queued captures from older clients. Only Safari
+    # can resolve stylesheet visibility; here we can remove explicit hidden nodes.
+    for node in list(page.iter()):
+        if not isinstance(node.tag, str):
+            continue
+        style = node.get("style", "")
+        if (
+            node.get("hidden") is not None
+            or node.get("aria-hidden", "").lower() == "true"
+            or re.search(
+                r"(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse)|"
+                r"content-visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)",
+                style,
+                re.IGNORECASE,
+            )
+        ):
+            if node.getparent() is not None:
+                node.drop_tree()
+    if article:
+        # This is a format declaration, not a trust boundary: sanitize everything.
+        # Identity must be carried by the same envelope as the extracted body.
+        canonical = page.xpath('//link[@rel="canonical"]/@href')
+        bodies = page.xpath("//body/article")
+        try:
+            matches = len(canonical) == 1 and url and normalize_url(canonical[0]) == normalize_url(url)
+        except ValueError:
+            matches = False
+        if not browser or not matches or len(bodies) != 1 or len(page.xpath("//article")) != 1:
+            return "", None
+        html = lxml_html.tostring(bodies[0], encoding="unicode")
+    else:
+        groups = {}
+        for index, node in enumerate(page.xpath("//article[not(ancestor::article)]")):
+            key = node.get("elid") or node.get("itemid") or node.get("data-article-id") or f"node-{index}"
+            groups.setdefault(key, []).append(node)
+        candidates = [
+            nodes
+            for nodes in groups.values()
+            if sum(len(p.text_content().strip()) for node in nodes for p in node.xpath(".//p")) >= 350
+        ]
+        if len(candidates) > 1:
+            hints = page.xpath('//title/text() | //meta[@property="og:title"]/@content')
+            matches = []
+            for nodes in candidates:
+                headings = [h.text_content() for node in nodes for h in node.xpath(".//h1")]
+                if any(_matching_headline(heading, hint) for heading in headings for hint in hints):
+                    matches.append(nodes)
+            if len(matches) != 1:
+                return "", None
+            for nodes in groups.values():
+                if nodes is not matches[0]:
+                    for node in nodes:
+                        node.drop_tree()
+        html = (
+            trafilatura.extract(
+                page,
+                output_format="html",
+                include_comments=False,
+                include_formatting=True,
+                include_links=True,
+                include_images=True,
+                include_tables=True,
+            )
+            or ""
         )
-        or ""
-    )
     html = articles.sanitised(html)
     text = article_text(html)
     if word_count(text) < 120 and re.search(
@@ -181,11 +268,16 @@ def extract(raw: str, *, browser: bool = False) -> tuple[str, str | None]:
         re.IGNORECASE,
     ):
         return "", None
-    metadata = trafilatura.extract_metadata(raw)
     return html, metadata.title[:500] if metadata and metadata.title else None
 
 
-async def store_capture(session, user, episode, saved, title, html, text, source):
+def _matching_headline(heading: str, hint: str) -> bool:
+    words = re.findall(r"\w+", heading.lower())
+    other = set(re.findall(r"\w+", hint.lower()))
+    return len(words) >= 3 and sum(word in other for word in words) / len(words) >= 0.75
+
+
+async def store_capture(session, user, episode, saved, title, html, text, source, *, replace=False):
     html = articles.sanitised(html)
     digest = hashlib.sha256((title + "\0" + text + "\0" + html).encode()).hexdigest()
     content = await session.scalar(
@@ -207,14 +299,15 @@ async def store_capture(session, user, episode, saved, title, html, text, source
         )
         session.add(content)
         await session.flush()
-    if saved.content_id is None:
+    if saved.content_id is None or (replace and saved.content_id != content.id):
+        previous_text = saved.content.text if saved.content is not None else episode.article_text
         saved.content = content
         saved.content_id = content.id
         position = await session.get(PlaybackPosition, (user.id, episode.id))
         if position is not None:
             # Existing feed capture used its exact historical text above. A browser
             # capture with different text cannot inherit seconds from the feed copy.
-            if episode.article_text != text:
+            if previous_text != text:
                 position.position_seconds = 0
                 position.completed = False
             position.content_id = content.id

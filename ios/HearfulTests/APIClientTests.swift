@@ -32,6 +32,34 @@ private func makeClient(_ transport: DataTransport) -> HearfulAPI {
     HearfulAPI(baseURL: URL(string: "http://test.local")!, transport: transport)
 }
 
+@Suite("Saved article replacement endpoint")
+struct SavedReplacementEndpointTests {
+    @Test func replacementUsesItsOwnRouteAndCarriesTheArticleFormat() async throws {
+        let transport = FakeTransport(json: """
+            {"id":42,"title":"Correct article","content_id":9,"position_seconds":0,"has_text":true}
+            """)
+        let result = try await makeClient(transport).saveArticle(
+            url: URL(string: "https://example.com/story"), html: "<article>Correct text</article>",
+            contentFormat: "article", replaceExisting: true)
+        let request = try #require(transport.lastRequest)
+        #expect(request.url?.path == "/saved/replace")
+        #expect(request.httpMethod == "POST")
+        let data = try #require(request.httpBody)
+        let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(body["content_format"] as? String == "article")
+        #expect(body["url"] as? String == "https://example.com/story")
+        #expect(result.contentID == 9)
+    }
+
+    @Test func ordinarySavesRetainTheirExistingRoute() async throws {
+        let transport = FakeTransport(json: """
+            {"id":42,"title":"Article","has_text":true}
+            """)
+        _ = try await makeClient(transport).saveArticle(episodeID: 42)
+        #expect(transport.lastRequest?.url?.path == "/saved")
+    }
+}
+
 private let playJSON = """
     {
       "action": "play_episode",

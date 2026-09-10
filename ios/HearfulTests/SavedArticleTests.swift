@@ -4,6 +4,26 @@ import Testing
 @testable import Hearful
 
 struct SavedArticleTests {
+    @Test func aQueuedReplacementRetainsItsIntentAndOlderCapturesStillDecode() throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let inbox = CaptureInbox(directory: directory)
+        let account = CaptureInbox.Account(userID: "first", server: URL(string: "https://example.com")!)
+        try inbox.configure(account)
+        let saved = try inbox.save(
+            url: URL(string: "https://example.com/story")!, html: "<article>Correct text</article>",
+            contentFormat: "article", replaceExisting: true)
+        let reopened = CaptureInbox(directory: directory)
+        #expect(reopened.pending(for: account).first?.contentFormat == "article")
+        #expect(reopened.pending(for: account).first?.replaceExisting == true)
+        var old = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as? [String: Any])
+        old.removeValue(forKey: "contentFormat")
+        old.removeValue(forKey: "replaceExisting")
+        let decoded = try JSONDecoder().decode(CaptureInbox.Capture.self, from: JSONSerialization.data(withJSONObject: old))
+        #expect(decoded.contentFormat == nil)
+        #expect(decoded.replaceExisting == nil)
+        #expect(decoded.url == saved.url)
+    }
     @Test func capturesSurviveReopeningAndStayWithTheirAccountAndServer() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString)
