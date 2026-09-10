@@ -7,6 +7,7 @@ struct LibraryView: View {
     @Binding var openEpisode: Episode?
     @Binding var openShow: Show?
     @State private var addingSources = false
+    @State private var feedQuery = ""
     @State private var path = NavigationPath()
 
     var body: some View {
@@ -16,6 +17,11 @@ struct LibraryView: View {
             // A fixed inline title does not change size or position as the
             // library scrolls.
             .toolbarTitleDisplayMode(.inline)
+            .searchable(
+                text: $feedQuery,
+                placement: .navigationBarDrawer(displayMode: .automatic),
+                prompt: "Search your feeds"
+            )
             .navigationDestination(item: $openShow) { ShowDetailView(show: $0) }
             .navigationDestination(for: Show.self) { ShowDetailView(show: $0) }
             .navigationDestination(for: PodcastResult.self) { PodcastPreviewView(podcast: $0) }
@@ -86,17 +92,23 @@ struct LibraryView: View {
     }
 
     private func showList(_ shows: [Show], offline: Bool) -> some View {
-        List {
+        let matchingShows = followedShowsMatching(shows, query: feedQuery)
+        return List {
             if offline {
                 Label("Offline — showing saved subscriptions", systemImage: "wifi.slash")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            ForEach(shows) { show in
+            ForEach(matchingShows) { show in
                 NavigationLink(value: show) { ShowRow(show: show) }
             }
         }
         .listStyle(.plain)
+        .overlay {
+            if matchingShows.isEmpty {
+                ContentUnavailableView.search(text: feedQuery)
+            }
+        }
         .refreshable { await model.load() }
     }
 }
@@ -473,6 +485,14 @@ private struct PodcastResultRow: View {
         .accessibilityLabel(
             result.publisher.map { "\(result.title), by \($0)" } ?? result.title)
     }
+}
+
+/// Following filters feed names immediately, including single-character queries.
+/// Clearing the field restores the original order without a discovery request.
+nonisolated func followedShowsMatching(_ shows: [Show], query: String) -> [Show] {
+    let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else { return shows }
+    return shows.filter { $0.title.localizedStandardContains(query) }
 }
 
 /// Local matching remains available offline and deliberately tolerates one

@@ -1,6 +1,7 @@
 """A newsletter's feed on the web, linked to the one that arrives by email."""
 
 from datetime import timedelta
+from email.utils import parsedate_to_datetime
 
 import pytest
 from sqlalchemy import select
@@ -72,7 +73,9 @@ async def newsletter(session, user, sender="bensouthwood@substack.com", title="B
             title="Post A",
             content_html="<p>Post A as emailed.</p>",
             link="https://email.mg.substack.com/c/track-a",
-            published_at=utcnow() - timedelta(days=9),
+            # Match the archive's fixed publication date; a date relative to
+            # today eventually overtakes Post B and changes the expected order.
+            published_at=parsedate_to_datetime(ITEMS[1][2]),
         )
     ]
     session.add(feed)
@@ -290,7 +293,7 @@ class TestWhatSheSees:
                 title="Post C",
                 content_html="<p>Post C as emailed, in full.</p>",
                 link="https://email.mg.substack.com/c/track-c",
-                published_at=utcnow(),
+                published_at=parsedate_to_datetime(POST_C[2]),
             )
         )
         await session.commit()

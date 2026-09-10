@@ -304,4 +304,26 @@ struct LocalShowSearchTests {
         #expect(showsMatching(shows, query: "cafe").map(\.id) == [2])
         #expect(showsMatching(shows, query: "politics continent").map(\.id) == [2])
     }
+
+    @Test func followingFiltersFromTheFirstCharacterAndUpdatesAsYouType() {
+        for query in ["h", "hi", "his", "hist", "histo", "histor", "history"] {
+            #expect(followedShowsMatching(shows, query: query).map(\.id) == [1])
+        }
+        #expect(followedShowsMatching(shows, query: "historyx").isEmpty)
+        #expect(followedShowsMatching(shows, query: "c").map(\.id) == [2])
+    }
+
+    @Test func followingMatchesFeedNamesIgnoringCaseAndAccents() {
+        #expect(followedShowsMatching(shows, query: "CAFÉ").map(\.id) == [2])
+        #expect(followedShowsMatching(shows, query: " cafe ").map(\.id) == [2])
+        #expect(followedShowsMatching(shows, query: "uropa").map(\.id) == [2])
+        #expect(followedShowsMatching(shows, query: "continent").isEmpty)
+    }
+
+    @Test func clearingFollowingSearchRestoresEveryFeedInOrder() {
+        for query in ["", " \n "] {
+            #expect(followedShowsMatching(shows, query: query).map(\.id) == [1, 2])
+        }
+        #expect(followedShowsMatching([], query: "h").isEmpty)
+    }
 }
