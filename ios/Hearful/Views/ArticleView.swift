@@ -379,8 +379,11 @@ final class TabBarMetrics: ObservableObject {
         guard frame.width > 120, frame.width <= tabBar.bounds.width, frame.height > 20 else {
             return
         }
-        pillWidth = frame.width
-        pillTop = tabBar.convert(frame, to: nil).minY
+        // Publishing an unchanged measurement invalidates ContentView and
+        // lays out the probe again. Keep that cycle from feeding itself.
+        let top = tabBar.convert(frame, to: nil).minY
+        if pillWidth != frame.width { pillWidth = frame.width }
+        if pillTop != top { pillTop = top }
     }
 }
 

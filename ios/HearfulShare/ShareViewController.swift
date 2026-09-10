@@ -1,33 +1,30 @@
+import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
 @MainActor
 final class ShareViewController: UIViewController {
-    private let status = UILabel()
-    private let done = UIButton(type: .system)
+    private var confirmation: UIHostingController<ShareConfirmationView>?
     private var started = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
-        status.font = .preferredFont(forTextStyle: .body)
-        status.adjustsFontForContentSizeCategory = true
-        status.numberOfLines = 0
-        status.text = "Saving to Magpie…"
-        done.isEnabled = false
-        done.setTitle("Done", for: .normal)
-        done.titleLabel?.font = .preferredFont(forTextStyle: .headline)
-        done.addTarget(self, action: #selector(finish), for: .touchUpInside)
-        let stack = UIStackView(arrangedSubviews: [status, done])
-        stack.axis = .vertical
-        stack.spacing = 24
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        let confirmation = UIHostingController(rootView: makeConfirmation(state: .saving))
+        self.confirmation = confirmation
+        addChild(confirmation)
+        confirmation.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(confirmation.view)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 32),
+            confirmation.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            confirmation.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            confirmation.view.topAnchor.constraint(equalTo: view.topAnchor),
+            confirmation.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+        confirmation.didMove(toParent: self)
+        // Share hosts may use this to present a compact sheet. The content also
+        // centers and scrolls when a host supplies a taller or smaller surface.
+        preferredContentSize = CGSize(width: 420, height: 480)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -85,12 +82,166 @@ final class ShareViewController: UIViewController {
         do {
             guard let input else { throw CaptureInbox.InboxError.invalidURL }
             try CaptureInbox.shared.save(url: input.url, title: input.title, html: input.html)
-            status.text =
-                "Saved on this device. Open Magpie to prepare the article for reading and listening."
-        } catch { status.text = error.localizedDescription }
-        done.isEnabled = true
-        UIAccessibility.post(notification: .announcement, argument: status.text)
+            show(.saved(title: input.title, url: input.url))
+        } catch {
+            show(.failed(message: error.localizedDescription))
+        }
     }
 
-    @objc private func finish() { extensionContext?.completeRequest(returningItems: nil) }
+    private func makeConfirmation(state: ShareConfirmationView.State) -> ShareConfirmationView {
+        ShareConfirmationView(state: state) { [weak self] in
+            self?.extensionContext?.completeRequest(returningItems: nil)
+        }
+    }
+
+    private func show(_ state: ShareConfirmationView.State) {
+        confirmation?.rootView = makeConfirmation(state: state)
+        UINotificationFeedbackGenerator().notificationOccurred(state.isSaved ? .success : .error)
+        UIAccessibility.post(
+            notification: .announcement, argument: "\(state.heading). \(state.message)")
+    }
+}
+
+private struct ShareConfirmationView: View {
+    enum State {
+        case saving
+        case saved(title: String?, url: URL)
+        case failed(message: String)
+
+        var heading: String {
+            switch self {
+            case .saving: "Saving to Magpie…"
+            case .saved: "Saved to Magpie"
+            case .failed: "Couldn't save article"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .saving: "Keeping this article for later."
+            case .saved:
+                "Saved on this device. Open Magpie to prepare it for reading and listening."
+            case .failed(let message): message
+            }
+        }
+
+        var isSaving: Bool {
+            if case .saving = self { return true }
+            return false
+        }
+
+        var isSaved: Bool {
+            if case .saved = self { return true }
+            return false
+        }
+    }
+
+    let state: State
+    let done: () -> Void
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 28) {
+                    VStack(spacing: 20) {
+                        statusIcon
+                        VStack(spacing: 10) {
+                            Text(state.heading)
+                                .font(.title2.bold())
+                                .foregroundStyle(.primary)
+                                .accessibilityAddTraits(.isHeader)
+                            Text(state.message)
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                        }
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if case .saved(let title, let url) = state {
+                        articlePreview(title: title, url: url)
+                    }
+
+                    Button(action: done) {
+                        Text("Done")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 32)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.roundedRectangle(radius: 16))
+                    .controlSize(.large)
+                    .tint(Color(uiColor: .systemBlue))
+                    .disabled(state.isSaving)
+                }
+                .padding(28)
+                .frame(maxWidth: 476)
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .background(Color(uiColor: .systemBackground))
+    }
+
+    private var statusIcon: some View {
+        ZStack {
+            Circle()
+                .fill(Color(uiColor: state.isSaved ? .systemGreen : .secondaryLabel).opacity(0.12))
+            if state.isSaving {
+                ProgressView()
+                    .controlSize(.large)
+            } else {
+                Image(systemName: state.isSaved ? "checkmark" : "exclamationmark")
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(Color(uiColor: state.isSaved ? .systemGreen : .label))
+            }
+        }
+        .frame(width: 72, height: 72)
+        .accessibilityHidden(true)
+    }
+
+    private func articlePreview(title: String?, url: URL) -> some View {
+        let title = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let host = url.host() ?? url.absoluteString
+        let source = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+
+        return HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "doc.text")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 6) {
+                if let title, !title.isEmpty {
+                    Text(title)
+                        .font(.headline)
+                        .lineLimit(3)
+                    Text(source)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(source)
+                        .font(.headline)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(18)
+        .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 18))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+#Preview("Saved article") {
+    ShareConfirmationView(
+        state: .saved(
+            title: "The quiet pleasure of listening to a good story",
+            url: URL(string: "https://www.example.com/article")!)
+    ) {}
+}
+
+#Preview("Saving") {
+    ShareConfirmationView(state: .saving) {}
+}
+
+#Preview("Unable to save") {
+    ShareConfirmationView(state: .failed(message: CaptureInbox.InboxError.signedOut.localizedDescription)) {}
 }

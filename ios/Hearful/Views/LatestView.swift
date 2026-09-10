@@ -12,7 +12,6 @@ struct LatestView: View {
     @Binding var showingVoice: Bool
     /// The episode whose page is open, if any.
     @Binding var openEpisode: Episode?
-    @State private var confirmingClear = false
     @State private var clearError: String?
 
     var body: some View {
@@ -47,13 +46,9 @@ struct LatestView: View {
             .toolbar {
                 if model.canClear {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            confirmingClear = true
-                        } label: {
-                            Label("Clear Latest", systemImage: "checkmark.circle")
+                        ClearLatestButton {
+                            Task { clearError = await model.clear() }
                         }
-                        .accessibilityHint(
-                            "Removes all current items without marking them as played")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -62,21 +57,6 @@ struct LatestView: View {
                     }
                     .accessibilityLabel("Ask for something to listen to")
                 }
-            }
-            .confirmationDialog(
-                "Clear Latest?",
-                isPresented: $confirmingClear,
-                titleVisibility: .visible
-            ) {
-                Button("Clear Latest", role: .destructive) {
-                    Task { clearError = await model.clear() }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text(
-                    "This removes all current items from Latest without marking them as played. "
-                        + "New episodes will still appear."
-                )
             }
             .alert(
                 "Could not clear Latest",
@@ -168,6 +148,35 @@ struct LatestView: View {
         .onTapGesture { openEpisode = episode }
         .episodeFilingActions(for: episode, allowsDismissal: true) { filing in
             Task { await model.file(filing, episode: episode) }
+        }
+    }
+}
+
+/// Keep presentation state in the toolbar's view, so opening and dismissing
+/// the dialog does not rebuild LatestView and its toolbar presentation host.
+private struct ClearLatestButton: View {
+    let clear: () -> Void
+    @State private var confirmingClear = false
+
+    var body: some View {
+        Button {
+            confirmingClear = true
+        } label: {
+            Label("Clear Latest", systemImage: "checkmark.circle")
+        }
+        .accessibilityHint("Removes all current items without marking them as played")
+        .confirmationDialog(
+            "Clear Latest?",
+            isPresented: $confirmingClear,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Latest", role: .destructive, action: clear)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This removes all current items from Latest without marking them as played. "
+                    + "New episodes will still appear."
+            )
         }
     }
 }

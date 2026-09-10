@@ -5,6 +5,29 @@ import AVFoundation
 nonisolated enum SpeechVoice {
     static let storageKey = "HearfulSpeechVoice"
 
+    struct Choice: Identifiable, Equatable, Sendable {
+        let id: String
+        let label: String
+    }
+
+    struct SettingsSnapshot: Sendable {
+        let choices: [Choice]
+        let selectedID: String
+    }
+
+    /// Voice discovery talks to system services. Keep it off the main actor
+    /// and return values, so opening a tab never waits for those services.
+    @concurrent static func settingsSnapshot() async -> SettingsSnapshot {
+        let voices = installedVoices()
+        return SettingsSnapshot(
+            choices: voices.map {
+                Choice(id: $0.identifier, label: [$0.name, $0.language, qualityName($0.quality)]
+                    .joined(separator: " · "))
+            },
+            selectedID: current?.identifier ?? ""
+        )
+    }
+
     static var current: AVSpeechSynthesisVoice? {
         if let identifier = UserDefaults.standard.string(forKey: storageKey),
             let chosen = AVSpeechSynthesisVoice(identifier: identifier)

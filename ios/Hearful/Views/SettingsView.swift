@@ -1,4 +1,3 @@
-import AVFoundation
 import SwiftUI
 
 struct SettingsView: View {
@@ -7,8 +6,8 @@ struct SettingsView: View {
         VoiceConversationPreferences.defaultFollowUpWait
     @EnvironmentObject private var auth: AuthController
     @ObservedObject private var player = PlaybackCoordinator.shared
-    @State private var systemVoiceID: String = SpeechVoice.current?.identifier ?? ""
-    @State private var previewSpeaker = Speaker()
+    @State private var systemVoiceID = ""
+    @State private var previewSpeaker: Speaker?
     @State private var confirmingDelete = false
     @State private var confirmingDisableAI = false
     @State private var showingAIChoice = false
@@ -16,7 +15,8 @@ struct SettingsView: View {
     @State private var deleteError: String?
     @State private var privacyError: String?
     @State private var serverOverride = AppConfiguration.rememberedOverride()
-    private let voices = SpeechVoice.installedVoices()
+    @State private var voices: [SpeechVoice.Choice] = []
+    @State private var loadingVoices = true
 
     var body: some View {
         NavigationStack {
@@ -52,13 +52,25 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    if voices.isEmpty {
+                    if loadingVoices {
+                        ProgressView("Loading voices…")
+                    } else if voices.isEmpty {
                         Text("No speech voice is available")
                             .foregroundStyle(.secondary)
                     } else {
-                        Picker("Voice", selection: $systemVoiceID) {
-                            ForEach(voices, id: \.identifier) { voice in
-                                Text(label(for: voice)).tag(voice.identifier)
+                        Picker("Voice", selection: Binding(
+                            get: { systemVoiceID },
+                            set: { identifier in
+                                systemVoiceID = identifier
+                                SpeechVoice.select(identifier: identifier)
+                                // Only a user choice previews speech; loading
+                                // the saved selection must remain silent.
+                                if previewSpeaker == nil { previewSpeaker = Speaker() }
+                                Task { await previewSpeaker?.speak("This voice will read your articles.") }
+                            }
+                        )) {
+                            ForEach(voices) { voice in
+                                Text(voice.label).tag(voice.id)
                             }
                         }
                         .pickerStyle(.navigationLink)
@@ -230,10 +242,12 @@ struct SettingsView: View {
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
-            .onChange(of: systemVoiceID) { _, identifier in
-                SpeechVoice.select(identifier: identifier)
-                // Hearing it is the only way to choose it.
-                Task { await previewSpeaker.speak("This voice will read your articles.") }
+            .task {
+                let snapshot = await SpeechVoice.settingsSnapshot()
+                guard !Task.isCancelled else { return }
+                voices = snapshot.choices
+                systemVoiceID = snapshot.selectedID
+                loadingVoices = false
             }
         }
     }
@@ -281,10 +295,5 @@ struct SettingsView: View {
             privacyError = APIError.genericSpokenResponse
             AccessibilityNotification.Announcement(APIError.genericSpokenResponse).post()
         }
-    }
-
-    private func label(for voice: AVSpeechSynthesisVoice) -> String {
-        let parts = [voice.name, voice.language, SpeechVoice.qualityName(voice.quality)]
-        return parts.joined(separator: " · ")
     }
 }

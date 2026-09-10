@@ -25,4 +25,14 @@ struct SpeechVoiceTests {
             pair.0 >= pair.1
         })
     }
+
+    @Test @MainActor func backgroundSnapshotContainsTheVoicePickerValues() async {
+        let snapshot = await SpeechVoice.settingsSnapshot()
+        let installed = SpeechVoice.installedVoices()
+        #expect(snapshot.choices.map(\.id) == installed.map(\.identifier))
+        #expect(snapshot.choices.map(\.label) == installed.map {
+            [$0.name, $0.language, SpeechVoice.qualityName($0.quality)].joined(separator: " · ")
+        })
+        #expect(snapshot.selectedID == SpeechVoice.current?.identifier ?? "")
+    }
 }

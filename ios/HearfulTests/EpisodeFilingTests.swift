@@ -152,6 +152,30 @@ struct EpisodeFilingTests {
                 for: unplayed, allowsDismissal: false) == [.played])
     }
 
+    @Test func finishedSavedArticleCanBeDismissedOrMarkedUnread() {
+        var finished = article(id: 7013)
+        finished.completed = true
+
+        #expect(
+            EpisodeFiling.leadingSwipeActions(
+                for: finished, allowsDismissal: true) == [.dismissed])
+        #expect(
+            EpisodeFiling.trailingSwipeActions(
+                for: finished, allowsDismissal: true) == [.restored])
+    }
+
+    @Test func anAlreadyDismissedArticleOnlyOffersRestore() {
+        var dismissed = article(id: 7014)
+        dismissed.dismissed = true
+
+        #expect(
+            EpisodeFiling.leadingSwipeActions(
+                for: dismissed, allowsDismissal: true).isEmpty)
+        #expect(
+            EpisodeFiling.trailingSwipeActions(
+                for: dismissed, allowsDismissal: true) == [.restored])
+    }
+
     @Test func showPageMarksAFiledEpisodeUnplayedOnTheTrailingEdge() {
         let filed = episode(id: 7012, played: true)
 

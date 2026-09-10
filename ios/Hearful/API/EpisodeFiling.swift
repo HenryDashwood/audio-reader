@@ -10,7 +10,7 @@ import SwiftUI
 nonisolated enum EpisodeFiling: String, Sendable, Hashable {
     /// She has heard it.
     case played
-    /// She does not want it, and has not heard it.
+    /// She does not want it; this says nothing about whether she heard it.
     case dismissed
     /// Neither: unplayed and eligible for Latest again, from the beginning.
     case restored
@@ -28,11 +28,12 @@ nonisolated enum EpisodeFiling: String, Sendable, Hashable {
     /// visible effect, and the reason everything here is announced.
     var hidesFromLatest: Bool { self != .restored }
 
-    /// Which of these are worth offering on a row. Dismissal belongs only to
-    /// Latest; a podcast or publication page offers played and unplayed.
+    /// Latest and Saved allow dismissal independently of completion; a
+    /// podcast or publication page offers only played and unplayed.
     static func available(for episode: Episode, allowsDismissal: Bool) -> [EpisodeFiling] {
-        if episode.completed == true || episode.dismissed == true { return [.restored] }
-        return allowsDismissal ? [.played, .dismissed] : [.played]
+        if episode.dismissed == true { return [.restored] }
+        let completion: EpisodeFiling = episode.completed == true ? .restored : .played
+        return allowsDismissal ? [completion, .dismissed] : [completion]
     }
 
     /// Leading-edge swipes remove an item; trailing-edge swipes complete it.
@@ -140,7 +141,7 @@ extension View {
     /// Swipe actions, because VoiceOver surfaces them through the Actions
     /// rotor — the same gesture on every row of every list, and the only way
     /// to reach a control that is otherwise hidden behind a swipe you cannot
-    /// see. Dismissal lives on the leading edge in Latest only; completion and
+    /// see. Dismissal lives on the leading edge in Latest and Saved; completion and
     /// its inverse live on the trailing edge everywhere. With one action on an
     /// edge, either can be completed in a single full swipe.
     func episodeFilingActions(

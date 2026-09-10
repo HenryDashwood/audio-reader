@@ -366,18 +366,28 @@ struct TabBarProbe: UIViewControllerRepresentable {
     func updateUIViewController(_ probe: Probe, context: Context) {}
 
     final class Probe: UIViewController {
+        private var measurementScheduled = false
+
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
-            measure()
+            scheduleMeasurement()
         }
 
         override func viewDidLayoutSubviews() {
             super.viewDidLayoutSubviews()
-            measure()
-            // The tab bar is often not laid out at its final size on the pass
-            // that brings this view up, and nothing lays this view out again
-            // afterwards — so ask once more when the dust has settled.
-            DispatchQueue.main.async { [weak self] in self?.measure() }
+            scheduleMeasurement()
+        }
+
+        private func scheduleMeasurement() {
+            // Publish after UIKit finishes layout, never from inside the
+            // layout callback. Several passes need only one measurement.
+            guard !measurementScheduled else { return }
+            measurementScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.measurementScheduled = false
+                self.measure()
+            }
         }
 
         private func measure() {
