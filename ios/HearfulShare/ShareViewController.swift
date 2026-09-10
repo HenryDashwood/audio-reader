@@ -105,7 +105,7 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func makeConfirmation(state: ShareConfirmationView.State) -> ShareConfirmationView {
+    private func makeConfirmation(state: ShareConfirmationView.Phase) -> ShareConfirmationView {
         ShareConfirmationView(state: state, save: { [weak self] replace in
             self?.saveCapture(replaceExisting: replace)
         }) { [weak self] in
@@ -113,7 +113,7 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func show(_ state: ShareConfirmationView.State) {
+    private func show(_ state: ShareConfirmationView.Phase) {
         confirmation?.rootView = makeConfirmation(state: state)
         if !state.isReady {
             UINotificationFeedbackGenerator().notificationOccurred(state.isSaved ? .success : .error)
@@ -124,7 +124,7 @@ final class ShareViewController: UIViewController {
 }
 
 private struct ShareConfirmationView: View {
-    enum State {
+    enum Phase {
         case saving
         case ready(title: String?, url: URL, preview: String?)
         case saved(title: String?, url: URL)
@@ -170,7 +170,7 @@ private struct ShareConfirmationView: View {
         }
     }
 
-    let state: State
+    let state: Phase
     var save: (Bool) -> Void = { _ in }
     let done: () -> Void
     @State private var replaceExisting = false
