@@ -1,30 +1,17 @@
 import SwiftUI
 
-/// The podcasts and publications the user follows, plus search across her
-/// library and public discovery sources.
+/// Followed podcasts and publications, with an explicit entry point for discovery.
 struct LibraryView: View {
-    @EnvironmentObject private var auth: AuthController
     @StateObject private var model = LibraryModel()
-    @StateObject private var searchModel = PodcastSearchModel()
-    @ObservedObject private var player = PlaybackCoordinator.shared
     @Binding var showingVoice: Bool
     @Binding var openEpisode: Episode?
     @Binding var openShow: Show?
-    @State private var searchText = ""
-    @State private var searchScope: LibrarySearchScope = .all
-    @State private var showingAIConsent = false
+    @State private var addingSources = false
     @State private var path = NavigationPath()
-    @FocusState private var searchFocused: Bool
 
     var body: some View {
         NavigationStack(path: $path) {
-            Group {
-                if searchText.isEmpty {
-                    library
-                } else {
-                    searchResults
-                }
-            }
+            library
             .navigationTitle("Following")
             // A fixed inline title does not change size or position as the
             // library scrolls.
@@ -33,15 +20,15 @@ struct LibraryView: View {
             .navigationDestination(for: Show.self) { ShowDetailView(show: $0) }
             .navigationDestination(for: PodcastResult.self) { PodcastPreviewView(podcast: $0) }
             .navigationDestination(item: $openEpisode) { episode in
-                ArticleView(episode: episode) { wordCount in
-                    searchModel.learnedWordCount(wordCount, for: episode.id)
-                }
+                ArticleView(episode: episode)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    SearchToolbarButton(
-                        label: "Search podcasts, publications, and episodes",
-                        focused: $searchFocused)
+                    Button { addingSources = true } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("Add sources")
+                    .accessibilityHint("Find a podcast or publication, or enter a feed address")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -50,31 +37,6 @@ struct LibraryView: View {
                         Image(systemName: "mic.fill")
                     }
                     .accessibilityLabel("Ask for something to listen to")
-                }
-            }
-            .searchable(
-                text: $searchText,
-                placement: .navigationBarDrawer(displayMode: .automatic),
-                prompt: "Podcasts, publications, episodes, or a web address"
-            )
-            .searchScopes($searchScope) {
-                Text("All").tag(LibrarySearchScope.all)
-                Text("Sources").tag(LibrarySearchScope.shows)
-                Text("Episodes").tag(LibrarySearchScope.episodes)
-            }
-            .searchFocused($searchFocused)
-            .onSubmit(of: .search) {
-                if pastedFeedURL(searchText) == nil {
-                    searchModel.searchNow(for: searchText)
-                }
-            }
-            .onChange(of: searchText) { _, text in
-                // A URL is a complete, deterministic result. It must never
-                // wait on—or disappear behind—a directory request.
-                if pastedFeedURL(text) != nil {
-                    searchModel.clear()
-                } else {
-                    searchModel.queryChanged(text)
                 }
             }
         }
@@ -91,15 +53,8 @@ struct LibraryView: View {
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
             Task { await model.load() }
         }
-        .sheet(isPresented: $showingAIConsent) {
-            AIDataSharingConsentView(
-                onAllowed: {
-                    showingAIConsent = false
-                    searchModel.searchWebNow(for: searchText)
-                },
-                onNotNow: { showingAIConsent = false }
-            )
-            .presentationDetents([.fraction(0.72), .large])
+        .sheet(isPresented: $addingSources) {
+            AddSourcesView(shows: model.availableShows)
         }
     }
 
@@ -117,9 +72,10 @@ struct LibraryView: View {
                 Label("Nothing followed yet", systemImage: "waveform")
             } description: {
                 Text(
-                    "Search for a podcast or publication above, or tap the microphone and say its name."
+                    "Tap the plus to add a podcast or publication, or tap the microphone and say its name."
                 )
             } actions: {
+                Button("Add sources") { addingSources = true }
                 Button("Find something by voice") { openVoiceSheet($showingVoice) }
             }
         case .loaded(let shows):
@@ -143,13 +99,90 @@ struct LibraryView: View {
         .listStyle(.plain)
         .refreshable { await model.load() }
     }
+}
+
+/// A dedicated discovery sheet keeps adding sources explicit, like adding a saved link.
+private struct AddSourcesView: View {
+    let shows: [Show]
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var auth: AuthController
+    @StateObject private var searchModel = PodcastSearchModel()
+    @ObservedObject private var player = PlaybackCoordinator.shared
+    @State private var searchText = ""
+    @State private var searchScope: LibrarySearchScope = .all
+    @State private var showingAIConsent = false
+    @State private var openEpisode: Episode?
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if searchText.isEmpty {
+                    ContentUnavailableView(
+                        "Add a source", systemImage: "plus.circle",
+                        description: Text("Search for a podcast or publication, or paste a web or feed address."))
+                } else {
+                    searchResults
+                }
+            }
+            .navigationTitle("Add sources")
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: Show.self) { ShowDetailView(show: $0) }
+            .navigationDestination(for: PodcastResult.self) { PodcastPreviewView(podcast: $0) }
+            .navigationDestination(item: $openEpisode) { episode in
+                ArticleView(episode: episode) { wordCount in
+                    searchModel.learnedWordCount(wordCount, for: episode.id)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .searchable(
+                text: $searchText,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Podcasts, publications, episodes, or a web address"
+            )
+            .searchScopes($searchScope) {
+                Text("All").tag(LibrarySearchScope.all)
+                Text("Sources").tag(LibrarySearchScope.shows)
+                Text("Episodes").tag(LibrarySearchScope.episodes)
+            }
+            .searchFocused($searchFocused)
+            .onSubmit(of: .search) {
+                if pastedFeedURL(searchText) == nil {
+                    searchModel.searchNow(for: searchText)
+                }
+            }
+            .onChange(of: searchText) { _, text in
+                // A URL is a complete, deterministic result. It must never
+                // wait on—or disappear behind—a directory request.
+                if pastedFeedURL(text) != nil {
+                    searchModel.clear()
+                } else {
+                    searchModel.queryChanged(text)
+                }
+            }
+        }
+        .sheet(isPresented: $showingAIConsent) {
+            AIDataSharingConsentView(
+                onAllowed: {
+                    showingAIConsent = false
+                    searchModel.searchWebNow(for: searchText)
+                },
+                onNotNow: { showingAIConsent = false }
+            )
+            .presentationDetents([.fraction(0.72), .large])
+        }
+    }
 
     @ViewBuilder
     private var searchResults: some View {
         let pastedFeed = pastedFeedURL(searchText)
         let localShows =
             searchScope.includesShows
-            ? showsMatching(model.availableShows, query: searchText) : []
+            ? showsMatching(shows, query: searchText) : []
         let localTitles = Set(localShows.map { searchIdentity($0.title) })
         let directoryResults =
             searchScope.includesShows

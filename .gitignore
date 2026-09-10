@@ -28,3 +28,11 @@ xcuserdata/
 *.safetensors
 voices.npz
 /ios/Packages/
+
+# Android local tooling and generated files
+android/.gradle/
+android/.kotlin/
+android/local.properties
+android/.idea/
+*.jks
+*.keystore

@@ -15,6 +15,12 @@ The system consists of a SwiftUI iOS client backed by a FastAPI service. The
 mobile client operates as a thin client, delegating feed ingestion and
 management, search, and the LLM-based voice action processing to the backend.
 
+A native Android preview is being developed in [`android/`](android/README.md).
+It currently runs against an offline sample library with Compose screens and a
+Media3 audio prototype. Open that directory in Android Studio, or use
+`make android-run` with an emulator running. See its README for supported flows,
+verification commands, and the remaining phone checks.
+
 Saved web articles, share-sheet capture, content versions, and release setup are
 documented in [Saved articles](docs/saved-articles.md).
 
@@ -31,6 +37,7 @@ phone testing, compatibility policy and rollback instructions.
   storage, podcast search, and the voice-command endpoint.
 - `ios/` — SwiftUI app, targeting **iOS 26+**. Ships as **Magpie**; the Xcode
   project, target, and bundle identifier keep the original `Hearful` name.
+- `android/` — Kotlin / Jetpack Compose Android preview, targeting Android 12+.
 - `cloudflare/email-worker/` — the one piece that runs at Cloudflare: the
   Email Worker that receives newsletter mail and hands it to the backend.
 
