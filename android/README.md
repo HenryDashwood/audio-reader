@@ -194,7 +194,11 @@ bundled so playback tests don't depend on a publisher's stream or a network.
 ## Article content
 
 The article reader displays HTML in a WebView, with headings, emphasis, lists,
-links, images and captions, quotations, code blocks, tables, and native MathML.
+links, images and captions, quotations, code blocks, tables, native MathML, and
+inline YouTube/Vimeo video players. Players require a tap and an internet
+connection, fit the article width, and have an **Open video in browser** fallback
+for unavailable/restricted embeds or full-screen viewing. Arbitrary iframes and
+publisher-specific video widgets remain unsupported.
 Wide code, tables, and display equations scroll inside the article. The reader
 follows the app's light/dark colors and system font scale, supports text selection,
 and searches the rendered page with previous/next match controls. HTML semantics,
@@ -225,8 +229,10 @@ matching the iOS approach. Unmatched content may have no exact visual position.
 
 HTML is sanitized with jsoup. Article scripts are stripped and blocked by CSP;
 only bundled app-owned geometry code is explicitly evaluated. No JavaScript-to-
-native interface is exposed. Forms, embedded frames and local file/content access
-are disabled. Web links open externally; remote images use
+native interface is exposed. Forms and local file/content access are disabled.
+Only canonical YouTube/Vimeo embed URLs survive sanitization and CSP; player
+scripts execute in sandboxed remote frames. Players receive the app origin as
+the referrer; ordinary article images still suppress referrers. Web links open externally; remote images use
 HTTPS without referrers or third-party cookies. Image bytes aren't explicitly
 cached for offline use yet. The bundled **Field notes → Reading beyond plain text**
 sample includes an offline image, quotes, code, inline/display equations, and a
@@ -279,7 +285,7 @@ their separate pending inbox until account and article processing are connected.
 There is no Google sign-in,
 live backend access, feed discovery, cloud progress reporting, incoming share
 capture from other apps, podcast downloading, Gemini integration, or microphone
-recording in this version. Internet access is used for HTTPS article images; the
+recording in this version. Internet access is used for HTTPS article images and embedded videos; the
 manifest does not request microphone access. Settings identifies this as a sample library. Backups and device transfers of
 preview preferences are disabled.
 

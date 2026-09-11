@@ -1,8 +1,6 @@
 import AVFoundation
 import Combine
-import MediaPlayer
 import OSLog
-import UIKit
 
 /// The word the system voice is about to speak, in the complete plain-text
 /// article. AVSpeechSynthesizer and NSString both count UTF-16 code units, so
@@ -129,7 +127,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             synthesizer.pauseSpeaking(at: .word)
         }
         isPlaying = false
-        updateNowPlayingPosition()
     }
 
     /// A call or an alarm has taken the audio.
@@ -142,7 +139,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         needsInterruptionRecovery = true
         cancelSpeech(clearingLocation: false)
         isPlaying = false
-        updateNowPlayingPosition()
     }
 
     /// A refused audio-session activation is retriable by the coordinator.
@@ -155,7 +151,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             guard activateSessionForSpeech() else { return }
             synthesizer.continueSpeaking()
             isPlaying = true
-            updateNowPlayingPosition()
         } else if script != nil {
             speakCurrentChunk()
         } else {
@@ -189,7 +184,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             currentTime = script.chunks[index].start
             cancelSpeech()
             publishChunkStart(index, in: script)
-            updateNowPlayingPosition()
         }
     }
 
@@ -204,7 +198,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         if wantsPlayback, script != nil {
             speakCurrentChunk()
         }
-        updateNowPlayingPosition()
     }
 
     /// The synthesiser's rate knob for a listener-facing multiplier.
@@ -261,7 +254,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         currentTime = resumeAt > 5 ? resumeAt : 0
         duration = 0
         PlaybackRestore.remember(episodeID: episode.id)
-        publishNowPlaying(episode)
 
         loadTask = Task { [weak self, api, cache] in
             // ArticleView has already saved this exact payload after showing
@@ -341,7 +333,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             chunkIndex = index
             currentTime = loaded.chunks[index].start
         }
-        updateNowPlayingPosition()
         if wantsPlayback {
             speakCurrentChunk()
         }
@@ -393,7 +384,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         currentUtterance = ObjectIdentifier(utterance)
         synthesizer.speak(utterance)
         isPlaying = true
-        updateNowPlayingPosition()
     }
 
     private func activateSessionForSpeech() -> Bool {
@@ -406,7 +396,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             cancelSpeech(clearingLocation: false)
             needsInterruptionRecovery = true
             isPlaying = false
-            updateNowPlayingPosition()
             Logger(subsystem: "com.henrydashwood.hearful", category: "playback")
                 .notice("Speech session is not ready to resume: \(error.localizedDescription, privacy: .private)")
             return false
@@ -447,7 +436,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             currentTime = duration
             chunkIndex = 0
             currentUtterance = nil
-            updateNowPlayingPosition()
             // The same marker a finished episode gets: an article simply
             // stopping mid-silence reads as a fault.
             feedback.play(.finished)
@@ -472,7 +460,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
                 length: length))
         let fraction = Double(location) / Double(max(utteranceLength, 1))
         currentTime = chunk.start + chunk.duration * min(fraction, 1)
-        updateNowPlayingPosition()
     }
 
     /// A seek and a chunk transition have a meaningful position before the
@@ -483,48 +470,5 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         spokenLocation = ArticleSpokenLocation(
             episodeID: episode.id,
             rangeInArticle: NSRange(location: script.chunks[index].textRange.location, length: 0))
-    }
-
-    // MARK: - Lock screen
-
-    private func publishNowPlaying(_ episode: Episode) {
-        var info: [String: Any] = [
-            MPMediaItemPropertyTitle: episode.title,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? Double(playbackRate) : 0.0,
-        ]
-        if duration > 0 {
-            info[MPMediaItemPropertyPlaybackDuration] = duration
-        }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        publishArtwork(for: episode)
-    }
-
-    private func publishArtwork(for episode: Episode) {
-        guard let url = episode.imageURL else { return }
-        Task { [weak self] in
-            guard let (data, _) = try? await URLSession.shared.data(from: url),
-                let image = UIImage(data: data)
-            else { return }
-            guard self?.currentEpisode?.id == episode.id else { return }
-            // @Sendable, not main-actor: MediaPlayer renders the artwork on
-            // its own queue, and a main-actor closure traps when it does.
-            let artwork = MPMediaItemArtwork(boundsSize: image.size) { @Sendable _ in image }
-            var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-            info[MPMediaItemPropertyArtwork] = artwork
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        }
-    }
-
-    private func updateNowPlayingPosition() {
-        // Nothing loaded means nothing to say — see AudioPlayer's copy.
-        guard currentEpisode != nil else { return }
-        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
-        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(playbackRate) : 0.0
-        if duration > 0 {
-            info[MPMediaItemPropertyPlaybackDuration] = duration
-        }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 }

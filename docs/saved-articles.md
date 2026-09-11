@@ -145,3 +145,23 @@ gate verifies that `CapturePage.js` matches the pinned Readability source and
 A physical-device share-sheet check is still required before release, especially
 signed-in Safari capture, offline saving, VoiceOver, and the new provisioning
 profiles.
+
+
+## Embedded videos
+
+The backend preserves YouTube (including Substack's youtube-nocookie embeds)
+and Vimeo players when extracting pages, accepting Safari captures, and reading
+full-content feeds. It normalises exact player URLs and permissions, removes
+autoplay and publisher scripts, and leaves spoken text/bookmarks unchanged.
+The iOS and Android readers size players to the page, require user interaction,
+and offer an external-browser link for offline, restricted, or unavailable videos.
+Video media is streamed by the provider and is not included in offline saves.
+Other providers, arbitrary iframes, and publisher-specific video widgets are not
+supported. Android can render these in supplied article HTML; live article
+fetching remains outside the current preview.
+
+Previously cached feed articles regain players only if their retained feed HTML
+has exactly the same spoken text. Existing immutable saved captures and old
+offline copies cannot recover discarded markup; saving a fresh copy is required.
+Safari capture retains recognised players for backend sanitisation. Frozen
+released clients and the JSON payload shape remain unchanged.

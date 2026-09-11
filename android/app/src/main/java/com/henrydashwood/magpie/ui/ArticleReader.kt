@@ -19,6 +19,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -125,7 +126,7 @@ private fun ArticleReaderContent(item: LibraryItem, query: String, position: Art
 
 private fun Color.css() = "#%06X".format(toArgb() and 0xFFFFFF)
 
-/** Sanitized document viewer. Only app-owned geometry code runs; CSP blocks article scripts.
+/** Sanitized document viewer. CSP blocks article scripts; recognised video frames run in their own origins.
  * No JavaScript-to-native interface is exposed, and links never navigate to another document. */
 @SuppressLint("SetJavaScriptEnabled")
 class ArticleWebView(context: Context) : WebView(context) {
@@ -144,7 +145,8 @@ class ArticleWebView(context: Context) : WebView(context) {
         setBackgroundColor(AndroidColor.TRANSPARENT)
         settings.apply {
             javaScriptEnabled = true // Required for explicit, app-owned geometry evaluation; article CSP forbids scripts.
-            domStorageEnabled = false
+            mediaPlaybackRequiresUserGesture = true
+            domStorageEnabled = true // Provider players use origin-scoped storage.
             allowFileAccess = false
             allowContentAccess = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
@@ -154,6 +156,7 @@ class ArticleWebView(context: Context) : WebView(context) {
             setGeolocationEnabled(false)
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+        webChromeClient = WebChromeClient()
         webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String?) {
                 if (ready || released) return
@@ -173,7 +176,12 @@ class ArticleWebView(context: Context) : WebView(context) {
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
-                if (!request.isForMainFrame || !request.hasGesture()) return true
+                if (!request.isForMainFrame) {
+                    if (ArticleDocument.videoUrl(uri.toString()) != null) return false
+                    if (request.hasGesture() && ArticleDocument.webUrl(uri.toString()) != null) openLink(uri)
+                    return true
+                }
+                if (!request.hasGesture()) return true
                 if (uri.toString().startsWith("${ArticleDocument.LOCAL_BASE}#")) return false
                 if (ArticleDocument.webUrl(uri.toString()) != null) openLink(uri)
                 return true
@@ -183,7 +191,7 @@ class ArticleWebView(context: Context) : WebView(context) {
                 if (request.url.toString() == "https://magpie.invalid/assets/magpie.png") {
                     return sampleImage()
                 }
-                // CSP permits only images to reach the network; local files and content providers
+                // CSP permits images and recognised player frames; local files and content providers
                 // remain blocked even if future markup accidentally references them.
                 if (request.url.scheme == "https") return null
                 return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))

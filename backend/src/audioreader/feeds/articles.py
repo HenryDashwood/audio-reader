@@ -15,10 +15,10 @@ with trafilatura.
 import logging
 
 import nh3
-import trafilatura
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes
+from audioreader.feeds.video import extract_with_videos, normalise_frames
 from audioreader.latex import with_mathml
 from audioreader.models import Episode
 from audioreader.text import article_text, word_count
@@ -36,7 +36,7 @@ _MATHML_TAGS = {
     "none",
 }  # fmt: skip
 
-_ALLOWED_TAGS = nh3.ALLOWED_TAGS | _MATHML_TAGS
+_ALLOWED_TAGS = nh3.ALLOWED_TAGS | _MATHML_TAGS | {"iframe"}
 
 #: Operators carry most of MathML's fine typesetting: which brackets grow to
 #: the height of what they hold, how much air sits either side of a sign.
@@ -49,6 +49,7 @@ _OPERATOR_ATTRIBUTES = {
 #: of equations lines up, which fences stretch, where the spaces are.
 _ALLOWED_ATTRIBUTES = {
     **nh3.ALLOWED_ATTRIBUTES,
+    "iframe": {"src", "title", "loading", "sandbox", "allow", "allowfullscreen", "referrerpolicy"},
     # The reader gives a display formula a box of its own to scroll in.
     "span": {"class"},
     "math": {"display", "xmlns"},
@@ -127,6 +128,19 @@ async def content_for(session: AsyncSession, episode: Episode, *, commit: bool =
     """
     cached_feed_fallback = _is_cached_feed_fallback(episode)
     if episode.article_text and episode.article_html and not cached_feed_fallback:
+        # Restore stripped players from the original feed only when its prose
+        # still matches the immutable narration/bookmarks exactly.
+        source = sanitised(episode.content_html)
+        if (
+            "<iframe" in source
+            and "<iframe" not in episode.article_html
+            and article_text(source) == episode.article_text
+        ):
+            episode.article_html = source
+            if commit:
+                await session.commit()
+            else:
+                await session.flush()
         return episode.article_text, rendered(episode.article_html)
 
     html = sanitised(episode.content_html)
@@ -175,16 +189,14 @@ async def text_for(session: AsyncSession, episode: Episode) -> str | None:
 def sanitised(html: str | None) -> str:
     """Feed or page markup reduced to what is safe to render.
 
-    An allowlist, not a blocklist: scripts, embeds, inline event handlers,
-    `javascript:` URLs and inline styles all go, and what survives is
-    structure, prose and maths. The app renders this with JavaScript switched
-    off as well — two locks on a door that opens onto whatever a blog happens
-    to serve.
+    Scripts, arbitrary frames, event handlers and inline styles are removed.
+    Recognised video players get canonical URLs and app-controlled permissions;
+    clients block scripts in the article while allowing isolated player frames.
     """
     if not html:
         return ""
     return nh3.clean(
-        html,
+        normalise_frames(html),
         tags=_ALLOWED_TAGS,
         attributes=_ALLOWED_ATTRIBUTES,
         clean_content_tags=_STRIPPED_WHOLE,
@@ -223,16 +235,7 @@ async def _extract_from_page(url: str) -> str | None:
     # for listening, a missing paragraph is worse than a stray one. The rest
     # asks for everything the reader can show: an article stripped to bare
     # <p> would lose its pictures and every link in it.
-    extracted = trafilatura.extract(
-        html,
-        output_format="html",
-        favor_recall=True,
-        include_comments=False,
-        include_formatting=True,
-        include_images=True,
-        include_links=True,
-        include_tables=True,
-    )
+    extracted = extract_with_videos(html, favor_recall=True)
     if not extracted:
         return None
     return sanitised(extracted)

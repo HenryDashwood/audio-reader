@@ -58,6 +58,17 @@ struct SafariCaptureTests {
         #expect(result["preview"]?.hasPrefix("Gardens paragraph 0") == true)
     }
 
+    @Test func capturedArticlesKeepVideoPlayersForBackendSanitisation() async throws {
+        let result = try await capture(
+            body: "<article><h1>City gardens provide shade</h1>\(paragraphs("Gardens"))"
+                + "<iframe loading='lazy' src='https://www.youtube-nocookie.com/embed/Wp7YrZ1H05g' title='A performance'></iframe>"
+                + "<iframe src='https://tracker.example.com'></iframe><p>After the video.</p></article>",
+            head: "<meta http-equiv='Content-Security-Policy' content=\"frame-src 'none'\">")
+        #expect(result["html"]?.contains("https://www.youtube-nocookie.com/embed/Wp7YrZ1H05g") == true)
+        #expect(result["html"]?.contains("tracker.example.com") == false)
+        #expect(result["html"]?.contains("After the video.") == true)
+    }
+
     @Test func selectsTheMatchingStoryAndKeepsItsOffscreenParagraphs() async throws {
         let result = try await capture(body:
             "<article><h1>Satellite engineering is changing</h1>\(paragraphs("Satellites", count: 30))</article>"

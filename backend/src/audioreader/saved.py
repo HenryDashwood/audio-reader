@@ -253,18 +253,7 @@ def extract(
                 if nodes is not matches[0]:
                     for node in nodes:
                         node.drop_tree()
-        html = (
-            trafilatura.extract(
-                page,
-                output_format="html",
-                include_comments=False,
-                include_formatting=True,
-                include_links=True,
-                include_images=True,
-                include_tables=True,
-            )
-            or ""
-        )
+        html = articles.extract_with_videos(lxml_html.tostring(page, encoding="unicode"))
     html = articles.sanitised(html)
     text = article_text(html)
     if word_count(text) < 120 and re.search(

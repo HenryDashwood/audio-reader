@@ -1,8 +1,6 @@
 import AVFoundation
 import Combine
-import MediaPlayer
 import OSLog
-import UIKit
 
 private let playbackLog = Logger(
     subsystem: "com.henrydashwood.hearful", category: "playback")
@@ -99,7 +97,6 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         // made a speed tap during that window update the chip but leave the
         // pending playback at its old rate.
         if playbackRequested { player.rate = clamped }
-        updateNowPlayingPosition()
     }
 
     var isReadyToPlay: Bool { player.currentItem?.status == .readyToPlay }
@@ -141,14 +138,12 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
             replaceItem(url: url, episode: episode, resumeAt: retrying ? currentTime : nil)
         }
         player.play()
-        updateNowPlayingPosition()
     }
 
     func pause() {
         playbackRequested = false
         stallTask?.cancel()
         player.pause()
-        updateNowPlayingPosition()
     }
 
     /// AVPlayer stops itself when the system takes the audio. Its item can
@@ -174,7 +169,6 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
             replaceItem(url: url, episode: episode, resumeAt: currentTime > 0 ? currentTime : nil)
         }
         player.play()
-        updateNowPlayingPosition()
     }
 
     /// Play was asked for and the player has not so much as begun — not
@@ -247,7 +241,6 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
             }
         }
         currentTime = clamped
-        updateNowPlayingPosition()
     }
 
     /// `resumeAt` overrides the episode's saved position, for a retry of the
@@ -301,14 +294,8 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                 } else if resumeAt > 5, resumeAt < self.duration - 10 {
                     self.seek(to: resumeAt)
                 }
-                // The asset's real duration replaces the feed's estimate.
-                self.updateNowPlayingPosition()
             }
         }
-        // Published on load, not on play: an episode restored at launch and
-        // started from the mini player or the lock screen must carry its
-        // title and artwork too, not just working buttons.
-        publishNowPlaying(episode)
     }
 
     // MARK: - Observation
@@ -328,7 +315,6 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                 // Land exactly on the end so the position reporter, which is
                 // watching this clock, records the episode as finished.
                 self.currentTime = self.duration
-                self.updateNowPlayingPosition()
                 self.feedback.play(.finished)
                 self.finished.send()
             }
@@ -387,9 +373,6 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                 default:
                     self.stallTask?.cancel()
                 }
-                // Keep the lock screen's clock in step: it ticks on its own
-                // from the published rate, not from our elapsed-time updates.
-                self.updateNowPlayingPosition()
             }
         }
     }
@@ -424,56 +407,6 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                 episode: episode,
                 message: "Sorry, \(episode.title) could not be played. Check your connection and try again."
             ))
-    }
-
-    // MARK: - Lock screen
-    // Remote commands (lock screen, AirPods stems, "Hey Siri, pause") are
-    // wired once in PlaybackCoordinator, which routes them to whichever
-    // player — audio or article — is actually live.
-
-    private func publishNowPlaying(_ episode: Episode) {
-        var info: [String: Any] = [
-            MPMediaItemPropertyTitle: episode.title,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? Double(playbackRate) : 0.0,
-        ]
-        if duration > 0 {
-            info[MPMediaItemPropertyPlaybackDuration] = duration
-        }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        publishArtwork(for: episode)
-    }
-
-    /// Fetched after the text is already up: the lock screen should never
-    /// wait on an image, and a failed fetch just leaves the placeholder.
-    private func publishArtwork(for episode: Episode) {
-        guard let url = episode.imageURL else { return }
-        Task { [weak self] in
-            guard let (data, _) = try? await URLSession.shared.data(from: url),
-                let image = UIImage(data: data)
-            else { return }
-            guard self?.currentEpisode?.id == episode.id else { return }  // she moved on
-            // @Sendable, not main-actor: MediaPlayer renders the artwork on
-            // its own queue, and a main-actor closure traps when it does.
-            let artwork = MPMediaItemArtwork(boundsSize: image.size) { @Sendable _ in image }
-            var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-            info[MPMediaItemPropertyArtwork] = artwork
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-        }
-    }
-
-    private func updateNowPlayingPosition() {
-        // Nothing loaded means nothing to say. Without this, the KVO callbacks
-        // that arrive a beat after clear() would put an empty entry — no
-        // title, a zeroed clock — back on the lock screen.
-        guard currentEpisode != nil else { return }
-        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
-        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(playbackRate) : 0.0
-        if duration > 0 {
-            info[MPMediaItemPropertyPlaybackDuration] = duration
-        }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     enum PlaybackError: Error {

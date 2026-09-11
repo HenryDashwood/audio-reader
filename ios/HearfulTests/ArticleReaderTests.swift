@@ -365,6 +365,40 @@ struct ArticleDocumentTests {
         #expect(decoded?.text == "One.\n\nTwo.")
     }
 
+    @Test func videoPagesKeepTheirIdentityAndPublisherRelativeLinks() {
+        let url = URL(string: "https://publisher.example/posts/music")!
+        let first = ArticleDocument.page(body: "<p>Prose</p>", pointSize: 20, baseURL: url)
+        let second = ArticleDocument.page(body: "<p>Prose</p>", pointSize: 20, baseURL: url)
+        #expect(first == second) // Playback updates must not reload and stop the player.
+        #expect(first.contains("<base href=\"https://publisher.example/posts/music\">"))
+        #expect(first.contains("default-src 'none'"))
+        #expect(first.contains("frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/"))
+        #expect(first.contains("min-height: 200px"))
+    }
+
+    @Test func videosAllowInlinePlaybackOnlyAfterUserInteraction() {
+        let configuration = WKWebViewConfiguration()
+        ArticleVideoScript.add(to: configuration)
+        #expect(configuration.defaultWebpagePreferences.allowsContentJavaScript)
+        #expect(configuration.allowsInlineMediaPlayback)
+        #expect(configuration.mediaTypesRequiringUserActionForPlayback == .all)
+        #expect(ArticleVideoScript.readerURL.scheme == "https")
+    }
+
+    @Test func articleCSPBlocksScriptsEvenWithPlayerJavaScriptEnabled() async throws {
+        let configuration = WKWebViewConfiguration()
+        ArticleVideoScript.add(to: configuration)
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let waiter = ArticleWebViewLoadWaiter()
+        await waiter.load(ArticleDocument.page(body: ArticleDocument.articleBody(
+            "<script>document.body.dataset.executed = 'yes'</script><p>Still readable</p>"), pointSize: 20), in: webView)
+        let result = try await webView.callAsyncJavaScript(
+            "return {executed: document.body.dataset.executed === 'yes', text: document.querySelector('p').textContent};",
+            arguments: [:], in: nil, contentWorld: ArticleReadingMarkerScript.world) as? [String: Any]
+        #expect(result?["executed"] as? Bool == false)
+        #expect(result?["text"] as? String == "Still readable")
+    }
+
     @Test func theDocumentCarriesTheReadersTextSize() {
         // The web view's own default is a fixed sixteen pixels and ignores the
         // text size set on the phone — the one setting someone losing their

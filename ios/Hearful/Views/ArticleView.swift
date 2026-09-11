@@ -168,7 +168,7 @@ struct ArticleView: View {
                             feedURL: episode.feedURL, author: episode.author,
                             publishedAt: episode.publishedAt)
                             + ArticleDocument.paragraphs(blurb),
-                        pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize),
+                        pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize, baseURL: episode.link),
                     baseURL: episode.link,
                     episodeID: episode.id,
                     speechText: nil,
@@ -185,7 +185,7 @@ struct ArticleView: View {
             VStack(spacing: 0) {
                 if model.isOffline {
                     Label(
-                        "Offline — showing the saved copy, without its pictures",
+                        "Offline — showing saved text; images and videos need a connection",
                         systemImage: "wifi.slash"
                     )
                     .font(.footnote)
@@ -215,7 +215,7 @@ struct ArticleView: View {
                 feedURL: episode.feedURL, author: episode.author,
                 publishedAt: episode.publishedAt)
                 + ArticleDocument.articleBody(article.body),
-            pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize)
+            pointSize: UIFont.preferredFont(forTextStyle: .body).pointSize, baseURL: episode.link)
     }
 
     private func openContainingFeed() {
@@ -639,7 +639,7 @@ private struct ArticleWebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        ArticleVideoScript.add(to: configuration)
         ArticleHeadlineScript.add(to: configuration)
         // Article images still come from their publishers, but cookies and
         // other website data must not become a lasting browsing profile inside
@@ -689,7 +689,7 @@ private struct ArticleWebView: UIViewRepresentable {
         // otherwise on every redraw the player causes by ticking.
         guard documentChanged else { return }
         context.coordinator.loaded = document
-        view.loadHTMLString(document, baseURL: baseURL)
+        view.loadHTMLString(document, baseURL: ArticleVideoScript.readerURL)
     }
 
     /// WKWebView's default indicator is dark even when its transparent page
@@ -721,6 +721,7 @@ private struct ArticleWebView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+        view.pauseAllMediaPlayback(completionHandler: nil)
         coordinator.detach(from: view)
     }
 
@@ -978,6 +979,8 @@ private struct ArticleWebView: UIViewRepresentable {
 
 /// The page the article is rendered into.
 enum ArticleDocument {
+    private static let styleNonce = UUID().uuidString
+
     /// Everything above the first paragraph: the article's title, then the
     /// podcast or publication it belongs to, its author, and when it was
     /// published.
@@ -1052,13 +1055,22 @@ enum ArticleDocument {
     /// which is a fixed sixteen pixels and ignores the text size set on the
     /// phone — the one setting a person who is losing their sight has almost
     /// certainly already turned up.
-    static func page(body: String, pointSize: CGFloat) -> String {
-        """
+    static func page(body: String, pointSize: CGFloat, baseURL: URL? = nil) -> String {
+        let nonce = styleNonce
+        let base = baseURL.flatMap { url -> String? in
+            guard ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+            let escaped = ArticleTextModel.escaped(url.absoluteString)
+                .replacingOccurrences(of: "\"", with: "&quot;")
+            return "<base href=\"\(escaped)\">"
+        } ?? ""
+        return """
         <!doctype html>
         <html>
         <head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http: data:; frame-src https://www.youtube-nocookie.com/embed/ https://player.vimeo.com/video/; style-src 'nonce-\(nonce)'; base-uri https: http:; form-action 'none'">
+        \(base)
+        <style nonce="\(nonce)">
           :root { color-scheme: light dark; --ink: #000; --quiet: #6c6c70; --rule: #d1d1d6; }
           @media (prefers-color-scheme: dark) {
             :root { --ink: #fff; --quiet: #98989f; --rule: #38383a; }
@@ -1081,6 +1093,7 @@ enum ArticleDocument {
           /* Pictures are the reason this is a web view; letting one push the
              page sideways would undo that. */
           img { max-width: 100%; height: auto; display: block; margin: 1em auto; }
+          iframe { display: block; width: 100%; aspect-ratio: 16 / 9; min-height: 200px; border: 0; margin: 1em 0; }
           figure { margin: 1em 0; }
           figcaption { color: var(--quiet); font-size: 0.88em; text-align: center; }
           blockquote {

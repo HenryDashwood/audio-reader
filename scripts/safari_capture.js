@@ -51,7 +51,7 @@ var ExtensionPreprocessingJS = {
                     clones[index].remove();
                 }
             });
-            page.querySelectorAll('script, style, form, input, textarea, select, iframe, nav, aside').forEach(function (node) { node.remove(); });
+            page.querySelectorAll('script, style, form, input, textarea, select, nav, aside').forEach(function (node) { node.remove(); });
 
             // Publishers may split one story's heading/body/bio into separate articles
             // with a common ID (IEEE does this). Never choose solely by body length.

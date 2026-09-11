@@ -67,6 +67,54 @@ class ArticleReaderTest {
         bitmap.recycle()
     }
 
+    @Test fun videoFramesRunInIsolationWithAppReferrerAndFitTheReader() {
+        val ran = java.util.concurrent.atomic.AtomicBoolean(false)
+        val referrer = AtomicReference<String?>(null)
+        lateinit var view: ArticleWebView
+        compose.runOnUiThread {
+            view = ArticleWebView(compose.activity)
+            val delegate = view.webViewClient
+            view.webViewClient = object : android.webkit.WebViewClient() {
+                override fun onPageFinished(browser: android.webkit.WebView, url: String?) = delegate.onPageFinished(browser, url)
+                override fun shouldOverrideUrlLoading(browser: android.webkit.WebView, request: android.webkit.WebResourceRequest) =
+                    delegate.shouldOverrideUrlLoading(browser, request)
+                override fun shouldInterceptRequest(browser: android.webkit.WebView, request: android.webkit.WebResourceRequest): android.webkit.WebResourceResponse {
+                    val player = request.url.path?.startsWith("/embed/") == true
+                    if (player) referrer.set(request.requestHeaders.entries.firstOrNull { it.key.equals("Referer", true) }?.value)
+                    if (request.url.path == "/script-ran") ran.set(true)
+                    val html = if (player) """<html><body><p>Sample video player</p>
+                        <script>new Image().src='https://www.youtube-nocookie.com/script-ran';</script></body></html>""" else ""
+                    return android.webkit.WebResourceResponse("text/html", "UTF-8", html.byteInputStream())
+                }
+            }
+            val item = RichArticleSample.item.copy(html = """<p>Before</p>
+                <iframe src="https://www.youtube.com/embed/Wp7YrZ1H05g" title="A performance"></iframe><p>After</p>""")
+            val body = com.henrydashwood.magpie.ui.ArticleDocument.body(item) + "<script>window.articleExecuted = true</script>"
+            val html = com.henrydashwood.magpie.ui.ArticleDocument.page(item, body, 20f,
+                "#000000", "#FFFFFF", "#555555", "#DDDDDD", "#0000FF", false)
+            compose.activity.setContent {
+                androidx.compose.ui.viewinterop.AndroidView(factory = { view }, modifier = Modifier.fillMaxSize(), onRelease = { it.release() })
+            }
+            view.display(html, "", 0, item.text)
+        }
+        compose.waitUntil(10_000) { ran.get() }
+        assertEquals(com.henrydashwood.magpie.ui.ArticleDocument.LOCAL_BASE.substringBefore("/reader/") + "/", referrer.get())
+        val result = inspect(view, """({
+            articleExecuted: window.articleExecuted === true,
+            width: document.querySelector('iframe').getBoundingClientRect().width,
+            height: document.querySelector('iframe').getBoundingClientRect().height,
+            pageFits: document.documentElement.scrollWidth <= innerWidth,
+            fallback: document.querySelector('[data-hearful-metadata] a').textContent
+        })""")
+        assertFalse(result.getBoolean("articleExecuted"))
+        assertTrue(result.getBoolean("pageFits"))
+        assertTrue(result.getDouble("width") >= 200)
+        assertTrue(result.getDouble("height") >= 200)
+        assertEquals("Open video in browser", result.getString("fallback"))
+        compose.runOnIdle { assertTrue(view.settings.mediaPlaybackRequiresUserGesture) }
+        capture("article-video")
+    }
+
     @Test fun richContentRendersWithImagesMathAndContainedOverflow() {
         compose.runOnUiThread { compose.activity.setContent { MagpieTheme { ArticleReader(RichArticleSample.item, "") } } }
         val view = browser()

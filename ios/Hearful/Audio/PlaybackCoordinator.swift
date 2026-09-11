@@ -23,17 +23,28 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     // Mirrors of the active player's state. Published here (rather than
     // computed) so observers get plain Combine streams: the position reporter
     // and every view subscribe to these without knowing about modes.
-    @Published private(set) var currentEpisode: Episode?
-    @Published private(set) var isPlaying = false
-    @Published private(set) var currentTime: TimeInterval = 0
-    @Published private(set) var duration: TimeInterval = 0
-    @Published private(set) var playbackRate: Float = 1.0
+    @Published private(set) var currentEpisode: Episode? {
+        didSet { publishNowPlaying() }
+    }
+    @Published private(set) var isPlaying = false {
+        didSet { publishNowPlaying() }
+    }
+    @Published private(set) var currentTime: TimeInterval = 0 {
+        didSet { publishNowPlaying() }
+    }
+    @Published private(set) var duration: TimeInterval = 0 {
+        didSet { publishNowPlaying() }
+    }
+    @Published private(set) var playbackRate: Float = 1.0 {
+        didSet { publishNowPlaying() }
+    }
     @Published private(set) var podcastPlaybackRate: Float = 1.0
     @Published private(set) var articlePlaybackRate: Float = 1.0
     @Published private(set) var playbackFailure: PlaybackFailure?
 
     let audio: AudioPlayer
     let article: ArticlePlayer
+    private let nowPlaying: NowPlayingPublisher
     private var cancellables: Set<AnyCancellable> = []
     private var interruptions = InterruptionPolicy()
     /// Whether she has asked for sound, as opposed to whether sound is coming
@@ -53,7 +64,11 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     /// nowhere. Internal so the tests can read them.
     static let resumeNudgeDelays: [TimeInterval] = [1, 2, 4]
 
-    init(audio: AudioPlayer, article: ArticlePlayer) {
+    init(
+        audio: AudioPlayer, article: ArticlePlayer,
+        nowPlaying: NowPlayingPublisher = NowPlayingPublisher()
+    ) {
+        self.nowPlaying = nowPlaying
         self.audio = audio
         self.article = article
         playbackRate = audio.playbackRate
@@ -221,9 +236,6 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         wantsPlayback = false
         audio.clear()
         article.clear()
-        // Last: the players' own pausing writes to the now-playing info, so
-        // emptying it any earlier just refills it with a rate and a clock.
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         PlaybackRestore.forget()
     }
 
@@ -253,6 +265,14 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
 
     func setArticlePlaybackRate(_ rate: Float) {
         article.setPlaybackRate(rate)
+    }
+
+    /// Only the active transport may update the system card. A paused podcast
+    /// still receives asynchronous AVPlayer callbacks after article speech starts.
+    private func publishNowPlaying() {
+        nowPlaying.update(
+            episode: currentEpisode, isPlaying: isPlaying, elapsed: currentTime,
+            duration: duration, rate: playbackRate)
     }
 
     // MARK: - Wiring
