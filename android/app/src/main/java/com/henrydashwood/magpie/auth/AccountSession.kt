@@ -4,6 +4,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.IOException
 
 // Called from the main dispatcher. The generation prevents late provider/network replies
 // from restoring a signed-out account or attaching credentials to a different session.
@@ -15,6 +16,8 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
     private val appleStore: ApplePendingStore = MemoryApplePendingStore(),
     private val now: () -> Long = System::currentTimeMillis) {
     private var token: String? = store.read()
+    private val mutableToken = MutableStateFlow(token)
+    internal val accessToken = mutableToken.asStateFlow()
     private var generation = 0
     private val mutableState = MutableStateFlow(AccountState(signedIn = token != null, applePending = appleStore.read() != null))
     val state = mutableState.asStateFlow()
@@ -38,6 +41,7 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
             try { store.write(response.token) }
             catch (failure: Exception) { runCatching { api.logout(response.token) }; throw failure }
             token = response.token
+            mutableToken.value = token
             // /me/identities can be retried independently without losing a valid login.
             AccountState(signedIn = true, user = response.user)
         }
@@ -123,6 +127,7 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
                         try { store.write(auth.token) }
                         catch (failure: Exception) { runCatching { api.logout(auth.token) }; throw failure }
                         token = auth.token
+                        mutableToken.value = token
                         appleStore.clear()
                         return AccountState(signedIn = true, user = auth.user)
                     }
@@ -154,12 +159,19 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
             null
         }
     }
+    internal fun rejectToken(rejected: String) {
+        // A late 401 from an old request cannot sign out a newer session.
+        if (token != rejected) return
+        forget()
+        mutableState.value = state.value.copy(error = "Please sign in again.")
+    }
     private fun forget() {
         // If durable removal fails, leave an actionable error instead of claiming sign-out.
         store.clear()
         appleStore.clear()
         generation++
         token = null
+        mutableToken.value = null
         mutableState.value = AccountState()
     }
     private suspend fun operation(work: suspend () -> AccountState?) {
@@ -173,10 +185,14 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
         } catch (failure: Exception) {
             if (version == generation) {
                 if (failure is AccountFailure && failure.status == 401 && token != null) forget()
-                // Network failures retain the encrypted handoff for an explicit retry.
+                // Network failures retain the encrypted handoff for a foreground or manual retry.
                 if (failure is AccountFailure && failure.status in setOf(400, 403, 409, 410)) appleStore.clear()
                 mutableState.value = state.value.copy(applePending = appleStore.read() != null,
-                    error = (failure as? AccountFailure)?.message ?: "The account request did not work. Please try again.")
+                    error = when (failure) {
+                        is AccountFailure -> failure.message
+                        is IOException -> "Could not connect to Magpie. Check your connection, then try again."
+                        else -> "The account request did not work. Please try again."
+                    })
             }
         } finally {
             if (version == generation) mutableState.value = state.value.copy(busy = false)

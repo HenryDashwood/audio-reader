@@ -19,10 +19,12 @@ import androidx.media3.session.SessionError
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.henrydashwood.magpie.MainActivity
+import com.henrydashwood.magpie.MagpieApplication
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.henrydashwood.magpie.data.ContentKind
 import com.henrydashwood.magpie.data.LibraryItem
 import com.henrydashwood.magpie.data.PreviewStore
-import com.henrydashwood.magpie.data.SampleLibrary
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -61,7 +63,11 @@ class PlaybackService : MediaSessionService() {
     private var rendering: Job? = null
     private var current: LibraryItem? = null
     private var rendered: RenderedArticle? = null
-    private val library = SampleLibrary()
+    private val library by lazy { (application as MagpieApplication).library }
+    private var playbackRevision = -1
+    private var lastReportedAt = 0L
+    private val localPodcastPositions = mutableMapOf<String, Long>()
+    private val reportLock = Mutex()
     private var sleepJob: Job? = null
     private val feedback = PlaybackFeedback(scope)
     private val sleepTimer = SleepTimer(SystemClock::elapsedRealtime,
@@ -118,8 +124,9 @@ class PlaybackService : MediaSessionService() {
                 if (controller.uid != applicationInfo.uid) return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
                 when (command.customAction) {
                     PLAY_ITEM -> {
-                        val item = library.items.find { it.id == args.getString("id") }
+                        val item = library.state.value.items.find { it.id == args.getString("id") }
                             ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
+                        if (item.episodeId != null && !item.textLoaded) return Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
                         play(item)
                     }
                     CANCEL_PREPARATION -> {
@@ -147,11 +154,17 @@ class PlaybackService : MediaSessionService() {
             }
         }).build()
         scope.launch {
+            var observed = library.state.value.revision
+            library.state.collect { state ->
+                if (state.revision != observed) { observed = state.revision; dismissPlayer(); localPodcastPositions.clear() }
+            }
+        }
+        scope.launch {
             while (isActive) { delay(3_000); if (player.isPlaying) persist() }
         }
         scope.launch { while (isActive) { publishReadingPosition(); delay(100) } }
         // A previous session is offered paused. Restoring never unexpectedly starts audio.
-        store.lastItem?.let { id -> library.items.find { it.id == id && it.kind == ContentKind.Podcast }?.let { load(it, null, false) } }
+        if (!library.state.value.live) store.lastItem?.let { id -> library.state.value.items.find { it.id == id && it.kind == ContentKind.Podcast }?.let { load(it, null, false) } }
     }
 
     private fun play(item: LibraryItem) {
@@ -193,13 +206,14 @@ class PlaybackService : MediaSessionService() {
         rendered?.file?.delete()
         rendered = audio
         current = item
+        playbackRevision = library.state.value.revision
         player.setPlaybackSpeed(store.speed(item.kind))
         store.lastItem = item.id
-        val uri = audio?.file?.toURI()?.toString() ?: "asset:///welcome.wav"
+        val uri = audio?.file?.toURI()?.toString() ?: item.audioUrl ?: "asset:///welcome.wav"
         val media = MediaItem.Builder().setMediaId(item.id).setUri(uri).setMediaMetadata(
             MediaMetadata.Builder().setTitle(item.title).setArtist(item.source).setIsPlayable(true).build(),
         ).build()
-        val start = if (audio != null) resumeAt(audio.chunks, store.bookmark(item.id), item.contentVersion) else store.position(item.id)
+        val start = if (audio != null) resumeAt(audio.chunks, store.bookmark(item.id), item.contentVersion) else if (item.episodeId != null) localPodcastPositions[item.id] ?: item.remotePositionMs else store.position(item.id)
         player.setMediaItem(media, start)
         player.prepare()
         player.playWhenReady = autoplay
@@ -207,16 +221,39 @@ class PlaybackService : MediaSessionService() {
 
     private fun persist(completed: Boolean = false) {
         val item = current ?: return
-        if (item.kind == ContentKind.Podcast) store.savePosition(item.id, if (completed) 0 else player.currentPosition.coerceAtLeast(0))
+        if (item.kind == ContentKind.Podcast) {
+            val position = if (completed) 0 else player.currentPosition.coerceAtLeast(0)
+            store.savePosition(item.id, position)
+            if (item.episodeId != null) localPodcastPositions[item.id] = position
+        }
         else rendered?.let { audio ->
             bookmarkAt(audio.chunks, if (completed) 0 else player.currentPosition, item.contentVersion)?.let { store.saveBookmark(item.id, it) }
+        }
+        if (item.episodeId != null && item.kind == ContentKind.Podcast && playbackRevision == library.state.value.revision &&
+            (completed || !player.isPlaying || SystemClock.elapsedRealtime() - lastReportedAt >= 30_000)) {
+            lastReportedAt = SystemClock.elapsedRealtime()
+            val version = playbackRevision
+            val seconds = player.currentPosition.coerceAtLeast(0) / 1000.0
+            scope.launch { reportLock.withLock {
+                if (version == library.state.value.revision) try { library.reportPodcast(item, seconds, completed) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { if (version == library.state.value.revision) PlaybackStatus.mutable.value = PlaybackStatus.state.value.copy(error = "Listening progress could not be synced. Your place is saved on this device.") }
+            } }
         }
     }
 
     private fun finishPlayback() {
         val item = current ?: return
         if (player.currentMediaItem?.mediaId != item.id) return
-        store.finished = store.finished + item.id
+        if (item.episodeId == null) store.finished = store.finished + item.id
+        else {
+            val version = playbackRevision
+            scope.launch {
+                if (version == library.state.value.revision) try { library.played(item, true) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { if (version == library.state.value.revision) PlaybackStatus.mutable.value = Preparation(error = "Finished status could not be synced. Please mark the item as read again when connected.") }
+            }
+        }
         // Reset the bookmark before clearing current, so a later explicit Play
         // starts at the beginning. Clearing also prevents callbacks from writing
         // the ended clock over that bookmark or restoring the finished player.

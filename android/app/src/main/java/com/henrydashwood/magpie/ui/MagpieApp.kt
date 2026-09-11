@@ -34,6 +34,8 @@ import com.henrydashwood.magpie.PlayerState
 import com.henrydashwood.magpie.data.playbackRates
 import com.henrydashwood.magpie.data.ContentKind
 import com.henrydashwood.magpie.data.LibraryItem
+import com.henrydashwood.magpie.data.LibraryFeed
+import kotlinx.coroutines.delay
 import com.henrydashwood.magpie.playback.Preparation
 import com.henrydashwood.magpie.playback.SleepTimerState
 
@@ -47,11 +49,15 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
+    val snapshot by model.libraryState.collectAsStateWithLifecycle()
+    val loadingItem by model.itemLoading.collectAsStateWithLifecycle()
+    val itemError by model.itemError.collectAsStateWithLifecycle()
+    var reloadVersion by remember { mutableIntStateOf(0) }
     var showingAccount by rememberSaveable { mutableStateOf(false) }
     val saved by model.saved.collectAsStateWithLifecycle()
     val finished by model.finished.collectAsStateWithLifecycle()
     val dismissedFromLatest by model.dismissedFromLatest.collectAsStateWithLifecycle()
-    val latestItems = model.library.filter { it.id !in dismissedFromLatest }
+    val latestItems = if (snapshot.live) snapshot.latestIds.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.id !in dismissedFromLatest }
     val pendingSources by model.pendingSources.collectAsStateWithLifecycle()
     val pendingLinks by model.pendingLinks.collectAsStateWithLifecycle()
     var savedListVersion by rememberSaveable { mutableIntStateOf(0) }
@@ -65,7 +71,23 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
     var showingPlayer by rememberSaveable { mutableStateOf(false) }
     var showingSearch by rememberSaveable(destination, selectedSource, selectedItemId) { mutableStateOf(false) }
     var query by rememberSaveable(destination, selectedSource, selectedItemId) { mutableStateOf("") }
-    val selectedItem = model.library.find { it.id == selectedItemId }
+    val selectedItem = snapshot.items.find { it.id == selectedItemId }
+    val selectedFeed = snapshot.feeds.find { it.id == selectedSource }
+    fun openItem(item: LibraryItem) { selectedItemId = item.id; model.openItem(item) }
+    var displayedRevision by rememberSaveable { mutableIntStateOf(snapshot.revision) }
+    LaunchedEffect(snapshot.revision) {
+        if (displayedRevision != snapshot.revision) {
+            displayedRevision = snapshot.revision
+            selectedItemId = null; selectedSource = null; showingPlayer = false; query = ""
+        }
+    }
+    LaunchedEffect(snapshot.revision, snapshot.owner, selectedSource, query, destination, reloadVersion) {
+        if (snapshot.live && snapshot.owner != null && selectedItemId == null &&
+            (selectedSource != null || destination == Destination.Following)) {
+            if (query.isNotBlank()) delay(300)
+            model.searchLibrary(selectedSource, query)
+        }
+    }
     val snackbar = remember { SnackbarHostState() }
     val followControl = remember { ArticleFollowControl() }
     LaunchedEffect(appleReturn) { if (appleReturn > 0) showingAccount = true }
@@ -92,6 +114,9 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
                     }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
                 },
                 actions = {
+                    if (snapshot.live && selectedItem == null && destination != Destination.Settings) IconButton(
+                        enabled = !snapshot.loading && !snapshot.searching,
+                        onClick = { model.refreshLibrary(); reloadVersion++ }) { Icon(Icons.Rounded.Refresh, "Refresh library") }
                     if (selectedItem == null && selectedSource == null && destination == Destination.Following) {
                         AddSourceButton(model) { showingSearch = false; query = "" }
                     }
@@ -134,14 +159,31 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
                 destination == Destination.Saved -> "Search saved articles"
                 else -> "Search your library"
             })
+            if (snapshot.live && destination != Destination.Settings && selectedItem == null) {
+                if (snapshot.loading || snapshot.searching) LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "Loading library" })
+                snapshot.error?.let { error ->
+                    Column(Modifier.padding(16.dp)) {
+                        Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                        TextButton(onClick = { model.refreshLibrary(); reloadVersion++ }) { Text("Try again") }
+                    }
+                }
+            }
             when {
+                selectedItem != null && snapshot.live && !selectedItem.textLoaded -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (loadingItem == selectedItem.id) { CircularProgressIndicator(); Text("Loading article…") }
+                    else {
+                        Text(itemError ?: selectedItem.captureError ?: "Open this article to load its text.", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                        TextButton(onClick = { model.openItem(selectedItem) }) { Text("Try again") }
+                    }
+                }
                 selectedItem != null -> ArticleReader(selectedItem, query, followControl)
-                selectedSource != null -> ItemList(model.library.filter { it.source == selectedSource }, saved, query, { selectedItemId = it.id }, model::play, model::toggleSaved, source = selectedSource)
-                destination == Destination.Following -> Following(model.library, query, { selectedSource = it }, { selectedItemId = it.id }, pendingSources, model::removePendingSource)
-                destination == Destination.Latest -> ItemList(latestItems, saved, "", { selectedItemId = it.id }, model::play, model::toggleSaved, emptyTitle = "You're caught up")
+                selectedSource != null -> ItemList(if (snapshot.live) snapshot.feedResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.source == selectedSource }, saved, if (snapshot.live) "" else query, ::openItem, model::play, model::toggleSaved, source = selectedFeed?.title ?: selectedSource, live = snapshot.live,
+                    feedSources = selectedFeed?.sources.orEmpty(), loading = snapshot.loading || snapshot.searching || snapshot.error != null)
+                destination == Destination.Following -> Following(snapshot.feeds, if (snapshot.live) snapshot.searchResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library, query, { selectedSource = it }, ::openItem, pendingSources, model::removePendingSource, snapshot.live, snapshot.loading || snapshot.searching || snapshot.error != null)
+                destination == Destination.Latest -> ItemList(latestItems, saved, "", ::openItem, model::play, model::toggleSaved, emptyTitle = "You're caught up", loading = snapshot.loading || snapshot.error != null)
                 destination == Destination.Saved -> key(savedListVersion) {
-                    ItemList(model.library.filter { it.id in saved && it.kind == ContentKind.Article }, saved, query, { selectedItemId = it.id }, model::play, model::toggleSaved, savedOnly = true, finished = finished, finish = model::toggleFinished,
-                        pendingLinks = pendingLinks, removePendingLink = model::removePendingLink)
+                    ItemList(if (snapshot.live) snapshot.savedIds.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.id in saved && it.kind == ContentKind.Article }, saved, query, ::openItem, model::play, model::toggleSaved, savedOnly = true, finished = finished, finish = model::toggleFinished,
+                        pendingLinks = pendingLinks, removePendingLink = model::removePendingLink, loading = snapshot.loading || snapshot.error != null)
                 }
                 else -> SettingsScreen(model) { showingAccount = true }
             }
@@ -191,10 +233,10 @@ private fun AppNavigation(selected: Destination, select: (Destination) -> Unit) 
 }
 
 @Composable
-private fun Following(items: List<LibraryItem>, query: String, openSource: (String) -> Unit, openItem: (LibraryItem) -> Unit, pendingSources: List<String>, removeSource: (String) -> Unit) {
+private fun Following(feeds: List<LibraryFeed>, items: List<LibraryItem>, query: String, openSource: (String) -> Unit, openItem: (LibraryItem) -> Unit, pendingSources: List<String>, removeSource: (String) -> Unit, live: Boolean = false, loading: Boolean = false) {
     val visiblePendingSources = pendingSources.filter { it.contains(query, ignoreCase = true) }
-    val sources = items.groupBy { it.source }.filterKeys { it.contains(query, ignoreCase = true) }
-    val results = if (query.isBlank()) emptyList() else items.filter { "${it.title} ${it.source}".contains(query, ignoreCase = true) }
+    val sources = feeds.filter { it.title.contains(query, ignoreCase = true) }
+    val results = if (query.isBlank()) emptyList() else if (live) items else items.filter { "${it.title} ${it.source}".contains(query, ignoreCase = true) }
     LazyColumn(Modifier.fillMaxSize().testTag("following-list")) {
         if (query.isNotBlank() && sources.isNotEmpty()) item { ListSection("In your library") }
         if (visiblePendingSources.isNotEmpty()) item { ListSection("Pending sources") }
@@ -202,23 +244,24 @@ private fun Following(items: List<LibraryItem>, query: String, openSource: (Stri
             PendingLinkRow(url, isSource = true) { removeSource(url) }
         }
         if (visiblePendingSources.isNotEmpty() && sources.isNotEmpty()) item { ListSection("Following") }
-        items(sources.entries.toList(), key = { it.key }) { (source, stories) ->
+        items(sources, key = { it.id }) { source ->
             ListItem(
-                headlineContent = { Text(source, fontWeight = FontWeight.SemiBold) },
-                supportingContent = { Text(sourceCount(stories)) },
-                leadingContent = { SourceArtwork(source, Modifier.size(56.dp)) },
-                modifier = Modifier.clickable(onClickLabel = "Open $source") { openSource(source) },
+                headlineContent = { Text(source.title, fontWeight = FontWeight.SemiBold) },
+                supportingContent = { Text("${source.count} ${if (source.articles) "posts" else "episodes"}") },
+                leadingContent = { SourceArtwork(source.title, Modifier.size(56.dp)) },
+                modifier = Modifier.clickable(onClickLabel = "Open ${source.title}") { openSource(source.id) },
             )
             HorizontalDivider(Modifier.padding(start = 88.dp))
         }
         if (results.isNotEmpty()) item { ListSection("Episodes in your library") }
         items(results, key = { it.id }) { item -> StoryRow(item, { openItem(item) }) }
-        if (query.isNotBlank() && sources.isEmpty() && results.isEmpty() && visiblePendingSources.isEmpty()) item { EmptyState("Nothing found", "Try a different title or source.") }
+        if (!loading && query.isBlank() && sources.isEmpty() && visiblePendingSources.isEmpty()) item { EmptyState("No sources yet", "Add a feed address above to start following.") }
+        if (!loading && query.isNotBlank() && sources.isEmpty() && results.isEmpty() && visiblePendingSources.isEmpty()) item { EmptyState("Nothing found", "Try a different title or source.") }
     }
 }
 
 @Composable
-private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String, open: (LibraryItem) -> Unit, play: (LibraryItem) -> Unit, save: (LibraryItem) -> Unit, source: String? = null, savedOnly: Boolean = false, finished: Set<String> = emptySet(), finish: (LibraryItem) -> Unit = {}, pendingLinks: List<String> = emptyList(), removePendingLink: (String) -> Unit = {}, emptyTitle: String = "Nothing here yet") {
+private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String, open: (LibraryItem) -> Unit, play: (LibraryItem) -> Unit, save: (LibraryItem) -> Unit, source: String? = null, savedOnly: Boolean = false, finished: Set<String> = emptySet(), finish: (LibraryItem) -> Unit = {}, pendingLinks: List<String> = emptyList(), removePendingLink: (String) -> Unit = {}, emptyTitle: String = "Nothing here yet", live: Boolean = false, feedSources: List<String> = emptyList(), loading: Boolean = false) {
     var showingFinished by rememberSaveable { mutableStateOf(false) }
     val visible = items.filter { (!savedOnly || (it.id in finished) == showingFinished) && "${it.title} ${it.source}".contains(query, ignoreCase = true) }
     val visibleLinks = if (savedOnly && !showingFinished) pendingLinks.filter { it.contains(query, ignoreCase = true) } else emptyList()
@@ -231,10 +274,10 @@ private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String
             }
         }
         if (source != null && query.isBlank()) {
-            item { FeedHeader(source, sourceCount(items)) }
+            item { FeedHeader(source, sourceCount(items), live, feedSources) }
             item { ListSection(if (items.all { it.kind == ContentKind.Article }) "Posts" else "Episodes") }
         }
-        if (visible.isEmpty() && visibleLinks.isEmpty()) item { EmptyState(if (query.isNotBlank()) "Nothing found" else emptyTitle, if (query.isNotBlank()) "Try a different search." else if (savedOnly && showingFinished) "Articles you finish stay here." else if (savedOnly) "Add a link above to save it for later." else "New episodes from your shows will appear here.") }
+        if (!loading && visible.isEmpty() && visibleLinks.isEmpty()) item { EmptyState(if (query.isNotBlank()) "Nothing found" else emptyTitle, if (query.isNotBlank()) "Try a different search." else if (savedOnly && showingFinished) "Articles you finish stay here." else if (savedOnly) "Add a link above to save it for later." else "New episodes from your shows will appear here.") }
         items(visibleLinks, key = { "pending:$it" }) { url -> PendingLinkRow(url) { removePendingLink(url) } }
         items(visible, key = { it.id }) { item ->
             if (item.kind == ContentKind.Article) ActionStoryRow(item, { open(item) }, { play(item) }, item.id in saved,
@@ -245,7 +288,7 @@ private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String
 }
 
 @Composable
-private fun FeedHeader(source: String, count: String) {
+private fun FeedHeader(source: String, count: String, live: Boolean = false, sources: List<String> = emptyList()) {
     val largeText = LocalDensity.current.fontScale > 1.3f
     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (largeText) SourceArtwork(source, Modifier.size(88.dp))
@@ -255,14 +298,14 @@ private fun FeedHeader(source: String, count: String) {
                 Text(source, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
                 Text(count, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            FeedManagementMenu(source)
+            FeedManagementMenu(source, live, sources)
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun FeedManagementMenu(source: String) {
+private fun FeedManagementMenu(source: String, live: Boolean, sources: List<String>) {
     var expanded by remember { mutableStateOf(false) }
     var managingSources by rememberSaveable(source) { mutableStateOf(false) }
     Box {
@@ -276,7 +319,7 @@ private fun FeedManagementMenu(source: String) {
             DropdownMenuItem(enabled = false, onClick = {}, leadingIcon = { Icon(Icons.Rounded.RemoveCircleOutline, null) }, text = {
                 Column {
                     Text("Unsubscribe")
-                    Text("Requires a connected account", style = MaterialTheme.typography.bodySmall)
+                    Text(if (live) "Not available on Android yet" else "Requires a connected account", style = MaterialTheme.typography.bodySmall)
                 }
             })
         }
@@ -293,9 +336,9 @@ private fun FeedManagementMenu(source: String) {
                     Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium)
             }
             item { Text("Sources in $source", Modifier.padding(16.dp).semantics { heading() }, style = MaterialTheme.typography.titleSmall) }
-            item { ListItem(headlineContent = { Text(source) }, supportingContent = { Text("Bundled sample content") }) }
+            items(if (live) sources.ifEmpty { listOf(source) } else listOf(source)) { name -> ListItem(headlineContent = { Text(name) }, supportingContent = { Text(if (live) "Connected source" else "Bundled sample content") }) }
             item {
-                Text("This is a sample feed. Combining or separating sources and unsubscribing will be available when your account is connected.",
+                Text(if (live) "Combining, separating, and unsubscribing from sources are not available on Android yet." else "This is a sample feed. Combining or separating sources and unsubscribing will be available when your account is connected.",
                     Modifier.padding(16.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -312,7 +355,7 @@ private fun StoryRow(item: LibraryItem, open: () -> Unit, play: (() -> Unit)? = 
             supportingContent = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(item.source, maxLines = if (largeText) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis)
-                    Text(if (item.kind == ContentKind.Article) "${item.text.split(Regex("\\s+")).size} words" else item.durationLabel, style = MaterialTheme.typography.bodySmall)
+                    Text(if (item.kind == ContentKind.Article) (item.wordCount ?: if (item.textLoaded) item.text.split(Regex("\\s+")).size else null)?.let { "$it words" } ?: "Article" else item.durationLabel, style = MaterialTheme.typography.bodySmall)
                     Text(item.description, style = MaterialTheme.typography.bodySmall, maxLines = if (largeText) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
                 }
             },

@@ -1,7 +1,8 @@
 # Magpie for Android
 
-A native Kotlin / Jetpack Compose preview, runnable without a phone, account,
-backend, or network connection. Open this `android/` directory in Android Studio.
+A native Kotlin / Jetpack Compose client. Signed-in builds load the account
+library; signed-out builds provide a separate sample library without a backend
+or network connection. Open this `android/` directory in Android Studio.
 The app is labelled **Magpie Preview** and debug installs use
 `com.henrydashwood.magpie.dev`.
 
@@ -156,7 +157,12 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
 - Light/dark themes, scalable text, labelled controls, heading semantics, and
   scrollable layouts. Automated checks exercise 200% text; physical TalkBack
   acceptance is still required.
-- Save/remove sample articles and file them under To read or Finished, persisted locally.
+- Following, Latest, and Saved load from the signed-in account. Feed pages and
+  library search use the backend, including feeds with no episodes. Saved article
+  versions load on demand into the existing rich reader. Refresh reloads the
+  account; failed requests retain the current account data with a retry control.
+- Save/remove articles and file them under To read or Finished. Signed-in changes
+  update the backend; signed-out sample changes remain local.
 - Reaching the end of a podcast or narrated article records it as finished locally,
   plays a quiet completion tone, and clears the player and sleep timer. Saved
   articles move to Finished without reopening the screen. The completed player
@@ -164,9 +170,9 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
 - Clear Latest uses a confirmation dialog and persists the current item IDs as
   dismissed locally, without marking them played/read or changing Saved, feed pages,
   or playback bookmarks. New IDs remain eligible for Latest.
-- Saved's + button captures web URLs in a separate durable local inbox. Pending links
-  appear under To read, support search and removal, and survive app restarts.
-  Article fetching/preparation and account sync are not connected yet.
+- Saved's + button saves and prepares URLs in the signed-in account. Signed-out
+  captures use a separate durable local inbox; signing in never uploads that
+  inbox automatically.
 - Separate persisted podcast/article speeds, an installed offline voice chooser,
   voice previews, and links to voice downloads, privacy, and email support.
 - A native Material mini player with artwork/title, contextual Follow, play/pause,
@@ -213,7 +219,8 @@ spoken text used for narration and UTF-16 bookmarks. Plain-text items fall back
 to escaped paragraphs. Like iOS, the Android reader expects the backend's existing
 LaTeX-to-MathML output; it does not interpret raw LaTeX or Markdown itself. MathML
 requires an up-to-date Android System WebView. No backend API or iOS contract was
-changed, and live account/article fetching is still future work.
+changed. Signed-in article fetching uses the same endpoint and pinned saved
+content ID as iOS.
 
 A native gutter marker follows the spoken line and stays at its position while
 paused. Seeking, speed changes and reopening the activity use the service's media
@@ -258,6 +265,8 @@ Feed headers have a management menu beside the title, matching iOS. Manage sourc
 shows the bundled source and explains the preview boundary; Unsubscribe is disabled
 with an account-required explanation. Combining, separating, and unsubscribing
 require a connected account rather than mutating the fixed sample catalogue.
+Direct feed URLs can be subscribed to while signed in. Source combining,
+separating, and unsubscribe controls remain unavailable on Android.
 Settings links to Sign-in Methods for Apple and Google sign-in, connected provider status,
 real account sign-out and deletion. Conversation, assistant, newsletters, and
 consent retain explicit unavailable states until their integrations exist.
@@ -283,15 +292,19 @@ is iOS-only. Privacy/support links use the same destinations as the Swift client
 
 ## Deliberate prototype boundaries
 
-The sample repository supplies playable content; locally captured URLs stay in
-their separate pending inbox until account and article processing are connected.
-Apple and Google sign-in and account controls use the backend when configured (see
-[sign-in setup](../docs/sign-in.md)); the library remains sample-only. There is no
-live library loading, feed discovery, cloud progress reporting, incoming share
-capture from other apps, podcast downloading, Gemini integration, or microphone
-recording in this version. Internet access is used for HTTPS article images and embedded videos; the
-manifest does not request microphone access. Settings identifies this as a sample library. Backups and device transfers of
-preview preferences are disabled.
+Signed-in accounts load real feeds, latest episodes, saved articles, and saved
+podcast positions using the existing API. Podcast playback streams the real
+HTTPS audio URL and reports position on pause and every thirty seconds. Finished
+status uses the existing played-state endpoint for both articles and podcasts.
+The service stops and clears account playback when the session changes.
+
+The sample repository and local capture inboxes remain separate while signed out.
+There is no automatic upload of sample content, preview progress, or pending URLs.
+Account metadata/text currently lives in memory: a fresh launch needs a connection,
+and there is no durable queue for offline account edits or progress uploads.
+Feed website discovery, directory search, source management, incoming share capture,
+podcast downloading, Gemini integration, and microphone recording remain future
+work. Backups and device transfers of preview preferences are disabled.
 
 Article rendering currently completes before playback starts, with a 30,000
 character guard and a timeout per chunk. Only the current rendered article is
@@ -328,14 +341,15 @@ Bluetooth routing, TalkBack speech arbitration, battery use, or long screen-off
 sessions. On the Pixel, verify those first, then an incoming call, interruption
 recovery, and process-death resume. Borrow a Samsung before broad release.
 
-The next functional work is a backend-backed repository,
-safe progress synchronisation, and microphone/confirmation/TalkBack coordination.
+The next functional work includes persistent offline account caching, durable
+progress synchronisation, feed discovery/source management, and
+microphone/confirmation/TalkBack coordination.
 Keep AppFunctions an optional adapter over the same action layer.
 
-Following has a leading Add sources action. Feed or website addresses are validated
-and saved in a separate local inbox, listed as pending sources and removable from
-that list. They never become Saved articles or simulated subscriptions. Feed
-discovery, name search, and subscribing require the future account connection.
+Following has a leading Add sources action. While signed in, a direct feed address
+creates a real subscription. While signed out, addresses stay in a separate local
+inbox and never become simulated subscriptions. Website discovery and searching
+the podcast directory by name remain outstanding.
 
 ## Accounts and linked sign-in
 
@@ -362,5 +376,7 @@ fingerprint added. `MAGPIE_GOOGLE_SERVER_CLIENT_ID` and `MAGPIE_ACCOUNT_API_URL`
 Gradle properties override these defaults, including empty values to disable them.
 Release defaults remain blank until a release signing certificate is registered.
 The new backend must be deployed before either sign-in flow can complete. See [setup and acceptance checks](../docs/sign-in.md).
-Signing in does not attach sample content or local preview bookmarks to a real
-account. Live library loading is the next part of parity item 1.
+Signing in replaces the sample catalogue with the account library. Samples and
+local capture inboxes are never attached automatically. Item/bookmark keys include
+the server and account identity, and late replies cannot repopulate a signed-out
+account. See [account-library implementation](../docs/android-library.md).

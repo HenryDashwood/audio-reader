@@ -19,25 +19,27 @@ import java.net.URI
 
 @Composable
 fun AddLinkButton(model: MagpieModel, onSaved: () -> Unit) {
+    val library by model.libraryState.collectAsStateWithLifecycle()
     val capture by model.linkCapture.collectAsStateWithLifecycle()
     LaunchedEffect(capture.savedUrl) {
         if (capture.savedUrl != null) { onSaved(); model.acknowledgeSavedLink() }
     }
     IconButton(onClick = model::beginLinkCapture) { Icon(Icons.Rounded.Add, "Add link") }
     AddressCaptureDialog(capture, "Add link", "Web address", "https://example.com/article",
-        "The link is saved on this device. Preparing articles will be available when your account is connected.",
+        if (library.live) "Save this article to your account so it is available on your other devices." else "The link is saved on this device. Preparing articles will be available when your account is connected.",
         model::closeLinkCapture, model::editLink, model::saveLink)
 }
 
 @Composable
 fun AddSourceButton(model: MagpieModel, onSaved: () -> Unit) {
+    val library by model.libraryState.collectAsStateWithLifecycle()
     val capture by model.sourceCapture.collectAsStateWithLifecycle()
     LaunchedEffect(capture.savedUrl) {
         if (capture.savedUrl != null) { onSaved(); model.acknowledgeSavedSource() }
     }
     IconButton(onClick = model::beginSourceCapture) { Icon(Icons.Rounded.Add, "Add sources") }
     AddressCaptureDialog(capture, "Add sources", "Feed or website address", "https://example.com/feed.xml",
-        "The address is saved on this device. Finding feeds, searching by name, and subscribing will be available when your account is connected.",
+        if (library.live) "Enter a direct RSS, Atom, or JSON feed address to follow it on all your devices. Website discovery and searching by name are not available here yet." else "The address is saved on this device. Finding feeds, searching by name, and subscribing will be available when your account is connected.",
         model::closeSourceCapture, model::editSource, model::saveSource)
 }
 

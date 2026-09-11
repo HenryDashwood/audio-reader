@@ -18,7 +18,7 @@ android {
         buildConfigField("String", "ACCOUNT_API_URL", "\"$accountServer\"")
         versionCode = 1
         versionName = "0.1.0-prototype"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.henrydashwood.magpie.MagpieTestRunner"
     }
     buildTypes {
         debug {

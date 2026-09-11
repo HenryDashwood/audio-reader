@@ -14,6 +14,16 @@ data class LibraryItem(
     val originalUrl: String? = null,
     // Display HTML (including backend-rendered MathML) is separate from immutable speech text.
     val html: String? = null,
+    val episodeId: Int? = null,
+    val contentId: Int? = null,
+    val sourceId: String = source,
+    val audioUrl: String? = null,
+    val wordCount: Int? = null,
+    val textLoaded: Boolean = true,
+    val remotePositionMs: Long = 0,
+    val completed: Boolean = false,
+    val dismissed: Boolean = false,
+    val captureError: String? = null,
 )
 
 interface LibraryRepository {

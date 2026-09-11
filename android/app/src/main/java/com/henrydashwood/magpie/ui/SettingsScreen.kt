@@ -32,6 +32,7 @@ import com.henrydashwood.magpie.playback.SpeechVoices
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(model: MagpieModel, onAccount: () -> Unit) {
+    val library by model.libraryState.collectAsStateWithLifecycle()
     val preferences by model.settings.collectAsStateWithLifecycle()
     val voices by model.voices.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -87,7 +88,7 @@ fun SettingsScreen(model: MagpieModel, onAccount: () -> Unit) {
         item { HorizontalDivider(); SettingsHeading("Assistant and Shortcuts") }
         item { SettingsFootnote("Android assistant integration is not connected in this preview.") }
         item { HorizontalDivider(); SettingsHeading("Newsletters") }
-        item { SettingsFootnote("Your newsletter address will appear here when your account is connected.") }
+        item { SettingsFootnote("Newsletter address management is not available on Android yet.") }
         item { HorizontalDivider(); SettingsHeading("Privacy & Support") }
         item { SettingsAction("Privacy Policy", Icons.AutoMirrored.Rounded.OpenInNew) { open(Intent(Intent.ACTION_VIEW, "https://audio-reader-production.up.railway.app/privacy".toUri())) } }
         item { SettingsAction("Email Support", Icons.Rounded.Email) { open(Intent(Intent.ACTION_SENDTO, "mailto:hcndashwood@gmail.com".toUri())) } }
@@ -96,7 +97,7 @@ fun SettingsScreen(model: MagpieModel, onAccount: () -> Unit) {
         item { HorizontalDivider(); SettingsHeading("Account") }
         item { SettingsAction("Sign-in Methods", Icons.Rounded.AccountCircle, onAccount) }
         if (linkError != null) item { SettingsFootnote(linkError!!, error = true) }
-        item { SettingsFootnote("Android preview · Sample library") }
+        item { SettingsFootnote(if (library.live) "Connected account library" else "Android preview · Sample library") }
     }
     if (showingVoices) ModalBottomSheet(onDismissRequest = { showingVoices = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {

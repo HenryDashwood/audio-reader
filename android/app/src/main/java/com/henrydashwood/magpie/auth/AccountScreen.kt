@@ -16,6 +16,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable
@@ -34,6 +36,11 @@ fun AccountContent(state: AccountState, configured: Boolean, onBack: () -> Unit,
     signIn: () -> Unit, linkGoogle: () -> Unit, refresh: () -> Unit, signOut: () -> Unit, delete: () -> Unit,
     appleConfigured: Boolean = false, signInApple: () -> Unit = {}, linkApple: () -> Unit = {},
     cancelApple: () -> Unit = {}, resumeApple: () -> Unit = {}, reopenApple: () -> Unit = {}) {
+    // A Custom Tab can outlive a failed background request. Check the retained
+    // proof when this screen becomes active again, including a browser return.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (state.applePending) resumeApple()
+    }
     var confirmingDelete by rememberSaveable { mutableStateOf(false) }
     Scaffold(topBar = {
         TopAppBar(title = { Text("Sign-in Methods") }, navigationIcon = {
@@ -42,8 +49,8 @@ fun AccountContent(state: AccountState, configured: Boolean, onBack: () -> Unit,
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(vertical = 16.dp)) {
-            item { Text("Android preview · Sample library", style = MaterialTheme.typography.titleMedium) }
-            item { Text("Signing in connects your account. The library shown in this preview still contains samples and does not change your saved library or listening progress.") }
+            item { Text(if (state.signedIn) "Your Magpie account" else "Android preview · Sample library", style = MaterialTheme.typography.titleMedium) }
+            item { Text(if (state.signedIn) "Following, Latest, and Saved use your account library. Changes to saved items and read status are shared with your other devices." else "Sign in to load your subscriptions and saved articles. Until then, this preview uses a separate sample library.") }
             if (!state.signedIn) {
                 item { Text("Sign in to Magpie", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge) }
                 item { Text("Already use Magpie on iOS? Sign in with the same Apple account to keep your account together.") }

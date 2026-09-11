@@ -44,6 +44,17 @@ class AccountSessionTest {
         assertEquals(setOf("apple", "google"), session.state.value.providers)
         assertFalse(session.state.value.busy)
     }
+    @Test fun libraryRejectionClearsOnlyTheSessionThatWasRejected() {
+        val store = Store("current"); val session = AccountSession(Api(), store)
+        session.rejectToken("old")
+        assertEquals("current", session.accessToken.value)
+        assertTrue(session.state.value.signedIn)
+        session.rejectToken("current")
+        assertNull(store.token)
+        assertNull(session.accessToken.value)
+        assertFalse(session.state.value.signedIn)
+        assertEquals("Please sign in again.", session.state.value.error)
+    }
     @Test fun explicitLinkPreservesSessionAndConflictDoesNotSignOut() = runTest {
         val api = Api(); val store = Store("original"); val session = AccountSession(api, store)
         api.linked = setOf("apple"); session.refresh()

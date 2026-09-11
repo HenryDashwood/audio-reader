@@ -6,6 +6,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import com.henrydashwood.magpie.BuildConfig
 
 // Provider credentials are exchanged for a Magpie session; email is never an account key.
@@ -98,6 +99,11 @@ class HttpAccountApi(private val baseUrl: String) : AccountApi {
                 throw AccountFailure(status, spoken ?: if (status == 401) "Please sign in again." else "The account request did not work. Please try again.")
             }
             json ?: throw AccountFailure(status, "The server response could not be read. Please try again.")
+        } catch (failure: IOException) {
+            // Exception messages can contain URLs; record only the type, never
+            // provider credentials, request bodies, or session tokens.
+            if (BuildConfig.DEBUG) android.util.Log.w("MagpieAccount", "Account connection failed: ${failure.javaClass.simpleName}")
+            throw failure
         } finally { connection.disconnect() }
     }
 }

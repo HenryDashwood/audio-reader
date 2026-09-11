@@ -7,8 +7,8 @@ it in Settings → Sign-in Methods. Both identities then resolve to the same use
 ID, library, listening progress, and consent choice. Linking does not grant AI
 consent or copy/move any library data.
 
-Android still uses a sample library. Its account screen clearly states this and
-never uploads sample content or local article bookmarks. Android's Apple browser
+Android loads the signed-in account library and uses samples only while signed
+out. It never uploads sample content or local article narration bookmarks. Android's Apple browser
 flow is implemented; account-backed library loading remains unfinished in parity
 item 1. Existing iOS Apple users can sign in directly with Apple on Android once
 the configured backend has been deployed and the acceptance checks below pass.
@@ -16,9 +16,11 @@ the configured backend has been deployed and the acceptance checks below pass.
 ## Provider configuration
 
 Provider registrations and public Railway settings were configured on 11 September
-2026. No backend was redeployed. The new endpoints and migration still need the
-normal staging release and subsequent manual production promotion. Existing
-native Apple sign-in works independently of the browser configuration.
+2026. Commit `f82ae3c87bd17abc64c1ceed2d245ce8df460a06` passed main CI and
+was deployed to staging. After enabling staging's Apple credentials, deployment
+`488f5572-6b95-4a3a-89de-7ab597ef5190` succeeded with that same revision.
+Production has not been redeployed or promoted. Existing native Apple sign-in
+works independently of the browser configuration.
 
 | Registration | Saved value |
 | --- | --- |
@@ -39,8 +41,10 @@ exact return URLs:
 
 Both Railway environments have the Services ID, their corresponding callback,
 and the server Google client ID saved with deployment skipped. Production's
-existing Apple key and encryption settings were preserved. Staging's Apple key
-settings are still blank; follow the staged rollout below before adding them.
+existing Apple key and encryption settings were preserved. Staging now has the
+Apple signing credentials and its own separate generated Fernet encryption key.
+The saved staging revocation setting remains `false`. No production credentials
+were changed.
 
 Google is External / Testing with `hcndashwood@gmail.com` registered as a test
 user. Branding uses Magpie, that support/contact address, the existing production
@@ -79,7 +83,7 @@ or debug app scheme. No Apple code, identity token, or Magpie session appears in
 that return URL. Apply migration `f83a2c04d917` through the normal release process
 before using the new endpoints.
 
-Staging rollout order:
+Staging rollout order (steps 1–2 completed on 11 September 2026):
 
 1. Deploy this backend through normal CI, including the migration and
    `apple_revoke_on_account_deletion` guard. The staging Railway setting
@@ -88,7 +92,7 @@ Staging rollout order:
    the Apple team ID, key ID, and private key needed for code exchange. Use a
    separate newly generated Fernet encryption key for staging. Keep all secrets
    out of source control and logs.
-3. Redeploy staging with those secrets and perform real provider/linking checks.
+3. Staging was redeployed with those secrets. Complete real provider/linking checks.
    Deleting a staging account must remove its local identities without revoking
    the shared Apple app authorization used in production.
 4. Promote the verified staging revision through the manual production workflow
@@ -161,7 +165,10 @@ random verifier retained in Android Keystore-encrypted storage; only its SHA-256
 challenge is sent when starting the flow, and the verifier never enters the browser.
 Linking is also bound to the
 exact initiating Magpie session, checked again after Apple's response. Returning
-from the browser only opens Sign-in Methods; it cannot supply credentials.
+from the browser opens Sign-in Methods and resumes checking the retained private
+proof; it cannot supply credentials. If a background check failed, foregrounding
+the account screen retries it without reopening Apple. An in-flight check finishes
+before the retry begins, so completion requests do not race.
 Pending attempts survive app recreation, can be cancelled, and expire. Each
 completed handoff is consumed once. If the final response is lost, start a fresh
 attempt. Expired rows are reclaimed when another browser flow starts. Temporary
@@ -194,8 +201,8 @@ Drive, contacts, or offline API access is requested.
 3. Sign out and sign in with Google on iOS. Verify the same library, user ID,
    listening progress, and AI consent choice.
 4. Sign in with Apple directly on Android, then repeat with that Google account.
-   Check the same account ID and provider list; its sample library must remain
-   explicitly separate. Verify the Services ID grouping with a real existing
+   Check the same account ID, provider list, subscriptions, and saved articles.
+   Signed-out sample content and local capture inboxes must remain separate. Verify the Services ID grouping with a real existing
    iOS account before enabling Android sign-in.
 5. Start with a new Google account on Android, connect Apple, and sign in with
    Apple on both platforms. Repeat linking from iOS. During Android authorization,
@@ -233,8 +240,11 @@ After provider configuration, `make backend-check`, `make backend-compatibility`
 iOS Info.plist and Android BuildConfig contain the registered IDs and expected
 callback/server settings. No compiler warnings were reported.
 
-Provider authorization itself was not exercised against real Apple/Google
-accounts. Backend rollout, configured staging checks, Google production audience
+Real Apple browser authorization and code exchange now pass on staging, as
+detailed below. Native Android Google authorization has also succeeded with a
+real account. Android linking and switching from Apple to Google have now passed;
+iOS Google acceptance remains pending.
+Full provider acceptance, production backend rollout, Google production audience
 publication, Android release registration, and physical-device accessibility
 acceptance remain required before releasing these sign-in flows.
 
@@ -243,4 +253,57 @@ and inspected visually on the emulator. Both provider buttons, setup messages,
 existing-Apple-account instructions, and sample-library disclosure were visible
 without clipping at the emulator's current text size. The original unconfigured preview kept both
 buttons disabled. Debug builds now contain the registered development settings;
-backend rollout remains required before sign-in can complete.
+staging now supports sign-in; production rollout remains pending.
+
+## Live staging verification — 11 September 2026
+
+Deployment `488f5572-6b95-4a3a-89de-7ab597ef5190` reached `SUCCESS` after the
+credential update. Health, Apple browser start, configured Services ID/callback,
+wrong-proof rejection, pending status, cancellation, replay rejection, callback
+cancellation, Google invalid-token rejection, and unauthenticated identity access
+checks passed against the live staging API. Temporary test handoffs were consumed
+or cancelled. These checks created no accounts and did not access production.
+Apple's real authorization page displayed “Magpie Sign In” for the configured
+Services ID. The account owner completed authorization and Apple returned to the
+registered staging callback. The backend successfully exchanged that real code,
+authenticated `/me` with the resulting session, and returned `apple` from
+`/me/identities`. Replaying completion returned 410. The test session was then
+logged out, and using it again returned 401. The account and library were
+preserved; local temporary proof/session material was removed.
+
+Google sign-in succeeded through the Android Credential Manager and Magpie
+displayed Google as connected. The APK certificate matched the registered debug
+SHA-1. An emulator DNS failure was resolved by cold-starting the same AVD with
+explicit DNS servers, preserving installed apps and data.
+
+That first Google login created a separate empty staging account. A read-only
+database check confirmed it contained no saved content, subscriptions, playback
+positions, owned feeds/articles, newsletters, or voice records. With explicit
+user approval, it was deleted through the app so Google could instead be linked
+from the existing Apple account. A second read-only check confirmed that the
+original Apple account and its library counts were unchanged.
+
+The Android browser test exposed a foreground-recovery gap: staging accepted
+Apple's callback, but Android had stopped polling and returning to the app did
+not restart completion. The attempt expired without creating a session. Android
+now resumes retained handoffs when the account screen becomes active, waits for
+any existing check before retrying, and distinguishes connection failures from
+other account errors. A subsequent real Apple attempt successfully signed Android
+into the original account.
+`make android-check` passed (42 JVM tests and lint), and the focused emulator
+account suite passed all 10 tests, including foreground recovery.
+
+On 12 September (local time), the Android app showed Apple connected. A read-only
+staging database check confirmed the original account still had 49 subscriptions,
+4 saved articles, and 236 playback positions. Google was then connected from that
+signed-in account through Credential Manager. After signing out and signing back
+in with Google, Android displayed both providers as connected. A second read-only
+check confirmed both identities belonged to the same original account, no extra
+account had been created, and all three content counts were unchanged. The
+emulator was left signed in through Google. At that point the library was still
+sample-only; the subsequent account-library work is documented in
+[Android library](android-library.md).
+
+iOS Google authorization, the remaining cross-platform acceptance scenarios,
+and physical-device acceptance remain outstanding.
+Production promotion is still pending those acceptance checks and authorisation.

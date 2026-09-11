@@ -1,6 +1,12 @@
 package com.henrydashwood.magpie
 
 import android.content.Context
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -78,6 +84,40 @@ class AccountScreenTest {
         compose.onNodeWithText("Sign in with Google").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("Cancel Apple sign-in").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(cancelled) }
+    }
+    @Test fun returningToForegroundChecksAFailedAppleAttemptAgain() {
+        val owner = object : LifecycleOwner {
+            val registry = LifecycleRegistry(this)
+            override val lifecycle: Lifecycle get() = registry
+        }
+        val state = mutableStateOf(AccountState(applePending = true, busy = true))
+        var checks = 0
+        compose.runOnUiThread { owner.registry.currentState = Lifecycle.State.RESUMED }
+        compose.setContent { CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+            MagpieTheme { AccountContent(state.value, true, {}, {}, {}, {}, {}, {},
+                appleConfigured = true, resumeApple = { checks++ }) }
+        } }
+        compose.runOnIdle {
+            assertEquals(1, checks)
+            owner.registry.currentState = Lifecycle.State.CREATED
+            state.value = state.value.copy(busy = false, error = "Could not connect to Magpie.")
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertEquals(1, checks) // Recomposition in the background is not a retry.
+            owner.registry.currentState = Lifecycle.State.RESUMED
+        }
+        compose.runOnIdle {
+            assertEquals(2, checks)
+            state.value = AccountState(signedIn = true, providers = setOf("apple"))
+        }
+        compose.waitForIdle()
+        compose.runOnIdle {
+            owner.registry.currentState = Lifecycle.State.CREATED
+            owner.registry.currentState = Lifecycle.State.RESUMED
+            assertEquals(2, checks) // A completed attempt must not be replayed.
+            owner.registry.currentState = Lifecycle.State.DESTROYED
+        }
     }
     @Test fun browserHandoffSurvivesRecreationInEncryptedStorage() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

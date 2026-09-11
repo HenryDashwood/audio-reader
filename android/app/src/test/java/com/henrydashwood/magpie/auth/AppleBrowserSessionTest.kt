@@ -22,6 +22,7 @@ class AppleBrowserSessionTest {
         var finishCount = 0
         var cancelled = false
         var fail = false
+        var connectionFailure = false
         var gate: CompletableDeferred<Unit>? = null
         val auth = AccountLogin("apple-session", AccountUser("same-user", null))
         var result = AppleBrowserResult("complete", auth = auth)
@@ -33,6 +34,7 @@ class AppleBrowserSessionTest {
         override suspend fun completeApple(state: String, verifier: String, session: String?): AppleBrowserResult {
             finishCount++; finishSession = session
             gate?.await()
+            if (connectionFailure) throw java.net.SocketTimeoutException()
             if (fail) throw AccountFailure(409, "Already linked to another account")
             return result
         }
@@ -106,6 +108,25 @@ class AppleBrowserSessionTest {
         restored.resumeApple()
         assertEquals("apple-session", store.token)
         assertNull(pending.read())
+    }
+    @Test fun connectionFailureRetainsProofAndResumesWithoutAnotherAppleAuthorization() = runTest {
+        val api = Api().apply { connectionFailure = true }
+        val store = Store(); val pending = MemoryApplePendingStore()
+        val session = AccountSession(api, store, pending)
+        var browserOpens = 0
+        session.signInApple(false) { browserOpens++ }
+        val proof = pending.read()
+        assertNotNull(proof)
+        assertFalse(session.state.value.busy)
+        assertTrue(session.state.value.applePending)
+        assertEquals("Could not connect to Magpie. Check your connection, then try again.", session.state.value.error)
+        api.connectionFailure = false
+        session.resumeApple()
+        assertEquals(1, browserOpens)
+        assertEquals(2, api.finishCount)
+        assertEquals("apple-session", store.token)
+        assertNull(pending.read())
+        assertNull(session.state.value.error)
     }
     @Test fun restoredLinkCannotAttachToADifferentSession() = runTest {
         val api = Api(); val pending = MemoryApplePendingStore()

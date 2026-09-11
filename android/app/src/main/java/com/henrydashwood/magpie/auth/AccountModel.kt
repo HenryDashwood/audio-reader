@@ -14,9 +14,7 @@ class AccountModel(application: Application) : AndroidViewModel(application) {
     private val google = GoogleAuthorization(application, BuildConfig.GOOGLE_SERVER_CLIENT_ID)
     val appleConfigured = BuildConfig.ACCOUNT_API_URL.isNotBlank()
     private var appleJob: Job? = null
-    private val session = AccountSession(HttpAccountApi(BuildConfig.ACCOUNT_API_URL),
-        EncryptedAccountTokenStore(application, BuildConfig.ACCOUNT_API_URL),
-        EncryptedApplePendingStore(EncryptedAccountTokenStore(application, BuildConfig.ACCOUNT_API_URL, "magpie-apple-pending")))
+    private val session = (application as com.henrydashwood.magpie.MagpieApplication).accounts
     val state = session.state
     init { if (appleConfigured) {
         if (state.value.applePending) resumeApple() else refresh()
@@ -29,8 +27,14 @@ class AccountModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun resumeApple() {
-        if (state.value.busy) return
+        if (!state.value.applePending) return
+        val previous = appleJob
+        if (state.value.busy && previous?.isActive != true) return
         appleJob = viewModelScope.launch {
+            // Do not race one-time completion requests. If the background check
+            // is still unwinding, recover after it finishes instead of dropping
+            // the browser-return event while busy.
+            previous?.join()
             session.resumeApple()
             if (state.value.signedIn && state.value.error == null) session.refresh()
         }
