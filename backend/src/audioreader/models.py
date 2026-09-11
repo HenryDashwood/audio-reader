@@ -235,16 +235,34 @@ class UserIdentity(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
-    provider: Mapped[str]  # "apple" today; "google" later
+    provider: Mapped[str]  # "apple" or "google"
     provider_subject: Mapped[str]
     email: Mapped[str | None]
     # Kept solely so the grant can be revoked with the provider when she
     # deletes her account. Encrypted at rest (see secrets_store); null when the
     # deployment has no Apple key configured, or the exchange failed.
     refresh_token: Mapped[str | None] = mapped_column(Text)
+    # Native App ID or web Services ID that issued the grant. Legacy null means native.
+    refresh_token_client_id: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="identities")
+
+
+class AppleBrowserFlow(Base):
+    """Five-minute browser handoff. Only the initiating app has the completion proof."""
+
+    __tablename__ = "apple_browser_flows"
+    state_hash: Mapped[str] = mapped_column(primary_key=True)
+    challenge: Mapped[str]
+    nonce: Mapped[str]
+    return_scheme: Mapped[str]
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    session_hash: Mapped[str | None]
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # A one-time Apple code encrypted at rest, never returned to the browser/app.
+    authorization_code: Mapped[str | None] = mapped_column(Text)
+    outcome: Mapped[str | None]  # ready, cancelled, or failed
 
 
 class AuthSession(Base):

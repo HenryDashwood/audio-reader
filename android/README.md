@@ -157,6 +157,10 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   scrollable layouts. Automated checks exercise 200% text; physical TalkBack
   acceptance is still required.
 - Save/remove sample articles and file them under To read or Finished, persisted locally.
+- Reaching the end of a podcast or narrated article records it as finished locally,
+  plays a quiet completion tone, and clears the player and sleep timer. Saved
+  articles move to Finished without reopening the screen. The completed player
+  stays closed after recreation/relaunch; explicitly playing the item starts over.
 - Clear Latest uses a confirmation dialog and persists the current item IDs as
   dismissed locally, without marking them played/read or changing Saved, feed pages,
   or playback bookmarks. New IDs remain eligible for Latest.
@@ -254,9 +258,9 @@ Feed headers have a management menu beside the title, matching iOS. Manage sourc
 shows the bundled source and explains the preview boundary; Unsubscribe is disabled
 with an account-required explanation. Combining, separating, and unsubscribing
 require a connected account rather than mutating the fixed sample catalogue.
-Settings shows the account, conversation, assistant, and newsletter sections with
-explicit unavailable states until their integrations exist; it does not present
-fake sign-out, account deletion, or consent controls.
+Settings links to Sign-in Methods for Apple and Google sign-in, connected provider status,
+real account sign-out and deletion. Conversation, assistant, newsletters, and
+consent retain explicit unavailable states until their integrations exist.
 
 ## Settings parity
 
@@ -273,17 +277,17 @@ article start, including regeneration of cached narration from its text bookmark
 Voice previews use transient audio focus and stop when Settings leaves the
 foreground. Voice downloads return to a refreshed catalogue.
 
-Conversation timing, Android assistant integration, newsletter addresses, sign-in,
-account deletion, and AI consent still require their corresponding Android
-integrations. The Settings sections make those boundaries visible. Siri itself
+Conversation timing, Android assistant integration, newsletter addresses, and AI
+consent still require their corresponding Android integrations. The Settings sections make those boundaries visible. Siri itself
 is iOS-only. Privacy/support links use the same destinations as the Swift client.
 
 ## Deliberate prototype boundaries
 
 The sample repository supplies playable content; locally captured URLs stay in
 their separate pending inbox until account and article processing are connected.
-There is no Google sign-in,
-live backend access, feed discovery, cloud progress reporting, incoming share
+Apple and Google sign-in and account controls use the backend when configured (see
+[sign-in setup](../docs/sign-in.md)); the library remains sample-only. There is no
+live library loading, feed discovery, cloud progress reporting, incoming share
 capture from other apps, podcast downloading, Gemini integration, or microphone
 recording in this version. Internet access is used for HTTPS article images and embedded videos; the
 manifest does not request microphone access. Settings identifies this as a sample library. Backups and device transfers of
@@ -324,7 +328,7 @@ Bluetooth routing, TalkBack speech arbitration, battery use, or long screen-off
 sessions. On the Pixel, verify those first, then an incoming call, interruption
 recovery, and process-death resume. Borrow a Samsung before broad release.
 
-The next functional work is the account-linking flow, a backend-backed repository,
+The next functional work is a backend-backed repository,
 safe progress synchronisation, and microphone/confirmation/TalkBack coordination.
 Keep AppFunctions an optional adapter over the same action layer.
 
@@ -332,3 +336,31 @@ Following has a leading Add sources action. Feed or website addresses are valida
 and saved in a separate local inbox, listed as pending sources and removable from
 that list. They never become Saved articles or simulated subscriptions. Feed
 discovery, name search, and subscribing require the future account connection.
+
+## Accounts and linked sign-in
+
+Settings → Sign-in Methods opens the account screen. Apple uses a browser Custom
+Tab with a backend code exchange and private app completion proof. Google uses
+Credential Manager. Both produce a Magpie session encrypted using Android
+Keystore with the API server as authenticated data.
+A token saved for one server cannot be replayed by changing the build's server.
+Cancellation leaves the account unchanged. Sign-out forgets the local session
+immediately and attempts server revocation; account deletion requires confirmation
+and only clears the session after the server confirms deletion.
+
+Existing Apple users can sign in directly on Android when the backend's Apple
+Services ID is associated with the iOS App ID. Either provider can be connected
+from an existing account on either platform. Android retains encrypted pending
+Apple attempts across process recreation, offers cancellation and retry, and
+rejects expired or mismatched attempts. The browser return carries no credentials.
+Both connected providers are listed on Android. Accounts already created
+separately are not merged; the server returns a conflict without moving data.
+
+Debug builds default to the registered Google server client and staging backend.
+The local debug signing certificate is registered; other machines need their own
+fingerprint added. `MAGPIE_GOOGLE_SERVER_CLIENT_ID` and `MAGPIE_ACCOUNT_API_URL`
+Gradle properties override these defaults, including empty values to disable them.
+Release defaults remain blank until a release signing certificate is registered.
+The new backend must be deployed before either sign-in flow can complete. See [setup and acceptance checks](../docs/sign-in.md).
+Signing in does not attach sample content or local preview bookmarks to a real
+account. Live library loading is the next part of parity item 1.

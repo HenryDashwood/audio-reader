@@ -8,6 +8,7 @@ test long before it fails a user.
 """
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import logfire
 import pytest
@@ -164,6 +165,25 @@ class TestPrivacy:
     request span unless told otherwise, and for `POST /command` those arguments
     are the transcript *and* the `User` row, email included.
     """
+
+    @pytest.mark.parametrize(
+        "path", ["/auth/apple/browser/complete", "/auth/apple/browser/cancel", "/me/identities/apple"]
+    )
+    def test_sign_in_validation_never_records_proof(self, path):
+        attributes = telemetry._request_attributes(
+            SimpleNamespace(url=SimpleNamespace(path=path)),
+            {
+                "errors": [
+                    {
+                        "type": "string_pattern_mismatch",
+                        "loc": ["body", "verifier"],
+                        "input": "private completion proof",
+                        "ctx": {"value": "private proof"},
+                    }
+                ]
+            },
+        )
+        assert attributes == {"errors": [{"type": "string_pattern_mismatch", "loc": ["body", "verifier"]}]}
 
     async def test_transcript_is_recorded(self, capfire, client, fake_llm, library):
         # Disclosed under "Keeping the app working" in static/privacy.html, and

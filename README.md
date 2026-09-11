@@ -734,6 +734,15 @@ To restore one:
 pg_restore --no-owner --no-privileges -d '<target database url>' hearful-<stamp>.dump
 ```
 
+### Apple, Google, and linked accounts
+
+Both clients support Apple and Google against the same account system, with
+explicit linking in Settings → Sign-in Methods. Android uses Apple's browser
+authorization; iOS keeps native Apple sign-in. See
+[provider setup and acceptance checks](docs/sign-in.md) for the Apple Services ID,
+Google client IDs, and backend migration required before enabling these flows.
+Android's live library connection remains outstanding.
+
 ### Revoking Sign in with Apple on account deletion
 
 App Store guideline 5.1.1(v) asks that deleting an account also revokes the

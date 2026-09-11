@@ -172,6 +172,12 @@ class Settings(BaseSettings):
     # Sign in with Apple: identity tokens are verified against Apple's public
     # keys, with the app's bundle id as the required audience. No secret needed.
     apple_bundle_id: str = "com.henrydashwood.hearful"
+    # Both native Google SDKs request tokens for this web/server client ID.
+    # Blank disables Google without affecting existing Apple sign-in.
+    google_client_id: str = ""
+    # Browser authorization on Android uses a Services ID grouped with the iOS App ID.
+    apple_services_id: str = ""
+    apple_browser_redirect_uri: str = ""
     apple_jwks_url: str = "https://appleid.apple.com/auth/keys"
 
     # Telling Apple when an account is deleted (guideline 5.1.1(v)) does need a
@@ -184,6 +190,9 @@ class Settings(BaseSettings):
     apple_private_key: str = ""  # the .p8 file's contents
     apple_token_url: str = "https://appleid.apple.com/auth/token"
     apple_revoke_url: str = "https://appleid.apple.com/auth/revoke"
+    # Staging needs code exchange for Android, but must not revoke the shared
+    # Apple app authorization when a staging-only Magpie account is deleted.
+    apple_revoke_on_account_deletion: bool = True
 
     @field_validator("apple_private_key")
     @classmethod

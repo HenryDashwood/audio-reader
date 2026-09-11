@@ -1,9 +1,8 @@
 import AuthenticationServices
 import SwiftUI
+import GoogleSignInSwift
 
-/// The gate shown until a session exists. One button, nothing to type: the
-/// native Sign in with Apple sheet is fully VoiceOver-accessible and works
-/// with Face ID alone.
+/// The gate shown until a session exists. Both providers use their native authorization flow.
 struct SignInView: View {
     @ObservedObject var auth: AuthController
     @Environment(\.colorScheme) private var colorScheme
@@ -14,6 +13,14 @@ struct SignInView: View {
     private static let contentWidth: CGFloat = 420
 
     var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                content.frame(minHeight: geometry.size.height)
+            }
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 24) {
             Spacer()
             Image("MagpieMark")
@@ -45,6 +52,18 @@ struct SignInView: View {
             .frame(height: 56)
             .padding(.horizontal, 32)
 
+            .disabled(auth.isAuthenticating)
+            GoogleSignInButton(scheme: colorScheme == .dark ? .dark : .light) {
+                Task { await auth.signInWithGoogle() }
+            }
+            .frame(minHeight: 48)
+            .padding(.horizontal, 32)
+            .disabled(auth.isAuthenticating || !auth.googleIsConfigured)
+            if !auth.googleIsConfigured {
+                Text("Google sign-in is not available in this build yet.")
+                    .font(.footnote).multilineTextAlignment(.center).padding(.horizontal, 32)
+            }
+            if auth.isAuthenticating { ProgressView("Signing in…") }
             Spacer().frame(height: 48)
         }
         // Centred and capped rather than full-bleed: on an iPad in landscape

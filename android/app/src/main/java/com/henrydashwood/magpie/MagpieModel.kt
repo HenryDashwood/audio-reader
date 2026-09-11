@@ -95,6 +95,8 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
 
     private fun updatePlayer() {
         mutableSettings.value = readSettings()
+        // Playback can finish in the service while the activity is backgrounded.
+        mutableFinished.value = store.finished
         val media = controller ?: return
         mutablePlayer.value = PlayerState(
             item = library.find { it.id == (preparation.value.itemId ?: media.currentMediaItem?.mediaId ?: store.lastItem) },

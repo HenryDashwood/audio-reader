@@ -31,7 +31,7 @@ import com.henrydashwood.magpie.playback.SpeechVoices
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(model: MagpieModel) {
+fun SettingsScreen(model: MagpieModel, onAccount: () -> Unit) {
     val preferences by model.settings.collectAsStateWithLifecycle()
     val voices by model.voices.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -94,7 +94,7 @@ fun SettingsScreen(model: MagpieModel) {
         item { ListItem(headlineContent = { Text("AI Data Sharing") }, supportingContent = { Text("Off · Voice requests are not connected") }) }
         item { SettingsFootnote("Article narration and voice previews run on this device. No account or library data is sent to an AI service in this preview.") }
         item { HorizontalDivider(); SettingsHeading("Account") }
-        item { ListItem(headlineContent = { Text("Not signed in") }, supportingContent = { Text("Sign-in, sign-out and account deletion are not connected in this preview.") }) }
+        item { SettingsAction("Sign-in Methods", Icons.Rounded.AccountCircle, onAccount) }
         if (linkError != null) item { SettingsFootnote(linkError!!, error = true) }
         item { SettingsFootnote("Android preview · Sample library") }
     }

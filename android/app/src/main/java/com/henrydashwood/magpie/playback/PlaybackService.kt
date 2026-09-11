@@ -63,7 +63,7 @@ class PlaybackService : MediaSessionService() {
     private var rendered: RenderedArticle? = null
     private val library = SampleLibrary()
     private var sleepJob: Job? = null
-    private val sleepFeedback = SleepTimerFeedback(scope)
+    private val feedback = PlaybackFeedback(scope)
     private val sleepTimer = SleepTimer(SystemClock::elapsedRealtime,
         changed = { PlaybackStatus.mutableSleepTimer.value = it }, expired = ::expireSleepTimer)
 
@@ -89,7 +89,7 @@ class PlaybackService : MediaSessionService() {
                     current?.let { store.saveSpeed(it.kind, parameters.speed) }
                 }
                 override fun onPlaybackStateChanged(playbackState: Int) {
-                    if (playbackState == Player.STATE_ENDED) persist(completed = true)
+                    if (playbackState == Player.STATE_ENDED) finishPlayback()
                 }
                 override fun onPlayerError(error: PlaybackException) {
                     PlaybackStatus.mutable.value = Preparation(error = "Playback stopped. Open the item and try again.")
@@ -155,6 +155,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun play(item: LibraryItem) {
+        feedback.close()
         // Clear an elapsed deadline before a new, explicit request to listen.
         sleepTimer.check()
         if (current?.id == item.id && player.playbackState != Player.STATE_IDLE && PlaybackStatus.state.value.message == null &&
@@ -212,6 +213,18 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private fun finishPlayback() {
+        val item = current ?: return
+        if (player.currentMediaItem?.mediaId != item.id) return
+        store.finished = store.finished + item.id
+        // Reset the bookmark before clearing current, so a later explicit Play
+        // starts at the beginning. Clearing also prevents callbacks from writing
+        // the ended clock over that bookmark or restoring the finished player.
+        persist(completed = true)
+        dismissPlayer()
+        feedback.finished()
+    }
+
     private fun dismissPlayer() {
         // Keep each item's bookmark, but forget what to restore into the mini player.
         persist(completed = player.playbackState == Player.STATE_ENDED)
@@ -252,7 +265,7 @@ class PlaybackService : MediaSessionService() {
         PlaybackStatus.mutable.value = Preparation()
         player.pause()
         persist()
-        if (wasPlaying) sleepFeedback.finished()
+        if (wasPlaying) feedback.finished()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
@@ -261,7 +274,7 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         persist(completed = player.playbackState == Player.STATE_ENDED)
         cancelSleepTimer()
-        sleepFeedback.close()
+        feedback.close()
         scope.cancel()
         renderer.close()
         session.release()

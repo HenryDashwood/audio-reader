@@ -15,10 +15,17 @@
         android:label="Magpie Preview"
         android:supportsRtl="true"
         android:theme="@style/Theme.Magpie">
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- This return link opens account UI only. It contains no credentials. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${applicationId}.auth" android:host="apple-sign-in" />
             </intent-filter>
         </activity>
         <!-- Media controls need an exported service; onGetSession rejects untrusted callers. -->

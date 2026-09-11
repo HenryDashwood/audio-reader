@@ -19,7 +19,12 @@ Keep the production address stable: already-installed apps use it.
 Staging requires ordinary Sign in with Apple. The development auth bypass stays
 disabled. Its Apple revocation credentials and inbound newsletter integration are
 blank, so deleting a staging account cannot revoke the app's production Apple
-authorization and staging cannot receive production newsletters. Background feed
+authorization and staging cannot receive production newsletters. Android Apple
+browser sign-in also needs those Apple credentials for code exchange. Before
+adding them, deploy the account-deletion revocation guard and verify
+`AUDIOREADER_APPLE_REVOKE_ON_ACCOUNT_DELETION=false` in staging. Use a separate
+staging token encryption key, and never roll back to code without that guard
+while the Apple key is present. See [sign-in rollout](sign-in.md). Background feed
 polling runs every 15 minutes (`AUDIOREADER_POLL_INTERVAL_SECONDS=900`); the first
 pass starts 15 minutes after backend startup. Logfire reporting remains disabled.
 The existing LLM vendor keys are shared for

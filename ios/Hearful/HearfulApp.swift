@@ -1,4 +1,5 @@
 import SwiftUI
+import GoogleSignIn
 
 @main
 struct HearfulApp: App {
@@ -24,6 +25,7 @@ struct HearfulApp: App {
                         .environmentObject(auth)
                 }
             }
+            .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
             .task {
                 auth.bootstrap()
                 await ObsoleteVoiceCleanup.remove()

@@ -11,12 +11,14 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader import secrets_store
-from audioreader.auth.apple import AppleIdentity
+from audioreader.auth.identity import VerifiedIdentity
 from audioreader.config import settings
 from audioreader.models import (
+    AppleBrowserFlow,
     AuthSession,
     PlaybackPosition,
     Subscription,
@@ -74,9 +76,10 @@ def hash_token(token: str) -> str:
 
 async def login(
     session: AsyncSession,
-    identity: AppleIdentity,
+    identity: VerifiedIdentity,
     provider: str = "apple",
     refresh_token: str | None = None,
+    refresh_token_client_id: str | None = None,
 ) -> tuple[User, str]:
     """Find or create the user for a verified identity; mint a session token.
 
@@ -95,6 +98,7 @@ async def login(
         user = await session.get_one(User, existing.user_id)
         if refresh_token:
             existing.refresh_token = secrets_store.encrypt(refresh_token)
+            existing.refresh_token_client_id = refresh_token_client_id or settings.apple_bundle_id
     else:
         user = User()
         session.add(user)
@@ -105,6 +109,7 @@ async def login(
                 provider_subject=identity.subject,
                 email=identity.email,
                 refresh_token=secrets_store.encrypt(refresh_token) if refresh_token else None,
+                refresh_token_client_id=refresh_token_client_id if refresh_token else None,
             )
         )
         if user.email is None:
@@ -115,6 +120,66 @@ async def login(
     session.add(AuthSession(token_hash=hash_token(raw_token), user=user))
     await session.commit()
     return user, raw_token
+
+
+class IdentityAlreadyLinked(Exception):
+    pass
+
+
+async def link_identity(
+    session: AsyncSession,
+    user: User,
+    identity: VerifiedIdentity,
+    provider: str,
+    refresh_token: str | None = None,
+    refresh_token_client_id: str | None = None,
+) -> None:
+    """Link verified credentials to the authenticated account, never merge users."""
+    user_id = user.id
+    existing = await session.scalar(
+        select(UserIdentity).where(
+            UserIdentity.provider == provider,
+            UserIdentity.provider_subject == identity.subject,
+        )
+    )
+    if existing is not None:
+        if existing.user_id != user_id:
+            raise IdentityAlreadyLinked("This sign-in is already linked to another Magpie account.")
+        if refresh_token:
+            existing.refresh_token = secrets_store.encrypt(refresh_token)
+            existing.refresh_token_client_id = refresh_token_client_id or settings.apple_bundle_id
+        await session.commit()
+        return
+    session.add(
+        UserIdentity(
+            user_id=user_id,
+            provider=provider,
+            provider_subject=identity.subject,
+            email=identity.email,
+            refresh_token=secrets_store.encrypt(refresh_token) if refresh_token else None,
+            refresh_token_client_id=refresh_token_client_id if refresh_token else None,
+        )
+    )
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # Another request may have linked this identity while we verified it.
+        # The database's unique(provider, subject) constraint is authoritative.
+        await session.rollback()
+        existing = await session.scalar(
+            select(UserIdentity).where(
+                UserIdentity.provider == provider,
+                UserIdentity.provider_subject == identity.subject,
+            )
+        )
+        if existing is not None and existing.user_id == user_id:
+            await session.refresh(user)
+            return
+        raise IdentityAlreadyLinked("This sign-in is already linked to another Magpie account.") from exc
+
+
+async def identity_providers(session: AsyncSession, user: User) -> list[str]:
+    return sorted(set(await session.scalars(select(UserIdentity.provider).where(UserIdentity.user_id == user.id))))
 
 
 def _as_aware(value: datetime) -> datetime:
@@ -172,10 +237,23 @@ async def provider_refresh_tokens(session: AsyncSession, user: User) -> list[str
     """
     stored = await session.scalars(
         select(UserIdentity.refresh_token).where(
-            UserIdentity.user_id == user.id, UserIdentity.refresh_token.is_not(None)
+            UserIdentity.user_id == user.id, UserIdentity.provider == "apple", UserIdentity.refresh_token.is_not(None)
         )
     )
     return [token for token in (secrets_store.decrypt(value) for value in stored) if token]
+
+
+async def apple_refresh_grants(session: AsyncSession, user: User) -> list[tuple[str, str]]:
+    rows = await session.execute(
+        select(UserIdentity.refresh_token_client_id, UserIdentity.refresh_token).where(
+            UserIdentity.user_id == user.id, UserIdentity.provider == "apple"
+        )
+    )
+    return [
+        (client_id or settings.apple_bundle_id, token)
+        for client_id, value in rows
+        if (token := secrets_store.decrypt(value))
+    ]
 
 
 async def delete_user(session: AsyncSession, user: User) -> None:
@@ -192,7 +270,7 @@ async def delete_user(session: AsyncSession, user: User) -> None:
     from audioreader.models import ArticleContent, Episode, SavedArticle
 
     saved_ids = list(await session.scalars(select(SavedArticle.episode_id).where(SavedArticle.user_id == user.id)))
-    for table in (SavedArticle, PlaybackPosition, Subscription, AuthSession, UserIdentity):
+    for table in (SavedArticle, PlaybackPosition, Subscription, AppleBrowserFlow, AuthSession, UserIdentity):
         await session.execute(delete(table).where(table.user_id == user.id))
     await session.execute(delete(ArticleContent).where(ArticleContent.owner_user_id == user.id))
     await session.execute(

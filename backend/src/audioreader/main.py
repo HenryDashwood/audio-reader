@@ -132,6 +132,9 @@ def create_app() -> FastAPI:
         """Public help and contact details for the App Store listing."""
         return FileResponse(STATIC_DIR / "support.html", media_type="text/html")
 
+    from audioreader.routers import apple_browser
+
+    app.include_router(apple_browser.router)
     app.include_router(auth.router)
     app.include_router(saved.router)
     app.include_router(feeds.router)

@@ -171,6 +171,7 @@ struct SettingsView: View {
                 }
 
                 Section("Account") {
+                    NavigationLink("Sign-in Methods") { SignInMethodsView(auth: auth) }
                     Button("Sign Out", role: .destructive) {
                         Task { await auth.signOut() }
                     }

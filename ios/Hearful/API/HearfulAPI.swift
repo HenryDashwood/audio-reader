@@ -66,6 +66,9 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
     /// backend can hold something revocable for account deletion. Optional:
     /// sign-in works without it.
     func login(appleIdentityToken: String, authorizationCode: String?) async throws -> AuthResponse
+    func login(googleIdentityToken: String) async throws -> AuthResponse
+    func linkedIdentities() async throws -> LinkedIdentities
+    func linkIdentity(provider: String, identityToken: String, authorizationCode: String?) async throws -> LinkedIdentities
     func logout() async throws
     func me() async throws -> UserInfo
     /// Records or withdraws the explicit choice required before a transcript
@@ -87,6 +90,15 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
 }
 
 extension HearfulAPIProtocol {
+    func login(googleIdentityToken: String) async throws -> AuthResponse {
+        throw APIError(underlying: "Google sign-in is unavailable.")
+    }
+    func linkedIdentities() async throws -> LinkedIdentities {
+        throw APIError(underlying: "Sign-in methods are unavailable.")
+    }
+    func linkIdentity(provider: String, identityToken: String, authorizationCode: String?) async throws -> LinkedIdentities {
+        throw APIError(underlying: "Account linking is unavailable.")
+    }
     func articleText(episodeID: Int, contentID: Int?) async throws -> EpisodeText {
         try await articleText(episodeID: episodeID)
     }
@@ -608,6 +620,29 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         var request = URLRequest(url: baseURL.appendingPathComponent("auth/logout"))
         request.httpMethod = "POST"
         try await perform(request)
+    }
+
+    func login(googleIdentityToken: String) async throws -> AuthResponse {
+        var request = URLRequest(url: baseURL.appendingPathComponent("auth/google"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["identity_token": googleIdentityToken])
+        return try await send(request)
+    }
+
+    func linkedIdentities() async throws -> LinkedIdentities {
+        try await send(URLRequest(url: baseURL.appendingPathComponent("me/identities")))
+    }
+
+    func linkIdentity(provider: String, identityToken: String, authorizationCode: String?) async throws -> LinkedIdentities {
+        guard ["apple", "google"].contains(provider) else { throw APIError(underlying: "Unknown sign-in provider") }
+        var request = URLRequest(url: baseURL.appendingPathComponent("me/identities/\(provider)"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var body = ["identity_token": identityToken]
+        if let authorizationCode { body["authorization_code"] = authorizationCode }
+        request.httpBody = try JSONEncoder().encode(body)
+        return try await send(request)
     }
 
     func libraryAction(_ action: String, episodeID: Int?, requestID: String) async throws -> CommandResponse {

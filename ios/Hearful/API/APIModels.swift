@@ -211,6 +211,10 @@ nonisolated struct AuthResponse: Decodable {
     let user: UserInfo
 }
 
+nonisolated struct LinkedIdentities: Decodable, Equatable {
+    let providers: [String]
+}
+
 nonisolated struct UserInfo: Decodable, Equatable {
     let id: String
     let displayName: String?

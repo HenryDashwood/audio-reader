@@ -262,6 +262,14 @@ class AppleLoginRequest(BaseModel):
     authorization_code: str | None = None
 
 
+class GoogleLoginRequest(BaseModel):
+    identity_token: str = Field(min_length=1, max_length=16384)
+
+
+class LinkedIdentitiesRead(BaseModel):
+    providers: list[str]
+
+
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

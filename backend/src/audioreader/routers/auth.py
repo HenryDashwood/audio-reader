@@ -14,12 +14,16 @@ from audioreader.auth.apple import (
     get_verifier,
 )
 from audioreader.auth.dependencies import bearer, get_current_user
+from audioreader.auth.google import GoogleTokenVerifier, GoogleVerificationError, get_google_verifier
+from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.models import User, utcnow
 from audioreader.schemas import (
     AIDataSharingConsentUpdate,
     AppleLoginRequest,
     AuthResponse,
+    GoogleLoginRequest,
+    LinkedIdentitiesRead,
     UserRead,
 )
 
@@ -31,6 +35,7 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 Verifier = Annotated[AppleTokenVerifier, Depends(get_verifier)]
 Revoker = Annotated[AppleRevoker | None, Depends(get_revoker)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
+GoogleVerifier = Annotated[GoogleTokenVerifier, Depends(get_google_verifier)]
 
 # Increment this whenever the consent screen's description of the data or the
 # receiving providers changes materially. Existing permission then stops being
@@ -87,6 +92,62 @@ async def logout(
         await service.revoke(session, credentials.credentials)
 
 
+async def verified_google(body: GoogleLoginRequest, verifier: GoogleTokenVerifier, failure_status: int = 401):
+    if not settings.google_client_id:
+        raise HTTPException(status_code=503, detail={"spoken_response": "Google sign-in is not available yet."})
+    try:
+        return await verifier.verify(body.identity_token)
+    except GoogleVerificationError as exc:
+        raise HTTPException(
+            status_code=failure_status,
+            detail={"spoken_response": "Google sign-in could not be verified. Please try again."},
+        ) from exc
+
+
+@router.post("/auth/google", response_model=AuthResponse)
+async def google_login(body: GoogleLoginRequest, session: Session, verifier: GoogleVerifier) -> AuthResponse:
+    identity = await verified_google(body, verifier)
+    user, token = await service.login(session, identity, provider="google")
+    return AuthResponse(token=token, user=user_read(user))
+
+
+@router.get("/me/identities", response_model=LinkedIdentitiesRead)
+async def linked_identities(session: Session, user: CurrentUser) -> LinkedIdentitiesRead:
+    return LinkedIdentitiesRead(providers=await service.identity_providers(session, user))
+
+
+@router.post("/me/identities/google", response_model=LinkedIdentitiesRead)
+async def link_google(
+    body: GoogleLoginRequest, session: Session, user: CurrentUser, verifier: GoogleVerifier
+) -> LinkedIdentitiesRead:
+    identity = await verified_google(body, verifier, failure_status=400)
+    try:
+        await service.link_identity(session, user, identity, "google")
+    except service.IdentityAlreadyLinked as exc:
+        raise HTTPException(status_code=409, detail={"spoken_response": str(exc)}) from exc
+    return await linked_identities(session, user)
+
+
+@router.post("/me/identities/apple", response_model=LinkedIdentitiesRead)
+async def link_apple(
+    body: AppleLoginRequest, session: Session, user: CurrentUser, verifier: Verifier, revoker: Revoker
+) -> LinkedIdentitiesRead:
+    try:
+        identity = await verifier.verify(body.identity_token)
+    except AppleVerificationError as exc:
+        raise HTTPException(
+            status_code=400, detail={"spoken_response": "Apple sign-in could not be verified. Please try again."}
+        ) from exc
+    refresh_token = (
+        await revoker.exchange_code(body.authorization_code) if revoker and body.authorization_code else None
+    )
+    try:
+        await service.link_identity(session, user, identity, "apple", refresh_token)
+    except service.IdentityAlreadyLinked as exc:
+        raise HTTPException(status_code=409, detail={"spoken_response": str(exc)}) from exc
+    return await linked_identities(session, user)
+
+
 @router.get("/me")
 async def me(user: CurrentUser) -> UserRead:
     """Cheap session probe: the app calls this at launch to notice a revoked
@@ -126,9 +187,12 @@ async def delete_me(session: Session, user: CurrentUser, revoker: Revoker) -> No
     token, the deletion goes ahead regardless. Erasing her data is the promise;
     reporting it upstream is courtesy, and courtesy does not get a veto.
     """
-    if revoker is not None:
-        for refresh_token in await service.provider_refresh_tokens(session, user):
-            if not await revoker.revoke(refresh_token):
+    if revoker is not None and settings.apple_revoke_on_account_deletion:
+        from audioreader.routers.apple_browser import web_revoker
+
+        for client_id, refresh_token in await service.apple_refresh_grants(session, user):
+            grant_revoker = revoker if client_id == settings.apple_bundle_id else web_revoker(client_id)
+            if grant_revoker is None or not await grant_revoker.revoke(refresh_token):
                 logger.warning("could not revoke an Apple grant; deleting the account anyway")
 
     await service.delete_user(session, user)

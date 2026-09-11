@@ -1,7 +1,7 @@
 import AuthenticationServices
 import Foundation
 
-/// Owns the session: whether we are signed in, signing in with Apple, and
+/// Owns the session: whether we are signed in, linking sign-in methods, and
 /// signing out. The gate in HearfulApp switches on `state`.
 @MainActor
 final class AuthController: ObservableObject {
@@ -33,12 +33,20 @@ final class AuthController: ObservableObject {
         }
     }
 
+    @Published private(set) var isAuthenticating = false
+    @Published private(set) var linkedProviders: [String]?
+    @Published private(set) var linkingError: String?
+    var googleIsConfigured: Bool { google.isConfigured }
+
+    private let google: any GoogleAuthorizing
+    private var sessionGeneration = 0
     private let api: HearfulAPIProtocol
     private var authRequiredObserver: NSObjectProtocol?
     private var positionReporter: PositionReporter?
 
-    init(api: HearfulAPIProtocol = HearfulAPI()) {
+    init(api: HearfulAPIProtocol = HearfulAPI(), google: any GoogleAuthorizing = GoogleAuthorization()) {
         self.api = api
+        self.google = google
         authRequiredObserver = NotificationCenter.default.addObserver(
             forName: .hearfulAuthRequired, object: nil, queue: .main
         ) { [weak self] _ in
@@ -65,8 +73,11 @@ final class AuthController: ObservableObject {
     }
 
     func refreshUser() async {
+        let generation = sessionGeneration
         do {
-            user = try await api.me()
+            let refreshed = try await api.me()
+            guard generation == sessionGeneration, state == .signedIn else { return }
+            user = refreshed
         } catch let error as APIError where error.isAuthFailure {
             // The API client has already posted hearfulAuthRequired.
         } catch {
@@ -77,6 +88,10 @@ final class AuthController: ObservableObject {
 
     /// Handed the result of the native Sign in with Apple sheet.
     func completeSignIn(result: Result<ASAuthorization, Error>) async {
+        guard !isAuthenticating, state == .signedOut else { return }
+        isAuthenticating = true
+        defer { isAuthenticating = false }
+        let generation = sessionGeneration
         signInError = nil
         switch result {
         case .failure(let error):
@@ -103,11 +118,8 @@ final class AuthController: ObservableObject {
             do {
                 let response = try await api.login(
                     appleIdentityToken: identityToken, authorizationCode: authorizationCode)
-                KeychainTokenStore.token = response.token
-                user = response.user
-                state = .signedIn
-                ShortcutLibrary.shared.invalidate()
-                HearfulShortcuts.updateAppShortcutParameters()
+                guard generation == sessionGeneration else { return }
+                accept(response)
             } catch let error as APIError {
                 signInError = error.spokenResponse
             } catch {
@@ -116,7 +128,92 @@ final class AuthController: ObservableObject {
         }
     }
 
+    func signInWithGoogle() async {
+        guard !isAuthenticating, state == .signedOut else { return }
+        isAuthenticating = true
+        signInError = nil
+        let generation = sessionGeneration
+        defer { isAuthenticating = false }
+        do {
+            let token = try await google.identityToken()
+            guard generation == sessionGeneration else { return }
+            let response = try await api.login(googleIdentityToken: token)
+            guard generation == sessionGeneration else { return }
+            accept(response)
+        } catch is CancellationError {
+        } catch {
+            guard generation == sessionGeneration else { return }
+            signInError = (error as? APIError)?.spokenResponse ?? APIError.genericSpokenResponse
+        }
+    }
+
+    func refreshLinkedProviders() async {
+        guard state == .signedIn else { return }
+        let generation = sessionGeneration
+        linkingError = nil
+        do {
+            let response = try await api.linkedIdentities()
+            guard generation == sessionGeneration else { return }
+            linkedProviders = response.providers
+        } catch {
+            guard generation == sessionGeneration else { return }
+            linkingError = (error as? APIError)?.spokenResponse ?? APIError.genericSpokenResponse
+        }
+    }
+
+    func linkGoogle() async {
+        guard !isAuthenticating, state == .signedIn else { return }
+        isAuthenticating = true
+        linkingError = nil
+        let generation = sessionGeneration
+        defer { isAuthenticating = false }
+        do {
+            let token = try await google.identityToken()
+            guard generation == sessionGeneration, state == .signedIn else { return }
+            let response = try await api.linkIdentity(provider: "google", identityToken: token, authorizationCode: nil)
+            guard generation == sessionGeneration else { return }
+            linkedProviders = response.providers
+        } catch is CancellationError {
+        } catch {
+            guard generation == sessionGeneration else { return }
+            linkingError = (error as? APIError)?.spokenResponse ?? APIError.genericSpokenResponse
+        }
+    }
+
+    func linkApple(result: Result<ASAuthorization, Error>) async {
+        guard !isAuthenticating, state == .signedIn else { return }
+        isAuthenticating = true
+        linkingError = nil
+        let generation = sessionGeneration
+        defer { isAuthenticating = false }
+        do {
+            let authorization = try result.get()
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                let data = credential.identityToken, let token = String(data: data, encoding: .utf8)
+            else { throw APIError(spokenResponse: "Apple sign-in did not work. Please try again.", underlying: "Provider authorization failed", statusCode: 0) }
+            let code = credential.authorizationCode.flatMap { String(data: $0, encoding: .utf8) }
+            let response = try await api.linkIdentity(provider: "apple", identityToken: token, authorizationCode: code)
+            guard generation == sessionGeneration else { return }
+            linkedProviders = response.providers
+        } catch let error as ASAuthorizationError where error.code == .canceled {
+        } catch {
+            guard generation == sessionGeneration else { return }
+            linkingError = (error as? APIError)?.spokenResponse ?? APIError.genericSpokenResponse
+        }
+    }
+
+    private func accept(_ response: AuthResponse) {
+        sessionGeneration += 1
+        linkedProviders = nil
+        KeychainTokenStore.token = response.token
+        user = response.user
+        state = .signedIn
+        ShortcutLibrary.shared.invalidate()
+        HearfulShortcuts.updateAppShortcutParameters()
+    }
+
     func signOut() async {
+        sessionGeneration += 1
         // Best effort: revoking server-side matters less than forgetting the
         // token locally, and must not block signing out while offline.
         try? await api.logout()
@@ -143,6 +240,10 @@ final class AuthController: ObservableObject {
     }
 
     private func forgetSession() {
+        sessionGeneration += 1
+        google.signOut()
+        linkedProviders = nil
+        linkingError = nil
         KeychainTokenStore.clear()
         ShortcutLifecycle.resetSession()
         // The next person to sign in on this phone must not be shown the last

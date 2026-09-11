@@ -46,7 +46,8 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MagpieApp(model: MagpieModel) {
+fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
+    var showingAccount by rememberSaveable { mutableStateOf(false) }
     val saved by model.saved.collectAsStateWithLifecycle()
     val finished by model.finished.collectAsStateWithLifecycle()
     val dismissedFromLatest by model.dismissedFromLatest.collectAsStateWithLifecycle()
@@ -67,6 +68,12 @@ fun MagpieApp(model: MagpieModel) {
     val selectedItem = model.library.find { it.id == selectedItemId }
     val snackbar = remember { SnackbarHostState() }
     val followControl = remember { ArticleFollowControl() }
+    LaunchedEffect(appleReturn) { if (appleReturn > 0) showingAccount = true }
+    if (showingAccount) {
+        BackHandler { showingAccount = false }
+        com.henrydashwood.magpie.auth.AccountScreen(onBack = { showingAccount = false })
+        return
+    }
     LaunchedEffect(playback.item) { if (playback.item == null) showingPlayer = false }
     LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); model.dismissNotice() } }
     LaunchedEffect(preparation.error) { preparation.error?.let { snackbar.showSnackbar(it, duration = SnackbarDuration.Long) } }
@@ -136,7 +143,7 @@ fun MagpieApp(model: MagpieModel) {
                     ItemList(model.library.filter { it.id in saved && it.kind == ContentKind.Article }, saved, query, { selectedItemId = it.id }, model::play, model::toggleSaved, savedOnly = true, finished = finished, finish = model::toggleFinished,
                         pendingLinks = pendingLinks, removePendingLink = model::removePendingLink)
                 }
-                else -> SettingsScreen(model)
+                else -> SettingsScreen(model) { showingAccount = true }
             }
         }
     }

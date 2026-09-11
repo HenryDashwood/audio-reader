@@ -55,6 +55,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXBuildFile section */
+        DD0000000000000000000001 = {isa = PBXBuildFile; productRef = DD0000000000000000000002; };
+        DD0000000000000000000003 = {isa = PBXBuildFile; productRef = DD0000000000000000000004; };
         BB0000000000000000000001 = {isa = PBXBuildFile; fileRef = BB0000000000000000000002; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
         BB0000000000000000000003 = {isa = PBXBuildFile; fileRef = BB0000000000000000000004; };
 /* End PBXBuildFile section */
@@ -96,6 +98,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+                DD0000000000000000000001,
+                DD0000000000000000000003,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -158,6 +162,8 @@
 			);
 			name = Hearful;
 			packageProductDependencies = (
+                DD0000000000000000000002,
+                DD0000000000000000000004,
 			);
 			productName = Hearful;
 			productReference = AA00000000000000000000D2 /* Magpie.app */;
@@ -219,6 +225,7 @@
 			mainGroup = AA00000000000000000000C1;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+                DD0000000000000000000005,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA00000000000000000000C2 /* Products */;
@@ -401,6 +408,9 @@
 				);
 				MARKETING_VERSION = 1.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful;
+				GOOGLE_SERVER_CLIENT_ID = "102154849961-o07dgdc8ltoescp4p3k9knl8rlm1l4m7.apps.googleusercontent.com";
+				GOOGLE_IOS_CLIENT_ID = "102154849961-qfipdjtga90po55ge81gej1jkcahaj8h.apps.googleusercontent.com";
+				GOOGLE_REVERSED_CLIENT_ID = "com.googleusercontent.apps.102154849961-qfipdjtga90po55ge81gej1jkcahaj8h";
 				PRODUCT_MODULE_NAME = Hearful;
 				PRODUCT_NAME = Magpie;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -438,6 +448,9 @@
 				);
 				MARKETING_VERSION = 1.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful;
+				GOOGLE_SERVER_CLIENT_ID = "102154849961-o07dgdc8ltoescp4p3k9knl8rlm1l4m7.apps.googleusercontent.com";
+				GOOGLE_IOS_CLIENT_ID = "102154849961-qfipdjtga90po55ge81gej1jkcahaj8h.apps.googleusercontent.com";
+				GOOGLE_REVERSED_CLIENT_ID = "com.googleusercontent.apps.102154849961-qfipdjtga90po55ge81gej1jkcahaj8h";
 				PRODUCT_MODULE_NAME = Hearful;
 				PRODUCT_NAME = Magpie;
 				PROVISIONING_PROFILE_SPECIFIER = "$(HEARFUL_APP_PROFILE_UUID)";
@@ -545,6 +558,9 @@
 		};
         BB000000000000000000000B = {isa = XCConfigurationList; buildConfigurations = (BB000000000000000000000C, BB000000000000000000000D, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
+        DD0000000000000000000005 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/google/GoogleSignIn-iOS"; requirement = {kind = exactVersion; version = 9.0.0; }; };
+        DD0000000000000000000002 = {isa = XCSwiftPackageProductDependency; package = DD0000000000000000000005; productName = GoogleSignIn; };
+        DD0000000000000000000004 = {isa = XCSwiftPackageProductDependency; package = DD0000000000000000000005; productName = GoogleSignInSwift; };
 	};
 	rootObject = AA00000000000000000000C0 /* Project object */;
 }

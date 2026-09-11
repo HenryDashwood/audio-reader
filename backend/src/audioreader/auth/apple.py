@@ -44,7 +44,7 @@ class AppleTokenVerifier:
         self._keys: dict[str, jwt.PyJWK] = {}
         self._fetched_at: float = 0.0
 
-    async def verify(self, identity_token: str) -> AppleIdentity:
+    async def verify(self, identity_token: str, *, nonce: str | None = None) -> AppleIdentity:
         try:
             header = jwt.get_unverified_header(identity_token)
         except jwt.InvalidTokenError as exc:
@@ -62,10 +62,15 @@ class AppleTokenVerifier:
                 algorithms=["RS256"],
                 audience=self.audience,
                 issuer=APPLE_ISSUER,
+                options={"require": ["sub", "aud", "iss", "exp"]},
             )
         except jwt.InvalidTokenError as exc:
             raise AppleVerificationError(f"token rejected: {exc}") from exc
 
+        if not isinstance(claims["sub"], str) or not claims["sub"].strip():
+            raise AppleVerificationError("missing Apple subject")
+        if nonce is not None and claims.get("nonce") != nonce:
+            raise AppleVerificationError("Apple sign-in does not match this browser request")
         return AppleIdentity(subject=claims["sub"], email=claims.get("email"))
 
     async def _key_for(self, kid: str) -> jwt.PyJWK:

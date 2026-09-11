@@ -64,10 +64,13 @@
 <h2>What we collect, and why</h2>
 <ul>
   <li>
-    <strong>Your email address and an Apple account identifier.</strong> These
-    come from Sign in with Apple when you create an account. If you chose to
-    hide your email, we only ever see Apple's private relay address. We use
-    these to know which account is yours and nothing else.
+    <strong>Your email address and sign-in provider identifiers.</strong> These
+    come from Apple or Google when you sign in or connect a sign-in method.
+    If you hide your email with Apple, we only see Apple's private relay address.
+    We use provider identifiers to recognise your account. Connecting Apple and
+    Google requires signing in with the additional provider while already signed
+    in to Magpie; matching email addresses alone do not connect accounts.
+    We do not request access to your Google mail, files, or contacts.
   </li>
   <li>
     <strong>The shows you subscribe to.</strong> So your library is there when
@@ -207,6 +210,10 @@
     back to Apple's servers.
   </li>
   <li>
+    <strong>Google</strong> — authentication when you choose Google sign-in.
+    See <a href="https://policies.google.com/privacy">Google's privacy policy</a>.
+  </li>
+  <li>
     <strong>OpenAI</strong> — your spoken requests as text and the relevant
     library details described above, and the publication name from an explicit
     web search. OpenAI does not receive microphone audio.
@@ -266,7 +273,9 @@
   Open <strong>Settings</strong> in the app and choose
   <strong>Delete Account</strong>.
   This permanently removes your account, your subscriptions and your place in
-  every episode, and asks Apple to revoke the Sign in with Apple connection. It
+  every episode, and all linked sign-in identities. When an Apple connection is
+  present, Magpie also asks Apple to revoke it. Deletion applies to the same
+  account on both iOS and Android. It
   also deletes the only mapping between your account and its random diagnostic
   identifier. Existing diagnostic records then remain only under that random
   code until their 30-day expiry and are no longer connected through Magpie's

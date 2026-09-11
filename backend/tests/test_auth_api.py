@@ -26,6 +26,7 @@ from audioreader.auth.apple import (
     get_revoker,
     get_verifier,
 )
+from audioreader.auth.google import GoogleTokenVerifier, get_google_verifier
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.main import create_app
@@ -94,13 +95,16 @@ def make_identity_token(apple_keys):
 
 
 @pytest.fixture
-async def auth_client(session: AsyncSession, apple_keys) -> AsyncIterator[AsyncClient]:
+async def auth_client(session: AsyncSession, apple_keys, monkeypatch) -> AsyncIterator[AsyncClient]:
     _, jwks = apple_keys
     app = create_app()
     app.dependency_overrides[get_session] = lambda: session
     # Fresh verifier per test: no JWKS cache bleeding between tests.
     verifier = AppleTokenVerifier(audience=settings.apple_bundle_id, jwks_url=JWKS_URL)
     app.dependency_overrides[get_verifier] = lambda: verifier
+    monkeypatch.setattr(settings, "google_client_id", "google-server-client")
+    google = GoogleTokenVerifier("google-server-client", JWKS_URL)
+    app.dependency_overrides[get_google_verifier] = lambda: google
     transport = ASGITransport(app=app)
     with respx.mock:
         respx.get(JWKS_URL).mock(return_value=Response(200, json=jwks))
@@ -473,3 +477,122 @@ class TestAppleRevocation:
         await session.commit()
 
         assert (await auth_client.get("/me")).status_code == 401
+
+
+@pytest.fixture
+def google_token(apple_keys):
+    private_key, _ = apple_keys
+
+    def make(subject="google-subject-1", **overrides):
+        claims = {
+            "sub": subject,
+            "aud": "google-server-client",
+            "iss": "https://accounts.google.com",
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 600,
+            "email": "user@example.com",
+            "email_verified": True,
+        } | overrides
+        return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": KID})
+
+    return make
+
+
+class TestLinkedSignIn:
+    async def test_apple_user_can_link_google_and_sign_in_with_either(
+        self, auth_client, make_identity_token, google_token, session
+    ):
+        apple = (await login(auth_client, make_identity_token())).json()
+        headers = {"Authorization": f"Bearer {apple['token']}"}
+        assert (await auth_client.get("/me/identities", headers=headers)).json() == {"providers": ["apple"]}
+        for _ in range(2):
+            response = await auth_client.post(
+                "/me/identities/google", headers=headers, json={"identity_token": google_token()}
+            )
+            assert response.status_code == 200
+            assert response.json() == {"providers": ["apple", "google"]}
+        google = await auth_client.post("/auth/google", json={"identity_token": google_token()})
+        assert google.status_code == 200
+        assert google.json()["user"]["id"] == apple["user"]["id"]
+        assert (await login(auth_client, make_identity_token())).json()["user"]["id"] == apple["user"]["id"]
+        assert await session.scalar(select(func.count(User.id))) == 1
+        assert await session.scalar(select(func.count(UserIdentity.id))) == 2
+        assert google.json()["user"]["ai_data_sharing_consented"] is False
+
+    async def test_google_user_can_link_apple(self, auth_client, make_identity_token, google_token):
+        google = (await auth_client.post("/auth/google", json={"identity_token": google_token()})).json()
+        headers = {"Authorization": f"Bearer {google['token']}"}
+        response = await auth_client.post(
+            "/me/identities/apple", headers=headers, json={"identity_token": make_identity_token()}
+        )
+        assert response.status_code == 200
+        assert response.json() == {"providers": ["apple", "google"]}
+        assert (await login(auth_client, make_identity_token())).json()["user"]["id"] == google["user"]["id"]
+
+    async def test_same_email_does_not_merge_accounts_and_conflict_preserves_both(
+        self, auth_client, make_identity_token, google_token, session
+    ):
+        apple = (await login(auth_client, make_identity_token())).json()
+        google = (await auth_client.post("/auth/google", json={"identity_token": google_token()})).json()
+        assert apple["user"]["id"] != google["user"]["id"]
+        response = await auth_client.post(
+            "/me/identities/google",
+            headers={"Authorization": f"Bearer {apple['token']}"},
+            json={"identity_token": google_token()},
+        )
+        assert response.status_code == 409
+        response = await auth_client.post(
+            "/me/identities/apple",
+            headers={"Authorization": f"Bearer {google['token']}"},
+            json={"identity_token": make_identity_token()},
+        )
+        assert response.status_code == 409
+        assert await session.scalar(select(func.count(User.id))) == 2
+        assert (await auth_client.post("/auth/google", json={"identity_token": google_token()})).json()["user"][
+            "id"
+        ] == google["user"]["id"]
+
+    async def test_link_requires_live_session_and_bad_identity_does_not_revoke_it(
+        self, auth_client, google_token, make_identity_token
+    ):
+        assert (
+            await auth_client.post("/me/identities/google", json={"identity_token": google_token()})
+        ).status_code == 401
+        account = (await login(auth_client, make_identity_token())).json()
+        headers = {"Authorization": f"Bearer {account['token']}"}
+        response = await auth_client.post("/me/identities/google", headers=headers, json={"identity_token": "invalid"})
+        assert response.status_code == 400
+        assert (await auth_client.get("/me", headers=headers)).status_code == 200
+        await auth_client.post("/auth/logout", headers=headers)
+        assert (
+            await auth_client.post("/me/identities/google", headers=headers, json={"identity_token": google_token()})
+        ).status_code == 401
+
+    @pytest.mark.parametrize(
+        "claims", [{"aud": "wrong-client"}, {"iss": "https://evil.test"}, {"exp": 1}, {"sub": ""}, {"sub": 123}]
+    )
+    async def test_rejects_invalid_google_claims(self, auth_client, google_token, claims, session):
+        assert (
+            await auth_client.post("/auth/google", json={"identity_token": google_token(**claims)})
+        ).status_code == 401
+        assert await session.scalar(select(func.count(User.id))) == 0
+
+    async def test_google_disabled_does_not_affect_apple(
+        self, auth_client, make_identity_token, google_token, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "google_client_id", "")
+        assert (await auth_client.post("/auth/google", json={"identity_token": google_token()})).status_code == 503
+        assert (await login(auth_client, make_identity_token())).status_code == 200
+
+    async def test_deleting_linked_account_removes_both_identities_and_sessions(
+        self, auth_client, make_identity_token, google_token, session
+    ):
+        account = (await login(auth_client, make_identity_token())).json()
+        headers = {"Authorization": f"Bearer {account['token']}"}
+        await auth_client.post("/me/identities/google", headers=headers, json={"identity_token": google_token()})
+        google = (await auth_client.post("/auth/google", json={"identity_token": google_token()})).json()
+        assert (await auth_client.delete("/me", headers=headers)).status_code == 204
+        assert await session.scalar(select(func.count(UserIdentity.id))) == 0
+        assert (
+            await auth_client.get("/me", headers={"Authorization": f"Bearer {google['token']}"})
+        ).status_code == 401
