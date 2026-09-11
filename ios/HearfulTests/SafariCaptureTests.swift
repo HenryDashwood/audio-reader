@@ -6,11 +6,11 @@ import WebKit
 private final class CapturePageLoader: NSObject, WKNavigationDelegate {
     var continuation: CheckedContinuation<Void, Never>?
 
-    func load(_ html: String, in view: WKWebView) async {
+    func load(_ html: String, in view: WKWebView, url: URL) async {
         await withCheckedContinuation { continuation in
             self.continuation = continuation
             view.navigationDelegate = self
-            view.loadHTMLString(html, baseURL: URL(string: "https://example.com/current"))
+            view.loadHTMLString(html, baseURL: url)
         }
     }
 
@@ -34,10 +34,10 @@ struct SafariCaptureTests {
         }.joined()
     }
 
-    private func capture(body: String, head: String = "", title: String = "City gardens provide shade") async throws -> [String: String] {
+    private func capture(body: String, head: String = "", title: String = "City gardens provide shade", url: String = "https://example.com/current") async throws -> [String: String] {
         let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
         let loader = CapturePageLoader()
-        await loader.load("<html><head><title>\(title)</title>\(head)</head><body>\(body)</body></html>", in: view)
+        await loader.load("<html><head><title>\(title)</title>\(head)</head><body>\(body)</body></html>", in: view, url: try #require(URL(string: url)))
         let plugins = try #require(Bundle.main.builtInPlugInsURL)
         let script = try String(contentsOf: plugins.appending(path: "HearfulShare.appex/CapturePage.js"), encoding: .utf8)
         let result = try await view.callAsyncJavaScript(
@@ -92,6 +92,53 @@ struct SafariCaptureTests {
             head: "<link rel='canonical' href='https://example.com/previous'>")
         #expect(result["html"] == "")
         #expect(result["url"] == "https://example.com/current")
+    }
+
+    @Test(arguments: ["archive.is", "archive.today", "archive.ph", "archive.li", "archive.vn", "archive.fo", "archive.md"])
+    func archiveShortLinkCapturesItsDeclaredSnapshot(host: String) async throws {
+        let url = "https://\(host)/1Ip09"
+        let snapshot = "https://\(host)/2026.09.10-074027/https://example.com/story"
+        // Archive markup uses a separate asset base and flattened div paragraphs.
+        let prose = paragraphs("Gardens").replacingOccurrences(of: "<p>", with: "<div>")
+            .replacingOccurrences(of: "</p>", with: "</div>")
+        let result = try await capture(
+            body: "<article><h1>City gardens provide shade</h1>\(prose)</article>",
+            head: "<base href='https://assets.\(host)/'><link rel='canonical' href='\(snapshot)'>"
+                + "<meta property='og:url' content='\(url)'>", url: url)
+        #expect(result["contentFormat"] == "article")
+        #expect(result["url"] == url)
+        #expect(result["title"] == "City gardens provide shade")
+        #expect(result["html"]?.contains("Gardens paragraph 7") == true)
+        #expect(result["html"]?.contains("href=\"\(url)\"") == true)
+        #expect(result["preview"]?.isEmpty == false)
+    }
+
+    @Test(arguments: [
+        "", // No evidence that the long and short URLs describe the same snapshot.
+        "<meta property='og:url' content='https://archive.is/other'>",
+        "<meta property='og:url' content='https://archive.is/1Ip09'><meta property='og:url' content='https://archive.is/other'>",
+    ])
+    func archiveMissingOrStaleShortIdentityKeepsOnlyTheLink(metadata: String) async throws {
+        let result = try await capture(
+            body: "<article><h1>City gardens provide shade</h1>\(paragraphs("Gardens"))</article>",
+            head: "<link rel='canonical' href='https://archive.is/2026.09.10-074027/https://example.com/story'>\(metadata)",
+            url: "https://archive.is/1Ip09")
+        #expect(result["html"] == "")
+    }
+
+    @Test(arguments: [
+        ("https://example.com/1Ip09", "https://example.com/2026.09.10-074027/https://publisher.com/story"),
+        ("https://archive.is.evil.example/1Ip09", "https://archive.is.evil.example/2026.09.10-074027/https://publisher.com/story"),
+        ("https://archive.is/1Ip09", "https://publisher.com/story"),
+        ("https://archive.is/1Ip09", "https://archive.is/other"),
+        ("https://archive.is/1Ip09", "https://archive.ph/2026.09.10-074027/https://publisher.com/story"),
+        ("https://archive.is/search", "https://archive.is/2026.09.10-074027/https://publisher.com/story"),
+    ])
+    func matchingOpenGraphURLDoesNotGenerallyOverrideCanonical(url: String, canonical: String) async throws {
+        let result = try await capture(
+            body: "<article><h1>City gardens provide shade</h1>\(paragraphs("Gardens"))</article>",
+            head: "<link rel='canonical' href='\(canonical)'><meta property='og:url' content='\(url)'>", url: url)
+        #expect(result["html"] == "")
     }
 
     @Test func largePageChromeDoesNotDiscardASmallArticle() async throws {

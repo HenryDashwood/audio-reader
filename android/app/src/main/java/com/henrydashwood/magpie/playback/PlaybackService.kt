@@ -3,6 +3,7 @@ package com.henrydashwood.magpie.playback
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -42,6 +43,10 @@ data class Preparation(val itemId: String? = null, val message: String? = null, 
 object PlaybackStatus {
     internal val mutable = MutableStateFlow(Preparation())
     val state = mutable.asStateFlow()
+    internal val mutableSleepTimer = MutableStateFlow(SleepTimerState())
+    val sleepTimer = mutableSleepTimer.asStateFlow()
+    internal val mutableReadingPosition = MutableStateFlow<ArticleReadingPosition?>(null)
+    val readingPosition = mutableReadingPosition.asStateFlow()
 }
 
 // Media3 still marks session negotiation and some service controls as unstable.
@@ -57,6 +62,10 @@ class PlaybackService : MediaSessionService() {
     private var current: LibraryItem? = null
     private var rendered: RenderedArticle? = null
     private val library = SampleLibrary()
+    private var sleepJob: Job? = null
+    private val sleepFeedback = SleepTimerFeedback(scope)
+    private val sleepTimer = SleepTimer(SystemClock::elapsedRealtime,
+        changed = { PlaybackStatus.mutableSleepTimer.value = it }, expired = ::expireSleepTimer)
 
     override fun onCreate() {
         super.onCreate()
@@ -71,6 +80,10 @@ class PlaybackService : MediaSessionService() {
             setWakeMode(C.WAKE_MODE_LOCAL)
             setPlaybackSpeed(store.speed(ContentKind.Podcast))
             addListener(object : Player.Listener {
+                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                    if (playWhenReady) sleepTimer.check()
+                }
+                override fun onEvents(player: Player, events: Player.Events) { publishReadingPosition() }
                 override fun onIsPlayingChanged(isPlaying: Boolean) { persist() }
                 override fun onPlaybackParametersChanged(parameters: androidx.media3.common.PlaybackParameters) {
                     current?.let { store.saveSpeed(it.kind, parameters.speed) }
@@ -93,6 +106,9 @@ class PlaybackService : MediaSessionService() {
                 if (controller.uid == applicationInfo.uid) {
                     commands.add(SessionCommand(PLAY_ITEM, Bundle.EMPTY))
                     commands.add(SessionCommand(CANCEL_PREPARATION, Bundle.EMPTY))
+                    commands.add(SessionCommand(DISMISS_PLAYER, Bundle.EMPTY))
+                    commands.add(SessionCommand(SET_SLEEP_TIMER, Bundle.EMPTY))
+                    commands.add(SessionCommand(CANCEL_SLEEP_TIMER, Bundle.EMPTY))
                 }
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
                     .setAvailableSessionCommands(commands.build()).build()
@@ -110,6 +126,21 @@ class PlaybackService : MediaSessionService() {
                         rendering?.cancel()
                         PlaybackStatus.mutable.value = Preparation()
                     }
+                    SET_SLEEP_TIMER -> {
+                        if (!sleepTimer.start(args.getLong(SLEEP_DURATION_MS))) {
+                            return Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
+                        }
+                        sleepJob?.cancel()
+                        sleepJob = scope.launch {
+                            while (sleepTimer.state.running) {
+                                val remaining = checkNotNull(sleepTimer.state.deadlineMs) - SystemClock.elapsedRealtime()
+                                delay(remaining.coerceIn(1L, 1_000L))
+                                sleepTimer.check()
+                            }
+                        }
+                    }
+                    CANCEL_SLEEP_TIMER -> cancelSleepTimer()
+                    DISMISS_PLAYER -> dismissPlayer()
                     else -> return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
                 }
                 return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
@@ -118,11 +149,14 @@ class PlaybackService : MediaSessionService() {
         scope.launch {
             while (isActive) { delay(3_000); if (player.isPlaying) persist() }
         }
+        scope.launch { while (isActive) { publishReadingPosition(); delay(100) } }
         // A previous session is offered paused. Restoring never unexpectedly starts audio.
         store.lastItem?.let { id -> library.items.find { it.id == id && it.kind == ContentKind.Podcast }?.let { load(it, null, false) } }
     }
 
     private fun play(item: LibraryItem) {
+        // Clear an elapsed deadline before a new, explicit request to listen.
+        sleepTimer.check()
         if (current?.id == item.id && player.playbackState != Player.STATE_IDLE && PlaybackStatus.state.value.message == null &&
             (item.kind == ContentKind.Podcast || rendered?.voiceSelection == store.voiceId)) {
             if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
@@ -178,22 +212,72 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private fun dismissPlayer() {
+        // Keep each item's bookmark, but forget what to restore into the mini player.
+        persist(completed = player.playbackState == Player.STATE_ENDED)
+        rendering?.cancel()
+        cancelSleepTimer()
+        PlaybackStatus.mutable.value = Preparation()
+        current = null
+        store.lastItem = null
+        player.stop()
+        player.clearMediaItems()
+        rendered?.file?.delete()
+        rendered = null
+        PlaybackStatus.mutableReadingPosition.value = null
+    }
+
+    private fun publishReadingPosition() {
+        val item = current
+        val audio = rendered
+        val active = item != null && audio != null && item.kind == ContentKind.Article &&
+            player.currentMediaItem?.mediaId == item.id && player.playbackState != Player.STATE_IDLE &&
+            player.playbackState != Player.STATE_ENDED && PlaybackStatus.state.value.message == null
+        val range = if (active) readingRangeAt(audio!!.chunks, audio.ranges, player.currentPosition) else null
+        PlaybackStatus.mutableReadingPosition.value = range?.let {
+            ArticleReadingPosition(item!!.id, item.contentVersion, it.startUtf16, it.endUtf16)
+        }
+    }
+
+    private fun cancelSleepTimer() {
+        sleepJob?.cancel()
+        sleepJob = null
+        sleepTimer.cancel()
+    }
+
+    private fun expireSleepTimer() {
+        val wasPlaying = player.isPlaying
+        // Also stop buffering or narration preparation so it cannot start after the deadline.
+        rendering?.cancel()
+        PlaybackStatus.mutable.value = Preparation()
+        player.pause()
+        persist()
+        if (wasPlaying) sleepFeedback.finished()
+    }
+
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
         if (controllerInfo.uid == applicationInfo.uid || controllerInfo.isTrusted) session else null
 
     override fun onDestroy() {
         persist(completed = player.playbackState == Player.STATE_ENDED)
+        cancelSleepTimer()
+        sleepFeedback.close()
         scope.cancel()
         renderer.close()
         session.release()
         player.release()
         rendered?.file?.delete()
         PlaybackStatus.mutable.value = Preparation()
+        PlaybackStatus.mutableReadingPosition.value = null
         super.onDestroy()
     }
 
     companion object {
         const val PLAY_ITEM = "magpie.play_sample"
+        const val DISMISS_PLAYER = "magpie.dismiss_player"
         const val CANCEL_PREPARATION = "magpie.cancel_preparation"
+        const val SET_SLEEP_TIMER = "magpie.set_sleep_timer"
+        const val CANCEL_SLEEP_TIMER = "magpie.cancel_sleep_timer"
+        const val SLEEP_DURATION_MS = "duration_ms"
     }
 }

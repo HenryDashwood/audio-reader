@@ -51,6 +51,27 @@ and calls narrowly scoped Magpie tools to search, subscribe, play, file, or
 change speed. Conversation history stays on the phone and is sent back only
 for the few turns needed to answer a clarification.
 
+## Android development
+
+Open `android/` in Android Studio. The [Android development guide](android/README.md)
+covers SDK installation, Google's Android CLI, emulator setup, and debugging.
+
+```bash
+make android-doctor      # verify Java, Gradle, SDK, and emulator tools
+make android-emulators   # list virtual devices
+make android-emulator    # start the only AVD; use ANDROID_AVD=name if several exist
+make android-run         # build, install, and launch Magpie Preview
+make android-check       # build app/test APKs, run JVM tests and lint
+make android-test        # run UI and playback tests on a booted emulator
+make android-layout      # inspect visible controls and accessibility labels
+make android-screenshot  # save a screenshot under build/android-artifacts/
+make android-logs        # save logs for the running preview process
+```
+
+The helpers select only emulators and preserve app data during ordinary installs.
+Set `ANDROID_SERIAL=emulator-5554` when more than one is running. The instrumented
+suite modifies preview preferences as part of its tests; use a development AVD.
+
 ## iOS development
 
 Requires Xcode with the iOS simulator runtime

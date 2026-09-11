@@ -4,7 +4,7 @@
 
 - Preserve unrelated working-tree changes. This repository is often used for parallel backend and iOS work.
 - Do not tag, publish, upload to TestFlight, change credentials, or modify production services unless the user explicitly asks.
-- Treat API contract changes as cross-platform: update and verify both the FastAPI backend and the Swift client when either side changes.
+- Treat API contract changes as cross-platform: update and verify the FastAPI backend, Swift client, and any affected Android contracts when one side changes.
 - Backend releases follow `docs/backend-releases.md`: CI deploys tested `main`
   commits to staging; `.github/workflows/backend-production.yml` owns manual
   production promotion of a verified staging deployment. Do not restore Railway
@@ -40,3 +40,30 @@
 - For SDK-sensitive changes, also run `make ios-test-latest` when a newer simulator runtime is installed.
 - Report compiler warnings separately from test failures; do not present a warning-bearing build as clean.
 
+## Android
+
+- The native Kotlin / Compose / Media3 client is under `android/`; read its
+  `AGENTS.md` and `README.md` before changing it. Open `android/` in Android Studio.
+- Run `make android-doctor` for Java, Gradle, SDK, and emulator diagnostics.
+  `make android-check` builds both debug APKs, runs JVM tests, and checks lint.
+- Use `make android-emulators` and `ANDROID_AVD=name make android-emulator` to
+  start an existing AVD. Run `make android-test` for UI/service changes and
+  `make android-run` to install and launch the preview. Set `ANDROID_SERIAL`
+  explicitly when more than one emulator is running.
+- Use `make android-unit-test TEST='*ClassName'` or
+  `make android-test TEST='fully.qualified.ClassName#method'` while iterating;
+  omit `TEST` for full verification. `android-check` always runs the full JVM suite.
+- Use `make android-layout`, `make android-screenshot`, and `make android-logs`
+  to inspect the running emulator. Screenshots/logs stay in ignored
+  `build/android-artifacts/`. Inspect screenshots visually when checking UI.
+- Google's official Android CLI and `android-cli` skill support environment
+  management, UI inspection, and current Android documentation. Use
+  `scripts/android-dev.sh cli docs search 'topic'` for API guidance. Check the
+  installed CLI's help because its syntax can change independently of Gradle.
+- The local device bridge, Gradle services, and CLI cache may need execution
+  outside an agent sandbox. Treat socket/cache permission errors as environment
+  failures; do not change application code or disable sandboxing to hide them.
+- Keep physical-device work intentional: the helper commands target emulators.
+  Do not uninstall, clear app data, wipe AVDs, or alter release signing as a
+  routine development step. Report emulator coverage separately from phone,
+  TalkBack, Bluetooth, and offline voice quality checks.

@@ -2,6 +2,7 @@ package com.henrydashwood.magpie
 
 import android.content.ComponentName
 import android.os.Bundle
+import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.Lifecycle
 import androidx.media3.session.MediaController
@@ -67,8 +68,31 @@ class PlaybackTest {
             } else {
                 assertEquals(1, compose.runOnUiThread { controller.mediaItemCount })
                 assertTrue(compose.runOnUiThread { controller.duration > 0 })
-                compose.runOnUiThread { controller.seekTo(3_000) }
-                compose.waitUntil(5_000) { compose.runOnUiThread { controller.currentPosition >= 3_000 } }
+                compose.waitUntil(5_000) { PlaybackStatus.readingPosition.value?.itemId == "morning" }
+                compose.runOnUiThread { controller.pause(); controller.seekTo(0) }
+                compose.waitUntil(5_000) { PlaybackStatus.readingPosition.value?.startUtf16 == 0 }
+                val initial = PlaybackStatus.readingPosition.value!!
+                compose.runOnUiThread { controller.setPlaybackSpeed(1.5f); controller.seekTo(controller.duration * 3 / 4) }
+                compose.waitUntil(5_000) { (PlaybackStatus.readingPosition.value?.startUtf16 ?: 0) > initial.startUtf16 }
+                val paused = PlaybackStatus.readingPosition.value
+                Thread.sleep(350)
+                assertEquals(paused, PlaybackStatus.readingPosition.value)
+                compose.onNodeWithText("Field notes").performClick()
+                compose.onNode(hasText("Before the rest of the day begins") and hasAnyAncestor(hasTestTag("story-list"))).performClick()
+                compose.onNodeWithTag("article-webview").performTouchInput { swipeDown() }
+                compose.onNode(hasContentDescription("Follow reading position") and hasAnyAncestor(hasTestTag("mini-player"))).assertIsDisplayed()
+                compose.onNodeWithContentDescription("Back").performClick()
+                compose.onNodeWithContentDescription("Follow reading position").assertDoesNotExist()
+                compose.onNode(hasText("Before the rest of the day begins") and hasAnyAncestor(hasTestTag("story-list"))).performClick()
+                compose.onNodeWithTag("article-webview").performTouchInput { swipeDown() }
+                compose.activityRule.scenario.recreate()
+                assertEquals(paused, PlaybackStatus.readingPosition.value)
+                compose.onNodeWithContentDescription("Follow reading position").assertIsDisplayed()
+                compose.onNodeWithContentDescription("Follow reading position").performClick()
+                compose.runOnUiThread { controller.seekTo(0) }
+                compose.waitUntil(5_000) { PlaybackStatus.readingPosition.value == initial }
+                request(controller, "welcome")
+                compose.waitUntil(5_000) { PlaybackStatus.readingPosition.value == null }
             }
         } finally { compose.runOnUiThread { controller.pause(); controller.release() } }
     }

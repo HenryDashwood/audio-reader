@@ -2800,9 +2800,28 @@ var ExtensionPreprocessingJS = {
                 });
                 return url.href;
             }
+            function archiveSnapshotMatches(canonical) {
+                var current = new URL(document.URL);
+                var snapshot = new URL(canonical.href);
+                // Archive snapshots declare a timestamped canonical and a short
+                // og:url. Require that explicit short identity, not just the host:
+                // a stale snapshot must not be captured under another short link.
+                var hosts = ['archive.is', 'archive.today', 'archive.ph', 'archive.li',
+                    'archive.vn', 'archive.fo', 'archive.md'];
+                var declared = document.head.querySelectorAll('meta[property="og:url"]');
+                var path = snapshot.pathname.match(/^\/(?:\d{4}\.\d{2}\.\d{2}-\d{6}|\d{14})\/(https?:\/\/.+)$/);
+                if (!hosts.includes(current.hostname) || !/^https?:$/.test(current.protocol)
+                    || current.username || current.password || current.port
+                    || snapshot.origin !== current.origin || snapshot.username || snapshot.password
+                    || !/^\/[A-Za-z0-9]{5}$/.test(current.pathname) || !path
+                    || declared.length !== 1 || identity(declared[0].content) !== identity(document.URL)) return false;
+                var original = new URL(path[1]);
+                return Boolean(original.hostname) && !original.username && !original.password;
+            }
             var canonical = document.querySelector('link[rel="canonical"]');
             // An in-page navigation can update the address before its body arrives.
-            if (canonical && identity(canonical.href) !== identity(document.URL)) {
+            if (canonical && identity(canonical.href) !== identity(document.URL)
+                && !archiveSnapshotMatches(canonical)) {
                 arguments.completionFunction(fallback);
                 return;
             }

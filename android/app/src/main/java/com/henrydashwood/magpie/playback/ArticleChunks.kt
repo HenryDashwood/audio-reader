@@ -38,3 +38,20 @@ fun resumeAt(chunks: List<TimedChunk>, bookmark: ArticleBookmark?, version: Stri
     if (bookmark == null || bookmark.contentVersion != version) return 0
     return chunks.lastOrNull { it.text.startUtf16 <= bookmark.offsetUtf16 }?.startMs ?: 0
 }
+
+/** Keep a sentence boundary even when an engine supplies no per-word audio markers. */
+fun articleNarrationChunks(text: String, limit: Int = 500): List<TextChunk> {
+    val sentences = java.text.BreakIterator.getSentenceInstance(java.util.Locale.UK)
+    sentences.setText(text)
+    val result = mutableListOf<TextChunk>()
+    var start = sentences.first()
+    var end = sentences.next()
+    while (end != java.text.BreakIterator.DONE) {
+        result += articleChunks(text.substring(start, end), limit).map {
+            it.copy(startUtf16 = it.startUtf16 + start, endUtf16 = it.endUtf16 + start)
+        }
+        start = end
+        end = sentences.next()
+    }
+    return result
+}

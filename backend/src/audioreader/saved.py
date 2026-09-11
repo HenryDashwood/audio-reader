@@ -162,7 +162,13 @@ async def capture(
             html, extracted_title = extract(raw.decode("utf-8", errors="replace"), url=episode.link)
             title = extracted_title or title
         except FeedFetchError as exc:
-            if exc.status_code in {401, 403}:
+            if exc.status_code == 429:
+                capture_error = (
+                    "Link saved. This site limited Magpie's requests or requires a browser security check. "
+                    "Try again later, or open the article in Safari, complete any security check, "
+                    "then use Share → Magpie once the full article is visible."
+                )
+            elif exc.status_code in {401, 403}:
                 capture_error = (
                     "Link saved. This site refused Magpie's request. "
                     "Open the page in Safari, then use Share → Magpie to save the page content."

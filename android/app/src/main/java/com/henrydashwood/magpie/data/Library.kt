@@ -12,6 +12,8 @@ data class LibraryItem(
     val text: String,
     val contentVersion: String = "sample-v1",
     val originalUrl: String? = null,
+    // Display HTML (including backend-rendered MathML) is separate from immutable speech text.
+    val html: String? = null,
 )
 
 interface LibraryRepository {
@@ -62,6 +64,7 @@ class SampleLibrary : LibraryRepository {
 
                 |The point is not to shut everything else out. It is to begin with something chosen, before the day fills itself with everything that asks for our attention.""".trimMargin(),
         ),
+        RichArticleSample.item,
     )
 
     companion object {

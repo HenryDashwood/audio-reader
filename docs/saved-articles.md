@@ -21,6 +21,10 @@ Competing article bodies need a unique matching headline; ambiguous pages and
 stale canonical URLs fall back to saving the current link. Publishers that split
 one story into multiple article elements can retain their common article ID.
 This uses the loaded page, not Safari's private Reader implementation.
+Archive.today-family short links can use a timestamped canonical URL on the same
+origin when the page's unique Open Graph URL matches the shared short link.
+This preserves the shared URL as the saved identity and still rejects stale or
+ambiguous snapshot metadata.
 
 The share sheet previews the extracted title and opening paragraph before Save.
 Other apps generally supply a URL. Limits apply to the extracted article, so
@@ -38,6 +42,9 @@ are outside this first implementation.
 If a site refuses the backend request (HTTP 401 or 403), Saved directs the user to
 open the page in Safari and use Share → Magpie. Sharing the same URL with its page
 content repairs the saved link, preserving its identity and original save date.
+HTTP 429 refusals explain that the site may be limiting requests or requiring a
+browser security check. They suggest trying later or sharing from Safari after
+the full article is visible; Retry alone still performs a server fetch.
 
 ## Identity, content, and progress
 

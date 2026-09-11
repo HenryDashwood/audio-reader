@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.selectable
@@ -25,14 +24,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
-import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.henrydashwood.magpie.MagpieModel
 import com.henrydashwood.magpie.PlayerState
@@ -40,6 +35,7 @@ import com.henrydashwood.magpie.data.playbackRates
 import com.henrydashwood.magpie.data.ContentKind
 import com.henrydashwood.magpie.data.LibraryItem
 import com.henrydashwood.magpie.playback.Preparation
+import com.henrydashwood.magpie.playback.SleepTimerState
 
 private enum class Destination(val label: String, val icon: ImageVector) {
     Following("Following", Icons.AutoMirrored.Rounded.LibraryBooks),
@@ -60,6 +56,7 @@ fun MagpieApp(model: MagpieModel) {
     var savedListVersion by rememberSaveable { mutableIntStateOf(0) }
     val playback by model.player.collectAsStateWithLifecycle()
     val preparation by model.preparation.collectAsStateWithLifecycle()
+    val sleepTimer by model.sleepTimer.collectAsStateWithLifecycle()
     val notice by model.notice.collectAsStateWithLifecycle()
     var destination by rememberSaveable { mutableStateOf(Destination.Following) }
     var selectedItemId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -69,6 +66,8 @@ fun MagpieApp(model: MagpieModel) {
     var query by rememberSaveable(destination, selectedSource, selectedItemId) { mutableStateOf("") }
     val selectedItem = model.library.find { it.id == selectedItemId }
     val snackbar = remember { SnackbarHostState() }
+    val followControl = remember { ArticleFollowControl() }
+    LaunchedEffect(playback.item) { if (playback.item == null) showingPlayer = false }
     LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); model.dismissNotice() } }
     LaunchedEffect(preparation.error) { preparation.error?.let { snackbar.showSnackbar(it, duration = SnackbarDuration.Long) } }
     BackHandler(showingSearch || selectedItem != null || selectedSource != null) {
@@ -84,11 +83,14 @@ fun MagpieApp(model: MagpieModel) {
                     if (selectedItem != null || selectedSource != null) IconButton(onClick = {
                         if (selectedItem != null) selectedItemId = null else selectedSource = null
                     }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-                    else if (destination == Destination.Following) {
-                        AddSourceButton(model) { showingSearch = false; query = "" }
-                    }
                 },
                 actions = {
+                    if (selectedItem == null && selectedSource == null && destination == Destination.Following) {
+                        AddSourceButton(model) { showingSearch = false; query = "" }
+                    }
+                    if (selectedItem == null && selectedSource == null && destination == Destination.Saved) {
+                        AddLinkButton(model) { savedListVersion++; showingSearch = false; query = "" }
+                    }
                     if (selectedItem != null) {
                         val isPlaying = playback.item?.id == selectedItem.id && playback.playing
                         ReaderToolbarActions(selectedItem, isPlaying, showingSearch,
@@ -97,11 +99,8 @@ fun MagpieApp(model: MagpieModel) {
                     } else if (selectedSource != null || destination == Destination.Following || destination == Destination.Saved) {
                         IconButton(onClick = { showingSearch = !showingSearch; query = "" }) {
                             Icon(if (showingSearch) Icons.Rounded.Close else Icons.Rounded.Search,
-                                if (showingSearch) "Close search" else if (selectedItem != null) "Find in this page" else "Search")
+                                if (showingSearch) "Close search" else "Search")
                         }
-                    }
-                    if (selectedItem == null && selectedSource == null && destination == Destination.Saved) {
-                        AddLinkButton(model) { savedListVersion++; showingSearch = false; query = "" }
                     }
                     if (selectedItem == null && selectedSource == null && destination == Destination.Latest && latestItems.isNotEmpty()) {
                         ClearLatestButton(model)
@@ -113,7 +112,7 @@ fun MagpieApp(model: MagpieModel) {
         bottomBar = {
             Column {
                 if (preparation.message != null) PreparationBar(preparation, model::cancelPreparation)
-                if (playback.item != null) MiniPlayer(playback, preparation.message != null, { showingPlayer = true }, model::toggle)
+                if (playback.item != null) MiniPlayer(playback, preparation.message != null, { showingPlayer = true }, model::toggle, model::dismissPlayer, followControl.actionFor(playback.item?.id))
                 AppNavigation(destination) { tab ->
                     destination = tab; selectedItemId = null; selectedSource = null
                 }
@@ -129,7 +128,7 @@ fun MagpieApp(model: MagpieModel) {
                 else -> "Search your library"
             })
             when {
-                selectedItem != null -> Reader(selectedItem, query)
+                selectedItem != null -> ArticleReader(selectedItem, query, followControl)
                 selectedSource != null -> ItemList(model.library.filter { it.source == selectedSource }, saved, query, { selectedItemId = it.id }, model::play, model::toggleSaved, source = selectedSource)
                 destination == Destination.Following -> Following(model.library, query, { selectedSource = it }, { selectedItemId = it.id }, pendingSources, model::removePendingSource)
                 destination == Destination.Latest -> ItemList(latestItems, saved, "", { selectedItemId = it.id }, model::play, model::toggleSaved, emptyTitle = "You're caught up")
@@ -142,7 +141,8 @@ fun MagpieApp(model: MagpieModel) {
         }
     }
     if (showingPlayer) ModalBottomSheet(onDismissRequest = { showingPlayer = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        FullPlayer(playback, preparation, model::toggle, model::skip, model::seek, model::speed, close = { showingPlayer = false }) {
+        FullPlayer(playback, preparation, model::toggle, model::skip, model::seek, model::speed,
+            sleepTimer, model::startSleepTimer, model::cancelSleepTimer, close = { showingPlayer = false }) {
             selectedItemId = playback.item?.id
             showingPlayer = false
         }
@@ -364,41 +364,6 @@ private fun ActionStoryRow(item: LibraryItem, open: () -> Unit, play: () -> Unit
     }
 }
 
-@Composable
-private fun Reader(item: LibraryItem, query: String) {
-    val paragraphs = remember(item) { item.text.split("\n\n") }
-    val listState = rememberLazyListState()
-    val matches = remember(paragraphs, query) { if (query.isBlank()) emptyList() else paragraphs.indices.filter { paragraphs[it].contains(query, ignoreCase = true) } }
-    var currentMatch by remember(query) { mutableIntStateOf(0) }
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(query) { matches.firstOrNull()?.let { listState.animateScrollToItem(it + 2) } }
-    if (query.isNotBlank()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(if (matches.isEmpty()) "Nothing found" else "${currentMatch + 1} of ${matches.size} paragraphs", Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
-            IconButton(enabled = matches.isNotEmpty(), onClick = { currentMatch = (currentMatch + matches.size - 1) % matches.size; scope.launch { listState.animateScrollToItem(matches[currentMatch] + 2) } }) { Icon(Icons.Rounded.KeyboardArrowUp, "Previous match") }
-            IconButton(enabled = matches.isNotEmpty(), onClick = { currentMatch = (currentMatch + 1) % matches.size; scope.launch { listState.animateScrollToItem(matches[currentMatch] + 2) } }) { Icon(Icons.Rounded.KeyboardArrowDown, "Next match") }
-        }
-    }
-    LazyColumn(Modifier.fillMaxSize().testTag("reader-list"), state = listState, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        item { Text(item.title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() }) }
-        item { Text(item.source, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(paragraphs) { paragraph ->
-            val highlightStyle = SpanStyle(background = MaterialTheme.colorScheme.primaryContainer, color = MaterialTheme.colorScheme.onPrimaryContainer)
-            val highlighted = buildAnnotatedString {
-                append(paragraph)
-                if (query.isNotBlank()) {
-                    var start = paragraph.indexOf(query, ignoreCase = true)
-                    while (start >= 0) {
-                        addStyle(highlightStyle, start, start + query.length)
-                        start = paragraph.indexOf(query, start + query.length, ignoreCase = true)
-                    }
-                }
-            }
-            Text(highlighted, style = MaterialTheme.typography.bodyLarge.copy(fontSize = 20.sp, lineHeight = 31.sp))
-        }
-    }
-}
-
 private fun sourceCount(items: List<LibraryItem>): String = "${items.size} ${if (items.all { it.kind == ContentKind.Article }) "posts" else "episodes"}"
 
 @Composable
@@ -407,15 +372,48 @@ private fun ListSection(title: String) {
 }
 
 @Composable
-private fun MiniPlayer(state: PlayerState, preparing: Boolean, open: () -> Unit, toggle: () -> Unit) {
+internal fun MiniPlayer(state: PlayerState, preparing: Boolean, open: () -> Unit, toggle: () -> Unit,
+    dismiss: () -> Unit, follow: (() -> Unit)? = null) {
     val item = state.item ?: return
-    Surface(color = MaterialTheme.colorScheme.primaryContainer, tonalElevation = 2.dp) {
-        Row(Modifier.fillMaxWidth().heightIn(min = 76.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).heightIn(min = 48.dp).testTag("mini-player-open").clickable(onClickLabel = "Open player") { open() }.padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SourceArtwork(item.source, Modifier.size(32.dp))
-                Text(item.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Surface(color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        tonalElevation = 2.dp, modifier = Modifier.testTag("mini-player")) {
+        Column {
+            BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                val expanded = maxWidth < 360.dp || LocalDensity.current.fontScale > 1.3f
+                val title: @Composable (Modifier) -> Unit = { modifier ->
+                    Row(modifier.heightIn(min = 48.dp).testTag("mini-player-open")
+                        .clickable(onClickLabel = "Open player") { open() }.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SourceArtwork(item.source, Modifier.size(32.dp))
+                        Text(item.title, style = MaterialTheme.typography.titleSmall, maxLines = if (expanded) 2 else 1,
+                            overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                val controls: @Composable () -> Unit = {
+                    if (follow != null) IconButton(onClick = follow, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Rounded.MyLocation, "Follow reading position")
+                    }
+                    IconButton(onClick = toggle, enabled = state.connected && !preparing, modifier = Modifier.size(48.dp)) {
+                        Icon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            if (state.playing) "Pause playback" else "Resume playback", Modifier.size(28.dp))
+                    }
+                    IconButton(onClick = dismiss, enabled = state.connected, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Rounded.Close, "Stop and close player")
+                    }
+                }
+                if (expanded) Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    title(Modifier.fillMaxWidth())
+                    Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) { controls() }
+                } else Row(Modifier.fillMaxWidth().heightIn(min = 76.dp), verticalAlignment = Alignment.CenterVertically) {
+                    title(Modifier.weight(1f))
+                    controls()
+                }
             }
-            IconButton(onClick = toggle, enabled = state.connected && !preparing, modifier = Modifier.size(52.dp)) { Icon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (state.playing) "Pause playback" else "Resume playback", Modifier.size(32.dp)) }
+            LinearProgressIndicator(progress = {
+                if (state.durationMs > 0) (state.positionMs.toFloat() / state.durationMs).coerceIn(0f, 1f) else 0f
+            }, modifier = Modifier.fillMaxWidth().height(2.dp).clearAndSetSemantics { },
+                color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.primary.copy(alpha = .12f),
+                gapSize = 0.dp, drawStopIndicator = {})
         }
     }
 }
@@ -431,8 +429,10 @@ private fun PreparationBar(state: Preparation, cancel: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FullPlayer(state: PlayerState, preparing: Preparation, toggle: () -> Unit, skip: (Int) -> Unit, seek: (Long) -> Unit, speed: (Float) -> Unit, close: () -> Unit, read: () -> Unit) {
+private fun FullPlayer(state: PlayerState, preparing: Preparation, toggle: () -> Unit, skip: (Int) -> Unit, seek: (Long) -> Unit, speed: (Float) -> Unit,
+    sleepTimer: SleepTimerState, startSleepTimer: (Int) -> Unit, cancelSleepTimer: () -> Unit, close: () -> Unit, read: () -> Unit) {
     val item = state.item ?: return
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp).padding(bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
         IconButton(onClick = close, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Rounded.KeyboardArrowDown, "Close player") }
@@ -462,7 +462,10 @@ private fun FullPlayer(state: PlayerState, preparing: Preparation, toggle: () ->
             FilledIconButton(onClick = toggle, enabled = state.connected && preparing.message == null, modifier = Modifier.size(76.dp)) { Icon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (state.playing) "Pause" else "Play", Modifier.size(40.dp)) }
             IconButton(onClick = { skip(30) }, enabled = state.durationMs > 0 && preparing.message == null, modifier = Modifier.size(56.dp)) { Icon(Icons.Rounded.Forward30, "Forward 30 seconds", Modifier.size(32.dp)) }
         }
-        SpeedPicker(state.speed, speed)
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SpeedPicker(state.speed, speed)
+            SleepTimerButton(sleepTimer, state.connected, startSleepTimer, cancelSleepTimer)
+        }
     }
 }
 

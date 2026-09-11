@@ -254,20 +254,26 @@ async def test_failed_extraction_keeps_link_then_retry_can_prepare_it(client, re
     assert response.json()["content_id"] and response.json()["capture_error"] is None
 
 
-@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize("status", [401, 403, 429])
 async def test_refused_web_fetch_recovers_by_sharing_browser_content(client, respx_mock, status):
     route = respx_mock.get(URL).respond(status)
     response = await client.post("/saved", json={"url": URL})
     assert response.status_code == 200
     item = response.json()
-    assert "refused Magpie's request" in item["capture_error"]
+    if status == 429:
+        assert "limited Magpie's requests" in item["capture_error"]
+        assert "security check" in item["capture_error"]
+        assert "full article is visible" in item["capture_error"]
+    else:
+        assert "refused Magpie's request" in item["capture_error"]
     assert "Safari" in item["capture_error"]
     assert not item["has_text"] and item["content_id"] is None
 
     # Safari shares its loaded page; this must repair the existing link without
     # another server fetch, a duplicate Saved item, or a changed save date.
+    fetch_count = route.call_count
     repaired = await capture(client)
-    assert route.call_count == 1
+    assert route.call_count == fetch_count
     assert repaired["id"] == item["id"]
     assert repaired["saved_at"] == item["saved_at"]
     assert repaired["has_text"] and repaired["content_id"]

@@ -1,6 +1,6 @@
 .PHONY: backend-dev backend-check backend-compatibility ios-phone-staging ios-phone-production ios-doctor ios-build ios-index ios-test ios-test-latest ios-phone ios-phone-debug ios-phone-debug-stop app-store-validate app-store-fixtures app-store-backend app-store-screenshot app-store-sync
 
-.PHONY: android-doctor android-build android-check android-test android-run
+.PHONY: android-doctor android-build android-check android-unit-test android-emulators android-emulator android-test android-run android-screenshot android-layout android-logs
 
 android-doctor:
 	@./scripts/android-dev.sh doctor
@@ -11,11 +11,29 @@ android-build:
 android-check:
 	@./scripts/android-dev.sh check
 
+android-unit-test:
+	@./scripts/android-dev.sh unit-test
+
+android-emulators:
+	@./scripts/android-dev.sh emulators
+
+android-emulator:
+	@./scripts/android-dev.sh emulator
+
 android-test:
 	@./scripts/android-dev.sh test
 
 android-run:
 	@./scripts/android-dev.sh run
+
+android-screenshot:
+	@./scripts/android-dev.sh screenshot
+
+android-layout:
+	@./scripts/android-dev.sh layout
+
+android-logs:
+	@./scripts/android-dev.sh logs
 
 backend-dev:
 	docker compose up -d db

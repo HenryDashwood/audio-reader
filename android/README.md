@@ -19,11 +19,17 @@ necessarily contain downloaded offline voices.
 From the repository root:
 
 ```sh
-make android-doctor  # Java, SDK, connected devices
+make android-doctor  # launcher/daemon Java, Gradle, required SDK, virtual devices
+make android-emulators # list AVDs
+make android-emulator  # boot the only AVD, or set ANDROID_AVD=name
 make android-build   # compile the debug APK
-make android-check   # compile, JVM tests, Android lint
+make android-check   # compile app and test APKs, all JVM tests, Android lint
+make android-unit-test # JVM tests only; TEST='*ArticleChunksTest' selects a class
 make android-test    # Compose UI and Media3 integration tests on one running emulator
 make android-run     # build, install over the existing emulator app, launch
+make android-layout  # inspect controls and accessibility labels as JSON
+make android-screenshot # save emulator PNG under build/android-artifacts/
+make android-logs     # save logs from the running Magpie process there
 ```
 
 Select a particular emulator with `ANDROID_SERIAL=emulator-5554`. These scripts
@@ -39,9 +45,109 @@ Set `ANDROID_HOME` for a nonstandard SDK location. Gradle caches from these
 commands live under ignored `build/android-gradle/`; Android Studio may use its
 own standard cache. The committed wrapper checks its Gradle distribution checksum.
 
+### Android CLI and SDK setup
+
+Install Google's [official Android CLI](https://developer.android.com/tools/agents/android-cli)
+using the installer linked from Google's
+[Android CLI skill](https://github.com/android/skills/tree/main/devtools/android-cli).
+On Apple Silicon, download and inspect the installer, then run it:
+
+```sh
+curl -fsSL https://dl.google.com/android/cli/latest/darwin_arm64/install.sh -o /tmp/install-android-cli.sh
+less /tmp/install-android-cli.sh
+bash /tmp/install-android-cli.sh
+```
+
+Google installs the launcher at `~/.local/bin/android`. The repository helper
+finds it there even if a GUI-launched terminal has not refreshed its PATH.
+Set `ANDROID_CLI` for a different executable. The CLI is needed for emulator
+startup and layout inspection, but is not a dependency of the Gradle build/CI.
+The September 2026 setup was verified with CLI `1.0.16261425`; use its `--help`
+for current syntax. Google now recommends the CLI's SDK commands in place of
+[`sdkmanager`](https://developer.android.com/tools/sdkmanager).
+
+The helper supplies the same SDK location to Gradle, adb, and the CLI:
+
+```sh
+./scripts/android-dev.sh cli sdk list
+./scripts/android-dev.sh cli sdk install platforms/android-37.0 build-tools/36.0.0 platform-tools emulator
+./scripts/android-dev.sh cli emulator create --list-profiles
+./scripts/android-dev.sh cli emulator create medium_phone
+./scripts/android-dev.sh cli docs search 'Compose accessibility semantics'
+```
+
+Creating an AVD is a one-time step if none exists. Use Android Studio Device
+Manager to choose an exact API/image: API 31 for minimum-version coverage, API 36
+for the established preview emulator, and API 37 for current target behaviour.
+Match the image ABI to the host. The CLI's template chooses its own API; inspect
+the resulting AVD before claiming version coverage. Do not overwrite an existing
+AVD to change its API. The CLI downloads tools/images as needed, so first setup
+requires network access and additional disk space.
+
+`ANDROID_HOME` takes precedence over legacy `ANDROID_SDK_ROOT`; without either,
+the helper uses `~/Library/Android/sdk` on macOS or `~/Android/Sdk` on Linux.
+Keep Android Studio's ignored `local.properties` SDK path aligned with that
+location. No NDK, CMake, or separate system-wide Kotlin/Gradle install is needed
+for the current Kotlin application.
+
+Codex can use Google's [`android-cli` skill](https://github.com/android/skills/tree/main/devtools/android-cli)
+for current command and UI-inspection guidance. It is installed locally on this
+development Mac; other machines can install that directory using the Codex Skill
+Installer. Repository-specific rules live in `AGENTS.md`, so builds and tests
+remain usable without an agent plugin. Android Studio provides Kotlin indexing,
+debugging, profiling, and Compose previews; open this directory for those tools.
+The CLI also connects directly to a running Studio project for symbol navigation,
+file analysis, and Compose previews. On this Mac, `studio check` reported Magpie
+ready and Kotlin file analysis succeeded:
+
+```sh
+./scripts/android-dev.sh cli studio check
+./scripts/android-dev.sh cli studio analyze-file --project=Magpie android/app/src/main/java/com/henrydashwood/magpie/playback/ArticleChunks.kt
+```
+
+### Tests, reports, and debugging
+
+```sh
+make android-unit-test TEST='*ArticleChunksTest'
+make android-test TEST='com.henrydashwood.magpie.MagpieNavigationTest'
+ANDROID_AVD=medium_phone make android-emulator
+ANDROID_SERIAL=emulator-5554 make android-run
+```
+
+For instrumented tests, `TEST` accepts a fully qualified class or `Class#method`;
+for JVM tests it accepts Gradle's `--tests` pattern. Omit it for the full suite.
+`android-check` ignores `TEST` and always includes all JVM tests. Instrumented
+tests change preview state/preferences; run them on development emulators.
+The build gate compiles the instrumentation APK even when no emulator is present.
+
+Reports are under `android/app/build/reports/`: `tests/testDebugUnitTest/`,
+`androidTests/connected/debug/`, and `lint-results-debug.html`. Raw test XML is
+under `android/app/build/test-results/` and `outputs/androidTest-results/`.
+CI retains these reports even when a check fails. The debug APK is
+`android/app/build/outputs/apk/debug/app-debug.apk`.
+
+Screenshot and log filenames include the selected serial and timestamp.
+`android-logs` captures the current app process without clearing the log buffer;
+if the process crashed, inspect the crash buffer directly:
+
+```sh
+"${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb" -s emulator-5554 logcat -b crash -d
+```
+
+Use layout inspection to find controls and their bounds, then `adb -s SERIAL
+shell input ...` for deliberate taps or swipes. View captured PNGs to verify
+appearance; successful capture alone is not a UI check. Neither layout dumps nor
+screenshots establish TalkBack speech or audio quality.
+
+Agent sandboxes can block adb's localhost socket, Gradle services, and writes to
+the CLI cache under `~/.android/`. Retry the specific development command through
+the agent's normal execution approval mechanism when that occurs. No global
+permission relaxation is needed. `android-doctor` distinguishes launcher Java
+(currently Studio's Java 25) from Gradle's pinned Java 21 runtime.
+
 ## What works
 
-- Following, Latest, Saved, source detail, local library search, and a text reader.
+- Following, Latest, Saved, source detail, local library search, and a rich article reader.
 - Article/episode toolbars with playback, original-page opening, Android sharing,
   find, and an Ask Magpie entry point. Original-page opening requires a web URL;
   samples share their text. Ask explains that conversation is not yet connected.
@@ -59,8 +165,22 @@ own standard cache. The committed wrapper checks its Gradle distribution checksu
   Article fetching/preparation and account sync are not connected yet.
 - Separate persisted podcast/article speeds, an installed offline voice chooser,
   voice previews, and links to voice downloads, privacy, and email support.
+- A native Material mini player with artwork/title, contextual Follow, play/pause,
+  a Stop and close (×) button, and a decorative progress line. Controls have 48dp
+  touch targets; narrow screens and large text give the title a separate row.
+  Closing saves the bookmark, cancels pending narration and the sleep timer,
+  stops/clears session media, and forgets the last item so the bar stays dismissed
+  after recreation/relaunch. Explicit Play brings it back from the saved position.
 - A bundled original sample recording, a mini player and full player, seek,
   pause/resume, and playback speed from 0.75× to 2×.
+- A sleep timer beside playback speed, with the iOS choices of 5, 10, 15, 30,
+  45, and 60 minutes, a rounded-up countdown, replacement, and cancellation.
+  The playback service owns its monotonic deadline, so closing the player or
+  backgrounding/recreating the activity does not reset it. Playback speed and
+  pauses do not extend the timer. Expiry pauses audio, preserves the bookmark,
+  cancels pending narration, and plays a quiet completion tone only if audio was
+  playing. Timers clear when the service/process ends and are not restored after
+  a restart. Voice timer commands await Android's voice integration.
 - Media3 playback owned by a `MediaSessionService`, with system media controls,
   audio focus, unplug-to-pause, and playback independent of the activity.
 - Google offline TTS rendered into short WAV chunks and assembled into **one**
@@ -70,6 +190,48 @@ own standard cache. The committed wrapper checks its Gradle distribution checksu
 The sample WAV is an original Magpie introduction, generated with the Mac's
 installed Alex voice. Its matching transcript is in `data/Library.kt`. It is
 bundled so playback tests don't depend on a publisher's stream or a network.
+
+## Article content
+
+The article reader displays HTML in a WebView, with headings, emphasis, lists,
+links, images and captions, quotations, code blocks, tables, and native MathML.
+Wide code, tables, and display equations scroll inside the article. The reader
+follows the app's light/dark colors and system font scale, supports text selection,
+and searches the rendered page with previous/next match controls. HTML semantics,
+image alternative text, and table headers remain available to TalkBack.
+
+`LibraryItem.html` is optional display content; `text` remains the immutable
+spoken text used for narration and UTF-16 bookmarks. Plain-text items fall back
+to escaped paragraphs. Like iOS, the Android reader expects the backend's existing
+LaTeX-to-MathML output; it does not interpret raw LaTeX or Markdown itself. MathML
+requires an up-to-date Android System WebView. No backend API or iOS contract was
+changed, and live account/article fetching is still future work.
+
+A native gutter marker follows the spoken line and stays at its position while
+paused. Seeking, speed changes and reopening the activity use the service's media
+timeline. Scrolling by touch or accessibility, or searching the page, stops
+following until **Follow reading position** in the mini player is used. The
+Follow icon appears only for the currently playing article while its reader is
+visible and detached; navigating elsewhere removes that action.
+Automatic scrolling is suppressed during touch exploration. The marker is
+purely visual and does not interrupt TalkBack announcements or text selection.
+
+The renderer records the voice's `onRangeStart` sample frames while synthesizing
+and maps them into the joined WAV's timeline. Engines without word-range callbacks
+use the current sentence's start (bounded chunks for unusually long sentences);
+no word timings are estimated. The display aligns
+spoken UTF-16 ranges with common word runs in the HTML, skipping URLs and MathML,
+matching the iOS approach. Unmatched content may have no exact visual position.
+
+HTML is sanitized with jsoup. Article scripts are stripped and blocked by CSP;
+only bundled app-owned geometry code is explicitly evaluated. No JavaScript-to-
+native interface is exposed. Forms, embedded frames and local file/content access
+are disabled. Web links open externally; remote images use
+HTTPS without referrers or third-party cookies. Image bytes aren't explicitly
+cached for offline use yet. The bundled **Field notes → Reading beyond plain text**
+sample includes an offline image, quotes, code, inline/display equations, and a
+table. `ArticleReaderTest` checks rendering, page overflow, find, 200% text, dark
+mode, marker alignment/following, and activity recreation; physical TalkBack/math speech acceptance is pending.
 
 ## Design reference
 
@@ -116,9 +278,9 @@ The sample repository supplies playable content; locally captured URLs stay in
 their separate pending inbox until account and article processing are connected.
 There is no Google sign-in,
 live backend access, feed discovery, cloud progress reporting, incoming share
-capture from other apps, podcast downloading, sleep timer, Gemini integration, or microphone
-recording in this version. The manifest does not request Internet or microphone
-access. Settings identifies this as a sample library. Backups and device transfers of
+capture from other apps, podcast downloading, Gemini integration, or microphone
+recording in this version. Internet access is used for HTTPS article images; the
+manifest does not request microphone access. Settings identifies this as a sample library. Backups and device transfers of
 preview preferences are disabled.
 
 Article rendering currently completes before playback starts, with a 30,000
@@ -129,8 +291,8 @@ chunk transitions, and battery on the Pixel before choosing incremental renderin
 
 Article bookmarks contain the immutable content version and a **UTF-16 offset**
 into the exact input text. For now, resume repeats the start of the current chunk.
-There is no word highlighting or exact within-chunk text/audio alignment. Podcast
-bookmarks use actual media milliseconds. Article positions are **never** written
+The visual reading marker uses word timings when the voice supplies them; durable
+resume remains at the chunk boundary. Podcast bookmarks use actual media milliseconds. Article positions are **never** written
 to the backend's existing `position_seconds` field. A future cross-platform API
 change must preserve the frozen released Swift clients.
 

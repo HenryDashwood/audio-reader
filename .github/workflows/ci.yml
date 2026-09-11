@@ -39,6 +39,16 @@ jobs:
           restore-keys: android-gradle-${{ runner.os }}-
       - name: Build, unit tests, and lint
         run: make android-check
+      - name: Retain Android test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-check-reports
+          path: |
+            android/app/build/reports/
+            android/app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   backend:
     name: Backend checks

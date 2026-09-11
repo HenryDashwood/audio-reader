@@ -15,6 +15,10 @@ Android client; it must not change released Swift contracts implicitly.
 - Run `make android-check` for changes here. Run `make android-test` on a running
   emulator for UI/service changes. Report emulator and physical-device coverage
   separately; missing voice models are not proof that narration works.
+- Use the root Android development helpers for emulator startup, focused tests,
+  screenshots, UI layout inspection, and app logs. See README.md for setup,
+  test/report paths, and the official Android CLI. Prefer its documentation
+  search and Google's current docs when working with Android APIs.
 - Keep generated build files, local SDK paths, signing keys, and Android Studio
   workspace settings out of Git. Do not publish, register an app, or change
   signing/release configuration unless explicitly requested.

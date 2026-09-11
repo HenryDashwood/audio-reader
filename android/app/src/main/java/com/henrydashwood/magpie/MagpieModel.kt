@@ -73,6 +73,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     val voices = voiceCatalog.state
     private var voiceRefresh: Job? = null
     val preparation = PlaybackStatus.state
+    val sleepTimer = PlaybackStatus.sleepTimer
     private val mutableNotice = MutableStateFlow<String?>(null)
     val notice = mutableNotice.asStateFlow()
     private var controller: MediaController? = null
@@ -96,7 +97,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         mutableSettings.value = readSettings()
         val media = controller ?: return
         mutablePlayer.value = PlayerState(
-            item = library.find { it.id == media.currentMediaItem?.mediaId } ?: mutablePlayer.value.item,
+            item = library.find { it.id == (preparation.value.itemId ?: media.currentMediaItem?.mediaId ?: store.lastItem) },
             playing = media.isPlaying,
             buffering = media.playbackState == Player.STATE_BUFFERING,
             positionMs = media.currentPosition.coerceAtLeast(0),
@@ -157,6 +158,40 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     fun closeVoiceSettings() { voiceRefresh?.cancel(); voiceCatalog.close() }
     fun cancelPreparation() {
         controller?.sendCustomCommand(SessionCommand(PlaybackService.CANCEL_PREPARATION, Bundle.EMPTY), Bundle.EMPTY)
+    }
+    fun dismissPlayer() {
+        voiceCatalog.stop()
+        val media = controller
+        if (media == null || !media.isConnected) {
+            mutableNotice.value = "The player is still connecting. Please try again."
+            return
+        }
+        val result = media.sendCustomCommand(SessionCommand(PlaybackService.DISMISS_PLAYER, Bundle.EMPTY), Bundle.EMPTY)
+        result.addListener({
+            try {
+                if (result.get().resultCode < 0) mutableNotice.value = "The player could not be closed. Please try again."
+                else updatePlayer()
+            } catch (_: Exception) { mutableNotice.value = "The player disconnected. Please try again." }
+        }, getApplication<Application>().mainExecutor)
+    }
+
+    fun startSleepTimer(minutes: Int) = changeSleepTimer(PlaybackService.SET_SLEEP_TIMER,
+        Bundle().apply { putLong(PlaybackService.SLEEP_DURATION_MS, minutes * 60_000L) })
+
+    fun cancelSleepTimer() = changeSleepTimer(PlaybackService.CANCEL_SLEEP_TIMER, Bundle.EMPTY)
+
+    private fun changeSleepTimer(action: String, args: Bundle) {
+        val media = controller
+        if (media == null || !media.isConnected) {
+            mutableNotice.value = "The player is still connecting. Please try again."
+            return
+        }
+        val result = media.sendCustomCommand(SessionCommand(action, Bundle.EMPTY), args)
+        result.addListener({
+            try {
+                if (result.get().resultCode < 0) mutableNotice.value = "The sleep timer could not be changed. Please try again."
+            } catch (_: Exception) { mutableNotice.value = "The player disconnected. Please try again." }
+        }, getApplication<Application>().mainExecutor)
     }
     fun toggleSaved(item: LibraryItem) {
         val next = if (item.id in saved.value) saved.value - item.id else saved.value + item.id
