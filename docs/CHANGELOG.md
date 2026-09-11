@@ -12,6 +12,16 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.4.1
 
+Articles can now display supported YouTube and Vimeo videos. Open an article
+containing a video and tap its play button. Videos wait for you to start them;
+an "Open video in browser" link is available if a video cannot play inside Magpie.
+
+This build also fixes the system playback controls becoming out of step with
+article narration. Please try pausing and resuming from Control Centre and the
+Lock Screen, including after switching from a podcast to an article.
+
+## 1.4.1 — conversation improvements
+
 Conversations now keep listening after Magpie replies. Wait for the listening
 sound and vibration, then ask your next question. Staying quiet ends listening
 without an error; say "That's all" to close the conversation. Starting an
