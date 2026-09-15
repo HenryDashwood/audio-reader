@@ -429,7 +429,8 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
 
     func saveArticle(
         url: URL? = nil, episodeID: Int? = nil, title: String? = nil, html: String? = nil,
-        savedAt: Date? = nil, contentFormat: String? = nil, replaceExisting: Bool = false
+        savedAt: Date? = nil, contentFormat: String? = nil, replaceExisting: Bool = false,
+        createIfMissing: Bool = false
     ) async throws -> Episode {
         // A distinct route makes an older backend fail visibly instead of silently
         // ignoring a replacement flag and keeping the incorrect selected version.
@@ -449,7 +450,21 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         request.httpBody = try encoder.encode(Body(
             url: url, episode_id: episodeID, title: title, html: html,
             saved_at: savedAt, content_format: contentFormat))
-        return try await send(request)
+        let originalToken = Self.tokenProvider()
+        do {
+            return try await send(request)
+        } catch let error as APIError where replaceExisting && createIfMissing
+            && error.statusCode == 404
+            && error.spokenResponse == "Save this article before replacing its text."
+        {
+            // Only the explicit missing-save response permits creation. A missing
+            // replacement route on an older server must still fail visibly.
+            // Do not send private captured text to an account signed in while
+            // the replacement request was in flight.
+            guard Self.tokenProvider() == originalToken else { throw error }
+            request.url = baseURL.appendingPathComponent("saved")
+            return try await send(request)
+        }
     }
 
     func removeSavedArticle(id: Int) async throws {
@@ -755,7 +770,13 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
     }
 
     private static func spokenResponse(from data: Data) -> String? {
-        try? JSONDecoder().decode(ErrorEnvelope.self, from: data).detail?.spokenResponse
+        if let spoken = try? JSONDecoder().decode(ErrorEnvelope.self, from: data).detail?.spokenResponse {
+            return spoken
+        }
+        // Saved-article routes use FastAPI's plain string detail for actionable
+        // errors, including the explicit response that permits a first save.
+        struct PlainError: Decodable { let detail: String }
+        return try? JSONDecoder().decode(PlainError.self, from: data).detail
     }
 
     private static let decoder: JSONDecoder = {

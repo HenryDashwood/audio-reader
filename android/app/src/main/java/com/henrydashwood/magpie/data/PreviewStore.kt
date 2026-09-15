@@ -43,6 +43,7 @@ class PreviewStore(context: Context) {
     fun bookmark(id: String): ArticleBookmark? = preferences.getString("version:$id", null)?.let {
         ArticleBookmark(it, preferences.getInt("offset:$id", 0))
     }
+    fun clearBookmark(id: String) { preferences.edit { remove("version:$id"); remove("offset:$id") } }
     fun saveBookmark(id: String, bookmark: ArticleBookmark) {
         preferences.edit {
             putString("version:$id", bookmark.contentVersion)

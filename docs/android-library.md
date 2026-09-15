@@ -34,7 +34,8 @@ and article text are not persisted for offline use yet.
 Save/remove, URL capture, read/unread, Clear Latest, and subscribing to a direct
 feed URL use the existing authenticated endpoints. UI state changes only after
 the server accepts a write. Signed-out preview actions keep using their local
-stores; pending links and feed addresses are never uploaded automatically.
+stores; sample pending links and feed addresses are never uploaded automatically.
+Signed-in saved links use the account-scoped queue described below.
 
 Podcasts play the supplied HTTPS audio URL, resume from the saved server position,
 and report media seconds on pause and every thirty seconds. During a playback
@@ -116,3 +117,37 @@ Source rows distinguish the primary source, email newsletters, hosts, and update
 failures. Private subscription URL paths and tokens never appear in those labels.
 Only non-primary sources can be separated. Unsubscribe also works in a subscribed
 preview; removing a combined root stops following every source in the group.
+
+## Saved article preparation
+
+`ArticleInboxStore` commits URL, stable capture ID, and original saved timestamp
+to app-private storage before acknowledging a capture. Queues are partitioned by
+the server/user digest, separate from signed-out sample inboxes. A server-bound
+token digest remembers the last identified account for offline cold-start capture;
+it stores no credential and cannot identify a different token or server. Account
+metadata and full article text remain in memory.
+
+`SavedPreparation` syncs pending links on account activation, entering Saved,
+refresh, or explicit retry. It runs in the foreground and has no background worker.
+Only a confirmed `/saved` response removes a pending entry. Transport failure
+keeps the entry and its timestamp for an idempotent retry. A response containing
+`capture_error` is a saved link, with explicit Retry and Open original actions.
+Pending entries can also be removed when no sync is in flight.
+
+Saved offers Review device links for URLs captured before sign-in. Cancelling
+leaves them unassigned. Confirmed import commits each link to the chosen account
+queue before removing its device-inbox copy. If an import fails partway through,
+the remaining device links stay available; account changes stop the import.
+
+Retry uses `/saved/{id}/retry`; confirmed replacement uses `/saved/replace`.
+The existing backend owns immutable content selection and replacement failure
+semantics. Android invalidates loaded text only when the selected content changes,
+rejects stale text/search replies, and keeps the selected Saved version when
+loading feed results. The playback service cancels old narration, preparation,
+and timers when it observes a new content ID; local text bookmarks are reset.
+An unchanged selection keeps playback and its bookmark. Failed replacements keep
+the current copy and can be tried again. Account changes dismiss confirmation,
+hide other accounts' pending links, and prevent late replies from altering them.
+Filing updates from an older content ID are rejected, so a late playback completion
+cannot mark replacement text as read. An empty Following search preserves initial
+load errors even when a cached account identity is available for offline capture.

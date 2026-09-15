@@ -35,7 +35,7 @@ final class SavedLibrary: ObservableObject {
                     let episode = try await api.saveArticle(
                         url: capture.url, title: capture.title, html: capture.html,
                         savedAt: capture.createdAt, contentFormat: capture.contentFormat,
-                        replaceExisting: capture.replaceExisting == true)
+                        replaceExisting: capture.replaceExisting == true, createIfMissing: true)
                     // Signing out or switching servers during a request must not
                     // write the previous account's response into the next cache.
                     guard currentAccount == account, self.generation == generation else { return }
@@ -273,7 +273,7 @@ struct SavedView: View {
                 Button("Replace saved text") { Task { await model.replace(episode) } }
                 Button("Cancel", role: .cancel) {}
             } message: { _ in
-                Text("Download a fresh copy from the original link. If the text changes, listening starts from the beginning. If it fails, your current copy is kept. For pages requiring sign-in, share from Safari and choose Replace saved text.")
+                Text("Download a fresh copy from the original link. If the text changes, listening starts from the beginning. If it fails, your current copy is kept. For pages requiring sign-in, share from Safari to update your saved copy.")
             }
             .refreshable { await model.load() }
             .toolbar {

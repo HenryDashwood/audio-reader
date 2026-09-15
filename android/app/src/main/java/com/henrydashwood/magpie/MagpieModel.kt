@@ -64,7 +64,11 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     val pendingSources = mutablePendingSources.asStateFlow()
     private val mutableSourceCapture = MutableStateFlow(LinkCaptureState())
     val sourceCapture = mutableSourceCapture.asStateFlow()
-    private val inbox = LinkInbox(application)
+    private val inbox = (application as MagpieApplication).deviceLinkInbox
+    private val mutableDeviceLinks = MutableStateFlow(inbox.links())
+    val deviceLinks = mutableDeviceLinks.asStateFlow()
+    private val mutableImportingLinks = MutableStateFlow(false)
+    val importingLinks = mutableImportingLinks.asStateFlow()
     private val mutablePendingLinks = MutableStateFlow(inbox.links())
     val pendingLinks = mutablePendingLinks.asStateFlow()
     private val mutableLinkCapture = MutableStateFlow(LinkCaptureState())
@@ -86,6 +90,10 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     private val mutableNotice = MutableStateFlow<String?>(null)
     val notice = mutableNotice.asStateFlow()
     val sourceManager = com.henrydashwood.magpie.data.SourceManager(viewModelScope, repository) { mutableNotice.value = it }
+    val savedPreparation = com.henrydashwood.magpie.data.SavedPreparation(viewModelScope, repository,
+        (application as MagpieApplication).articleInbox, { mutableNotice.value = it }, { before, after ->
+            if (before.contentId != after.contentId) store.clearBookmark(before.id)
+        })
     private var controller: MediaController? = null
     private val connection = MediaController.Builder(application, SessionToken(application, ComponentName(application, PlaybackService::class.java))).buildAsync()
 
@@ -105,12 +113,15 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                     mutableNotice.value = null
                     mutableClearingLatest.value = false
                     mutableClearLatestError.value = null
+                    mutableImportingLinks.value = false
                 }
                 mutableSaved.value = if (snapshot.live) snapshot.savedIds.toSet() else store.saved
                 mutableFinished.value = if (snapshot.live) snapshot.items.filter { it.completed }.map { it.id }.toSet() else store.finished
                 mutableDismissedFromLatest.value = if (snapshot.live) emptySet() else store.dismissedFromLatest
                 mutablePendingLinks.value = if (snapshot.live) emptyList() else inbox.links()
+                mutableDeviceLinks.value = inbox.links()
                 mutablePendingSources.value = if (snapshot.live) emptyList() else sourceInbox.links()
+                savedPreparation.activate(if (snapshot.live) snapshot.owner else null, snapshot.revision)
                 updatePlayer()
             }
         }
@@ -143,7 +154,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun refreshLibrary() { if (libraryState.value.live) viewModelScope.launch { repository.refresh() } }
+    fun refreshLibrary() { if (libraryState.value.live) viewModelScope.launch { repository.refresh(); savedPreparation.sync() } }
     suspend fun searchLibrary(feedId: String?, query: String) {
         if (libraryState.value.live && libraryState.value.owner != null) repository.search(feedId, query)
     }
@@ -154,7 +165,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         mutableItemLoading.value = item.id
         contentJob = viewModelScope.launch {
             try {
-                if (item.captureError != null) repository.save(item)
+                if (item.captureError != null && item.id in saved.value) repository.prepareSaved(item, false, libraryState.value.revision)
                 val loaded = repository.content(item.id)
                 if (play) playReady(loaded)
             }
@@ -302,13 +313,14 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 if (libraryState.value.live) {
-                    repository.save(url = capture.url.trim())
+                    savedPreparation.add(capture.url)
+                    if (revision != libraryState.value.revision) return@launch
                     mutableLinkCapture.value = LinkCaptureState(savedUrl = capture.url)
-                    mutableNotice.value = "Saved to your library"
                     return@launch
                 }
                 val added = withContext(Dispatchers.IO) { inbox.add(capture.url) }
                 mutablePendingLinks.value = inbox.links()
+                mutableDeviceLinks.value = inbox.links()
                 mutableLinkCapture.value = LinkCaptureState(savedUrl = capture.url)
                 mutableNotice.value = if (added) "Link saved on this device" else "This link is already saved on this device"
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -320,9 +332,32 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
             try {
                 withContext(Dispatchers.IO) { inbox.remove(url) }
                 mutablePendingLinks.value = inbox.links()
+                mutableDeviceLinks.value = inbox.links()
                 mutableNotice.value = "Saved link removed"
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { mutableNotice.value = error.message ?: "The link could not be removed. Please try again." }
+        }
+    }
+
+    fun importDeviceLinks() {
+        if (!libraryState.value.live || mutableImportingLinks.value || savedPreparation.state.value.busy) return
+        val revision = libraryState.value.revision
+        val urls = deviceLinks.value.toList()
+        mutableImportingLinks.value = true
+        viewModelScope.launch {
+            try {
+                for (url in urls) {
+                    if (revision != libraryState.value.revision) throw CancellationException("Account changed")
+                    // Commit to the chosen account before removing the unassigned copy.
+                    savedPreparation.add(url, syncAfter = false)
+                    if (revision != libraryState.value.revision) throw CancellationException("Account changed")
+                    withContext(Dispatchers.IO) { inbox.remove(url) }
+                    if (revision != libraryState.value.revision) throw CancellationException("Account changed")
+                    mutableDeviceLinks.value = inbox.links()
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { if (revision == libraryState.value.revision) mutableNotice.value = failure.message ?: "The links could not be imported. Please try again." }
+            finally { if (revision == libraryState.value.revision) { mutableImportingLinks.value = false; savedPreparation.sync() } }
         }
     }
 

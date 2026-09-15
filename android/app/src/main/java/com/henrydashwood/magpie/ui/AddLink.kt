@@ -26,7 +26,7 @@ fun AddLinkButton(model: MagpieModel, onSaved: () -> Unit) {
     }
     IconButton(onClick = model::beginLinkCapture) { Icon(Icons.Rounded.Add, "Add link") }
     AddressCaptureDialog(capture, "Add link", "Web address", "https://example.com/article",
-        if (library.live) "Save this article to your account so it is available on your other devices." else "The link is saved on this device. Preparing articles will be available when your account is connected.",
+        if (library.live) "The link is kept on this device for your account until Magpie can save and prepare it." else "The link is saved in this device’s sample inbox. It is kept separate from account libraries.",
         model::closeLinkCapture, model::editLink, model::saveLink)
 }
 

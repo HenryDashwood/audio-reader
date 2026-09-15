@@ -37,7 +37,7 @@ interface LibraryApi {
 }
 
 /** Uses the existing Swift/backend wire contract. Authorization never follows redirects. */
-class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (String) -> Unit = {}) : LibraryApi, DiscoveryApi, SourceManagementApi {
+class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (String) -> Unit = {}) : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi {
     override suspend fun userId(token: String) = obj(token, "me").getString("id")
     override suspend fun feeds(token: String) = array(token, "feeds").objects().map(::decodeFeed)
     override suspend fun latest(token: String) = list(token, "episodes?limit=30")
@@ -54,6 +54,10 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
     }
     override suspend fun save(token: String, episodeId: Int?, url: String?) = decodeEpisode(obj(token, "saved", "POST",
         JSONObject().put("episode_id", episodeId).put("url", url)))
+    override suspend fun capture(token: String, article: PendingArticle) = decodeEpisode(obj(token, "saved", "POST",
+        JSONObject().put("url", article.url).put("saved_at", article.savedAt)))
+    override suspend fun retrySaved(token: String, episodeId: Int) = decodeEpisode(obj(token, "saved/$episodeId/retry", "POST"))
+    override suspend fun replaceSaved(token: String, episodeId: Int) = decodeEpisode(obj(token, "saved/replace", "POST", JSONObject().put("episode_id", episodeId)))
     override suspend fun remove(token: String, episodeId: Int) { request(token, "saved/$episodeId", "DELETE") }
     override suspend fun played(token: String, episodeId: Int, played: Boolean) {
         request(token, "episodes/$episodeId/state", "PUT", JSONObject().put("played", played))

@@ -34,6 +34,59 @@ private func makeClient(_ transport: DataTransport) -> HearfulAPI {
 
 @Suite("Saved article replacement endpoint")
 struct SavedReplacementEndpointTests {
+    private actor ShareTransport: DataTransport {
+        let status: Int
+        let detail: String
+        private(set) var requests: [URLRequest] = []
+
+        init(status: Int, detail: String) {
+            self.status = status
+            self.detail = detail
+        }
+
+        func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+            requests.append(request)
+            let replacing = request.url?.path == "/saved/replace"
+            let data = replacing
+                ? try JSONSerialization.data(withJSONObject: ["detail": detail])
+                : Data("{\"id\":42,\"title\":\"Article\",\"has_text\":true}".utf8)
+            return (data, HTTPURLResponse(
+                url: request.url!, statusCode: replacing ? status : 200,
+                httpVersion: nil, headerFields: nil)!)
+        }
+    }
+
+    @Test func aNewSharedArticleIsCreatedWithTheSameCaptureAfterAnExplicitMissingSave() async throws {
+        let transport = ShareTransport(status: 404, detail: "Save this article before replacing its text.")
+        let result = try await makeClient(transport).saveArticle(
+            url: URL(string: "https://example.com/story"), title: "Article",
+            html: "<article>Captured text</article>", savedAt: Date(timeIntervalSince1970: 100),
+            contentFormat: "article", replaceExisting: true, createIfMissing: true)
+        let requests = await transport.requests
+        #expect(requests.map { $0.url?.path } == ["/saved/replace", "/saved"])
+        #expect(requests.first?.httpBody == requests.last?.httpBody)
+        #expect(result.id == 42)
+    }
+
+    @Test(arguments: [404, 401, 422, 500])
+    func aFailedSharedReplacementDoesNotSilentlyBecomeAnOrdinarySave(status: Int) async {
+        let transport = ShareTransport(status: status, detail: "Replacement unavailable")
+        await #expect(throws: APIError.self) {
+            try await makeClient(transport).saveArticle(
+                url: URL(string: "https://example.com/story"),
+                replaceExisting: true, createIfMissing: true)
+        }
+        #expect(await transport.requests.count == 1)
+    }
+
+    @Test func anExplicitReplacementDoesNotCreateAMissingSave() async {
+        let transport = ShareTransport(status: 404, detail: "Save this article before replacing its text.")
+        await #expect(throws: APIError.self) {
+            try await makeClient(transport).saveArticle(episodeID: 42, replaceExisting: true)
+        }
+        #expect(await transport.requests.count == 1)
+    }
+
     @Test func replacementUsesItsOwnRouteAndCarriesTheArticleFormat() async throws {
         let transport = FakeTransport(json: """
             {"id":42,"title":"Correct article","content_id":9,"position_seconds":0,"has_text":true}

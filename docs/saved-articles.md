@@ -27,6 +27,10 @@ This preserves the shared URL as the saved identity and still rejects stale or
 ambiguous snapshot metadata.
 
 The share sheet previews the extracted title and opening paragraph before Save.
+Its single Save article action updates an existing saved copy by default, or
+creates a new save when the server explicitly reports that none exists. There is
+no replacement toggle. Changed text restarts listening; failed replacements keep
+the current copy. A missing replacement route does not fall back to ordinary save.
 Other apps generally supply a URL. Limits apply to the extracted article, so
 large navigation sections do not discard an otherwise small article. Failed,
 oversized, or uncertain extraction falls back to URL capture without truncation.
@@ -60,10 +64,10 @@ the full article is visible; Retry alone still performs a server fetch.
   selected copy for restoration. Account deletion erases private copies.
 - Changed captures create additional versions. Duplicate captures within one
   owner and article reuse the existing version. Re-saving does not automatically
-  switch the selected copy. **Replace saved text** in a Saved item's context menu
-  fetches a fresh copy from its original link. The same option in Safari's share
-  sheet queues a replacement using the previewed browser capture, useful for
-  signed-in pages. Replacement requires an existing saved item owned by the user,
+  switch the selected copy through ordinary saves. **Replace saved text** in a
+  Saved item's context menu fetches a fresh copy from its original link. Safari's
+  share sheet automatically queues a replacement using the previewed browser
+  capture, useful for signed-in pages. Replacement requires an existing saved item owned by the user,
   preserves its original save date, and keeps the old immutable content version.
   A failed replacement leaves the selected copy and progress unchanged. Changed
   spoken text resets progress and completion; identical speech keeps progress,

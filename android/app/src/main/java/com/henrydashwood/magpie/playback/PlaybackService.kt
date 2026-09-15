@@ -157,6 +157,12 @@ class PlaybackService : MediaSessionService() {
             var observed = library.state.value.revision
             library.state.collect { state ->
                 if (state.revision != observed) { observed = state.revision; dismissPlayer(); localPodcastPositions.clear() }
+                val playing = current
+                val updated = state.items.firstOrNull { it.id == playing?.id }
+                if (playing?.kind == ContentKind.Article && updated != null && playing.contentId != updated.contentId) {
+                    dismissPlayer()
+                    store.clearBookmark(playing.id)
+                }
             }
         }
         scope.launch {

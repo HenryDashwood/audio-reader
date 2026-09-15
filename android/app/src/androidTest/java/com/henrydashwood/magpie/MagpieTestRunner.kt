@@ -7,6 +7,8 @@ import com.henrydashwood.magpie.auth.*
 
 /** UI tests use an isolated signed-out session, never the owner's live account. */
 class MagpieTestApplication : MagpieApplication() {
+    override val articleInbox by lazy { com.henrydashwood.magpie.data.ArticleInboxStore(this, "magpie_test_account_captures") }
+    override val deviceLinkInbox by lazy { com.henrydashwood.magpie.data.LinkInbox(this, "magpie_test_device_links") }
     var libraryOverride: com.henrydashwood.magpie.data.AccountLibrary? = null
     override val library get() = libraryOverride ?: super.library
     override val accounts by lazy {

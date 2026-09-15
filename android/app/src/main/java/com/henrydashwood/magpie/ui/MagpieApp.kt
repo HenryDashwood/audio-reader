@@ -91,6 +91,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
     LaunchedEffect(snapshot.catalogRevision) {
         if (snapshot.live && snapshot.catalogRevision > 0 && selectedSource != null && selectedFeed == null) selectedSource = null
     }
+    LaunchedEffect(destination, snapshot.owner) { if (destination == Destination.Saved) model.savedPreparation.sync() }
     val snackbar = remember { SnackbarHostState() }
     val followControl = remember { ArticleFollowControl() }
     LaunchedEffect(appleReturn) { if (appleReturn > 0) showingAccount = true }
@@ -186,13 +187,14 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
                 destination == Destination.Latest -> ItemList(latestItems, saved, "", ::openItem, model::play, model::toggleSaved, emptyTitle = "You're caught up", loading = snapshot.loading || snapshot.error != null)
                 destination == Destination.Saved -> key(savedListVersion) {
                     ItemList(if (snapshot.live) snapshot.savedIds.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.id in saved && it.kind == ContentKind.Article }, saved, query, ::openItem, model::play, model::toggleSaved, savedOnly = true, finished = finished, finish = model::toggleFinished,
-                        pendingLinks = pendingLinks, removePendingLink = model::removePendingLink, loading = snapshot.loading || snapshot.error != null)
+                        pendingLinks = pendingLinks, removePendingLink = model::removePendingLink, live = snapshot.live, model = model, loading = snapshot.loading || snapshot.error != null)
                 }
                 else -> SettingsScreen(model) { showingAccount = true }
             }
         }
     }
     SourceManagementDialog(model)
+    ReplaceSavedTextDialog(model)
     if (showingPlayer) ModalBottomSheet(onDismissRequest = { showingPlayer = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         FullPlayer(playback, preparation, model::toggle, model::skip, model::seek, model::speed,
             sleepTimer, model::startSleepTimer, model::cancelSleepTimer, close = { showingPlayer = false }) {
@@ -267,6 +269,8 @@ private fun Following(feeds: List<LibraryFeed>, items: List<LibraryItem>, query:
 @Composable
 private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String, open: (LibraryItem) -> Unit, play: (LibraryItem) -> Unit, save: (LibraryItem) -> Unit, source: String? = null, savedOnly: Boolean = false, finished: Set<String> = emptySet(), finish: (LibraryItem) -> Unit = {}, pendingLinks: List<String> = emptyList(), removePendingLink: (String) -> Unit = {}, emptyTitle: String = "Nothing here yet", live: Boolean = false, feedSources: List<String> = emptyList(), loading: Boolean = false, feed: LibraryFeed? = null, model: MagpieModel? = null) {
     var showingFinished by rememberSaveable { mutableStateOf(false) }
+    val preparation = if (savedOnly && live) model?.savedPreparation?.state?.collectAsStateWithLifecycle()?.value else null
+    val pending = if (!showingFinished) preparation?.pending.orEmpty().filter { it.url.contains(query, ignoreCase = true) } else emptyList()
     val visible = items.filter { (!savedOnly || (it.id in finished) == showingFinished) && "${it.title} ${it.source}".contains(query, ignoreCase = true) }
     val visibleLinks = if (savedOnly && !showingFinished) pendingLinks.filter { it.contains(query, ignoreCase = true) } else emptyList()
     LazyColumn(Modifier.fillMaxSize().testTag("story-list")) {
@@ -281,12 +285,15 @@ private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String
             item { FeedHeader(source, feed?.let { "${it.count} ${if (it.articles) "posts" else "episodes"}" } ?: sourceCount(items), live, feedSources, feed, model) }
             item { ListSection(if (items.all { it.kind == ContentKind.Article }) "Posts" else "Episodes") }
         }
-        if (!loading && visible.isEmpty() && visibleLinks.isEmpty()) item { EmptyState(if (query.isNotBlank()) "Nothing found" else emptyTitle, if (query.isNotBlank()) "Try a different search." else if (savedOnly && showingFinished) "Articles you finish stay here." else if (savedOnly) "Add a link above to save it for later." else "New episodes from your shows will appear here.") }
+        if (preparation != null && model != null) item { SavedPreparationStatus(model) }
+        if (!loading && visible.isEmpty() && visibleLinks.isEmpty() && pending.isEmpty()) item { EmptyState(if (query.isNotBlank()) "Nothing found" else emptyTitle, if (query.isNotBlank()) "Try a different search." else if (savedOnly && showingFinished) "Articles you finish stay here." else if (savedOnly) "Add a link above to save it for later." else "New episodes from your shows will appear here.") }
+        items(pending, key = { "account-pending:${it.id}" }) { if (model != null) SavedPendingRow(it, model) }
         items(visibleLinks, key = { "pending:$it" }) { url -> PendingLinkRow(url) { removePendingLink(url) } }
         items(visible, key = { it.id }) { item ->
             if (item.kind == ContentKind.Article) ActionStoryRow(item, { open(item) }, { play(item) }, item.id in saved,
                 { save(item) }, item.id in finished, if (savedOnly) ({ finish(item) }) else null)
             else StoryRow(item, { open(item) }, { play(item) })
+            if (savedOnly && live && model != null && item.kind == ContentKind.Article) SavedArticlePreparation(item, model)
         }
     }
 }

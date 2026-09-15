@@ -11,7 +11,9 @@ import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountLibraryTest {
-    private class Api : LibraryApi, DiscoveryApi, SourceManagementApi {
+    private class Api : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi {
+        var textGate: CompletableDeferred<Unit>? = null
+        var userFailure = false
         var grouped = false
         var unsubscribed = false
         var failRefreshAfterChange = false
@@ -25,11 +27,12 @@ class AccountLibraryTest {
         var contentId = 7
         var requestedContent: Int? = null
         var saves = 0
+        var filings = 0
         var positions = 0
         var texts = 0
         var latestRows = listOf(RemoteEpisode(1, "Episode", source = "Same title", feedUrl = "https://one.example/feed", audioUrl = "https://one.example/audio.mp3", positionSeconds = 42.5))
         var savedRows = listOf(RemoteEpisode(2, "Saved article", contentId = 7))
-        override suspend fun userId(token: String) = token
+        override suspend fun userId(token: String): String { if (userFailure) throw IOException(); return token }
         override suspend fun feeds(token: String): List<LibraryFeed> {
             gate?.await()
             if (fail) throw IOException()
@@ -44,13 +47,23 @@ class AccountLibraryTest {
         }
         override suspend fun text(token: String, episodeId: Int, contentId: Int?): RemoteText {
             texts++; requestedContent = contentId
-            return RemoteText(episodeId, this.contentId, "Full saved text", "<p>Full saved text</p>", 3)
+            val version = this.contentId
+            textGate?.await()
+            return RemoteText(episodeId, version, "Full saved text", "<p>Full saved text</p>", 3)
         }
         override suspend fun save(token: String, episodeId: Int?, url: String?): RemoteEpisode {
             saves++; if (fail) throw IOException(); return savedRows.first()
         }
         override suspend fun remove(token: String, episodeId: Int) { if (fail) throw IOException() }
-        override suspend fun played(token: String, episodeId: Int, played: Boolean) { if (fail) throw IOException() }
+        override suspend fun capture(token: String, article: PendingArticle) = save(token, null, article.url)
+        override suspend fun retrySaved(token: String, episodeId: Int) = save(token, episodeId, null)
+        override suspend fun replaceSaved(token: String, episodeId: Int): RemoteEpisode {
+            if (fail) throw IOException()
+            contentId++
+            savedRows = savedRows.map { if (it.id == episodeId) it.copy(contentId = contentId, completed = false) else it }
+            return savedRows.first { it.id == episodeId }
+        }
+        override suspend fun played(token: String, episodeId: Int, played: Boolean) { if (fail) throw IOException(); filings++ }
         override suspend fun clearLatest(token: String) {}
         override suspend fun subscribe(token: String, url: String): LibraryFeed { subscriptions++; return LibraryFeed("3", "New feed", 0, true, url) }
         override suspend fun directory(token: String, query: String): List<SourceResult> {
@@ -86,11 +99,54 @@ class AccountLibraryTest {
         assertFalse(state.items.any { it.id == "walking" })
         assertEquals(0, api.texts) // Full articles are fetched on demand.
     }
+    @Test fun replacementInvalidatesTextButFailedReplacementPreservesTheLoadedCopy() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val old = library.content(library.state.value.savedIds.single())
+        api.fail = true
+        assertTrue(runCatching { library.prepareSaved(old, true, library.state.value.revision) }.isFailure)
+        assertEquals(old, library.state.value.items.first { it.id == old.id })
+        api.fail = false
+        val updated = library.prepareSaved(old, true, library.state.value.revision)
+        assertEquals(8, updated.contentId); assertFalse(updated.textLoaded); assertEquals("", updated.text)
+        assertEquals(old.id, updated.id)
+        assertTrue(runCatching { library.played(old, true) }.isFailure)
+        assertEquals(0, api.filings) // An old playback completion must not finish the replacement.
+        val loaded = library.content(updated.id); assertEquals(8, loaded.contentId)
+        api.latestRows = listOf(api.savedRows.single().copy(contentId = 7))
+        library.search("1", "")
+        assertEquals(8, library.state.value.items.first { it.id == old.id }.contentId)
+    }
+    @Test fun lateTextReplyCannotRestoreVersionReplacedWhileLoading() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val old = library.state.value.items.first { it.id in library.state.value.savedIds }
+        api.textGate = CompletableDeferred()
+        val loading = launch { library.content(old.id) }; runCurrent()
+        library.prepareSaved(old, true, library.state.value.revision)
+        api.textGate!!.complete(Unit); loading.join()
+        assertEquals(8, library.state.value.items.first { it.id == old.id }.contentId)
+        assertFalse(library.state.value.items.first { it.id == old.id }.textLoaded)
+    }
+    @Test fun cachedIdentitySupportsOfflineSameSessionButNeverAnotherTokenOrServer() = runTest {
+        val identities = object : AccountIdentityStore {
+            val rows = mutableMapOf<String, String>()
+            override fun owner(sessionKey: String) = rows[sessionKey]
+            override suspend fun remember(sessionKey: String, owner: String) { rows[sessionKey] = owner }
+        }
+        val api = Api(); val library = AccountLibrary(api, "one", identityStore = identities)
+        library.changeSession("alice"); val owner = library.state.value.owner
+        api.fail = true; api.userFailure = true
+        val offline = AccountLibrary(api, "one", identityStore = identities); offline.changeSession("alice")
+        assertEquals(owner, offline.state.value.owner); assertNotNull(offline.state.value.error)
+        offline.changeSession("bob"); assertNull(offline.state.value.owner)
+        val other = AccountLibrary(api, "two", identityStore = identities); other.changeSession("alice"); assertNull(other.state.value.owner)
+    }
     @Test fun failedLoadNeverShowsSamplesAndRefreshFailureKeepsTheCurrentAccount() = runTest {
         val api = Api().apply { fail = true }; val library = AccountLibrary(api, "server")
         library.changeSession("alice")
         assertTrue(library.state.value.live)
         assertTrue(library.state.value.items.isEmpty())
+        assertNotNull(library.state.value.error)
+        library.search(null, "")
         assertNotNull(library.state.value.error)
         api.fail = false; library.refresh()
         val items = library.state.value.items

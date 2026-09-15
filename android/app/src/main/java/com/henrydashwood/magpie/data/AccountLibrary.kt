@@ -19,7 +19,8 @@ data class LibraryState(val live: Boolean = false, val revision: Int = 0, val ca
 
 /** Main-dispatcher state. Every result is bound to the initiating session revision.
  * Account data is kept in memory; a failed load never falls back to sample data. */
-class AccountLibrary(private val api: LibraryApi, private val server: String, initiallySignedIn: Boolean = false) : SourceRepository, SourceManagementRepository {
+class AccountLibrary(private val api: LibraryApi, private val server: String, initiallySignedIn: Boolean = false,
+    private val identityStore: AccountIdentityStore? = null) : SourceRepository, SourceManagementRepository, SavedArticleRepository {
     private var token: String? = null
     private var revision = 0
     private var searchVersion = 0
@@ -37,7 +38,8 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         token = value
         revision++
         searchVersion++
-        mutable.value = if (value == null) preview() else LibraryState(live = true, revision = revision, loading = true)
+        mutable.value = if (value == null) preview() else LibraryState(live = true, revision = revision, loading = true,
+            owner = identityStore?.owner(digest(server + ":" + value)))
         if (value != null) refresh()
     }
     private fun check(version: Int) { if (version != revision) throw CancellationException("Account changed") }
@@ -50,6 +52,10 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
             mutable.value = state.value.copy(loading = true, error = null)
             try {
                 val owner = state.value.owner ?: digest(server + ":" + api.userId(current))
+                check(version)
+                identityStore?.remember(digest(server + ":" + current), owner)
+                check(version)
+                mutable.value = state.value.copy(owner = owner)
                 val result = coroutineScope {
                     val feeds = async { api.feeds(current) }
                     val latest = async { api.latest(current) }
@@ -73,13 +79,19 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     suspend fun search(feedId: String?, query: String) {
         val (current, version) = credentials()
         val request = ++searchVersion
+        if (feedId == null && query.isBlank()) {
+            // Returning to Following performs no request and must retain a failed
+            // initial-load error, including when only the cached account is known.
+            mutable.value = state.value.copy(searching = false, feedResults = emptyList(), searchResults = emptyList())
+            return
+        }
         mutable.value = state.value.copy(searching = true, error = null, feedResults = emptyList(), searchResults = emptyList())
         try {
             val rows = if (feedId != null) api.episodes(current, feedId, query)
                 else if (query.isBlank()) emptyList() else api.search(current, query)
             check(version)
             if (request != searchVersion) return
-            val items = rows.map { it.item(state.value) }
+            val items = rows.map { row -> state.value.items.firstOrNull { it.episodeId == row.id && it.id in state.value.savedIds } ?: row.item(state.value) }
             mutable.value = state.value.copy(items = merge(state.value.items, items), searching = false,
                 feedResults = if (feedId != null) items.map { it.id } else emptyList(),
                 searchResults = if (feedId == null) items.map { it.id } else emptyList())
@@ -96,6 +108,7 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         if (item.kind == ContentKind.Podcast || item.textLoaded) return item
         val text = api.text(current, checkNotNull(item.episodeId), item.contentId)
         check(version)
+        if (state.value.items.firstOrNull { it.id == id }?.contentId != item.contentId) throw CancellationException("Article changed")
         require(text.episodeId == item.episodeId && (item.contentId == null || text.contentId == item.contentId)) { "The article version changed. Refresh your library and try again." }
         require(text.text.isNotBlank()) { "The article has no readable text yet." }
         val loaded = item.copy(text = text.text, html = text.html, wordCount = text.wordCount,
@@ -117,6 +130,8 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     }
     suspend fun played(item: LibraryItem, value: Boolean) = mutate { current ->
         requireItem(item)
+        if (item.kind == ContentKind.Article && state.value.items.first { it.id == item.id }.contentId != item.contentId)
+            throw CancellationException("Article changed")
         api.played(current, checkNotNull(item.episodeId), value);
         { mutable.value = state.value.copy(items = state.value.items.map { if (it.id == item.id) it.copy(completed = value) else it },
             latestIds = if (value) state.value.latestIds - item.id else state.value.latestIds) }
@@ -219,6 +234,38 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     override suspend fun unfollowSource(preview: SourcePreview): SourcePreview {
         changeSourceGroup(preview.feed.id, null, SourceChange.Unsubscribe, preview.sessionRevision)
         return preview.copy(subscribed = false)
+    }
+    override suspend fun captureSaved(article: PendingArticle, revision: Int) {
+        val (current, version) = credentials()
+        check(revision)
+        writes.withLock {
+            check(version)
+            val row = checkNotNull(api as? SavedArticleApi).capture(current, article)
+            check(version)
+            acceptSaved(row)
+        }
+    }
+    override suspend fun prepareSaved(item: LibraryItem, replace: Boolean, revision: Int): LibraryItem {
+        val (current, version) = credentials()
+        check(revision)
+        return writes.withLock {
+            check(version)
+            require(item.id in state.value.savedIds && item.kind == ContentKind.Article) { "This article is no longer in Saved." }
+            val savedApi = checkNotNull(api as? SavedArticleApi)
+            val row = if (replace) savedApi.replaceSaved(current, checkNotNull(item.episodeId)) else savedApi.retrySaved(current, checkNotNull(item.episodeId))
+            check(version)
+            require(row.id == item.episodeId) { "The saved article changed. Refresh and try again." }
+            acceptSaved(row)
+        }
+    }
+    private fun acceptSaved(row: RemoteEpisode): LibraryItem {
+        // A search started before replacement must not restore the old selection.
+        searchVersion++
+        val added = row.item(state.value)
+        val items = merge(state.value.items, listOf(added))
+        val savedIds = if (added.id in state.value.savedIds) state.value.savedIds else listOf(added.id) + state.value.savedIds
+        mutable.value = state.value.copy(items = items, savedIds = savedIds, searching = false)
+        return items.first { it.id == added.id }
     }
     private fun requireItem(item: LibraryItem) { require(state.value.items.any { it.id == item.id }) { "This item belongs to a different library." } }
     private suspend fun mutate(work: suspend (String) -> (() -> Unit)) {

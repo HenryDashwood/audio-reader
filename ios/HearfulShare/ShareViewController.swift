@@ -92,12 +92,12 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func saveCapture(replaceExisting: Bool) {
+    private func saveCapture() {
         do {
             guard let input = pendingInput else { throw CaptureInbox.InboxError.invalidURL }
             try CaptureInbox.shared.save(
                 url: input.url, title: input.title, html: input.html,
-                contentFormat: input.contentFormat, replaceExisting: replaceExisting)
+                contentFormat: input.contentFormat, replaceExisting: true)
             pendingInput = nil
             show(.saved(title: input.title, url: input.url))
         } catch {
@@ -106,8 +106,8 @@ final class ShareViewController: UIViewController {
     }
 
     private func makeConfirmation(state: ShareConfirmationView.Phase) -> ShareConfirmationView {
-        ShareConfirmationView(state: state, save: { [weak self] replace in
-            self?.saveCapture(replaceExisting: replace)
+        ShareConfirmationView(state: state, save: { [weak self] in
+            self?.saveCapture()
         }) { [weak self] in
             self?.extensionContext?.completeRequest(returningItems: nil)
         }
@@ -132,7 +132,7 @@ private struct ShareConfirmationView: View {
 
         var heading: String {
             switch self {
-            case .saving: "Saving to Magpie…"
+            case .saving: "Preparing article…"
             case .ready: "Save to Magpie"
             case .saved: "Saved to Magpie"
             case .failed: "Couldn't save article"
@@ -141,10 +141,10 @@ private struct ShareConfirmationView: View {
 
         var message: String {
             switch self {
-            case .saving: "Keeping this article for later."
+            case .saving: "Getting this page ready to save."
             case .ready(_, _, let preview):
                 if let preview, !preview.isEmpty {
-                    "Check the article below before saving."
+                    "Ready to read or listen to later."
                 } else {
                     "The article couldn't be identified in this page. Save its link and Magpie will try the original address."
                 }
@@ -171,9 +171,8 @@ private struct ShareConfirmationView: View {
     }
 
     let state: Phase
-    var save: (Bool) -> Void = { _ in }
+    var save: () -> Void = {}
     let done: () -> Void
-    @State private var replaceExisting = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -199,35 +198,40 @@ private struct ShareConfirmationView: View {
                     }
 
                     if case .ready(let title, let url, let preview) = state {
-                        articlePreview(title: title, url: url)
-                        if let preview, !preview.isEmpty {
-                            Text(preview)
+                        articlePreview(title: title, url: url, preview: preview)
+                        VStack(spacing: 16) {
+                            Text("Already saved? This updates your copy. If the text changes, listening starts from the beginning.")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button(action: save) {
+                                Text("Save article")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity, minHeight: 32)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .buttonBorderShape(.roundedRectangle(radius: 16))
+                            .controlSize(.large)
+                            Button("Cancel", action: done)
                                 .font(.body)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .accessibilityLabel("Article begins: \(preview)")
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
                         }
-                        Toggle("Replace saved text", isOn: $replaceExisting)
-                        if replaceExisting {
-                            Text("Replaces an existing saved copy when Magpie syncs. Changed text starts listening from the beginning. If replacement fails, the current copy is kept.")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                        Button(replaceExisting ? "Save replacement" : "Save article") {
-                            save(replaceExisting)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
                     }
 
-                    Button(action: done) {
-                        Text(state.isReady ? "Cancel" : "Done")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 32)
+                    if !state.isReady {
+                        Button(action: done) {
+                            Text("Done")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity, minHeight: 32)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.roundedRectangle(radius: 16))
+                        .controlSize(.large)
+                        .disabled(state.isSaving)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.roundedRectangle(radius: 16))
-                    .controlSize(.large)
-                    .tint(Color(uiColor: .systemBlue))
-                    .disabled(state.isSaving)
                 }
                 .padding(28)
                 .frame(maxWidth: 476)
@@ -255,21 +259,17 @@ private struct ShareConfirmationView: View {
         .accessibilityHidden(true)
     }
 
-    private func articlePreview(title: String?, url: URL) -> some View {
+    private func articlePreview(title: String?, url: URL, preview: String? = nil) -> some View {
         let title = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let host = url.host() ?? url.absoluteString
         let source = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
 
-        return HStack(alignment: .top, spacing: 14) {
-            Image(systemName: "doc.text")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
+        return VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 if let title, !title.isEmpty {
                     Text(title)
                         .font(.headline)
-                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(source)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -279,11 +279,34 @@ private struct ShareConfirmationView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if let preview, !preview.isEmpty {
+                Divider()
+                Text(preview)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("Article begins: \(preview)")
+            }
         }
         .padding(18)
         .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 18))
         .accessibilityElement(children: .combine)
     }
+}
+
+#Preview("Ready to save") {
+    ShareConfirmationView(
+        state: .ready(
+            title: "The quiet pleasure of listening to a good story",
+            url: URL(string: "https://www.example.com/article")!,
+            preview: "Some stories deserve your full attention. Others find their place alongside a morning walk, a familiar journey, or a quiet moment at home.")
+    ) {}
+}
+
+#Preview("Link only") {
+    ShareConfirmationView(
+        state: .ready(title: nil, url: URL(string: "https://www.example.com/article")!, preview: nil)
+    ) {}
 }
 
 #Preview("Saved article") {

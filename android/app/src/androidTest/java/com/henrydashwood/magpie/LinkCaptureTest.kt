@@ -15,7 +15,7 @@ class LinkCaptureTest {
     @Test fun linkCaptureValidatesPersistsDeduplicatesFiltersAndRemoves() {
         val url = "https://example.org/magpie-capture-test/${UUID.randomUUID()}"
         val model = compose.runOnUiThread { ViewModelProvider(compose.activity)[MagpieModel::class.java] }
-        val inbox = LinkInbox(compose.activity.applicationContext)
+        val inbox = (compose.activity.application as MagpieApplication).deviceLinkInbox
         try {
             compose.onNodeWithContentDescription("Add link").assertDoesNotExist()
             compose.onNodeWithText("Saved").performClick()

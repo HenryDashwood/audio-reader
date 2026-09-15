@@ -24,9 +24,11 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   contents refresh after changes; Saved, loaded text, and active playback remain
   available. Primary and failing sources are identified, private feed URLs are
   hidden, and forwarded newsletters explain how to stop forwarding.
-- [ ] **5. Saved article preparation.** Process pending links, retry failed captures,
-  and replace saved text. URL capture and retry-on-open are implemented; pending
-  inbox processing and explicit text replacement remain.
+- [x] **5. Saved article preparation.** Durable account-scoped pending links,
+  explicit import of links saved before sign-in, failed-capture retry, and confirmed
+  text replacement. Changed text clears old playback and bookmarks; failed or
+  unchanged replacements preserve the current copy. Queue syncing runs in the
+  foreground when Saved opens, on refresh, or on explicit retry.
 - [ ] **6. Incoming sharing.** Receive shared links and support browser content capture.
 - [ ] **7. Ask Magpie conversations.** Recognition, commands, spoken replies,
   follow-up conversations, and timing preferences.
@@ -126,8 +128,36 @@ The updated preview was installed and staging sign-in restored. Ahead of AI’s
 source-management screen loaded its primary source and available subscriptions;
 the live screenshot was also inspected. No live subscription changes were made.
 
-The next unchecked item is **5. Saved article preparation: process pending links,
-retry failed captures, and replace saved text**.
+## Saved article preparation implementation
+
+On 15 September 2026, item 5 was implemented with the existing `/saved`,
+`/saved/{id}/retry`, and `/saved/replace` contracts. No backend or Swift changes
+were required. Pending entries preserve their original saved timestamp and remain
+on disk until the server confirms the save. Account and server boundaries apply
+to queued links, including after an offline restart of an identified session.
+Links saved before sign-in require review and confirmation before importing.
+
+Tests cover disk persistence and deduplication, partial connection failures,
+account changes during requests, stale article replies, explicit retry, replacement
+confirmation/cancellation, unchanged versus changed playback, and large-text/dark
+mode. All article captures and replacements in tests use isolated fixtures.
+
+Verification: `make android-check` passed all 78 JVM tests, built both debug APKs,
+and passed lint without compiler warnings. All eight new Saved instrumentation
+journeys passed, including actual offline narration and confirmed device-link
+import. The full Android 16/API 36 run passed 70 of 71 tests and exposed an initial
+connection error being cleared by an empty search. That regression was fixed and
+covered by a unit assertion; the complete live-library class then passed. The
+playback-completion class also passed after adding a guard against old completion
+updates marking replacement text as read. Across the full run and focused reruns,
+all 71 emulator tests passed, with no skips. The large-text/dark-mode replacement
+dialog screenshot was visually inspected. The final preview was installed,
+staging sign-in was restored with Apple and Google connected, and the live Saved
+screen and replacement control were visually checked without changing articles.
+Phone and TalkBack acceptance remain.
+
+The next unchecked item is **6. Incoming sharing: receive shared links and support
+browser content capture**.
 
 ## Shared limitations
 

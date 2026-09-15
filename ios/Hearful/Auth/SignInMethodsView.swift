@@ -1,5 +1,4 @@
 import AuthenticationServices
-import GoogleSignInSwift
 import SwiftUI
 
 struct SignInMethodsView: View {
@@ -30,8 +29,7 @@ struct SignInMethodsView: View {
                         Label("Connected", systemImage: "checkmark.circle")
                     } else {
                         Text("Connect your Google account")
-                        GoogleSignInButton(scheme: colorScheme == .dark ? .dark : .light) { Task { await auth.linkGoogle() } }
-                            .frame(minHeight: 48)
+                        GoogleAuthenticationButton(title: "Continue with Google") { Task { await auth.linkGoogle() } }
                             .disabled(auth.isAuthenticating || !auth.googleIsConfigured)
                         if !auth.googleIsConfigured {
                             Text("Google sign-in is not available in this build yet.").font(.footnote)

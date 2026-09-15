@@ -1,6 +1,5 @@
 import AuthenticationServices
 import SwiftUI
-import GoogleSignInSwift
 
 /// The gate shown until a session exists. Both providers use their native authorization flow.
 struct SignInView: View {
@@ -53,10 +52,9 @@ struct SignInView: View {
             .padding(.horizontal, 32)
 
             .disabled(auth.isAuthenticating)
-            GoogleSignInButton(scheme: colorScheme == .dark ? .dark : .light) {
+            GoogleAuthenticationButton {
                 Task { await auth.signInWithGoogle() }
             }
-            .frame(minHeight: 48)
             .padding(.horizontal, 32)
             .disabled(auth.isAuthenticating || !auth.googleIsConfigured)
             if !auth.googleIsConfigured {

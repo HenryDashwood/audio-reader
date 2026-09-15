@@ -179,7 +179,7 @@ async def capture(
             raise HTTPException(
                 422,
                 detail="Could not replace the text. Your saved copy is unchanged. "
-                "Open the original in Safari, then share to Magpie and choose Replace saved text.",
+                "Open the original in Safari, then share to Magpie to update your saved copy.",
             )
         if saved.content_id is None:
             saved.capture_error = capture_error

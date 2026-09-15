@@ -171,9 +171,13 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
 - Clear Latest uses a confirmation dialog and updates the account cursor while
   signed in, or persists the current sample item IDs as dismissed locally, without marking them played/read or changing Saved, feed pages,
   or playback bookmarks. New IDs remain eligible for Latest.
-- Saved's + button saves and prepares URLs in the signed-in account. Signed-out
-  captures use a separate durable local inbox; signing in never uploads that
-  inbox automatically.
+- Saved's + button keeps links in a durable account-scoped queue before uploading.
+  Pending links retry when Saved opens, on refresh, or with Sync saved links;
+  confirmed captures leave the queue. Failed article captures offer Retry and
+  Open original. Replace saved text asks for confirmation and preserves the old
+  copy on failure; changed content stops old narration and resets its bookmark.
+  Signed-out captures use a separate device inbox that never uploads automatically;
+  Review device links offers an explicit, confirmed import into the current account.
 - Separate persisted podcast/article speeds, an installed offline voice chooser,
   voice previews, and links to voice downloads, privacy, and email support.
 - A native Material mini player with artwork/title, contextual Follow, play/pause,
@@ -305,10 +309,12 @@ HTTPS audio URL and reports position on pause and every thirty seconds. Finished
 status uses the existing played-state endpoint for both articles and podcasts.
 The service stops and clears account playback when the session changes.
 
-The sample repository and local capture inboxes remain separate while signed out.
-There is no automatic upload of sample content, preview progress, or pending URLs.
+The sample repository and sample capture inboxes remain separate while signed out.
+There is no automatic upload of sample content, preview progress, or sample URLs.
 Account metadata/text currently lives in memory: a fresh launch needs a connection,
 and there is no durable queue for offline account edits or progress uploads.
+New saved links have their own durable queue. A previously identified session can
+queue links after an offline restart; a new session must identify its account first.
 Incoming share capture,
 podcast downloading, Gemini integration, and microphone recording remain future
 work. Backups and device transfers of preview preferences are disabled.
@@ -349,7 +355,7 @@ sessions. On the Pixel, verify those first, then an incoming call, interruption
 recovery, and process-death resume. Borrow a Samsung before broad release.
 
 The next functional work includes persistent offline account caching, durable
-progress synchronisation, saved-article preparation, and
+progress synchronisation, incoming sharing, and
 microphone/confirmation/TalkBack coordination.
 Keep AppFunctions an optional adapter over the same action layer.
 
