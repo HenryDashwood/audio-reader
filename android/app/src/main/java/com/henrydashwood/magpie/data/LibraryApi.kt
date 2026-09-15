@@ -11,7 +11,7 @@ import java.net.URLEncoder
 import java.io.ByteArrayOutputStream
 
 data class LibraryFeed(val id: String, val title: String, val count: Int, val articles: Boolean,
-    val url: String? = null, val sources: List<String> = emptyList())
+    val url: String? = null, val sources: List<String> = emptyList(), val description: String? = null)
 data class RemoteEpisode(val id: Int, val title: String, val description: String = "", val source: String = "Saved articles",
     val feedUrl: String? = null, val audioUrl: String? = null, val link: String? = null,
     val durationSeconds: Int? = null, val wordCount: Int? = null, val positionSeconds: Double = 0.0,
@@ -36,7 +36,7 @@ interface LibraryApi {
 }
 
 /** Uses the existing Swift/backend wire contract. Authorization never follows redirects. */
-class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (String) -> Unit = {}) : LibraryApi {
+class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (String) -> Unit = {}) : LibraryApi, DiscoveryApi {
     override suspend fun userId(token: String) = obj(token, "me").getString("id")
     override suspend fun feeds(token: String) = array(token, "feeds").objects().map(::decodeFeed)
     override suspend fun latest(token: String) = list(token, "episodes?limit=30")
@@ -62,6 +62,18 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
     override suspend fun position(token: String, episodeId: Int, seconds: Double, completed: Boolean) {
         request(token, "episodes/$episodeId/position", "PUT", JSONObject().put("position_seconds", seconds).put("completed", completed))
     }
+    override suspend fun directory(token: String, query: String) = array(token, "search/podcasts?q=${encode(query.take(200))}").objects().map(::decodeSource).distinctBy { it.url }
+    override suspend fun discover(token: String, url: String) = obj(token, "feeds/discover", "POST",
+        JSONObject().put("url", validateLink(url))).getJSONArray("candidates").objects().map(::decodeCandidate)
+    override suspend fun preview(token: String, url: String) = decodePreview(obj(token, "feeds/preview", "POST",
+        JSONObject().put("url", validateLink(url))))
+    override suspend fun webSearch(token: String, query: String): SourceResult? {
+        val result = request(token, "search/publications", "POST", JSONObject().put("query", query.take(200)))
+        return if (result.trim() == "null") null else decodeSource(JSONObject(result))
+    }
+    override suspend fun aiConsent(token: String) = obj(token, "me").optBoolean("ai_data_sharing_consented", false)
+    override suspend fun setAIConsent(token: String, granted: Boolean) = obj(token, "me/ai-data-sharing", "PUT",
+        JSONObject().put("granted", granted)).optBoolean("ai_data_sharing_consented", false)
     private suspend fun list(token: String, path: String) = array(token, path).objects().map(::decodeEpisode)
     private suspend fun array(token: String, path: String) = JSONArray(request(token, path))
     private suspend fun obj(token: String, path: String, method: String = "GET", body: JSONObject? = null) = JSONObject(request(token, path, method, body))
@@ -105,9 +117,17 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
     }
     companion object {
         private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
+        fun decodeSource(json: JSONObject) = SourceResult(json.getString("title"), validateLink(json.getString("feed_url")),
+            json.optionalString("publisher"), json.optionalInt("episode_count"))
+        fun decodeCandidate(json: JSONObject) = SourceResult(json.getString("title"), validateLink(json.getString("feed_url")),
+            count = json.optInt("item_count"), description = json.optionalString("description"), format = json.optionalString("format"),
+            audioCount = json.optInt("audio_item_count"), recentTitle = json.optJSONArray("recent_item_titles")?.optString(0)?.takeIf { it.isNotBlank() },
+            primary = json.optBoolean("is_primary"))
+        fun decodePreview(json: JSONObject) = RemotePreview(decodeFeed(json.getJSONObject("feed")),
+            json.getJSONArray("episodes").objects().map(::decodeEpisode), json.getBoolean("subscribed"))
         fun decodeFeed(json: JSONObject) = LibraryFeed(json.getInt("id").toString(), json.getString("title"),
             json.optInt("episode_count"), json.optBoolean("is_article_feed"), json.optionalString("url"),
-            json.optJSONArray("sources")?.objects()?.map { it.getString("title") }.orEmpty())
+            json.optJSONArray("sources")?.objects()?.map { it.getString("title") }.orEmpty(), json.optionalString("description"))
         fun decodeEpisode(json: JSONObject) = RemoteEpisode(json.getInt("id"), json.getString("title"),
             json.optionalString("description") ?: "", json.optionalString("feed_title") ?: "Saved articles",
             json.optionalString("feed_url"), https(json.optionalString("audio_url")), https(json.optionalString("link")),

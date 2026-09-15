@@ -163,12 +163,13 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   account; failed requests retain the current account data with a retry control.
 - Save/remove articles and file them under To read or Finished. Signed-in changes
   update the backend; signed-out sample changes remain local.
-- Reaching the end of a podcast or narrated article records it as finished locally,
+- Reaching the end of a podcast or narrated article records it as finished (on
+  the backend when signed in),
   plays a quiet completion tone, and clears the player and sleep timer. Saved
   articles move to Finished without reopening the screen. The completed player
   stays closed after recreation/relaunch; explicitly playing the item starts over.
-- Clear Latest uses a confirmation dialog and persists the current item IDs as
-  dismissed locally, without marking them played/read or changing Saved, feed pages,
+- Clear Latest uses a confirmation dialog and updates the account cursor while
+  signed in, or persists the current sample item IDs as dismissed locally, without marking them played/read or changing Saved, feed pages,
   or playback bookmarks. New IDs remain eligible for Latest.
 - Saved's + button saves and prepares URLs in the signed-in account. Signed-out
   captures use a separate durable local inbox; signing in never uploads that
@@ -265,11 +266,13 @@ Feed headers have a management menu beside the title, matching iOS. Manage sourc
 shows the bundled source and explains the preview boundary; Unsubscribe is disabled
 with an account-required explanation. Combining, separating, and unsubscribing
 require a connected account rather than mutating the fixed sample catalogue.
-Direct feed URLs can be subscribed to while signed in. Source combining,
+Add sources searches podcasts and library episodes, discovers feeds from websites,
+and previews content before subscribing. Source combining,
 separating, and unsubscribe controls remain unavailable on Android.
 Settings links to Sign-in Methods for Apple and Google sign-in, connected provider status,
-real account sign-out and deletion. Conversation, assistant, newsletters, and
-consent retain explicit unavailable states until their integrations exist.
+real account sign-out and deletion. Conversation, assistant, and newsletters
+retain explicit unavailable states until their integrations exist. AI Data Sharing
+can be reviewed, granted, or withdrawn in Settings.
 
 ## Settings parity
 
@@ -286,8 +289,8 @@ article start, including regeneration of cached narration from its text bookmark
 Voice previews use transient audio focus and stop when Settings leaves the
 foreground. Voice downloads return to a refreshed catalogue.
 
-Conversation timing, Android assistant integration, newsletter addresses, and AI
-consent still require their corresponding Android integrations. The Settings sections make those boundaries visible. Siri itself
+Conversation timing, Android assistant integration, and newsletter addresses
+still require their corresponding Android integrations. The Settings sections make those boundaries visible. Siri itself
 is iOS-only. Privacy/support links use the same destinations as the Swift client.
 
 ## Deliberate prototype boundaries
@@ -302,7 +305,7 @@ The sample repository and local capture inboxes remain separate while signed out
 There is no automatic upload of sample content, preview progress, or pending URLs.
 Account metadata/text currently lives in memory: a fresh launch needs a connection,
 and there is no durable queue for offline account edits or progress uploads.
-Feed website discovery, directory search, source management, incoming share capture,
+Source management, incoming share capture,
 podcast downloading, Gemini integration, and microphone recording remain future
 work. Backups and device transfers of preview preferences are disabled.
 
@@ -342,14 +345,20 @@ sessions. On the Pixel, verify those first, then an incoming call, interruption
 recovery, and process-death resume. Borrow a Samsung before broad release.
 
 The next functional work includes persistent offline account caching, durable
-progress synchronisation, feed discovery/source management, and
+progress synchronisation, source management, and
 microphone/confirmation/TalkBack coordination.
 Keep AppFunctions an optional adapter over the same action layer.
 
-Following has a leading Add sources action. While signed in, a direct feed address
-creates a real subscription. While signed out, addresses stay in a separate local
-inbox and never become simulated subscriptions. Website discovery and searching
-the podcast directory by name remain outstanding.
+Following has a leading Add sources action. While signed in, typing searches the
+podcast directory and account episodes; pasting a website or feed address offers
+feed discovery. Multiple feeds require a choice, and a single feed opens its
+preview. Preview episodes can be read or played before subscribing. Subscribe
+updates Following only after server confirmation. Searching the web for a
+publication is a separate, explicit AI action with account consent. Settings
+provides review and withdrawal of that permission. Failed directory lookups keep
+successful library matches available. Old queries, closed screens, and changed
+accounts cannot restore stale discovery results. While signed out, addresses
+stay in a separate local inbox and never become simulated subscriptions.
 
 ## Accounts and linked sign-in
 

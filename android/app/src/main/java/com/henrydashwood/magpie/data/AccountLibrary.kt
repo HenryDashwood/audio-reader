@@ -19,7 +19,7 @@ data class LibraryState(val live: Boolean = false, val revision: Int = 0, val ow
 
 /** Main-dispatcher state. Every result is bound to the initiating session revision.
  * Account data is kept in memory; a failed load never falls back to sample data. */
-class AccountLibrary(private val api: LibraryApi, private val server: String, initiallySignedIn: Boolean = false) {
+class AccountLibrary(private val api: LibraryApi, private val server: String, initiallySignedIn: Boolean = false) : SourceRepository {
     private var token: String? = null
     private var revision = 0
     private var searchVersion = 0
@@ -129,6 +129,53 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         val feed = api.subscribe(current, url);
         { mutable.value = state.value.copy(feeds = (state.value.feeds.filterNot { it.id == feed.id } + feed).sortedBy { it.title.lowercase() }) }
     }
+    private suspend fun <T> discovery(work: suspend (DiscoveryApi, String) -> T): T {
+        val (current, version) = credentials()
+        val result = work(checkNotNull(api as? DiscoveryApi) { "Source discovery is unavailable." }, current)
+        check(version)
+        return result
+    }
+    private suspend fun acceptEpisodes(rows: List<RemoteEpisode>): List<String> {
+        val (current, version) = credentials()
+        val owner = state.value.owner ?: digest(server + ":" + api.userId(current))
+        check(version)
+        val next = state.value.copy(owner = owner)
+        // Saved articles retain their selected immutable content version.
+        val items = rows.map { row -> next.items.firstOrNull { it.episodeId == row.id && it.id in next.savedIds } ?: row.item(next) }
+        mutable.value = next.copy(items = merge(next.items, items))
+        return items.map { it.id }
+    }
+    override suspend fun findSources(query: String): SourceMatches = discovery { sourceApi, current ->
+        coroutineScope {
+            suspend fun <T> attempt(block: suspend () -> T): Result<T> = try { Result.success(block()) }
+                catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { Result.failure(failure) }
+            val directory = async { attempt { sourceApi.directory(current, query) } }
+            val episodes = async { attempt { api.search(current, query) } }
+            directory.await() to episodes.await()
+        }
+    }.let { (sources, rows) ->
+        SourceMatches(sources.getOrDefault(emptyList()), acceptEpisodes(rows.getOrDefault(emptyList())),
+            listOfNotNull(sources.exceptionOrNull(), rows.exceptionOrNull()).map { message(it as Exception) }.distinct().joinToString(" ").ifBlank { null })
+    }
+    override suspend fun discoverSources(url: String) = discovery { sourceApi, current -> sourceApi.discover(current, validateLink(url)).distinctBy { it.url } }
+    override suspend fun previewSource(url: String): SourcePreview {
+        val preview = discovery { sourceApi, current -> sourceApi.preview(current, validateLink(url)) }
+        return SourcePreview(preview.feed, acceptEpisodes(preview.episodes), preview.subscribed, state.value.revision)
+    }
+    override suspend fun followSource(preview: SourcePreview): SourcePreview {
+        require(preview.sessionRevision == state.value.revision) { "This preview belongs to a different session." }
+        try { subscribe(checkNotNull(preview.feed.url)) }
+        catch (failure: AccountFailure) {
+            if (failure.status != 409) throw failure
+            // Another device may have subscribed since this preview was loaded.
+            refresh()
+            if (state.value.feeds.none { it.id == preview.feed.id || it.url == preview.feed.url }) throw failure
+        }
+        return preview.copy(subscribed = true)
+    }
+    override suspend fun findPublication(query: String) = discovery { sourceApi, current -> sourceApi.webSearch(current, query) }
+    override suspend fun aiConsent() = discovery { sourceApi, current -> sourceApi.aiConsent(current) }
+    override suspend fun setAIConsent(granted: Boolean) = discovery { sourceApi, current -> sourceApi.setAIConsent(current, granted) }
     private fun requireItem(item: LibraryItem) { require(state.value.items.any { it.id == item.id }) { "This item belongs to a different library." } }
     private suspend fun mutate(work: suspend (String) -> (() -> Unit)) {
         val (current, version) = credentials()

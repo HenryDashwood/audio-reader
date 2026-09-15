@@ -11,7 +11,9 @@ import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountLibraryTest {
-    private class Api : LibraryApi {
+    private class Api : LibraryApi, DiscoveryApi {
+        var directoryFailure = false
+        var subscriptions = 0
         var fail = false
         var gate: CompletableDeferred<Unit>? = null
         var oldSearch: CompletableDeferred<Unit>? = null
@@ -45,7 +47,17 @@ class AccountLibraryTest {
         override suspend fun remove(token: String, episodeId: Int) { if (fail) throw IOException() }
         override suspend fun played(token: String, episodeId: Int, played: Boolean) { if (fail) throw IOException() }
         override suspend fun clearLatest(token: String) {}
-        override suspend fun subscribe(token: String, url: String) = LibraryFeed("3", "New feed", 0, true, url)
+        override suspend fun subscribe(token: String, url: String): LibraryFeed { subscriptions++; return LibraryFeed("3", "New feed", 0, true, url) }
+        override suspend fun directory(token: String, query: String): List<SourceResult> {
+            if (directoryFailure) throw IOException()
+            return listOf(SourceResult("New feed", "https://new.example/feed"))
+        }
+        override suspend fun discover(token: String, url: String) = listOf(SourceResult("New feed", url))
+        override suspend fun preview(token: String, url: String) = RemotePreview(LibraryFeed("3", "New feed", 2, true, url),
+            listOf(RemoteEpisode(99, "Preview article"), savedRows.first().copy(contentId = 100)), false)
+        override suspend fun webSearch(token: String, query: String): SourceResult? = null
+        override suspend fun aiConsent(token: String) = false
+        override suspend fun setAIConsent(token: String, granted: Boolean) = granted
         override suspend fun position(token: String, episodeId: Int, seconds: Double, completed: Boolean) { positions++ }
     }
     @Test fun loadsDistinctFeedsLatestAndSavedIncludingEmptyFeeds() = runTest {
@@ -137,5 +149,26 @@ class AccountLibraryTest {
         assertEquals(0, api.positions)
         library.reportPodcast(library.state.value.items.first { it.episodeId == 1 }, 42.5, false)
         assertEquals(1, api.positions)
+    }
+    @Test fun previewDoesNotFollowOrReplaceSavedVersionsAndRejectsAnotherSessionsSubscription() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val saved = library.state.value.savedIds
+        val latest = library.state.value.latestIds
+        val feeds = library.state.value.feeds
+        val preview = library.previewSource("https://new.example/feed")
+        assertEquals(feeds, library.state.value.feeds); assertEquals(saved, library.state.value.savedIds)
+        assertEquals(latest, library.state.value.latestIds); assertEquals(0, api.subscriptions)
+        assertEquals(7, library.state.value.items.first { it.id in saved }.contentId)
+        assertTrue(library.state.value.items.any { it.episodeId == 99 })
+        library.followSource(preview); assertEquals(1, api.subscriptions)
+        assertTrue(library.state.value.feeds.any { it.id == "3" })
+        library.changeSession("bob")
+        assertTrue(runCatching { library.followSource(preview) }.isFailure); assertEquals(1, api.subscriptions)
+    }
+    @Test fun directoryFailureKeepsLibrarySearchResultsAndReportsThePartialFailure() = runTest {
+        val api = Api().apply { directoryFailure = true }; val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val results = library.findSources("new")
+        assertTrue(results.sources.isEmpty()); assertEquals(1, results.itemIds.size); assertNotNull(results.error)
+        assertTrue(library.state.value.items.any { it.id in results.itemIds && it.title == "new" })
     }
 }

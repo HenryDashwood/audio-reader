@@ -42,6 +42,9 @@ data class LinkCaptureState(val showing: Boolean = false, val url: String = "", 
 
 class MagpieModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as MagpieApplication).library
+    val discovery = com.henrydashwood.magpie.data.SourceDiscovery(viewModelScope, repository)
+    suspend fun aiConsent() = repository.aiConsent()
+    suspend fun setAIConsent(granted: Boolean) = repository.setAIConsent(granted)
     val libraryState = repository.state
     val library get() = libraryState.value.items
     private val mutableItemLoading = MutableStateFlow<String?>(null)
@@ -91,6 +94,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
             repository.state.collect { snapshot ->
                 if (revision != snapshot.revision) {
                     revision = snapshot.revision
+                    discovery.reset()
                     contentJob?.cancel()
                     mutableItemLoading.value = null
                     mutableItemError.value = null

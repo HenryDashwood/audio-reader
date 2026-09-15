@@ -118,7 +118,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
                         enabled = !snapshot.loading && !snapshot.searching,
                         onClick = { model.refreshLibrary(); reloadVersion++ }) { Icon(Icons.Rounded.Refresh, "Refresh library") }
                     if (selectedItem == null && selectedSource == null && destination == Destination.Following) {
-                        AddSourceButton(model) { showingSearch = false; query = "" }
+                        AddSourceButton(model, ::openItem) { showingSearch = false; query = "" }
                     }
                     if (selectedItem == null && selectedSource == null && destination == Destination.Saved) {
                         AddLinkButton(model) { savedListVersion++; showingSearch = false; query = "" }

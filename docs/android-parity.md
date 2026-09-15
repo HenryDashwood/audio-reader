@@ -1,43 +1,55 @@
 # Android parity checklist
 
 Baseline: source review against the current iOS app, 11 September 2026.
+Updated: 15 September 2026.
 Numbers match the review. A checked item covers the implementation described
 here; emulator results do not establish physical-device audio or TalkBack quality.
 
-- [ ] **1. Accounts and live library.** Sign-in, sessions, sign-out, account
-  deletion, and account-backed library loading. Apple and Google are the chosen
-  providers on both platforms, with explicit account linking. Apple browser sign-in,
-  Google sign-in,
-  secure sessions, and account controls are implemented; see
-  [sign-in setup](sign-in.md). Provider setup and live acceptance checks are still
-  required. Live library loading remains unfinished. Keep sample content isolated.
-- [ ] **2. Real podcast playback.** Play publisher audio URLs instead of the bundled recording.
-- [ ] **3. Discovery and subscribing.** Directory/web search, feed discovery,
-  previews, and subscriptions.
+- [x] **1. Accounts and live library.** Apple and Google sign-in, explicit linking,
+  encrypted sessions, sign-out/deletion, and account-backed Following, Latest, and
+  Saved are implemented. Staging acceptance verified both linked providers and the
+  real library. Samples and local inboxes remain isolated. Release signing and
+  production promotion remain release tasks; see [sign-in setup](sign-in.md) and
+  [library verification](android-library.md).
+- [x] **2. Real podcast playback.** Streams publisher HTTPS audio URLs, resumes
+  saved media positions, and reports podcast progress. Fixture playback and
+  account-change cleanup passed on the emulator; phone audio acceptance remains.
+- [x] **3. Discovery and subscribing.** Podcast directory and library search,
+  website/feed discovery, candidate selection, readable/playable previews, and
+  explicit subscriptions. Web publication search is an explicit action gated by
+  current account AI consent. Partial search failures preserve successful results;
+  query/session changes discard stale replies.
 - [ ] **4. Source management.** Combine, separate, and unsubscribe.
 - [ ] **5. Saved article preparation.** Process pending links, retry failed captures,
-  and replace saved text.
+  and replace saved text. URL capture and retry-on-open are implemented; pending
+  inbox processing and explicit text replacement remain.
 - [ ] **6. Incoming sharing.** Receive shared links and support browser content capture.
 - [ ] **7. Ask Magpie conversations.** Recognition, commands, spoken replies,
   follow-up conversations, and timing preferences.
 - [ ] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
 - [ ] **9. Newsletters.** Address presentation/sharing, sender approval/blocking, and signup.
-- [ ] **10. AI consent controls.** Review, grant, and revoke account-level permission.
+- [x] **10. AI consent controls.** The discovery flow discloses AI data sharing
+  before granting permission. Settings reads, reviews, grants, and withdraws the
+  same backend account permission used by iOS. Declining never runs an AI search.
+  Implemented alongside item 3 because web discovery depends on it.
 - [ ] **11. Progress sync and offline content.** Account-scoped caches and backend
   progress reporting. Do not send rendered Android article seconds through the
   existing position API; its timeline differs from the iOS article timeline.
+  Podcast reporting is implemented; persistent caches, a durable retry queue, and
+  cross-device article bookmarks remain.
 - [ ] **12. Per-item filing.** Played/unplayed, read/unread outside Saved,
-  individual Latest dismissal, and restoration.
+  individual Latest dismissal, and restoration. Saved read/unread and Clear Latest
+  already update the backend.
 - [ ] **13. Listening status and metadata.** Continue listening, live progress,
   completed/current-item labels, publication dates, and publisher artwork.
 - [ ] **14. Article startup and length.** Avoid full upfront synthesis and the
   30,000-character guard, with cancellation and stable text bookmarks preserved.
 - [x] **15. End-of-item behavior.** Completing a podcast or narrated article marks
-  it finished locally, resets its replay bookmark, clears the player and timer,
+  it finished (on the backend when signed in), resets its replay bookmark, clears the player and timer,
   and plays a completion tone. Saved updates without reopening. Pausing or
   manually closing an unfinished item preserves its bookmark and does not mark it
-  finished. This does not yet add the Latest filtering/status in items 12–13 or
-  backend reporting in item 11.
+  finished. Live Latest respects server filtering. Remaining per-item filing and
+  status presentation are tracked in items 12–13.
 - [ ] **16. Diagnostics.** Account-connected voice attempts and crash/hang reporting.
 
 ## First implementation
@@ -59,6 +71,32 @@ both debug APKs built, no lint issues or compiler warnings reported).
 `ANDROID_SERIAL=emulator-5554 make android-test` passed all 38 tests on the
 Android 16/API 36 emulator, with no failures or skips. The three new completion
 tests also passed in isolation, including actual offline article narration.
+
+## Discovery implementation
+
+On 15 September 2026, items 1–2 were reconciled with the completed account-library
+work, and the next unfinished item (3) was implemented. Item 10 was completed as
+its consent dependency. No backend or Swift contract changes were needed.
+
+`SourceDiscoveryTest` covers debouncing and URL routing, multiple-feed choice,
+explicit successful subscriptions, failure/retry, partial results, late replies,
+account changes, and the AI consent gate. Emulator journeys additionally exercise
+activity recreation, reading an article before subscribing, large-text/dark-theme
+navigation, and consent withdrawal from Settings. Test requests use fixtures and
+never modify the owner's subscriptions or AI permission.
+
+Verification: `make android-check` passed all 61 JVM tests, compiled both debug
+APKs, and passed lint without compiler warnings. The five focused discovery
+instrumentation tests passed, followed by all 58 tests in the full Android 16/API
+36 emulator suite, with no failures or skips. The installed build was also checked
+against staging: Planet Money directory results and a populated podcast preview
+loaded, and the Astral Codex Ten website resolved to a populated article-feed
+preview. The live preview screenshot was visually inspected. No live subscription
+or AI-permission writes were made. Phone, TalkBack, and Bluetooth acceptance
+remain outstanding.
+
+The next unchecked item is **4. Source management: combine, separate, and
+unsubscribe**.
 
 ## Shared limitations
 

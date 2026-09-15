@@ -44,7 +44,7 @@ are never sent to the server's `position_seconds`: Android keeps a separate
 local UTF-16 bookmark because voice timing differs across platforms.
 
 Offline account caching, a durable retry queue for edits/progress, cross-device
-article bookmarks, website feed discovery, directory search, source combining,
+article bookmarks, source combining,
 separating/unsubscribe, artwork loading, and physical-device acceptance remain
 follow-up work. The existing full-article narration length guard still applies.
 
@@ -77,3 +77,22 @@ Validated on 12 September 2026:
   edits or playback; writes and podcast progress were exercised with test fixtures.
 - Physical-device, TalkBack, Bluetooth, and offline voice acceptance remain
   unverified. No production deployment was performed.
+
+
+## Source discovery
+
+`SourceDiscovery` owns cancellable, generation-bound search and preview state in
+`MagpieModel`. `HttpLibraryApi` also implements `DiscoveryApi`, using existing
+`/search/podcasts`, `/search/episodes`, `/feeds/discover`, `/feeds/preview`, and
+`/search/publications` contracts. Preview items join the account-scoped item cache
+for reading/playback, without changing Following, Latest, or Saved. Existing
+saved items retain their selected content version. A preview carries its session
+revision; it cannot be subscribed under another account. A subscription conflict
+is accepted only after refreshing and confirming that the feed is followed.
+
+Directory and account searches are independent so one failure keeps the other's
+results. Addresses bypass both and are discovered only on explicit submission.
+The web fallback is an explicit action and reads current account AI permission
+before submitting a query. Missing consent presents a disclosure; allowing it
+uses `/me/ai-data-sharing`. Settings can review and withdraw the same account
+permission. Voice capture itself remains unimplemented on Android.

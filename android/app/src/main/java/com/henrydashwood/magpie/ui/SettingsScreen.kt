@@ -92,8 +92,8 @@ fun SettingsScreen(model: MagpieModel, onAccount: () -> Unit) {
         item { HorizontalDivider(); SettingsHeading("Privacy & Support") }
         item { SettingsAction("Privacy Policy", Icons.AutoMirrored.Rounded.OpenInNew) { open(Intent(Intent.ACTION_VIEW, "https://audio-reader-production.up.railway.app/privacy".toUri())) } }
         item { SettingsAction("Email Support", Icons.Rounded.Email) { open(Intent(Intent.ACTION_SENDTO, "mailto:hcndashwood@gmail.com".toUri())) } }
-        item { ListItem(headlineContent = { Text("AI Data Sharing") }, supportingContent = { Text("Off · Voice requests are not connected") }) }
-        item { SettingsFootnote("Article narration and voice previews run on this device. No account or library data is sent to an AI service in this preview.") }
+        item { AISharingSettings(model) }
+        item { SettingsFootnote("Article narration and voice previews run on this device. Publication web search uses OpenAI only with your account permission.") }
         item { HorizontalDivider(); SettingsHeading("Account") }
         item { SettingsAction("Sign-in Methods", Icons.Rounded.AccountCircle, onAccount) }
         if (linkError != null) item { SettingsFootnote(linkError!!, error = true) }
