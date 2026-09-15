@@ -22,6 +22,7 @@ interface SourceRepository {
     suspend fun discoverSources(url: String): List<SourceResult>
     suspend fun previewSource(url: String): SourcePreview
     suspend fun followSource(preview: SourcePreview): SourcePreview
+    suspend fun unfollowSource(preview: SourcePreview): SourcePreview
     suspend fun findPublication(query: String): SourceResult?
     suspend fun aiConsent(): Boolean
     suspend fun setAIConsent(granted: Boolean): Boolean

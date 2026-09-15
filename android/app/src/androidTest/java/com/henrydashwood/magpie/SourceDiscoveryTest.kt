@@ -28,7 +28,7 @@ class SourceDiscoveryTest {
     private lateinit var api: Api
     private lateinit var library: AccountLibrary
     private var scenario: ActivityScenario<MainActivity>? = null
-    private class Api : LibraryApi, DiscoveryApi {
+    private class Api : LibraryApi, DiscoveryApi, SourceManagementApi {
         var followed = 0
         var webCalls = 0
         var grants = 0
@@ -49,6 +49,10 @@ class SourceDiscoveryTest {
         override suspend fun clearLatest(token: String) {}
         override suspend fun subscribe(token: String, url: String): LibraryFeed { if (failure) throw java.io.IOException(); followed++; return feed }
         override suspend fun position(token: String, episodeId: Int, seconds: Double, completed: Boolean) {}
+        override suspend fun feedSources(token: String, feedId: String) = emptyList<FeedSource>()
+        override suspend fun changeSources(token: String, feedId: String, sourceId: String?, change: SourceChange) {
+            assertEquals(SourceChange.Unsubscribe, change); followed = 0
+        }
         override suspend fun directory(token: String, query: String) = listOf(SourceResult("Fixture podcast", feed.url!!, "Fixture publisher", 1))
         override suspend fun discover(token: String, url: String) = listOf(SourceResult("Main feed", feed.url!!, primary = true), SourceResult("Comments feed", "https://fixture.example/comments"))
         override suspend fun preview(token: String, url: String): RemotePreview {
@@ -93,6 +97,11 @@ class SourceDiscoveryTest {
         compose.onNodeWithContentDescription("Subscribe to Fixture publication").performClick()
         compose.onNodeWithText("Subscribed").assertIsDisplayed()
         capture("discovery-subscribed")
+        compose.onNodeWithContentDescription("Unsubscribe from Fixture publication").performClick()
+        compose.onNodeWithText("Subscribed").assertDoesNotExist()
+        assertTrue(library.state.value.feeds.isEmpty())
+        compose.onNodeWithContentDescription("Subscribe to Fixture publication").performClick()
+        compose.onNodeWithText("Subscribed").assertIsDisplayed()
         compose.onNodeWithText("Done").performClick()
         compose.onNodeWithText("Fixture publication").assertIsDisplayed()
         assertEquals(1, api.followed)

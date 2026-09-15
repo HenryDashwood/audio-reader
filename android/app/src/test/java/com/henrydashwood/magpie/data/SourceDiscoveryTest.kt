@@ -38,6 +38,7 @@ class SourceDiscoveryTest {
             followed++; if (failFollow) throw IOException()
             return preview.copy(subscribed = true)
         }
+        override suspend fun unfollowSource(preview: SourcePreview) = preview.copy(subscribed = false)
         override suspend fun findPublication(query: String): SourceResult? { webRequests++; return source }
         override suspend fun aiConsent(): Boolean { withContext(NonCancellable) { consentGate?.await() }; return consent }
         override suspend fun setAIConsent(granted: Boolean): Boolean { grants++; consent = granted; return consent }

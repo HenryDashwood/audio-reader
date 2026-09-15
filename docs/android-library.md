@@ -44,8 +44,7 @@ are never sent to the server's `position_seconds`: Android keeps a separate
 local UTF-16 bookmark because voice timing differs across platforms.
 
 Offline account caching, a durable retry queue for edits/progress, cross-device
-article bookmarks, source combining,
-separating/unsubscribe, artwork loading, and physical-device acceptance remain
+article bookmarks, artwork loading, and physical-device acceptance remain
 follow-up work. The existing full-article narration length guard still applies.
 
 ## Verification
@@ -96,3 +95,24 @@ The web fallback is an explicit action and reads current account AI permission
 before submitting a query. Missing consent presents a disclosure; allowing it
 uses `/me/ai-data-sharing`. Settings can review and withdraw the same account
 permission. Voice capture itself remains unimplemented on Android.
+
+## Source management
+
+`SourceManager` owns the management dialog and serializes UI actions. Existing
+`GET /feeds/{id}/sources`, `PUT /feeds/{id}/sources/{source_id}`, and corresponding
+DELETE endpoints provide source listing, combination, separation, and unsubscribe.
+The backend retains ownership of duplicate selection and shared progress; Android
+does not merge article records or infer groups from matching names.
+
+Every operation carries the current session revision. Successful writes invalidate
+old feed/search replies and refresh Following, Latest, and Saved. The feed page
+reloads after grouping changes and returns to Following when unsubscribed.
+Cached text, item IDs, bookmarks, and playback remain available. Known word counts
+survive metadata refreshes, and absent feed URLs cannot match unrelated feeds.
+A failed write keeps the existing group; a confirmed write followed by a failed
+refresh is reported as a refresh failure, with a retry to reload the group.
+
+Source rows distinguish the primary source, email newsletters, hosts, and update
+failures. Private subscription URL paths and tokens never appear in those labels.
+Only non-primary sources can be separated. Unsubscribe also works in a subscribed
+preview; removing a combined root stops following every source in the group.

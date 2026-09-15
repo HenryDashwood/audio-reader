@@ -11,7 +11,12 @@ import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountLibraryTest {
-    private class Api : LibraryApi, DiscoveryApi {
+    private class Api : LibraryApi, DiscoveryApi, SourceManagementApi {
+        var grouped = false
+        var unsubscribed = false
+        var failRefreshAfterChange = false
+        var changeGate: CompletableDeferred<Unit>? = null
+        var sourceWrites = 0
         var directoryFailure = false
         var subscriptions = 0
         var fail = false
@@ -28,7 +33,7 @@ class AccountLibraryTest {
         override suspend fun feeds(token: String): List<LibraryFeed> {
             gate?.await()
             if (fail) throw IOException()
-            return listOf(LibraryFeed("1", "Same title", 80, false, "https://one.example/feed"), LibraryFeed("2", "Same title", 0, true))
+            return if (unsubscribed) emptyList() else listOf(LibraryFeed("1", "Same title", 80, false, "https://one.example/feed"), LibraryFeed("2", "Same title", 0, true)).filterNot { grouped && it.id == "2" }
         }
         override suspend fun latest(token: String) = latestRows
         override suspend fun saved(token: String) = savedRows
@@ -58,6 +63,15 @@ class AccountLibraryTest {
         override suspend fun webSearch(token: String, query: String): SourceResult? = null
         override suspend fun aiConsent(token: String) = false
         override suspend fun setAIConsent(token: String, granted: Boolean) = granted
+        override suspend fun feedSources(token: String, feedId: String) = listOf(FeedSource("1", "Same title", "https://one.example/feed", "rss", primary = true)) +
+            if (grouped) listOf(FeedSource("2", "Same title", "https://two.example/feed", "rss")) else emptyList()
+        override suspend fun changeSources(token: String, feedId: String, sourceId: String?, change: SourceChange) {
+            sourceWrites++; changeGate?.await()
+            if (fail) throw IOException()
+            grouped = change == SourceChange.Combine
+            unsubscribed = change == SourceChange.Unsubscribe
+            if (failRefreshAfterChange) fail = true
+        }
         override suspend fun position(token: String, episodeId: Int, seconds: Double, completed: Boolean) { positions++ }
     }
     @Test fun loadsDistinctFeedsLatestAndSavedIncludingEmptyFeeds() = runTest {
@@ -170,5 +184,46 @@ class AccountLibraryTest {
         val results = library.findSources("new")
         assertTrue(results.sources.isEmpty()); assertEquals(1, results.itemIds.size); assertNotNull(results.error)
         assertTrue(library.state.value.items.any { it.id in results.itemIds && it.title == "new" })
+    }
+    @Test fun sourceChangesRefreshFollowingWithoutRemovingSavedItemsOrText() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val revision = library.state.value.revision
+        val article = library.content(library.state.value.savedIds.single())
+        val before = library.state.value
+        val group = library.sourceGroup("1", revision)
+        assertEquals(listOf("2"), group.available.map { it.id })
+        library.changeSourceGroup("1", "2", SourceChange.Combine, revision)
+        assertEquals(listOf("1"), library.state.value.feeds.map { it.id })
+        assertTrue(library.state.value.catalogRevision > before.catalogRevision)
+        library.changeSourceGroup("1", "2", SourceChange.Separate, revision)
+        assertEquals(2, library.state.value.feeds.size)
+        library.changeSourceGroup("1", null, SourceChange.Unsubscribe, revision)
+        assertTrue(library.state.value.feeds.isEmpty()); assertEquals(before.savedIds, library.state.value.savedIds)
+        assertEquals(article, library.state.value.items.first { it.id == article.id })
+        assertEquals(42_500, library.state.value.items.first { it.episodeId == 1 }.remotePositionMs)
+    }
+    @Test fun sourceMutationFailuresAreDistinctFromRefreshFailures() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val before = library.state.value; api.fail = true
+        assertTrue(runCatching { library.changeSourceGroup("1", "2", SourceChange.Combine, before.revision) }.isFailure)
+        assertEquals(before, library.state.value)
+        api.fail = false; api.failRefreshAfterChange = true
+        library.changeSourceGroup("1", "2", SourceChange.Combine, before.revision)
+        assertFalse(library.state.value.feeds.any { it.id == "2" }); assertNotNull(library.state.value.error)
+    }
+    @Test fun lateSourceWritesCannotRestoreAnOldAccountOrOldSearchResults() = runTest {
+        val api = Api().apply { changeGate = CompletableDeferred() }; val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val revision = library.state.value.revision
+        val pending = launch { library.changeSourceGroup("1", "2", SourceChange.Combine, revision) }; runCurrent()
+        library.changeSession(null); api.changeGate!!.complete(Unit); pending.join()
+        assertFalse(library.state.value.live); assertEquals(0, library.state.value.catalogRevision)
+        library.changeSession("bob")
+        assertTrue(runCatching { library.changeSourceGroup("1", "2", SourceChange.Combine, revision) }.isFailure)
+        assertEquals(1, api.sourceWrites)
+        api.oldSearch = CompletableDeferred()
+        val search = launch { library.search(null, "old") }; runCurrent()
+        library.changeSourceGroup("1", "2", SourceChange.Combine, library.state.value.revision)
+        api.oldSearch!!.complete(Unit); search.join()
+        assertTrue(library.state.value.searchResults.isEmpty())
     }
 }

@@ -71,7 +71,13 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit) {
                                     state.selected?.publisher?.let { Text(it) }
                                     Text("${preview.feed.count} ${if (preview.feed.articles) "posts" else "episodes"}")
                                     preview.feed.description?.takeIf { it.isNotBlank() }?.let { Text(it) }
-                                    if (preview.subscribed) Text("Subscribed", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                                    if (preview.subscribed) {
+                                        Text("Subscribed", modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                                        if (preview.feed.sourceDetails.size > 1) Text("Unsubscribing stops following all sources in this publication.")
+                                        if (preview.feed.forwarded) Text("To stop forwarded emails, remove the forwarding rule in your email account.")
+                                        TextButton(onClick = controller::unfollow, enabled = !state.following,
+                                            modifier = Modifier.semantics { contentDescription = "Unsubscribe from ${preview.feed.title}" }) { Text("Unsubscribe", color = MaterialTheme.colorScheme.error) }
+                                    }
                                     else Button(onClick = controller::follow, enabled = !state.following,
                                         modifier = Modifier.semantics { contentDescription = "Subscribe to ${preview.feed.title}" }) { Text(if (state.following) "Subscribing…" else "Subscribe") }
                                 }

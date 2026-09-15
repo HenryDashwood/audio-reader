@@ -19,7 +19,11 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   explicit subscriptions. Web publication search is an explicit action gated by
   current account AI consent. Partial search failures preserve successful results;
   query/session changes discard stale replies.
-- [ ] **4. Source management.** Combine, separate, and unsubscribe.
+- [x] **4. Source management.** Combine subscribed publications, separate secondary
+  sources, and unsubscribe from a feed or discovery preview. Following and feed
+  contents refresh after changes; Saved, loaded text, and active playback remain
+  available. Primary and failing sources are identified, private feed URLs are
+  hidden, and forwarded newsletters explain how to stop forwarding.
 - [ ] **5. Saved article preparation.** Process pending links, retry failed captures,
   and replace saved text. URL capture and retry-on-open are implemented; pending
   inbox processing and explicit text replacement remain.
@@ -95,8 +99,35 @@ preview. The live preview screenshot was visually inspected. No live subscriptio
 or AI-permission writes were made. Phone, TalkBack, and Bluetooth acceptance
 remain outstanding.
 
-The next unchecked item is **4. Source management: combine, separate, and
-unsubscribe**.
+## Source management implementation
+
+On 15 September 2026, item 4 was implemented using the existing backend endpoints.
+Source changes use stable IDs, prevent duplicate submissions, discard replies
+after account changes, and invalidate results from an earlier feed grouping.
+A confirmed change followed by a failed refresh is shown separately from a failed
+write, so retrying a refresh does not repeat the mutation.
+
+Repository and screen tests cover combining, separating, unsubscribe failure and
+retry, stale replies, activity recreation, preservation of Saved and active
+podcast playback, and scrollable controls at 200% text size in dark mode. All
+subscription writes in tests use isolated fixtures.
+
+Verification: `make android-check` passed all 69 JVM tests, built both debug APKs,
+and passed lint without compiler warnings. The full emulator run completed 51
+tests successfully before host overload caused a sleep-timer failure and stalled
+the next test. After recovery, all five source-management tests, five discovery
+tests, the interrupted capture test, and the sleep-timer retry passed. Together
+these runs cover all 63 Android 16/API 36 instrumentation tests. Phone, TalkBack,
+and Bluetooth acceptance remain outstanding.
+
+The large-text/dark-theme screenshot check was repeated after dismissing a stale
+Android system ANR dialog, and the unobstructed result was visually inspected.
+The updated preview was installed and staging sign-in restored. Ahead of AI’s
+source-management screen loaded its primary source and available subscriptions;
+the live screenshot was also inspected. No live subscription changes were made.
+
+The next unchecked item is **5. Saved article preparation: process pending links,
+retry failed captures, and replace saved text**.
 
 ## Shared limitations
 

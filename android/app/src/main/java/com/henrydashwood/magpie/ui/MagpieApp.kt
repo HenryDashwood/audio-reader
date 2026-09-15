@@ -81,12 +81,15 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
             selectedItemId = null; selectedSource = null; showingPlayer = false; query = ""
         }
     }
-    LaunchedEffect(snapshot.revision, snapshot.owner, selectedSource, query, destination, reloadVersion) {
+    LaunchedEffect(snapshot.revision, snapshot.owner, snapshot.catalogRevision, selectedSource, query, destination, reloadVersion) {
         if (snapshot.live && snapshot.owner != null && selectedItemId == null &&
-            (selectedSource != null || destination == Destination.Following)) {
+            (selectedSource != null || destination == Destination.Following) && (selectedSource == null || selectedFeed != null)) {
             if (query.isNotBlank()) delay(300)
             model.searchLibrary(selectedSource, query)
         }
+    }
+    LaunchedEffect(snapshot.catalogRevision) {
+        if (snapshot.live && snapshot.catalogRevision > 0 && selectedSource != null && selectedFeed == null) selectedSource = null
     }
     val snackbar = remember { SnackbarHostState() }
     val followControl = remember { ArticleFollowControl() }
@@ -178,7 +181,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
                 }
                 selectedItem != null -> ArticleReader(selectedItem, query, followControl)
                 selectedSource != null -> ItemList(if (snapshot.live) snapshot.feedResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.source == selectedSource }, saved, if (snapshot.live) "" else query, ::openItem, model::play, model::toggleSaved, source = selectedFeed?.title ?: selectedSource, live = snapshot.live,
-                    feedSources = selectedFeed?.sources.orEmpty(), loading = snapshot.loading || snapshot.searching || snapshot.error != null)
+                    feedSources = selectedFeed?.sources.orEmpty(), feed = selectedFeed, model = model, loading = snapshot.loading || snapshot.searching || snapshot.error != null)
                 destination == Destination.Following -> Following(snapshot.feeds, if (snapshot.live) snapshot.searchResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library, query, { selectedSource = it }, ::openItem, pendingSources, model::removePendingSource, snapshot.live, snapshot.loading || snapshot.searching || snapshot.error != null)
                 destination == Destination.Latest -> ItemList(latestItems, saved, "", ::openItem, model::play, model::toggleSaved, emptyTitle = "You're caught up", loading = snapshot.loading || snapshot.error != null)
                 destination == Destination.Saved -> key(savedListVersion) {
@@ -189,6 +192,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
             }
         }
     }
+    SourceManagementDialog(model)
     if (showingPlayer) ModalBottomSheet(onDismissRequest = { showingPlayer = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         FullPlayer(playback, preparation, model::toggle, model::skip, model::seek, model::speed,
             sleepTimer, model::startSleepTimer, model::cancelSleepTimer, close = { showingPlayer = false }) {
@@ -261,7 +265,7 @@ private fun Following(feeds: List<LibraryFeed>, items: List<LibraryItem>, query:
 }
 
 @Composable
-private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String, open: (LibraryItem) -> Unit, play: (LibraryItem) -> Unit, save: (LibraryItem) -> Unit, source: String? = null, savedOnly: Boolean = false, finished: Set<String> = emptySet(), finish: (LibraryItem) -> Unit = {}, pendingLinks: List<String> = emptyList(), removePendingLink: (String) -> Unit = {}, emptyTitle: String = "Nothing here yet", live: Boolean = false, feedSources: List<String> = emptyList(), loading: Boolean = false) {
+private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String, open: (LibraryItem) -> Unit, play: (LibraryItem) -> Unit, save: (LibraryItem) -> Unit, source: String? = null, savedOnly: Boolean = false, finished: Set<String> = emptySet(), finish: (LibraryItem) -> Unit = {}, pendingLinks: List<String> = emptyList(), removePendingLink: (String) -> Unit = {}, emptyTitle: String = "Nothing here yet", live: Boolean = false, feedSources: List<String> = emptyList(), loading: Boolean = false, feed: LibraryFeed? = null, model: MagpieModel? = null) {
     var showingFinished by rememberSaveable { mutableStateOf(false) }
     val visible = items.filter { (!savedOnly || (it.id in finished) == showingFinished) && "${it.title} ${it.source}".contains(query, ignoreCase = true) }
     val visibleLinks = if (savedOnly && !showingFinished) pendingLinks.filter { it.contains(query, ignoreCase = true) } else emptyList()
@@ -274,7 +278,7 @@ private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String
             }
         }
         if (source != null && query.isBlank()) {
-            item { FeedHeader(source, sourceCount(items), live, feedSources) }
+            item { FeedHeader(source, feed?.let { "${it.count} ${if (it.articles) "posts" else "episodes"}" } ?: sourceCount(items), live, feedSources, feed, model) }
             item { ListSection(if (items.all { it.kind == ContentKind.Article }) "Posts" else "Episodes") }
         }
         if (!loading && visible.isEmpty() && visibleLinks.isEmpty()) item { EmptyState(if (query.isNotBlank()) "Nothing found" else emptyTitle, if (query.isNotBlank()) "Try a different search." else if (savedOnly && showingFinished) "Articles you finish stay here." else if (savedOnly) "Add a link above to save it for later." else "New episodes from your shows will appear here.") }
@@ -288,7 +292,7 @@ private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String
 }
 
 @Composable
-private fun FeedHeader(source: String, count: String, live: Boolean = false, sources: List<String> = emptyList()) {
+private fun FeedHeader(source: String, count: String, live: Boolean = false, sources: List<String> = emptyList(), feed: LibraryFeed? = null, model: MagpieModel? = null) {
     val largeText = LocalDensity.current.fontScale > 1.3f
     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (largeText) SourceArtwork(source, Modifier.size(88.dp))
@@ -298,7 +302,7 @@ private fun FeedHeader(source: String, count: String, live: Boolean = false, sou
                 Text(source, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
                 Text(count, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            FeedManagementMenu(source, live, sources)
+            if (live && feed != null && model != null) SourceManagementMenu(model, feed) else FeedManagementMenu(source, live, sources)
         }
     }
 }

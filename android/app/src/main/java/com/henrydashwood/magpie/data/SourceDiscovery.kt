@@ -73,6 +73,15 @@ class SourceDiscovery(private val scope: CoroutineScope, private val repository:
             update { it.copy(preview = subscribed) }
         }
     }
+    fun unfollow() {
+        val preview = state.value.preview ?: return
+        if (!preview.subscribed || state.value.following) return
+        request {
+            update { it.copy(following = true, error = null) }
+            val updated = repository.unfollowSource(preview)
+            update { it.copy(preview = updated) }
+        }
+    }
     fun searchWeb() = request {
         update { it.copy(loading = true, webMessage = null, error = null) }
         if (!repository.aiConsent()) update { it.copy(askingConsent = true) }

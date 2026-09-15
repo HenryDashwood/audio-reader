@@ -85,6 +85,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     val sleepTimer = PlaybackStatus.sleepTimer
     private val mutableNotice = MutableStateFlow<String?>(null)
     val notice = mutableNotice.asStateFlow()
+    val sourceManager = com.henrydashwood.magpie.data.SourceManager(viewModelScope, repository) { mutableNotice.value = it }
     private var controller: MediaController? = null
     private val connection = MediaController.Builder(application, SessionToken(application, ComponentName(application, PlaybackService::class.java))).buildAsync()
 
@@ -95,6 +96,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                 if (revision != snapshot.revision) {
                     revision = snapshot.revision
                     discovery.reset()
+                    sourceManager.reset()
                     contentJob?.cancel()
                     mutableItemLoading.value = null
                     mutableItemError.value = null

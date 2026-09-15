@@ -11,7 +11,7 @@ import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.security.MessageDigest
 
-data class LibraryState(val live: Boolean = false, val revision: Int = 0, val owner: String? = null,
+data class LibraryState(val live: Boolean = false, val revision: Int = 0, val catalogRevision: Int = 0, val owner: String? = null,
     val items: List<LibraryItem> = emptyList(), val feeds: List<LibraryFeed> = emptyList(),
     val latestIds: List<String> = emptyList(), val savedIds: List<String> = emptyList(),
     val feedResults: List<String> = emptyList(), val searchResults: List<String> = emptyList(),
@@ -19,7 +19,7 @@ data class LibraryState(val live: Boolean = false, val revision: Int = 0, val ow
 
 /** Main-dispatcher state. Every result is bound to the initiating session revision.
  * Account data is kept in memory; a failed load never falls back to sample data. */
-class AccountLibrary(private val api: LibraryApi, private val server: String, initiallySignedIn: Boolean = false) : SourceRepository {
+class AccountLibrary(private val api: LibraryApi, private val server: String, initiallySignedIn: Boolean = false) : SourceRepository, SourceManagementRepository {
     private var token: String? = null
     private var revision = 0
     private var searchVersion = 0
@@ -176,6 +176,50 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     override suspend fun findPublication(query: String) = discovery { sourceApi, current -> sourceApi.webSearch(current, query) }
     override suspend fun aiConsent() = discovery { sourceApi, current -> sourceApi.aiConsent(current) }
     override suspend fun setAIConsent(granted: Boolean) = discovery { sourceApi, current -> sourceApi.setAIConsent(current, granted) }
+    override suspend fun sourceGroup(feedId: String, sessionRevision: Int): SourceGroup {
+        val (current, version) = credentials()
+        check(sessionRevision)
+        return writes.withLock {
+            check(version)
+            val management = checkNotNull(api as? SourceManagementApi)
+            val result = coroutineScope {
+                val sources = async { management.feedSources(current, feedId) }
+                val feeds = async { api.feeds(current) }
+                sources.await() to feeds.await()
+            }
+            check(version)
+            SourceGroup(result.first.sortedByDescending { it.primary },
+                result.second.filter { it.id != feedId && result.first.none { source -> source.id == it.id } })
+        }
+    }
+    override suspend fun changeSourceGroup(feedId: String, sourceId: String?, change: SourceChange, sessionRevision: Int) {
+        val (current, version) = credentials()
+        check(sessionRevision)
+        writes.withLock {
+            check(version)
+            require(feedId != sourceId) { "The primary source cannot be separated or combined with itself." }
+            checkNotNull(api as? SourceManagementApi).changeSources(current, feedId, sourceId, change)
+            check(version)
+            // Invalidate replies from the previous grouping. Keep item/text caches
+            // and bookmarks so Saved and current playback survive unsubscribing.
+            searchVersion++
+            val removedId = when (change) {
+                SourceChange.Combine -> sourceId
+                SourceChange.Unsubscribe -> feedId
+                SourceChange.Separate -> null
+            }
+            mutable.value = state.value.copy(feeds = state.value.feeds.filterNot { it.id == removedId },
+                catalogRevision = state.value.catalogRevision + 1, feedResults = emptyList(), searchResults = emptyList(),
+                latestIds = emptyList(), searching = false)
+        }
+        // A failed refresh is reported as a library refresh error, not a failed
+        // write. The server has already accepted the source change.
+        refresh()
+    }
+    override suspend fun unfollowSource(preview: SourcePreview): SourcePreview {
+        changeSourceGroup(preview.feed.id, null, SourceChange.Unsubscribe, preview.sessionRevision)
+        return preview.copy(subscribed = false)
+    }
     private fun requireItem(item: LibraryItem) { require(state.value.items.any { it.id == item.id }) { "This item belongs to a different library." } }
     private suspend fun mutate(work: suspend (String) -> (() -> Unit)) {
         val (current, version) = credentials()
@@ -201,7 +245,7 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
             if (podcast) ContentKind.Podcast else ContentKind.Article,
             durationSeconds?.let { "${(it / 60).coerceAtLeast(1)} min" } ?: if (podcast) "Podcast" else "Article",
             if (podcast) description else "", contentVersion = "unloaded:$contentId", originalUrl = link,
-            episodeId = id, contentId = contentId, sourceId = state.feeds.firstOrNull { it.url == feedUrl }?.id ?: feedUrl ?: source,
+            episodeId = id, contentId = contentId, sourceId = state.feeds.firstOrNull { feedUrl != null && it.url == feedUrl }?.id ?: feedUrl ?: source,
             audioUrl = audioUrl, wordCount = wordCount, textLoaded = podcast,
             remotePositionMs = if (completed) 0 else (positionSeconds * 1000).toLong().coerceAtLeast(0),
             completed = completed, dismissed = dismissed, captureError = captureError)
@@ -211,7 +255,7 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         for (row in rows) {
             val old = items[row.id]
             items[row.id] = if (old?.textLoaded == true && !row.textLoaded && old.contentId == row.contentId)
-                row.copy(text = old.text, html = old.html, textLoaded = true, contentVersion = old.contentVersion) else row
+                row.copy(text = old.text, html = old.html, textLoaded = true, contentVersion = old.contentVersion, wordCount = row.wordCount ?: old.wordCount) else row
         }
         return items.values.toList()
     }

@@ -262,13 +262,17 @@ separate command-testing interface to those screens. Keep the sample disclosure
 in Settings. Article rows have no overflow buttons: swipe toward the end to
 save/remove, or toward the start in Saved to mark read/unread. Long-press menus
 and TalkBack custom actions expose the same operations without requiring swipes.
-Feed headers have a management menu beside the title, matching iOS. Manage sources
-shows the bundled source and explains the preview boundary; Unsubscribe is disabled
-with an account-required explanation. Combining, separating, and unsubscribing
-require a connected account rather than mutating the fixed sample catalogue.
+Feed headers have a management menu beside the title, matching iOS. Signed-in
+Manage sources lists primary and additional sources, their host or newsletter
+type, and any update failures. It combines other followed publications (including
+all their sources) and separates non-primary sources. The backend owns duplicate
+article selection and shared progress. Unsubscribe removes the whole publication
+from Following while preserving Saved, bookmarks, and active playback; subscribed
+previews also offer Unsubscribe. Forwarded newsletters explain how to stop their
+forwarding rule. Source addresses display only their host, never private URL tokens.
+Signed-out samples retain the account-required explanation and fixed catalogue.
 Add sources searches podcasts and library episodes, discovers feeds from websites,
-and previews content before subscribing. Source combining,
-separating, and unsubscribe controls remain unavailable on Android.
+and previews content before subscribing.
 Settings links to Sign-in Methods for Apple and Google sign-in, connected provider status,
 real account sign-out and deletion. Conversation, assistant, and newsletters
 retain explicit unavailable states until their integrations exist. AI Data Sharing
@@ -305,7 +309,7 @@ The sample repository and local capture inboxes remain separate while signed out
 There is no automatic upload of sample content, preview progress, or pending URLs.
 Account metadata/text currently lives in memory: a fresh launch needs a connection,
 and there is no durable queue for offline account edits or progress uploads.
-Source management, incoming share capture,
+Incoming share capture,
 podcast downloading, Gemini integration, and microphone recording remain future
 work. Backups and device transfers of preview preferences are disabled.
 
@@ -345,7 +349,7 @@ sessions. On the Pixel, verify those first, then an incoming call, interruption
 recovery, and process-death resume. Borrow a Samsung before broad release.
 
 The next functional work includes persistent offline account caching, durable
-progress synchronisation, source management, and
+progress synchronisation, saved-article preparation, and
 microphone/confirmation/TalkBack coordination.
 Keep AppFunctions an optional adapter over the same action layer.
 
