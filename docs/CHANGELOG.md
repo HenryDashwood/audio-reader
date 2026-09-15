@@ -10,6 +10,33 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.5.0
+
+You can now sign in with Google as well as Apple. If you already use Magpie,
+sign in with your usual method first, then open Settings → Sign-in Methods to
+connect the other account. Please check that your library and listening progress
+stay together when you switch sign-in methods.
+
+Save articles from Safari using Share → Magpie, or add a link in Saved. The
+share screen shows the title and opening text before you save. Sharing an
+article again updates your saved copy; if its text changes, listening starts
+from the beginning. Please try saving a new article, updating an existing one,
+and opening Magpie to read or listen to it.
+
+Articles can display supported YouTube and Vimeo videos. Tap a video's play
+button to start it, or use "Open video in browser" if it cannot play in Magpie.
+Please also check pausing and resuming article narration from Control Centre
+and the Lock Screen, including after switching from a podcast.
+
+Conversations can keep listening after Magpie replies. Wait for the listening
+sound and vibration before asking your next question, and say "That's all" to
+finish. With VoiceOver, double-tap with two fingers to finish speaking,
+interrupt a reply, or start listening again. Settings → Siri and Shortcuts
+explains the available shortcuts and how to open Ask Magpie with Back Tap.
+
+Please report sign-in problems, missing saved text, lost listening positions,
+or controls that are difficult to use with VoiceOver or larger text.
+
 ## 1.4.1
 
 Articles can now display supported YouTube and Vimeo videos. Open an article
