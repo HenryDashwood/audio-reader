@@ -69,6 +69,30 @@ struct SafariCaptureTests {
         #expect(result["html"]?.contains("After the video.") == true)
     }
 
+    @Test func capturesShareImagesAndIconsUsingTheOriginalBaseURL() async throws {
+        let result = try await capture(
+            body: "<article><h1>City gardens provide shade</h1>\(paragraphs("Gardens"))</article>",
+            head: """
+                <base href="https://cdn.example.com/assets/">
+                <meta property="og:image" content="garden.jpg">
+                <meta name="twitter:image" content="/social.jpg">
+                <link rel="apple-touch-icon" sizes="180x180" href="icon.png">
+                <link rel="icon" type="image/png" href="/favicon.png" onload="alert('bad')">
+                <meta property="og:image" content="data:image/png;base64,abc">
+                <meta name="private-data" content="Do not copy this">
+                """)
+        let html = try #require(result["html"])
+        #expect(result["contentFormat"] == "article")
+        #expect(html.contains("https://cdn.example.com/assets/garden.jpg"))
+        #expect(html.contains("https://cdn.example.com/social.jpg"))
+        #expect(html.contains("https://cdn.example.com/assets/icon.png"))
+        #expect(html.contains("https://cdn.example.com/favicon.png"))
+        #expect(html.contains("sizes=\"180x180\""))
+        #expect(!html.contains("data:image"))
+        #expect(!html.contains("onload"))
+        #expect(!html.contains("private-data"))
+    }
+
     @Test func selectsTheMatchingStoryAndKeepsItsOffscreenParagraphs() async throws {
         let result = try await capture(body:
             "<article><h1>Satellite engineering is changing</h1>\(paragraphs("Satellites", count: 30))</article>"

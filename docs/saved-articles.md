@@ -93,6 +93,29 @@ Saved titles are included in visual and voice library search, scoped to the owne
 The voice search tool supports `saved_only`; save dates are provided as context.
 The UI does not yet provide an automatic continuous Saved playlist.
 
+## Artwork
+
+New web and Safari captures keep the article's Open Graph share image, then its
+Twitter card image, falling back to a declared site icon. Relative image URLs use
+the fetched page's final address or Safari's original base URL. Unsupported SVG,
+non-web, credentialed, and malformed image URLs are skipped. Feed artwork keeps
+its existing publication-logo preference.
+
+Captured artwork belongs to the private immutable content version and never
+enters shared episode metadata. Replacing a copy can update its image without
+resetting listening progress when the spoken text is unchanged. The existing
+`image_url` response field carries the selected image, so clients need no new
+JSON fields. Safari preserves the metadata inside its existing HTML envelope.
+
+Saved articles with no captured or feed artwork, including older saves, try the
+publisher's standard `/favicon.ico` directly. This does not fetch or replace their
+text. Sites without a usable image retain the app's monogram placeholder. To
+obtain a share image for an older copy, replace its saved text or share it again
+from Safari. Image loading still requires the network.
+
+Migration `a19d6e7f2c84` adds a nullable image URL to `article_contents`; historical
+content, selection, and progress remain unchanged.
+
 ## API
 
 - `GET /saved` returns the user's saved episode payloads, newest save first.

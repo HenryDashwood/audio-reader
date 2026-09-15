@@ -280,10 +280,20 @@ async def complete(body: BrowserProof, session: Session, credentials: Credential
     if user is not None:
         # The session may have been revoked during Apple's round trip.
         live_user = await service.user_for_token(session, credentials.credentials) if credentials else None
-        if live_user is None or live_user.id != user.id:
+        if credentials is None or live_user is None or live_user.id != user.id:
             raise fail("Please sign in again before connecting Apple.", 401)
         try:
-            await service.link_identity(session, user, identity, "apple", refresh_token, settings.apple_services_id)
+            await service.link_identity(
+                session,
+                user,
+                identity,
+                "apple",
+                refresh_token,
+                settings.apple_services_id,
+                session_token=credentials.credentials,
+            )
+        except service.LinkSessionExpired as exc:
+            raise fail(str(exc), 401) from exc
         except service.IdentityAlreadyLinked as exc:
             raise fail(str(exc), 409) from exc
         return BrowserResult(status="complete", providers=await service.identity_providers(session, user))

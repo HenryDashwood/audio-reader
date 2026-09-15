@@ -16,8 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from audioreader.feeds import articles
+from audioreader.feeds.artwork import artwork_url_in_html, favicon_url
 from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes
 from audioreader.models import ArticleContent, Episode, Feed, PlaybackPosition, SavedArticle, User, utcnow
+from audioreader.schemas import secure_url
 from audioreader.text import article_text, word_count
 
 
@@ -140,6 +142,7 @@ async def capture(
         saved.capture_error = None
         return
     html = ""
+    image_url = None
     capture_error = "Link saved. Could not retrieve the full article."
     title = body.title or episode.title
     source = "browser" if body.html else "web"
@@ -148,6 +151,7 @@ async def capture(
             body.html, browser=True, url=episode.link, article=body.content_format == "article"
         )
         title = (extracted_title if body.content_format == "article" else body.title) or extracted_title or title
+        image_url = artwork_url_in_html(body.html, episode.link or "", prefer_social=True)
     elif episode.feed_id is not None and not replace:
         text, html_value = await articles.content_for(session, episode, commit=False)
         if articles.known_word_count(episode):
@@ -158,8 +162,10 @@ async def capture(
                 return
     elif episode.link:
         try:
-            raw, _ = await fetch_public_bytes(episode.link, max_bytes=MAX_ARTICLE_BYTES)
-            html, extracted_title = extract(raw.decode("utf-8", errors="replace"), url=episode.link)
+            raw, final_url = await fetch_public_bytes(episode.link, max_bytes=MAX_ARTICLE_BYTES)
+            page = raw.decode("utf-8", errors="replace")
+            html, extracted_title = extract(page, url=episode.link)
+            image_url = artwork_url_in_html(page, final_url, prefer_social=True)
             title = extracted_title or title
         except FeedFetchError as exc:
             if exc.status_code == 429:
@@ -184,7 +190,7 @@ async def capture(
         if saved.content_id is None:
             saved.capture_error = capture_error
         return
-    await store_capture(session, user, episode, saved, title, html, text, source, replace=replace)
+    await store_capture(session, user, episode, saved, title, html, text, source, replace=replace, image_url=image_url)
 
 
 def extract(
@@ -272,9 +278,13 @@ def _matching_headline(heading: str, hint: str) -> bool:
     return len(words) >= 3 and sum(word in other for word in words) / len(words) >= 0.75
 
 
-async def store_capture(session, user, episode, saved, title, html, text, source, *, replace=False):
+async def store_capture(session, user, episode, saved, title, html, text, source, *, replace=False, image_url=None):
     html = articles.sanitised(html)
-    digest = hashlib.sha256((title + "\0" + text + "\0" + html).encode()).hexdigest()
+    # Preserve the digest of older captures without metadata, including offline retries.
+    identity = title + "\0" + text + "\0" + html
+    if image_url:
+        identity += "\0" + image_url
+    digest = hashlib.sha256(identity.encode()).hexdigest()
     content = await session.scalar(
         select(ArticleContent).where(
             ArticleContent.episode_id == episode.id,
@@ -287,6 +297,7 @@ async def store_capture(session, user, episode, saved, title, html, text, source
             episode_id=episode.id,
             owner_user_id=user.id,
             title=title,
+            image_url=image_url,
             text=text,
             html=html,
             digest=digest,
@@ -329,10 +340,13 @@ async def decorate(session, user, read):
         if saved.content is not None:
             read.content_id = saved.content.id
             read.title = saved.content.title
+            read.image_url = secure_url(saved.content.image_url) or read.image_url
             read.word_count = word_count(saved.content.text)
             read.has_text = True
         elif read.audio_url is None:
             read.has_text = False
+        if read.image_url is None and read.audio_url is None:
+            read.image_url = secure_url(favicon_url(read.link))
     return read
 
 

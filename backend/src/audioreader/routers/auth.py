@@ -36,6 +36,7 @@ Verifier = Annotated[AppleTokenVerifier, Depends(get_verifier)]
 Revoker = Annotated[AppleRevoker | None, Depends(get_revoker)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 GoogleVerifier = Annotated[GoogleTokenVerifier, Depends(get_google_verifier)]
+Credentials = Annotated[HTTPAuthorizationCredentials, Depends(bearer)]
 
 # Increment this whenever the consent screen's description of the data or the
 # receiving providers changes materially. Existing permission then stops being
@@ -118,11 +119,13 @@ async def linked_identities(session: Session, user: CurrentUser) -> LinkedIdenti
 
 @router.post("/me/identities/google", response_model=LinkedIdentitiesRead)
 async def link_google(
-    body: GoogleLoginRequest, session: Session, user: CurrentUser, verifier: GoogleVerifier
+    body: GoogleLoginRequest, session: Session, user: CurrentUser, verifier: GoogleVerifier, credentials: Credentials
 ) -> LinkedIdentitiesRead:
     identity = await verified_google(body, verifier, failure_status=400)
     try:
-        await service.link_identity(session, user, identity, "google")
+        await service.link_identity(session, user, identity, "google", session_token=credentials.credentials)
+    except service.LinkSessionExpired as exc:
+        raise HTTPException(status_code=401, detail={"spoken_response": str(exc)}) from exc
     except service.IdentityAlreadyLinked as exc:
         raise HTTPException(status_code=409, detail={"spoken_response": str(exc)}) from exc
     return await linked_identities(session, user)
@@ -130,7 +133,12 @@ async def link_google(
 
 @router.post("/me/identities/apple", response_model=LinkedIdentitiesRead)
 async def link_apple(
-    body: AppleLoginRequest, session: Session, user: CurrentUser, verifier: Verifier, revoker: Revoker
+    body: AppleLoginRequest,
+    session: Session,
+    user: CurrentUser,
+    verifier: Verifier,
+    revoker: Revoker,
+    credentials: Credentials,
 ) -> LinkedIdentitiesRead:
     try:
         identity = await verifier.verify(body.identity_token)
@@ -142,7 +150,11 @@ async def link_apple(
         await revoker.exchange_code(body.authorization_code) if revoker and body.authorization_code else None
     )
     try:
-        await service.link_identity(session, user, identity, "apple", refresh_token)
+        await service.link_identity(
+            session, user, identity, "apple", refresh_token, session_token=credentials.credentials
+        )
+    except service.LinkSessionExpired as exc:
+        raise HTTPException(status_code=401, detail={"spoken_response": str(exc)}) from exc
     except service.IdentityAlreadyLinked as exc:
         raise HTTPException(status_code=409, detail={"spoken_response": str(exc)}) from exc
     return await linked_identities(session, user)

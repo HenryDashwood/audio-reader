@@ -529,28 +529,30 @@ class TestLinkedSignIn:
         assert response.json() == {"providers": ["apple", "google"]}
         assert (await login(auth_client, make_identity_token())).json()["user"]["id"] == google["user"]["id"]
 
-    async def test_same_email_does_not_merge_accounts_and_conflict_preserves_both(
+    async def test_same_email_stays_separate_until_authenticated_link_combines_accounts(
         self, auth_client, make_identity_token, google_token, session
     ):
         apple = (await login(auth_client, make_identity_token())).json()
         google = (await auth_client.post("/auth/google", json={"identity_token": google_token()})).json()
         assert apple["user"]["id"] != google["user"]["id"]
+        assert await session.scalar(select(func.count(User.id))) == 2
         response = await auth_client.post(
             "/me/identities/google",
             headers={"Authorization": f"Bearer {apple['token']}"},
             json={"identity_token": google_token()},
         )
-        assert response.status_code == 409
+        assert response.status_code == 200
+        assert response.json() == {"providers": ["apple", "google"]}
         response = await auth_client.post(
             "/me/identities/apple",
             headers={"Authorization": f"Bearer {google['token']}"},
             json={"identity_token": make_identity_token()},
         )
-        assert response.status_code == 409
-        assert await session.scalar(select(func.count(User.id))) == 2
+        assert response.status_code == 401  # the absorbed account's old session is retired
+        assert await session.scalar(select(func.count(User.id))) == 1
         assert (await auth_client.post("/auth/google", json={"identity_token": google_token()})).json()["user"][
             "id"
-        ] == google["user"]["id"]
+        ] == apple["user"]["id"]
 
     async def test_link_requires_live_session_and_bad_identity_does_not_revoke_it(
         self, auth_client, google_token, make_identity_token

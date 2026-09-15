@@ -10,7 +10,7 @@ import java.io.IOException
 // from restoring a signed-out account or attaching credentials to a different session.
 data class AccountState(val signedIn: Boolean = false, val user: AccountUser? = null,
     val providers: Set<String>? = null, val busy: Boolean = false, val error: String? = null,
-    val applePending: Boolean = false)
+    val applePending: Boolean = false, val libraryRevision: Int = 0)
 
 class AccountSession(private val api: AccountApi, private val store: AccountTokenStore,
     private val appleStore: ApplePendingStore = MemoryApplePendingStore(),
@@ -27,7 +27,8 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
         operation {
             val user = api.me(current)
             val providers = api.providers(current)
-            AccountState(signedIn = true, user = user, providers = providers, applePending = appleStore.read() != null)
+            AccountState(signedIn = true, user = user, providers = providers, applePending = appleStore.read() != null,
+                libraryRevision = state.value.libraryRevision)
         }
     }
     suspend fun signInGoogle(authorize: suspend () -> String) {
@@ -55,7 +56,7 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
             val credential = authorize()
             if (version != generation || current != token) return@operation null
             val providers = api.linkGoogle(current, credential)
-            state.value.copy(providers = providers, error = null)
+            state.value.copy(providers = providers, libraryRevision = state.value.libraryRevision + 1, error = null)
         }
     }
     suspend fun signInApple(link: Boolean, openBrowser: (String) -> Unit) {
@@ -133,7 +134,8 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
                     }
                     val providers = response.providers ?: throw AccountFailure(0, "Apple could not be connected. Please try again.")
                     appleStore.clear()
-                    return state.value.copy(providers = providers, applePending = false, error = null)
+                    return state.value.copy(providers = providers, applePending = false,
+                        libraryRevision = state.value.libraryRevision + 1, error = null)
                 }
                 else -> throw AccountFailure(0, "Apple sign-in did not finish. Please try again.")
             }

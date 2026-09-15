@@ -38,6 +38,120 @@ async def capture(client, **fields):
     return response.json()
 
 
+async def test_capture_artwork_stays_private_and_follows_selected_snapshot(client, session, make_client):
+    def illustrated(image):
+        return page().replace("</head>", f'<meta property="og:image" content="{image}"></head>')
+
+    first = await capture(client, html=illustrated("/private-first.jpg"))
+    assert first["image_url"] == "https://example.com/private-first.jpg"
+    assert (await session.get(Episode, first["id"])).image_url is None
+    await client.put(
+        f"/episodes/{first['id']}/position", json={"position_seconds": 42, "content_id": first["content_id"]}
+    )
+    second = await capture(client, html=illustrated("/private-second.jpg"))
+    assert second["image_url"] == first["image_url"]
+    assert second["content_id"] == first["content_id"]
+    updated = (
+        await client.post("/saved/replace", json={"url": URL, "html": illustrated("/private-second.jpg")})
+    ).json()
+    assert updated["image_url"] == "https://example.com/private-second.jpg"
+    assert updated["content_id"] != first["content_id"]
+    assert updated["position_seconds"] == 42  # Artwork changes do not restart speech.
+    assert (await session.get(ArticleContent, first["content_id"])).image_url == first["image_url"]
+    assert (await client.get("/saved")).json()[0]["image_url"] == updated["image_url"]
+    assert (await client.get(f"/episodes/{first['id']}")).json()["image_url"] == updated["image_url"]
+    other = User(display_name="Other")
+    session.add(other)
+    await session.commit()
+    async with make_client(other) as outsider:
+        other_copy = await capture(outsider, html=illustrated("/other.jpg"))
+        assert other_copy["id"] == first["id"]
+        assert other_copy["image_url"] == "https://example.com/other.jpg"
+    assert (await client.get("/saved")).json()[0]["image_url"] == updated["image_url"]
+
+
+async def test_url_capture_uses_redirected_page_for_artwork_without_extra_fetch(client, monkeypatch):
+    calls = []
+
+    async def fetch(url, **kwargs):
+        calls.append(url)
+        html = page().replace("</head>", '<meta property="og:image" content="images/share.jpg"></head>')
+        return html.encode(), "https://publisher.example/news/story"
+
+    monkeypatch.setattr(saved, "fetch_public_bytes", fetch)
+    item = (await client.post("/saved", json={"url": URL})).json()
+    assert item["image_url"] == "https://publisher.example/news/images/share.jpg"
+    assert item["has_text"]
+    assert calls == [URL]
+
+
+async def test_old_saved_copy_uses_standard_favicon_without_changing_content(client, session):
+    first = await capture(client)
+    content = await session.get(ArticleContent, first["content_id"])
+    assert content.image_url is None
+    item = (await client.get("/saved")).json()[0]
+    assert item["image_url"] == "https://example.com/favicon.ico"
+    assert item["content_id"] == first["content_id"]
+    assert item["saved_at"] == first["saved_at"]
+
+
+async def test_article_envelope_keeps_artwork_out_of_spoken_and_reader_text(client):
+    html = page().replace(
+        "</head>",
+        f'<link rel="canonical" href="{URL}"><meta property="og:image" content="http://example.com/share.jpg"></head>',
+    )
+    item = await capture(client, html=html, content_format="article")
+    assert item["image_url"] == "https://example.com/share.jpg"
+    text = (await client.get(f"/episodes/{item['id']}/text")).json()
+    assert "share.jpg" not in text["text"]
+    assert "share.jpg" not in text["html"]
+
+
+async def test_invalid_article_envelope_cannot_supply_artwork(client):
+    html = page().replace(
+        "</head>",
+        '<link rel="canonical" href="https://example.com/another">'
+        '<meta property="og:image" content="https://example.com/wrong.jpg"></head>',
+    )
+    item = await capture(client, html=html, content_format="article")
+    assert item["content_id"] is None
+    assert item["capture_error"]
+    assert item["image_url"] == "https://example.com/favicon.ico"
+
+
+def test_artwork_migration_preserves_historical_snapshots():
+    import importlib.util
+    from pathlib import Path
+
+    import sqlalchemy as sa
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    path = Path(__file__).parents[1] / "alembic/versions/a19d6e7f2c84_saved_article_artwork.py"
+    spec = importlib.util.spec_from_file_location("artwork_migration", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with sa.create_engine("sqlite://").begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE article_contents (id INTEGER PRIMARY KEY, text TEXT, digest TEXT)")
+        connection.exec_driver_sql("INSERT INTO article_contents VALUES (12, 'Original speech', 'original-digest')")
+        with Operations.context(MigrationContext.configure(connection)):
+            module.upgrade()
+        assert connection.exec_driver_sql("SELECT * FROM article_contents").one() == (
+            12,
+            "Original speech",
+            "original-digest",
+            None,
+        )
+        with Operations.context(MigrationContext.configure(connection)):
+            module.downgrade()
+        assert connection.exec_driver_sql("SELECT * FROM article_contents").one() == (
+            12,
+            "Original speech",
+            "original-digest",
+        )
+
+
 async def test_standalone_capture_is_private_and_does_not_subscribe(client, session, make_client):
     item = await capture(client)
     assert item["content_id"] and item["saved_at"] and item["has_text"]

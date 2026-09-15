@@ -52,6 +52,6 @@ async def receive_email(
     if user is None:
         raise HTTPException(status_code=404, detail="no such address")
 
-    delivery = await service.receive(session, user, raw)
+    delivery = await service.receive(session, user, raw, recipient=recipient)
     logger.info("inbound email for user %s: %s", user.id, delivery.status)
     return InboundReceipt(status=delivery.status, feed_id=delivery.feed_id, episode_id=delivery.episode_id)

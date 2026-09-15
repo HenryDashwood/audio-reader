@@ -20,10 +20,13 @@ from audioreader.config import settings
 from audioreader.models import (
     AppleBrowserFlow,
     AuthSession,
+    NewsletterInboxAlias,
     PlaybackPosition,
     Subscription,
     User,
     UserIdentity,
+    VoiceCommandReceipt,
+    VoiceUndo,
     utcnow,
 )
 from audioreader.newsletters import service as newsletters
@@ -126,6 +129,10 @@ class IdentityAlreadyLinked(Exception):
     pass
 
 
+class LinkSessionExpired(Exception):
+    pass
+
+
 async def link_identity(
     session: AsyncSession,
     user: User,
@@ -133,8 +140,10 @@ async def link_identity(
     provider: str,
     refresh_token: str | None = None,
     refresh_token_client_id: str | None = None,
+    *,
+    session_token: str,
 ) -> None:
-    """Link verified credentials to the authenticated account, never merge users."""
+    """Link verified credentials, combining an existing account atomically."""
     user_id = user.id
     existing = await session.scalar(
         select(UserIdentity).where(
@@ -142,9 +151,45 @@ async def link_identity(
             UserIdentity.provider_subject == identity.subject,
         )
     )
+    source_id = existing.user_id if existing is not None else user_id
+    # Stable lock order serializes overlapping and opposite-direction links.
+    locked = list(
+        await session.scalars(
+            select(User)
+            .where(User.id.in_([user_id, source_id]))
+            .order_by(User.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    )
+    account_ids = {account.id for account in locked}
+    auth_session = await session.scalar(
+        select(AuthSession)
+        .where(AuthSession.token_hash == hash_token(session_token))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if (
+        user_id not in account_ids
+        or auth_session is None
+        or auth_session.user_id != user_id
+        or auth_session.revoked_at is not None
+        or is_expired(auth_session)
+    ):
+        raise LinkSessionExpired("Please sign in again before connecting accounts.")
+    existing = await session.scalar(
+        select(UserIdentity)
+        .where(UserIdentity.provider == provider, UserIdentity.provider_subject == identity.subject)
+        .execution_options(populate_existing=True)
+    )
     if existing is not None:
         if existing.user_id != user_id:
-            raise IdentityAlreadyLinked("This sign-in is already linked to another Magpie account.")
+            if existing.user_id != source_id or source_id not in account_ids:
+                raise IdentityAlreadyLinked("Your accounts changed while connecting. Please try again.")
+            from audioreader.auth.merge import combine_accounts
+
+            source = next(account for account in locked if account.id == source_id)
+            await combine_accounts(session, user, source)
         if refresh_token:
             existing.refresh_token = secrets_store.encrypt(refresh_token)
             existing.refresh_token_client_id = refresh_token_client_id or settings.apple_bundle_id
@@ -175,7 +220,7 @@ async def link_identity(
         if existing is not None and existing.user_id == user_id:
             await session.refresh(user)
             return
-        raise IdentityAlreadyLinked("This sign-in is already linked to another Magpie account.") from exc
+        raise IdentityAlreadyLinked("Your accounts changed while connecting. Please try again.") from exc
 
 
 async def identity_providers(session: AsyncSession, user: User) -> list[str]:
@@ -270,7 +315,17 @@ async def delete_user(session: AsyncSession, user: User) -> None:
     from audioreader.models import ArticleContent, Episode, SavedArticle
 
     saved_ids = list(await session.scalars(select(SavedArticle.episode_id).where(SavedArticle.user_id == user.id)))
-    for table in (SavedArticle, PlaybackPosition, Subscription, AppleBrowserFlow, AuthSession, UserIdentity):
+    for table in (
+        SavedArticle,
+        PlaybackPosition,
+        Subscription,
+        AppleBrowserFlow,
+        AuthSession,
+        UserIdentity,
+        NewsletterInboxAlias,
+        VoiceCommandReceipt,
+        VoiceUndo,
+    ):
         await session.execute(delete(table).where(table.user_id == user.id))
     await session.execute(delete(ArticleContent).where(ArticleContent.owner_user_id == user.id))
     await session.execute(

@@ -143,7 +143,7 @@ async def test_google_account_can_link_apple_on_android(auth_client, google_toke
     assert (await native_login(auth_client, make_identity_token))["user"]["id"] == google["user"]["id"]
 
 
-async def test_other_account_conflict_does_not_move_the_identity(
+async def test_existing_apple_account_combines_with_google_account_after_browser_proof(
     auth_client, google_token, make_identity_token, apple_keys
 ):
     native = await native_login(auth_client, make_identity_token)
@@ -151,8 +151,9 @@ async def test_other_account_conflict_does_not_move_the_identity(
     flow = (await begin(auth_client, google["token"])).json()
     await callback(auth_client, flow, code="conflict-code")
     token_exchange(apple_keys, flow)
-    assert (await finish(auth_client, flow, google["token"])).status_code == 409
-    assert (await native_login(auth_client, make_identity_token))["user"]["id"] == native["user"]["id"]
+    assert (await finish(auth_client, flow, google["token"])).status_code == 200
+    assert (await native_login(auth_client, make_identity_token))["user"]["id"] == google["user"]["id"]
+    assert (await auth_client.get("/me", headers={"Authorization": f"Bearer {native['token']}"})).status_code == 401
 
 
 async def test_link_is_bound_to_exact_live_session(auth_client, make_identity_token, apple_keys):

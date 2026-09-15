@@ -116,6 +116,30 @@ var ExtensionPreprocessingJS = {
             link.rel = 'canonical';
             link.href = document.URL;
             output.head.appendChild(link);
+            // Readability strips the head. Carry only artwork declarations from the
+            // original page, resolving relative URLs while its base URI is known.
+            // The backend chooses and validates the image for this private snapshot.
+            Array.from(document.head.querySelectorAll('meta, link')).filter(function (node) {
+                var key = (node.getAttribute('property') || node.getAttribute('name') || '').toLowerCase();
+                var rels = (node.getAttribute('rel') || '').toLowerCase().split(/\s+/);
+                return node.tagName === 'META'
+                    ? ['og:image', 'og:image:url', 'og:image:secure_url', 'twitter:image', 'twitter:image:src'].includes(key)
+                    : rels.some(function (rel) { return rel === 'icon' || rel.startsWith('apple-touch-icon'); });
+            }).slice(0, 32).forEach(function (node) {
+                try {
+                    var attribute = node.tagName === 'META' ? 'content' : 'href';
+                    var value = node.getAttribute(attribute);
+                    if (!value || value.length > 8192) return;
+                    var image = new URL(value, document.baseURI);
+                    if (!/^https?:$/.test(image.protocol) || image.username || image.password) return;
+                    var metadata = output.createElement(node.tagName.toLowerCase());
+                    ['property', 'name', 'rel', 'type', 'sizes'].forEach(function (name) {
+                        if (node.hasAttribute(name)) metadata.setAttribute(name, node.getAttribute(name));
+                    });
+                    metadata.setAttribute(attribute, image.href);
+                    output.head.appendChild(metadata);
+                } catch (_) {}
+            });
             var body = output.createElement('article');
             body.innerHTML = article.content;
             body.querySelectorAll('article').forEach(function (nested) {

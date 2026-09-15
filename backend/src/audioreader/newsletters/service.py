@@ -37,6 +37,7 @@ from audioreader.models import (
     Episode,
     Feed,
     InboundMessage,
+    NewsletterInboxAlias,
     NewsletterSignup,
     PlaybackPosition,
     Subscription,
@@ -145,14 +146,20 @@ async def inbound_address(session: AsyncSession, user: User) -> str:
     if not settings.inbound_email_enabled:
         raise NewslettersDisabledError
     if user.inbound_token is None:
-        user.inbound_token = new_inbound_token()
+        while True:
+            token = new_inbound_token()
+            if await session.get(NewsletterInboxAlias, token) is None and not await session.scalar(
+                select(User.id).where(User.inbound_token == token)
+            ):
+                user.inbound_token = token
+                break
         await session.commit()
     address = address_for(user)
     assert address is not None
     return address
 
 
-async def user_for_recipient(session: AsyncSession, recipient: str | None) -> User | None:
+def recipient_token(recipient: str | None) -> str | None:
     if not recipient or not settings.inbound_email_domain:
         return None
     local, _, domain = recipient.strip().lower().partition("@")
@@ -163,6 +170,16 @@ async def user_for_recipient(session: AsyncSession, recipient: str | None) -> Us
     local = local.split("+", 1)[0]
     if not local:
         return None
+    return local
+
+
+async def user_for_recipient(session: AsyncSession, recipient: str | None) -> User | None:
+    local = recipient_token(recipient)
+    if local is None:
+        return None
+    alias = await session.get(NewsletterInboxAlias, local)
+    if alias is not None:
+        return await session.get(User, alias.user_id)
     return await session.scalar(select(User).where(User.inbound_token == local))
 
 
@@ -445,7 +462,7 @@ async def _follow_confirmation(link: str) -> bool:
     return True
 
 
-async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
+async def receive(session: AsyncSession, user: User, raw: bytes, recipient: str | None = None) -> Delivery:
     """File one email for its recipient.
 
     The raw bytes are stored before anything else is attempted, so a message
@@ -505,12 +522,16 @@ async def receive(session: AsyncSession, user: User, raw: bytes) -> Delivery:
         await session.commit()
         return Delivery(SKIPPED)
 
-    feed = await session.scalar(
-        select(Feed).where(Feed.owner_user_id == user.id, Feed.url == feed_url_for(user, message.sender.key))
-    )
+    # Old newsletter addresses keep their original private feed namespace,
+    # including independent approve/block choices for the same sender.
+    token = recipient_token(recipient or recipient_from_headers(raw))
+    alias = await session.get(NewsletterInboxAlias, token) if token else None
+    namespace = alias.namespace_user_id if alias is not None and alias.user_id == user.id else user.id
+    feed_url = f"email://{namespace}/{message.sender.key}"
+    feed = await session.scalar(select(Feed).where(Feed.owner_user_id == user.id, Feed.url == feed_url))
     if feed is None:
         feed = Feed(
-            url=feed_url_for(user, message.sender.key),
+            url=feed_url,
             title=message.sender.name,
             source=FEED_SOURCE_EMAIL,
             owner_user_id=user.id,

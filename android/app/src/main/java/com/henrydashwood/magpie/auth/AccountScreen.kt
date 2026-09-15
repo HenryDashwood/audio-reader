@@ -59,7 +59,7 @@ fun AccountContent(state: AccountState, configured: Boolean, onBack: () -> Unit,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Image(painterResource(R.drawable.google_g), null, Modifier.size(20.dp)); Spacer(Modifier.width(12.dp)); Text("Sign in with Google") } }
             } else {
                 item { Text(state.user?.displayName ?: "Signed in", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge) }
-                item { Text("Connect Apple and Google to use either for the same account. Matching email addresses alone do not connect accounts.") }
+                item { Text("Connect Apple and Google to use either for the same account. If both already have Magpie accounts, connecting combines their subscriptions, saved articles, and listening progress. Matching email addresses alone do not connect accounts. After combining accounts, review AI Data Sharing in Settings. Devices signed in to the other account will need to sign in again.") }
                 if (state.providers == null) {
                     item { Button(onClick = refresh, enabled = !state.busy) { Text("Load sign-in methods") } }
                 } else {

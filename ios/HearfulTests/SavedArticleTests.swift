@@ -4,6 +4,18 @@ import Testing
 @testable import Hearful
 
 struct SavedArticleTests {
+    @Test func savedArtworkSurvivesDecodingAndOfflineCaching() throws {
+        let json = """
+            {"id":42,"title":"Saved essay","content_id":12,
+             "link":"https://example.com/essay","image_url":"https://example.com/share.jpg"}
+            """
+        let episode = try JSONDecoder().decode(Episode.self, from: Data(json.utf8))
+        #expect(episode.imageURL?.absoluteString == "https://example.com/share.jpg")
+        let restored = try JSONDecoder().decode(Episode.self, from: JSONEncoder().encode(episode))
+        #expect(restored == episode)
+        #expect(restored.contentID == 12)
+    }
+
     @Test func aQueuedReplacementRetainsItsIntentAndOlderCapturesStillDecode() throws {
         let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

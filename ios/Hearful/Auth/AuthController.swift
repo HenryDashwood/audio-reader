@@ -41,13 +41,16 @@ final class AuthController: ObservableObject {
     private let google: any GoogleAuthorizing
     private var sessionGeneration = 0
     private let api: HearfulAPIProtocol
+    private let notificationCenter: NotificationCenter
     private var authRequiredObserver: NSObjectProtocol?
     private var positionReporter: PositionReporter?
 
-    init(api: HearfulAPIProtocol = HearfulAPI(), google: any GoogleAuthorizing = GoogleAuthorization()) {
+    init(api: HearfulAPIProtocol = HearfulAPI(), google: any GoogleAuthorizing = GoogleAuthorization(),
+         notificationCenter: NotificationCenter = .default) {
         self.api = api
         self.google = google
-        authRequiredObserver = NotificationCenter.default.addObserver(
+        self.notificationCenter = notificationCenter
+        authRequiredObserver = notificationCenter.addObserver(
             forName: .hearfulAuthRequired, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -173,6 +176,7 @@ final class AuthController: ObservableObject {
             let response = try await api.linkIdentity(provider: "google", identityToken: token, authorizationCode: nil)
             guard generation == sessionGeneration else { return }
             linkedProviders = response.providers
+            await linkedAccountChanged(generation: generation)
         } catch is CancellationError {
         } catch {
             guard generation == sessionGeneration else { return }
@@ -195,11 +199,21 @@ final class AuthController: ObservableObject {
             let response = try await api.linkIdentity(provider: "apple", identityToken: token, authorizationCode: code)
             guard generation == sessionGeneration else { return }
             linkedProviders = response.providers
+            await linkedAccountChanged(generation: generation)
         } catch let error as ASAuthorizationError where error.code == .canceled {
         } catch {
             guard generation == sessionGeneration else { return }
             linkingError = (error as? APIError)?.spokenResponse ?? APIError.genericSpokenResponse
         }
+    }
+
+    private func linkedAccountChanged(generation: Int) async {
+        await refreshUser()
+        guard generation == sessionGeneration, state == .signedIn else { return }
+        ShortcutLibrary.shared.invalidate()
+        HearfulShortcuts.updateAppShortcutParameters()
+        notificationCenter.post(name: .hearfulSubscriptionsChanged, object: nil)
+        notificationCenter.post(name: .hearfulSavedChanged, object: nil)
     }
 
     private func accept(_ response: AuthResponse) {

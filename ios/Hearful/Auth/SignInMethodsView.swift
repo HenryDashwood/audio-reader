@@ -8,7 +8,7 @@ struct SignInMethodsView: View {
     var body: some View {
         List {
             Section {
-                Text("Connect Apple and Google to use either to sign in to this account. Your library and listening progress stay together.")
+                Text("Connect Apple and Google to use either to sign in. If both already have Magpie accounts, connecting combines their subscriptions, saved articles, and listening progress.")
             }
             if let providers = auth.linkedProviders {
                 Section("Apple") {
@@ -47,7 +47,7 @@ struct SignInMethodsView: View {
                 }
             }
             Section {
-                Text("To connect an existing account, sign in with the method you originally used first. Connecting requires signing in with the additional provider. Matching email addresses alone do not connect accounts.")
+                Text("Connecting requires signing in with the additional provider. Matching email addresses alone do not connect accounts. After combining accounts, review AI Data Sharing in Settings. Devices signed in to the other account will need to sign in again.")
                     .font(.footnote)
             }
         }

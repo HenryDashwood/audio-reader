@@ -64,10 +64,14 @@ class AccountSessionTest {
         assertEquals("original", store.token)
         assertEquals(setOf("apple"), session.state.value.providers)
         assertEquals("Already linked to another account", session.state.value.error)
+        assertEquals(0, session.state.value.libraryRevision)
         api.failure = null; api.linked = setOf("apple", "google"); session.linkGoogle { "proof" }
         assertEquals(setOf("apple", "google"), session.state.value.providers)
         assertEquals("original", store.token)
         assertEquals(0, api.loginCount)
+        assertEquals(1, session.state.value.libraryRevision)
+        session.refresh()
+        assertEquals(1, session.state.value.libraryRevision)
     }
     @Test fun cancellingDoesNotCreateAnAccountOrDisplayAnError() = runTest {
         val api = Api(); val session = AccountSession(api, Store())

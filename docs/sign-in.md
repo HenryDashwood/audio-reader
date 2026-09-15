@@ -4,8 +4,11 @@ Apple and Google sign-in are implemented on iOS and Android. iOS keeps its nativ
 Apple sheet; Android opens Apple's authorization page in a browser Custom Tab.
 A person signed in to Magpie can connect another provider by authenticating with
 it in Settings → Sign-in Methods. Both identities then resolve to the same user
-ID, library, listening progress, and consent choice. Linking does not grant AI
-consent or copy/move any library data.
+ID, library, and listening progress. If the additional identity already belongs
+to another Magpie account, explicit linking combines that account into the
+currently signed-in account. Linking never grants AI consent; combining existing
+accounts withdraws the current choice until the person reviews the combined
+library's AI sharing in Settings.
 
 Android loads the signed-in account library and uses samples only while signed
 out. It never uploads sample content or local article narration bookmarks. Android's Apple browser
@@ -181,12 +184,39 @@ Google API refresh tokens. Android encrypts Magpie sessions with Keystore; iOS
 uses its existing Keychain store. Neither client stores Google ID tokens as its
 Magpie session.
 
-A link to the same Magpie account is idempotent. A provider identity already
-attached to another account returns 409 and does not move it. Invalid additional
-provider proof returns 400 so it does not revoke a valid Magpie session; an
-invalid Magpie session returns 401. Signing in separately with two previously
-unlinked identities creates two accounts, even if the email matches. Combining
-already separate libraries is not implemented by the linking endpoint.
+A link to the same Magpie account is idempotent. Signing in separately with two
+previously unlinked identities still creates two accounts, even if the email
+matches. Explicitly connecting the other provider combines them after verifying
+both the current Magpie session and the additional provider proof. Invalid
+provider proof returns 400; an expired/revoked Magpie session returns 401.
+
+Combination runs in one transaction, locking both users in ID order and
+rechecking the initiating session after provider verification. The current
+account retains its ID and sessions. Every provider identity from the other
+account moves to it; the other account's sessions and pending browser handoffs
+are retired, requiring those devices to sign in again. A concurrent identity
+change returns a retryable 409 rather than combining an account whose user row
+was not locked. Lost-response retries are idempotent.
+
+Subscriptions are united by feed ID. Duplicate subscriptions retain the current
+account's grouping and the furthest Latest cursor, so cleared items do not refill
+Latest. Imported groups are flattened through existing roots. Saved items are
+united by episode ID with their earliest save date. The current readable capture
+wins a duplicate; a prepared incoming capture repairs an empty current one.
+All private immutable text versions survive. The most recently updated playback
+record wins only when it matches the selected content version, preserving its
+completion/dismissal flags. Seconds from different text versions are never mixed.
+
+Private newsletter feeds, messages, and signup records move with their owner.
+Migration `e94d82c617ab` adds newsletter inbox aliases: both old addresses keep
+delivering to their original feed namespaces, including independent sender
+approval/block choices. Deleting the combined account removes these aliases.
+Undo records describing either old library are invalidated; command receipts for
+the current account remain so retries cannot repeat actions. AI consent must be
+reviewed again after a combination. iOS refreshes its account, Following, Latest,
+Saved, and shortcut data; Android refreshes its library after a successful link.
+The existing provider-list response contract remains unchanged. Older clients
+can link through the same endpoint, then refresh their library.
 
 Account deletion removes every linked identity and Magpie session. Apple grants
 are revoked using the existing encrypted refresh-token mechanism when available,
@@ -208,9 +238,14 @@ Drive, contacts, or offline API access is requested.
    Apple on both platforms. Repeat linking from iOS. During Android authorization,
    return using the callback link, background/reopen the app, and recreate its
    process. Check cancellation, expiry, offline retry, and a second browser return.
-6. Cancel each provider sheet. Check that account state is unchanged. Try an
-   identity already attached to another test account; check that neither library
-   moves and the conflict is explained.
+6. Cancel each provider sheet. Check that account state is unchanged. Sign in
+   separately with Apple and Google to create two test accounts, add distinct and
+   overlapping subscriptions/saved items, then connect them in either direction.
+   Check that both sign-ins reach the combined library, the current session stays
+   signed in, and the other account's old sessions require sign-in. Verify both
+   newsletter addresses still deliver, text versions keep matching progress, and
+   AI sharing asks for consent again. A failed provider proof must change neither
+   account.
 7. Reopen both apps, test offline restoration and server-revoked sessions, then
    delete a disposable linked account and verify both methods lose access to it.
 8. Check VoiceOver, TalkBack, large text, dark mode, and device account selection

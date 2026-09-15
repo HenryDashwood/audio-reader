@@ -177,6 +177,8 @@ class ArticleContent(Base):
     episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), index=True)
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title: Mapped[str]
+    # Browser metadata belongs to this owner's snapshot, never the shared episode.
+    image_url: Mapped[str | None]
     text: Mapped[str] = mapped_column(Text)
     html: Mapped[str] = mapped_column(Text)
     digest: Mapped[str]
@@ -221,6 +223,15 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     identities: Mapped[list["UserIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class NewsletterInboxAlias(Base):
+    """Keep a combined account's old address and private feed namespace working."""
+
+    __tablename__ = "newsletter_inbox_aliases"
+    token: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    namespace_user_id: Mapped[uuid.UUID] = mapped_column(Uuid)
 
 
 class UserIdentity(Base):

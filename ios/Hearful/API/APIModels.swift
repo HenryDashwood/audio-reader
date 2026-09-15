@@ -59,8 +59,8 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
     var wordCount: Int? = nil
     let publishedAt: Date?
     let link: URL?
-    /// Episode artwork; the backend falls back to the show's artwork, so this
-    /// is only nil for feeds with no images at all.
+    /// Episode or private saved-capture artwork, with publication artwork or a
+    /// saved article's site favicon supplied by the backend as a fallback.
     var imageURL: URL?
     /// This listener's saved playback position; nil when never played.
     /// Optional so payloads from before the field existed still decode.

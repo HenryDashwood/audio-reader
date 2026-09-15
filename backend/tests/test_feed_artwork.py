@@ -1,11 +1,43 @@
 from datetime import UTC, datetime, timedelta
 
-from audioreader.feeds.artwork import SITE_ARTWORK_RECHECK_AFTER, artwork_url_in_html, site_artwork_is_due
+from audioreader.feeds.artwork import SITE_ARTWORK_RECHECK_AFTER, artwork_url_in_html, favicon_url, site_artwork_is_due
 
 PAGE_URL = "https://publication.example.com/articles/"
 
 
 class TestArtworkURLInHTML:
+    def test_article_prefers_share_image_then_twitter_then_icon(self):
+        icon = '<link rel="apple-touch-icon" href="/touch.png">'
+        twitter = '<meta name="twitter:image" content="/twitter.jpg">'
+        og = '<meta property="og:image" content="/article.jpg">'
+        for metadata, expected in [
+            (og + twitter + icon, "article.jpg"),
+            (twitter + icon, "twitter.jpg"),
+            (icon, "touch.png"),
+        ]:
+            assert (
+                artwork_url_in_html(metadata, PAGE_URL, prefer_social=True)
+                == f"https://publication.example.com/{expected}"
+            )
+
+    def test_malformed_and_unsupported_social_images_fall_through(self):
+        html = """
+        <base href="https://[broken">
+        <meta property="og:image" content="https://[broken">
+        <meta property="og:image" content="javascript:alert(1)">
+        <meta property="og:image" content="/art.svg">
+        <meta property="og:image" content="https://user:secret@example.com/art.jpg">
+        <meta property="og:image" content="https://example.com:9999/art.jpg">
+        <link rel="icon" href="/favicon.png">
+        """
+        assert artwork_url_in_html(html, PAGE_URL, prefer_social=True) == "https://publication.example.com/favicon.png"
+
+    def test_standard_favicon_drops_article_path_query_and_fragment(self):
+        assert favicon_url(PAGE_URL + "story?private=token#heading") == "https://publication.example.com/favicon.ico"
+        assert favicon_url("file:///private/story") is None
+        assert favicon_url("https://user:secret@example.com/story") is None
+        assert favicon_url("https://[broken") is None
+
     def test_prefers_the_sites_own_square_mark_over_the_social_card(self):
         # A touch icon is drawn for a tile; the social card is as often a
         # photo that illustrated the front page as it is a logo.

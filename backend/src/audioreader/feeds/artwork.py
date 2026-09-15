@@ -80,13 +80,14 @@ def _largest_side(sizes: str) -> int | None:
 _TILE_SIDE = 120
 
 
-def artwork_url_in_html(html: str, page_url: str) -> str | None:
+def artwork_url_in_html(html: str, page_url: str, *, prefer_social: bool = False) -> str | None:
     """The best raster artwork named by an HTML head, made absolute.
 
     A show's artwork is a square tile, so a large touch icon — the site's
     own square mark — comes first. The social card is next: a photo that
     happened to illustrate the front page as often as a logo. Small icons
-    are favicons and come last.
+    are favicons and come last. For individual articles, prefer_social puts
+    the article's share image ahead of the publication's mark.
     """
 
     finder = _ArtworkFinder()
@@ -96,24 +97,41 @@ def artwork_url_in_html(html: str, page_url: str) -> str | None:
     except Exception:  # Broken publisher markup must not stop feed ingestion.
         pass
 
-    base_url = urljoin(page_url, finder.base_href) if finder.base_href else page_url
+    try:
+        base_url = urljoin(page_url, finder.base_href) if finder.base_href else page_url
+    except ValueError:
+        base_url = page_url
     by_size = sorted(finder.touch_icons + finder.icons, key=lambda icon: icon[2] or 0, reverse=True)
     marks = [icon for icon in finder.touch_icons if icon[2] is None or icon[2] >= _TILE_SIDE]
     marks += [icon for icon in finder.icons if icon[2] is not None and icon[2] >= _TILE_SIDE]
     marks.sort(key=lambda icon: icon[2] or _TILE_SIDE, reverse=True)
-    candidates = [
-        *((icon[0], icon[1]) for icon in marks),
+    social = [
         *((url, "") for url in finder.open_graph),
         *((url, "") for url in finder.twitter),
+    ]
+    logos = [(icon[0], icon[1]) for icon in marks]
+    candidates = [
+        *(social + logos if prefer_social else logos + social),
         *((icon[0], icon[1]) for icon in by_size if icon not in marks),
     ]
     for candidate, mime_type in candidates:
-        if mime_type == "image/svg+xml" or urlsplit(candidate).path.casefold().endswith(".svg"):
-            # SwiftUI's AsyncImage does not render SVG artwork.
+        try:
+            if mime_type == "image/svg+xml" or urlsplit(candidate).path.casefold().endswith(".svg"):
+                # SwiftUI's AsyncImage does not render SVG artwork.
+                continue
+            usable = _usable_image_url(urljoin(base_url, candidate))
+        except ValueError:
             continue
-        if usable := _usable_image_url(urljoin(base_url, candidate)):
+        if usable:
             return usable
     return None
+
+
+def favicon_url(page_url: str | None) -> str | None:
+    """A direct publisher fallback for old saves whose page metadata is gone."""
+    if not page_url or not _usable_image_url(page_url):
+        return None
+    return urljoin(page_url, "/favicon.ico")
 
 
 def _usable_image_url(url: str) -> str | None:
