@@ -5,7 +5,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF1558B0), onPrimary = Color.White,
@@ -23,5 +29,23 @@ private val DarkColors = darkColorScheme(
 
 @Composable
 fun MagpieTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        val activity = view.context.activity()
+        SideEffect {
+            activity?.window?.let { window ->
+                WindowCompat.getInsetsController(window, view).apply {
+                    isAppearanceLightStatusBars = !darkTheme
+                    isAppearanceLightNavigationBars = !darkTheme
+                }
+            }
+        }
+    }
     MaterialTheme(colorScheme = if (darkTheme) DarkColors else LightColors, content = content)
+}
+
+private tailrec fun Context.activity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> if (baseContext !== this) baseContext.activity() else null
+    else -> null
 }

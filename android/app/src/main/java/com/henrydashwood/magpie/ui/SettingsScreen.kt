@@ -31,7 +31,7 @@ import com.henrydashwood.magpie.playback.SpeechVoices
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(model: MagpieModel, onAccount: () -> Unit) {
+fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: () -> Unit) {
     val library by model.libraryState.collectAsStateWithLifecycle()
     val preferences by model.settings.collectAsStateWithLifecycle()
     val conversation by model.conversationSettings.collectAsStateWithLifecycle()
@@ -92,7 +92,7 @@ fun SettingsScreen(model: MagpieModel, onAccount: () -> Unit) {
             modifier = Modifier.clickable { showingWait = true }.testTag("conversation-wait")) }
         item { SettingsFootnote("Say ‘that’s all’ to finish. With TalkBack, tap Listen for each turn when announcements have finished.") }
         item { HorizontalDivider(); SettingsHeading("Assistant and Shortcuts") }
-        item { SettingsFootnote("Android assistant integration is not connected in this preview.") }
+        item { SettingsAction("Home screen and Quick Settings", Icons.Rounded.AppShortcut, onShortcuts) }
         item { HorizontalDivider(); SettingsHeading("Newsletters") }
         item { SettingsFootnote("Newsletter address management is not available on Android yet.") }
         item { HorizontalDivider(); SettingsHeading("Privacy & Support") }

@@ -102,6 +102,33 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         }
     }
 
+    /** Resolve a shortcut against the current account, including items outside Latest/Saved. */
+    suspend fun shortcutItem(id: String): LibraryItem {
+        if (!state.value.live) return state.value.items.firstOrNull { it.id == id }
+            ?: throw IllegalArgumentException("That sample is no longer available.")
+        val (current, version) = credentials()
+        val prefix = "${checkNotNull(state.value.owner)}:episode:"
+        require(id.startsWith(prefix)) { "This shortcut belongs to another account." }
+        val episodeId = id.removePrefix(prefix).toIntOrNull()?.takeIf { it > 0 }
+            ?: throw IllegalArgumentException("That shortcut is no longer available.")
+        val row = api.episode(current, episodeId)
+        check(version)
+        require(row.id == episodeId) { "The requested item could not be found." }
+        return acceptVoiceEpisode(row, version)
+    }
+
+    /** Fresh read-only results without replacing the search currently displayed in the app. */
+    suspend fun shortcutItems(feedId: String? = null): List<LibraryItem> {
+        if (!state.value.live) return state.value.items.filter { feedId == null || it.sourceId == feedId }
+        val (current, version) = credentials()
+        if (feedId != null) require(state.value.feeds.any { it.id == feedId }) { "That show is no longer followed." }
+        val rows = if (feedId == null) api.latest(current) else api.episodes(current, feedId, "")
+        check(version)
+        val items = rows.map { it.item(state.value) }
+        mutable.value = state.value.copy(items = merge(state.value.items, items))
+        return items.map { row -> state.value.items.first { it.id == row.id } }
+    }
+
     suspend fun content(id: String): LibraryItem {
         val (current, version) = credentials()
         val item = state.value.items.first { it.id == id }

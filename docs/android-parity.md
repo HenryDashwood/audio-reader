@@ -56,6 +56,8 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   already update the backend.
 - [ ] **13. Listening status and metadata.** Continue listening, live progress,
   completed/current-item labels, publication dates, and publisher artwork.
+  Shortcut/tile continuation is implemented with item 8; the in-app presentation
+  and remaining metadata still need work.
 - [ ] **14. Article startup and length.** Avoid full upfront synthesis and the
   30,000-character guard, with cancellation and stable text bookmarks preserved.
 - [x] **15. End-of-item behavior.** Completing a podcast or narrated article marks
@@ -290,6 +292,39 @@ recognition callbacks; no live transcripts or library mutations were sent.
 Physical microphone, TalkBack, Bluetooth, and phone audio acceptance remain.
 
 The next unchecked item is **8. Assistant and shortcuts**.
+
+## Assistant and shortcuts implementation in progress
+
+The first item 8 milestone adds four launcher actions, a settings page for
+pinnable library/show actions, and Ask/Continue Quick Settings tiles. Continue
+uses a separate account-scoped last-item choice, preserves a loaded player's
+newer clock, and can resolve an older item outside Latest/Saved through the
+existing episode endpoint. No backend or Swift contract changed. Targeted pins
+validate the owner; external intents cannot submit AI transcripts or start the
+microphone. Late requests are discarded after account or playback changes.
+Intent delivery is consumed once, including across activity recreation.
+
+Verification on 16 September 2026: `make android-check` passed 130 JVM tests,
+built both debug APKs, and passed lint without compiler warnings. All 14 focused
+shortcut journeys passed, including real launcher pin confirmation, native Quick
+Settings activation, cold/warm intent delivery, activity recreation, loaded and
+older-item continuation, owner validation, cancellation, external pause, and
+account changes during lookup. The final full Android 16/API 36 run passed all
+121 emulator tests with no failures or skips. The 200% text/dark shortcut screen
+was visually inspected after fixing its wrapping heading and system-bar contrast.
+Tests use isolated accounts and restore their Quick Settings configuration; they
+do not submit live requests or change the owner's library. Physical launcher,
+TalkBack, Bluetooth, microphone, and assistant acceptance remain separate.
+
+Item 8 remains unchecked until assistant library browsing/search, trusted
+hands-free microphone activation (the current Ask shortcut still needs a Listen
+tap), and the structured action equivalents (library lookup with duration/unheard
+filters, playback controls/status, filing, undo, free-form requests, subscription,
+and destination actions) are implemented and verified. A microphone launch must
+distinguish a user-invoked launcher/tile/assistant action from an arbitrary app's
+forged exported intent, retain the Android permission step, and stop on backgrounding.
+Newsletter shortcut support also depends on item 9. Platform-specific release
+and physical-assistant acceptance remain separate from emulator verification.
 
 ## Shared limitations
 

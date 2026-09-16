@@ -41,6 +41,9 @@ class PreviewStore(context: Context) {
     var lastItem: String?
         get() = preferences.getString("last_item", null)
         set(value) { preferences.edit { putString("last_item", value) } }
+    // Explicit Continue is independent of whether the mini player was dismissed.
+    fun continuation(owner: String?) = preferences.getString("continue:${owner ?: "sample"}", null)
+    fun saveContinuation(owner: String?, id: String?) { preferences.edit { putString("continue:${owner ?: "sample"}", id) } }
     fun position(id: String): Long = preferences.getLong("position:$id", 0)
     fun savePosition(id: String, position: Long) {
         preferences.edit { putLong("position:$id", position) }

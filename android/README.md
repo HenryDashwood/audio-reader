@@ -287,8 +287,8 @@ Signed-out samples retain the account-required explanation and fixed catalogue.
 Add sources searches podcasts and library episodes, discovers feeds from websites,
 and previews content before subscribing.
 Settings links to Sign-in Methods for Apple and Google sign-in, connected provider status,
-real account sign-out and deletion. Assistant and newsletters retain explicit
-unavailable states until their integrations exist. AI Data Sharing
+real account sign-out and deletion. Home screen and Quick Settings actions are
+available; assistant library browsing and newsletters remain in progress. AI Data Sharing
 can be reviewed, granted, or withdrawn in Settings.
 
 ## Settings parity
@@ -309,8 +309,8 @@ foreground. Voice downloads return to a refreshed catalogue.
 Conversation settings persist Keep listening after replies and a 10, 15, 20, or
 30-second follow-up wait. With TalkBack, each turn requires an explicit Listen tap
 so spoken announcements cannot enter an automatically opened microphone.
-Android assistant integration and newsletter addresses still require their
-corresponding integrations. The Settings sections make those boundaries visible. Siri itself
+Assistant library browsing, structured automation, and newsletter addresses still
+require their corresponding integrations. The Settings sections make those boundaries visible. Siri itself
 is iOS-only. Privacy/support links use the same destinations as the Swift client.
 
 ## Deliberate prototype boundaries
@@ -329,6 +329,38 @@ New saved links and confirmed shared content have their own durable queue. A
 previously identified session can queue captures after an offline restart; a new
 session must identify its account first. Podcast downloading and Gemini integration
 remain future work. Backups and device transfers of preview preferences are disabled.
+
+## Home screen shortcuts and Quick Settings
+
+After opening Magpie, hold its app icon for Ask Magpie, Continue listening, Play
+latest, and Saved articles. Settings → Home screen and Quick Settings can pin
+these actions or a particular library item/show. Reading pins open the reader;
+listening pins resolve and play that item; show pins choose the latest unfinished,
+undismissed item. The launcher asks for confirmation before pinning when supported.
+Targeted shortcuts contain only scoped identifiers, never credentials or article
+text. They require the account that created them and cannot silently switch to
+another account or the sample library. Account lookups use the existing episode
+endpoint and do not replace the search currently displayed in Magpie.
+
+Continue listening preserves the loaded player's current clock, or resolves the
+last item stored under the current account. Closing the mini player preserves this
+explicit continuation choice; completion clears it. Podcast media positions and
+article text bookmarks remain separate. A pending shortcut has a bounded wait and
+Cancel control. Changed accounts, explicit media controls, sleep expiry, and audio
+disconnection prevent a late response from starting playback. Recreating an
+activity does not replay its original shortcut intent.
+
+Ask Magpie and Continue listening also have Quick Settings tiles. Android 13+
+can show the native Add tile prompt from Settings; Android 12 users can add them
+with Quick Settings → Edit. Tiles request device unlock before opening the app.
+Ask opens the conversation without recording; Listen remains an explicit tap.
+Android 14+ uses the PendingIntent tile launch API; Android 12–13 use the guarded
+legacy overload because the replacement is unavailable there.
+
+Assistant media-library browsing/search and structured automation remain part of
+checklist item 8. Google describes AppFunctions/Gemini integration as an
+experimental private preview; launcher/tile availability does not establish
+Gemini support or phone acceptance.
 
 ## Ask Magpie
 

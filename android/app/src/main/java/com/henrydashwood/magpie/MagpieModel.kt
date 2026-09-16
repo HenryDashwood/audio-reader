@@ -31,6 +31,9 @@ import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import com.henrydashwood.magpie.voice.*
+import com.henrydashwood.magpie.shortcuts.*
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.TimeoutCancellationException
 
 data class PlayerState(
     val item: LibraryItem? = null,
@@ -187,11 +190,68 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshLibrary() { if (libraryState.value.live) viewModelScope.launch { repository.refresh(); savedPreparation.sync() } }
+    private var shortcutJob: kotlinx.coroutines.Job? = null
+    private var shortcutVersion = 0
+    private val mutableShortcutWorking = MutableStateFlow<String?>(null)
+    val shortcutWorking = mutableShortcutWorking.asStateFlow()
+    private val mutableShortcutNavigation = MutableStateFlow<ShortcutRequest?>(null)
+    val shortcutNavigation = mutableShortcutNavigation.asStateFlow()
+    fun consumeShortcutNavigation() { mutableShortcutNavigation.value = null }
+    fun cancelShortcut() { shortcutVersion++; shortcutJob?.cancel(); shortcutJob = null; mutableShortcutWorking.value = null }
+    fun runShortcut(request: ShortcutRequest) {
+        cancelShortcut(); voice.close(resume = false); contentJob?.cancel()
+        val version = shortcutVersion
+        val controls = PlaybackStatus.controlVersion.value
+        val initial = libraryState.value
+        mutableNotice.value = null
+        mutableShortcutWorking.value = request.action.label
+        shortcutJob = viewModelScope.launch {
+            try {
+                withTimeout(30_000) {
+                    if (request.action in setOf(ShortcutAction.Ask, ShortcutAction.Saved, ShortcutAction.Following, ShortcutAction.Shortcuts, ShortcutAction.Player)) {
+                        mutableShortcutNavigation.value = request
+                        if (request.action == ShortcutAction.Ask) voice.open(null)
+                        return@withTimeout
+                    }
+                    val snapshot = libraryState.first { !it.loading }
+                    fun checkAccount() {
+                        check(libraryState.value.revision == initial.revision && libraryState.value.live == initial.live) { "Your account changed. Open the shortcut again." }
+                        check(PlaybackStatus.controlVersion.value == controls) { "Playback changed. Open the shortcut again when you are ready." }
+                        check(request.owner == null || request.owner == (libraryState.value.owner ?: "sample")) { "This shortcut belongs to another account. Sign in to that account or create a new shortcut." }
+                    }
+                    checkAccount()
+                    check(!snapshot.live || snapshot.owner != null) { "Your library could not load. Open Magpie and try again." }
+                    player.first { it.connected }
+                    checkAccount()
+                    val item = when (request.action) {
+                        ShortcutAction.Continue -> player.value.item ?: (store.continuation(snapshot.owner) ?: store.lastItem)?.let { repository.shortcutItem(it) }
+                            ?: throw IllegalStateException("There is nothing to continue yet. Choose Play latest or open an item first.")
+                        ShortcutAction.ReadItem, ShortcutAction.PlayItem -> repository.shortcutItem(checkNotNull(request.itemId))
+                        ShortcutAction.Latest, ShortcutAction.PlayFeed -> repository.shortcutItems(request.feedId).firstOrNull {
+                            !it.completed && !it.dismissed && it.captureError == null && (snapshot.live || it.id !in finished.value && it.id !in dismissedFromLatest.value)
+                        } ?: throw IllegalStateException("There is nothing new to listen to here.")
+                        else -> return@withTimeout
+                    }
+                    checkAccount()
+                    val loaded = if (item.textLoaded) item else repository.content(item.id)
+                    checkAccount()
+                    mutableShortcutNavigation.value = request.copy(itemId = loaded.id)
+                    if (request.action != ShortcutAction.ReadItem) playReady(loaded)
+                }
+            } catch (_: TimeoutCancellationException) {
+                mutableNotice.value = "That shortcut took too long. Open Magpie and try again."
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (failure: Exception) {
+                mutableNotice.value = failure.message ?: "That shortcut could not finish. Please try again."
+            } finally { if (version == shortcutVersion) mutableShortcutWorking.value = null }
+        }
+    }
+    fun ask(viewedEpisodeId: Int? = null) { cancelShortcut(); voice.open(viewedEpisodeId) }
     suspend fun searchLibrary(feedId: String?, query: String) {
         if (libraryState.value.live && libraryState.value.owner != null) repository.search(feedId, query)
     }
     fun openItem(item: LibraryItem, play: Boolean = false) {
-        if (play) voice.close(resume = false)
+        if (play) { cancelShortcut(); voice.close(resume = false) }
         contentJob?.cancel()
         mutableItemError.value = null
         if (!libraryState.value.live || item.textLoaded) { if (play) playReady(item); return }
@@ -225,6 +285,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         if (player.value.playing) controller?.pause() else player.value.item?.let(::play)
     }
     fun pause() {
+        cancelShortcut()
         if (preparation.value.message != null) cancelPreparation()
         controller?.pause()
     }
@@ -262,6 +323,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         controller?.sendCustomCommand(SessionCommand(PlaybackService.CANCEL_PREPARATION, Bundle.EMPTY), Bundle.EMPTY)
     }
     fun dismissPlayer() {
+        cancelShortcut()
         voiceCatalog.stop()
         val media = controller
         if (media == null || !media.isConnected) {

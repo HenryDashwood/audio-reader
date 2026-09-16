@@ -41,6 +41,16 @@
                 <data android:mimeType="text/html" />
             </intent-filter>
         </activity>
+        <service android:name=".shortcuts.AskMagpieTile" android:exported="true"
+            android:label="Ask Magpie" android:icon="@drawable/ic_shortcut_mic"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".shortcuts.ContinueListeningTile" android:exported="true"
+            android:label="Continue listening" android:icon="@drawable/ic_shortcut_play"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
         <!-- Media controls need an exported service; onGetSession rejects untrusted callers. -->
         <service
             android:name=".playback.PlaybackService"

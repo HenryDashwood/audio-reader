@@ -38,6 +38,7 @@ import com.henrydashwood.magpie.data.LibraryFeed
 import kotlinx.coroutines.delay
 import com.henrydashwood.magpie.playback.Preparation
 import com.henrydashwood.magpie.playback.SleepTimerState
+import com.henrydashwood.magpie.shortcuts.*
 
 private enum class Destination(val label: String, val icon: ImageVector) {
     Following("Following", Icons.AutoMirrored.Rounded.LibraryBooks),
@@ -48,7 +49,8 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
+fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
+    shortcut: ShortcutRequest? = null, consumeShortcut: () -> Unit = {}) {
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
         // A separate share task may have queued content while this screen was stopped.
         model.savedPreparation.sync()
@@ -58,6 +60,9 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
     val itemError by model.itemError.collectAsStateWithLifecycle()
     var reloadVersion by remember { mutableIntStateOf(0) }
     var showingAccount by rememberSaveable { mutableStateOf(false) }
+    var showingShortcuts by rememberSaveable { mutableStateOf(false) }
+    val shortcutNavigation by model.shortcutNavigation.collectAsStateWithLifecycle()
+    val shortcutWorking by model.shortcutWorking.collectAsStateWithLifecycle()
     val saved by model.saved.collectAsStateWithLifecycle()
     val finished by model.finished.collectAsStateWithLifecycle()
     val dismissedFromLatest by model.dismissedFromLatest.collectAsStateWithLifecycle()
@@ -106,9 +111,35 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
         }
     }
     LaunchedEffect(appleReturn) { if (appleReturn > 0) showingAccount = true }
+    LaunchedEffect(shortcut?.delivery) {
+        shortcut?.let {
+            showingAccount = false; showingShortcuts = false; showingPlayer = false
+            model.runShortcut(it); consumeShortcut()
+        }
+    }
+    LaunchedEffect(shortcutNavigation) {
+        shortcutNavigation?.let { request ->
+            showingAccount = false; showingShortcuts = false; showingPlayer = false
+            selectedItemId = null; selectedSource = null; query = ""; showingSearch = false
+            when (request.action) {
+                ShortcutAction.Saved -> destination = Destination.Saved
+                ShortcutAction.Following -> destination = Destination.Following
+                ShortcutAction.Shortcuts -> showingShortcuts = true
+                ShortcutAction.ReadItem -> selectedItemId = request.itemId
+                ShortcutAction.Ask -> Unit
+                else -> showingPlayer = playback.item != null
+            }
+            model.consumeShortcutNavigation()
+        }
+    }
     if (showingAccount) {
         BackHandler { showingAccount = false }
         com.henrydashwood.magpie.auth.AccountScreen(onBack = { showingAccount = false })
+        return
+    }
+    if (showingShortcuts) {
+        BackHandler { showingShortcuts = false }
+        ShortcutsScreen(model) { showingShortcuts = false }
         return
     }
     LaunchedEffect(playback.item) { if (playback.item == null) showingPlayer = false }
@@ -142,7 +173,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
                         val isPlaying = playback.item?.id == selectedItem.id && playback.playing
                         ReaderToolbarActions(selectedItem, isPlaying, showingSearch,
                             { if (isPlaying) model.pause() else model.play(selectedItem) },
-                            { showingSearch = !showingSearch; query = "" }, onAsk = { model.voice.open(selectedItem.episodeId) })
+                            { showingSearch = !showingSearch; query = "" }, onAsk = { model.ask(selectedItem.episodeId) })
                     } else if (selectedSource != null || destination == Destination.Following || destination == Destination.Saved) {
                         IconButton(onClick = { showingSearch = !showingSearch; query = "" }) {
                             Icon(if (showingSearch) Icons.Rounded.Close else Icons.Rounded.Search,
@@ -152,7 +183,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
                     if (selectedItem == null && selectedSource == null && destination == Destination.Latest && latestItems.isNotEmpty()) {
                         ClearLatestButton(model)
                     }
-                    if (selectedItem == null) AskMagpieButton { model.voice.open(null) }
+                    if (selectedItem == null) AskMagpieButton { model.ask() }
                 },
             )
         },
@@ -168,6 +199,12 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            shortcutWorking?.let { action ->
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("$action…", Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
+                    TextButton(onClick = model::cancelShortcut) { Text("Cancel") }
+                }
+            }
             if (showingSearch) SearchField(query, { query = it }, when {
                 selectedItem != null -> "Find in this page"
                 selectedSource != null -> "Search this show"
@@ -200,7 +237,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
                     ItemList(if (snapshot.live) snapshot.savedIds.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.id in saved && it.kind == ContentKind.Article }, saved, query, ::openItem, model::play, model::toggleSaved, savedOnly = true, finished = finished, finish = model::toggleFinished,
                         pendingLinks = pendingLinks, removePendingLink = model::removePendingLink, live = snapshot.live, model = model, loading = snapshot.loading || snapshot.error != null)
                 }
-                else -> SettingsScreen(model) { showingAccount = true }
+                else -> SettingsScreen(model, onShortcuts = { showingShortcuts = true }) { showingAccount = true }
             }
         }
     }

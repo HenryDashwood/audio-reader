@@ -49,6 +49,8 @@ data class Preparation(val itemId: String? = null, val message: String? = null, 
 
 /** Only status crosses into the UI; the service owns the player and rendering lifecycle. */
 object PlaybackStatus {
+    internal val mutableControlVersion = MutableStateFlow(0)
+    val controlVersion = mutableControlVersion.asStateFlow()
     internal val mutableVoiceToken = MutableStateFlow<String?>(null)
     val voiceToken = mutableVoiceToken.asStateFlow()
     internal val mutable = MutableStateFlow(Preparation())
@@ -83,7 +85,10 @@ class PlaybackService : MediaSessionService() {
     private var voiceController: MediaSession.ControllerInfo? = null
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) invalidateVoice()
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                PlaybackStatus.mutableControlVersion.value++
+                invalidateVoice()
+            }
         }
     }
     private val feedback = PlaybackFeedback(scope)
@@ -145,7 +150,10 @@ class PlaybackService : MediaSessionService() {
                 // Includes an explicit Pause while already paused, which emits no player event.
                 if (listOf(Player.COMMAND_PLAY_PAUSE, Player.COMMAND_STOP, Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
                     Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD, Player.COMMAND_SET_SPEED_AND_PITCH,
-                    Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS).any(playerCommands::contains)) invalidateVoice()
+                    Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS).any(playerCommands::contains)) {
+                    PlaybackStatus.mutableControlVersion.value++
+                    invalidateVoice()
+                }
             }
 
             override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
@@ -165,6 +173,7 @@ class PlaybackService : MediaSessionService() {
                     }
                     return Futures.immediateFuture(result)
                 }
+                PlaybackStatus.mutableControlVersion.value++
                 invalidateVoice()
                 when (command.customAction) {
                     PLAY_ITEM -> {
@@ -251,6 +260,7 @@ class PlaybackService : MediaSessionService() {
         playbackRevision = library.state.value.revision
         player.setPlaybackSpeed(store.speed(item.kind))
         store.lastItem = item.id
+        store.saveContinuation(library.state.value.owner, item.id)
         val uri = audio?.file?.toURI()?.toString() ?: item.audioUrl ?: "asset:///welcome.wav"
         val media = MediaItem.Builder().setMediaId(item.id).setUri(uri).setMediaMetadata(
             MediaMetadata.Builder().setTitle(item.title).setArtist(item.source).setIsPlayable(true).build(),
@@ -300,6 +310,7 @@ class PlaybackService : MediaSessionService() {
         // starts at the beginning. Clearing also prevents callbacks from writing
         // the ended clock over that bookmark or restoring the finished player.
         persist(completed = true)
+        store.saveContinuation(library.state.value.owner, null)
         dismissPlayer()
         feedback.finished()
     }
@@ -411,6 +422,7 @@ class PlaybackService : MediaSessionService() {
                 if (item?.completed == true) {
                     store.clearBookmark(item.id); store.savePosition(item.id, 0)
                     localPodcastPositions[item.id] = 0
+                    if (store.continuation(library.state.value.owner) == item.id) store.saveContinuation(library.state.value.owner, null)
                 }
                 if (current?.id == id || hold.item?.id == id) {
                     hold.resume = false
@@ -447,6 +459,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun expireSleepTimer() {
+        PlaybackStatus.mutableControlVersion.value++
         invalidateVoice()
         val wasPlaying = player.isPlaying
         // Also stop buffering or narration preparation so it cannot start after the deadline.

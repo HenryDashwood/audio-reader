@@ -27,6 +27,7 @@ interface LibraryApi {
     suspend fun saved(token: String): List<RemoteEpisode>
     suspend fun episodes(token: String, feedId: String, query: String): List<RemoteEpisode>
     suspend fun search(token: String, query: String): List<RemoteEpisode>
+    suspend fun episode(token: String, episodeId: Int): RemoteEpisode = throw UnsupportedOperationException("Episode lookup is unavailable")
     suspend fun text(token: String, episodeId: Int, contentId: Int?): RemoteText
     suspend fun save(token: String, episodeId: Int? = null, url: String? = null): RemoteEpisode
     suspend fun remove(token: String, episodeId: Int)
@@ -48,6 +49,10 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
         return list(token, "feeds/$feedId/episodes?limit=50&q=${encode(query.take(200))}")
     }
     override suspend fun search(token: String, query: String) = list(token, "search/episodes?q=${encode(query.take(200))}")
+    override suspend fun episode(token: String, episodeId: Int): RemoteEpisode {
+        require(episodeId > 0)
+        return decodeEpisode(obj(token, "episodes/$episodeId"))
+    }
     override suspend fun text(token: String, episodeId: Int, contentId: Int?): RemoteText {
         val json = obj(token, "episodes/$episodeId/text" + (contentId?.let { "?content_id=$it" } ?: ""))
         return RemoteText(json.getInt("episode_id"), json.optionalInt("content_id"), json.getString("text"),
