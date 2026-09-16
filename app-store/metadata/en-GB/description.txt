@@ -8,6 +8,7 @@ You can make requests by tapping the microphone or through Siri, such as: “pla
 • Ask by topic, title, show, guest, or position
 • Pause, resume, skip, change speed, and set a sleep timer by voice
 • Hear articles read in the system voice you choose
+• Save articles from Safari or add a link to read and listen later
 • Follow email newsletters with a newsletter address of your own
 • Keep one playback speed for podcasts and another for articles
 • Continue playback from where you stopped on another device
@@ -22,4 +23,4 @@ The app can be used entirely without looking at the screen. It is designed for b
 
 Speech is converted to text on your device. Magpie never receives or stores audio recordings of your voice. Before any spoken request or explicit AI web search is sent to an AI provider, the app explains what data will be shared and asks for your permission. You can withdraw this permission at any time.
 
-Sign in with Apple syncs your library and listening positions across devices. You can delete your account and its data from Settings.
+Sign in with Apple or Google to sync your library and listening positions across devices. Connect both in Settings → Sign-in Methods to use either with the same library. You can delete your account and its data from Settings.

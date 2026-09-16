@@ -4,4 +4,6 @@ Tap the microphone or use Siri to make requests, such as "play the latest In Our
 
 Newsletters that only exist as email can be followed too. Settings gives you a newsletter address of your own to hand over instead of your inbox, or Magpie can sign you up itself from a newsletter's web address. The first time a sender writes, Magpie asks whether to follow it, and then reads each issue aloud without the unsubscribe links and footers emails carry.
 
+Save articles from Safari using Share → Magpie, or add a link in Saved. Read them on screen or listen with the same playback controls. Sign in with Apple or Google, and connect both in Settings → Sign-in Methods to keep one library.
+
 The app saves your playback position in every episode and is designed so the whole app can be used without looking at the screen. If you use VoiceOver, that is the way it is meant to be used.
