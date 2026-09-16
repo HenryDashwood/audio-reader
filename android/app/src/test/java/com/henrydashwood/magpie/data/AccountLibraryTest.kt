@@ -1,5 +1,7 @@
 package com.henrydashwood.magpie.data
 
+import com.henrydashwood.magpie.voice.*
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -11,7 +13,15 @@ import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountLibraryTest {
-    private class Api : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi {
+    private class Api : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, VoiceApi {
+        var voiceGate: CompletableDeferred<Unit>? = null
+        val voiceCancellations = mutableListOf<Pair<String, String>>()
+        override fun events(token: String, request: VoiceRequest) = flow {
+            emit(VoiceEvent.Delta("Working"))
+            voiceGate?.await()
+            emit(VoiceEvent.Result(VoiceResponse(VoiceAction.Unknown, "Done")))
+        }
+        override suspend fun cancel(token: String, requestId: String) { voiceCancellations += token to requestId }
         var textGate: CompletableDeferred<Unit>? = null
         var userFailure = false
         var grouped = false
@@ -282,4 +292,36 @@ class AccountLibraryTest {
         api.oldSearch!!.complete(Unit); search.join()
         assertTrue(library.state.value.searchResults.isEmpty())
     }
+    @Test fun voiceRepliesAreRejectedAfterAccountChangeAndCancellationKeepsOriginalAccount() = runTest {
+        val api = Api().apply { voiceGate = CompletableDeferred() }
+        val library = AccountLibrary(api, "https://voice.invalid")
+        library.changeSession("alice")
+        val request = VoiceRequest("Do something")
+        val operation = library.voiceOperation(request, library.state.value.revision)
+        val deltas = mutableListOf<String>()
+        var failure: Throwable? = null
+        val job = launch { failure = runCatching { operation.response(deltas::add) }.exceptionOrNull() }
+        runCurrent(); assertEquals(listOf("Working"), deltas)
+        library.changeSession("bob")
+        api.voiceGate!!.complete(Unit); job.join()
+        assertTrue(failure is kotlinx.coroutines.CancellationException)
+        operation.cancel()
+        assertEquals(listOf("alice" to request.requestId), api.voiceCancellations)
+        assertTrue(runCatching { operation.response() }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+    }
+    @Test fun confirmedVoiceEpisodeCanEnterThePlayerCacheWithoutInventingSavedOrLatestMembership() = runTest {
+        val library = AccountLibrary(Api(), "https://voice.invalid")
+        library.changeSession("alice")
+        val revision = library.state.value.revision
+        val before = library.state.value
+        val row = RemoteEpisode(99, "Requested episode", audioUrl = "https://example.com/audio.mp3")
+        val item = library.acceptVoiceEpisode(row, revision)
+        assertEquals(99, item.episodeId)
+        assertEquals(before.savedIds, library.state.value.savedIds)
+        assertEquals(before.latestIds, library.state.value.latestIds)
+        library.changeSession("bob")
+        assertTrue(runCatching { library.acceptVoiceEpisode(row, revision) }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertFalse(library.state.value.items.any { it.episodeId == 99 })
+    }
+
 }

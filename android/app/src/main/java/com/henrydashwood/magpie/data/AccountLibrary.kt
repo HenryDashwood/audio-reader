@@ -267,6 +267,33 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         mutable.value = state.value.copy(items = items, savedIds = savedIds, searching = false)
         return items.first { it.id == added.id }
     }
+    fun voiceOperation(request: com.henrydashwood.magpie.voice.VoiceRequest, sessionRevision: Int): com.henrydashwood.magpie.voice.VoiceOperation {
+        val (current, version) = credentials()
+        check(sessionRevision)
+        val voice = checkNotNull(api as? com.henrydashwood.magpie.voice.VoiceApi) { "Voice commands are unavailable." }
+        return object : com.henrydashwood.magpie.voice.VoiceOperation {
+            override suspend fun response(onDelta: (String) -> Unit): com.henrydashwood.magpie.voice.VoiceResponse {
+                check(version)
+                val response = com.henrydashwood.magpie.voice.VoiceExecution.response(voice.events(current, request)) {
+                    check(version); onDelta(it)
+                }
+                check(version)
+                return response
+            }
+            override suspend fun cancel() {
+                // Cancel only this request using its original account. Never route an old
+                // operation's cancellation through a newly signed-in account's token.
+                voice.cancel(current, request.requestId)
+            }
+        }
+    }
+    fun acceptVoiceEpisode(row: RemoteEpisode, sessionRevision: Int): LibraryItem {
+        check(sessionRevision)
+        require(state.value.live && row.id > 0)
+        val item = row.item(state.value)
+        mutable.value = state.value.copy(items = merge(state.value.items, listOf(item)))
+        return state.value.items.first { it.id == item.id }
+    }
     private fun requireItem(item: LibraryItem) { require(state.value.items.any { it.id == item.id }) { "This item belongs to a different library." } }
     private suspend fun mutate(work: suspend (String) -> (() -> Unit)) {
         val (current, version) = credentials()

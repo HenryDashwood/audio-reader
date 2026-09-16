@@ -220,9 +220,23 @@ using a different duration.
 This is the foundation for item 7, which remains unchecked. The Android Ask UI
 still discloses that conversation is unavailable until recognition, command
 streaming, spoken replies, media coordination, and follow-up timing are wired in.
-The pure Kotlin core is covered by 12 focused JVM tests; the build gate now passes
-95 JVM tests, both debug APKs, and lint. No microphone or device behavior is
-claimed by this milestone.
+The first core milestone passed 95 JVM tests, both debug APKs, and lint.
+
+The second milestone implements the existing `/command/stream` NDJSON and
+`DELETE /command/{request_id}` contracts. Incremental text is presentation only;
+a final receipt is required before effects can be applied. Truncated, malformed,
+oversized, contradictory, or duplicate receipts are rejected. Streams have a
+five-minute overall deadline and cancellation closes their connection off the UI
+thread. Authorization never follows redirects. Account-bound operations reject
+late replies after a session change while cancelling with the original account
+and request ID. Confirmed episodes can enter the player cache without inventing
+Saved or Latest membership.
+
+Verification: `make android-check` passed 104 JVM tests, both debug APKs, and lint
+without compiler warnings. All six `VoiceWireTest` cases passed on Android 16/API
+36, including streaming Unicode, compound effects, 401 handling, redirect rejection,
+and disconnecting a blocked reader. These use isolated connections and never send
+live transcripts or account mutations. No microphone behavior is claimed yet.
 
 ## Shared limitations
 
