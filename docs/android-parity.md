@@ -205,6 +205,25 @@ outstanding.
 
 The next unchecked item is **7. Ask Magpie conversations**.
 
+## Ask Magpie implementation in progress
+
+On 16 September 2026, the Android voice core gained whole-utterance local
+playback/sleep commands, explicit conversation-ending and undo phrases, bounded
+follow-up preferences, and account/server-scoped in-memory conversation context.
+Requests carry the most recent eight prior turns and eight recent actions;
+120 seconds of silence expires the subject. Interrupted requests retain their
+original request ID and payload for safe recovery until their client-side effects
+have succeeded. Late receipts cannot clear a newer request or cross accounts.
+Invalid or ambiguous timer durations are left unresolved rather than silently
+using a different duration.
+
+This is the foundation for item 7, which remains unchecked. The Android Ask UI
+still discloses that conversation is unavailable until recognition, command
+streaming, spoken replies, media coordination, and follow-up timing are wired in.
+The pure Kotlin core is covered by 12 focused JVM tests; the build gate now passes
+95 JVM tests, both debug APKs, and lint. No microphone or device behavior is
+claimed by this milestone.
+
 ## Shared limitations
 
 Podcast downloads and offline article images are not counted as Android parity
