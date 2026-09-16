@@ -24,33 +24,38 @@ class AccountScreenTest {
     private fun show(state: AccountState = AccountState(), configured: Boolean = true, delete: () -> Unit = {}) {
         compose.setContent { MagpieTheme { AccountContent(state, configured, {}, {}, {}, {}, {}, delete) } }
     }
+    // LazyColumn does not compose every off-screen item on smaller phones.
+    private fun scrollTo(text: String): SemanticsNodeInteraction {
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text))
+        return compose.onNodeWithText(text).performScrollTo()
+    }
     @Test fun unavailableConfigurationExplainsTheBoundary() {
         show(configured = false)
-        compose.onNodeWithText("Sign in with Google").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("Google sign-in is not available in this build yet.").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Android preview · Sample library").performScrollTo().assertIsDisplayed()
+        scrollTo("Sign in with Google").assertIsNotEnabled()
+        scrollTo("Google sign-in is not available in this build yet.").assertIsDisplayed()
+        scrollTo("Android preview · Sample library").assertIsDisplayed()
     }
     @Test fun bothConnectedProvidersAreVisible() {
         show(AccountState(signedIn = true, providers = setOf("apple", "google")))
-        compose.onNodeWithText("Apple · Connected").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Google · Connected").performScrollTo().assertIsDisplayed()
+        scrollTo("Apple · Connected").assertIsDisplayed()
+        scrollTo("Google · Connected").assertIsDisplayed()
         compose.onNodeWithText("Sign in with Google").assertDoesNotExist()
     }
     @Test fun linkConflictLeavesTheExistingProviderVisible() {
         show(AccountState(signedIn = true, providers = setOf("apple"), error = "Already linked to another account"))
-        compose.onNodeWithText("Apple · Connected").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Sign in with Google").performScrollTo().assertIsEnabled()
-        compose.onNodeWithText("Already linked to another account").performScrollTo().assertIsDisplayed()
+        scrollTo("Apple · Connected").assertIsDisplayed()
+        scrollTo("Sign in with Google").assertIsEnabled()
+        scrollTo("Already linked to another account").assertIsDisplayed()
     }
     @Test fun deletionRequiresExplicitConfirmationAndCanBeCancelled() {
         var deletions = 0
         show(AccountState(signedIn = true, providers = setOf("google")), delete = { deletions++ })
-        compose.onNodeWithText("Delete Account").performScrollTo().performClick()
+        scrollTo("Delete Account").performClick()
         compose.onNodeWithText("Delete your account?").assertIsDisplayed()
         assertEquals(0, deletions)
         compose.onNodeWithText("Cancel").performClick()
         assertEquals(0, deletions)
-        compose.onNodeWithText("Delete Account").performScrollTo().performClick()
+        scrollTo("Delete Account").performClick()
         compose.onNode(hasText("Delete Account") and hasAnyAncestor(isDialog())).performClick()
         compose.runOnIdle { assertEquals(1, deletions) }
     }
@@ -60,9 +65,9 @@ class AccountScreenTest {
             AccountContent(AccountState(), false, {}, {}, {}, {}, {}, {}, appleConfigured = true,
                 signInApple = { clicked = true })
         } }
-        compose.onNodeWithText("Sign in with Apple").performScrollTo().assertIsEnabled().performClick()
+        scrollTo("Sign in with Apple").assertIsEnabled().performClick()
         compose.runOnIdle { assertTrue(clicked) }
-        compose.onNodeWithText("Sign in with Google").performScrollTo().assertIsNotEnabled()
+        scrollTo("Sign in with Google").assertIsNotEnabled()
     }
     @Test fun googleAccountCanConnectAppleFromAndroid() {
         var linked = false
@@ -70,8 +75,8 @@ class AccountScreenTest {
             AccountContent(AccountState(signedIn = true, providers = setOf("google")), true,
                 {}, {}, {}, {}, {}, {}, appleConfigured = true, linkApple = { linked = true })
         } }
-        compose.onNodeWithText("Connect your Apple account").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Sign in with Apple").performScrollTo().performClick()
+        scrollTo("Connect your Apple account").assertIsDisplayed()
+        scrollTo("Sign in with Apple").performClick()
         compose.runOnIdle { assertTrue(linked) }
     }
     @Test fun pendingBrowserSignInCanBeCancelledAndPreventsAnotherProvider() {
@@ -80,9 +85,9 @@ class AccountScreenTest {
             AccountContent(AccountState(applePending = true, busy = true), true, {}, {}, {}, {}, {}, {},
                 appleConfigured = true, cancelApple = { cancelled = true })
         } }
-        compose.onNodeWithText("Sign in with Apple").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("Sign in with Google").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithText("Cancel Apple sign-in").performScrollTo().performClick()
+        scrollTo("Sign in with Apple").assertIsNotEnabled()
+        scrollTo("Sign in with Google").assertIsNotEnabled()
+        scrollTo("Cancel Apple sign-in").performClick()
         compose.runOnIdle { assertTrue(cancelled) }
     }
     @Test fun returningToForegroundChecksAFailedAppleAttemptAgain() {

@@ -47,6 +47,7 @@ class MagpieNavigationTest {
         compose.onNodeWithContentDescription("Search").performClick()
         compose.onNodeWithText("Search this show").performTextInput("blackbird")
         compose.onNodeWithContentDescription("Close search").performClick()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasContentDescription("Manage Field notes"))
         compose.onNodeWithContentDescription("Manage Field notes").assertIsDisplayed()
     }
 
@@ -85,6 +86,7 @@ class MagpieNavigationTest {
         compose.onNodeWithText("Close").performClick()
         compose.onNodeWithText("Search this show").assertTextContains("pleasure")
         compose.onNodeWithContentDescription("Close search").performClick()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasContentDescription("Manage Field notes"))
         compose.onNodeWithContentDescription("Manage Field notes").assertIsDisplayed()
     }
 

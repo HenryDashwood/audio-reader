@@ -42,8 +42,9 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   includes actual offline speech output; phone microphone/TalkBack acceptance remains.
 - [ ] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
   Launcher/pinned actions, Quick Settings, account-scoped Continue listening,
-  trusted Ask microphone launches, and media-client library browsing/search are
-  implemented. Structured actions remain; the newsletter action also depends on item 9.
+  trusted Ask microphone launches, media-client library browsing/search, structured
+  lookup/status, and playback controls are implemented. Filing/undo, free-form
+  requests, subscriptions, and destination actions remain; the newsletter action also depends on item 9.
 - [ ] **9. Newsletters.** Address presentation/sharing, sender approval/blocking, and signup.
 - [x] **10. AI consent controls.** The discovery flow discloses AI data sharing
   before granting permission. Settings reads, reviews, grants, and withdraws the
@@ -405,9 +406,47 @@ reports eight warnings and one hint in existing credentials, dependencies, asset
 shortcuts, and convenience-API usage. This establishes platform integration, not Gemini
 availability or physical assistant acceptance.
 
-Item 8 remains unchecked until structured playback controls, filing, undo,
-free-form requests, subscription, and destination actions are implemented and
-verified. Future assistant adapters
+The fifth milestone adds structured pause, skip, seek, set/undo speed, set/cancel
+sleep timer, explicit item playback, Continue, and Latest/show playback. A private
+Media3 command validates account revision and target IDs at the service boundary.
+Playback reuses the existing catalogue, renderer, bookmarks, and player, and only
+confirms a start once audio is playing in a foreground service. Android's
+background-start denial produces a one-use, immutable, account-scoped action to
+open Magpie for the selected item. Pending preparation/start is cancelled on caller
+disconnection, account changes, or independent media controls. Local controls do
+not wait for library refreshes. Speed undo is limited to the originating account,
+content kind, resulting speed, and ten-minute lifetime.
+
+Controlled regression tests exposed stale-account targets pausing current audio
+before rejection, and Pause waiting behind an unrelated library refresh. Both
+paths now validate/operate before asynchronous library work. Cold-service tests
+use a server fixture that returns acknowledged progress, and await service
+confirmation before disconnecting test controllers. Actual offline article
+rendering, seeking, and continuation are exercised without podcast progress writes.
+
+Verification on the small-phone API 36.1 emulator: all 22 AppFunction integration
+tests passed. The full 163-test run passed 157 cases and exposed four existing
+small-screen scrolling assumptions, an unreliable synthetic WebView navigation,
+and one compound voice-playback timeout. Tests now scroll lazy lists to their
+targets and serve the capture fixture through normal WebView request interception.
+Final focused runs passed all ten account tests, six navigation tests, the capture
+extraction test, and all sixteen voice-conversation tests. The voice timeout did
+not recur in that complete group; its timeout and state diagnostics are retained.
+The initial full run could not exercise Compose UI on this image because its
+transitive Espresso version used a removed InputManager method. Pinning Espresso
+3.7.0 applies the documented AndroidX fix without changing application behavior.
+The final `make android-check` builds both APKs and passes all 135 JVM tests;
+there are no compiler warnings or lint errors. The existing eight lint warnings
+and one hint remain.
+
+Cold-service playback was tested with no activity visible, in the existing app
+process. Full process-death playback and the actual foreground-start-denial
+handoff remain separate acceptance checks; the emulator did not trigger that
+denial. Physical assistant/Gemini, phone audio, Bluetooth, and TalkBack acceptance
+are not established by these tests.
+
+Item 8 remains unchecked until structured filing/undo, free-form requests,
+subscription, and destination actions are implemented and verified. Future assistant adapters
 must preserve the trusted microphone launch boundary and Android permission step.
 Newsletter shortcut support also depends on item 9. Platform-specific release
 and physical-assistant acceptance remain separate from emulator verification.

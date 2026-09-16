@@ -120,6 +120,10 @@ for JVM tests it accepts Gradle's `--tests` pattern. Omit it for the full suite.
 `android-check` ignores `TEST` and always includes all JVM tests. Instrumented
 tests change preview state/preferences; run them on development emulators.
 The build gate compiles the instrumentation APK even when no emulator is present.
+Espresso is explicitly pinned to 3.7.0: older versions pulled in by Compose
+reflect on `InputManager.getInstance`, which is absent on the API 36.1 emulator.
+The [AndroidX Test release notes](https://developer.android.com/jetpack/androidx/releases/test#espresso-3.7.0)
+document the fix to use the system service instead.
 
 Reports are under `android/app/build/reports/`: `tests/testDebugUnitTest/`,
 `androidTests/connected/debug/`, and `lint-results-debug.html`. Raw test XML is
@@ -400,8 +404,20 @@ images. This is separate from the app's Android 12 minimum. The KSP compiler
 generates the permission-protected service and schema from the
 annotated Kotlin functions; generated files are not committed.
 
-Structured playback controls, filing/undo, requests, subscriptions, and destination
-actions remain part of checklist item 8. Google describes AppFunctions/Gemini integration as an
+Structured playback actions can pause, skip, seek, set/undo speed, set/cancel a
+sleep timer, play an item, continue listening, and play Latest or a followed show.
+They use the same playback service and confirm its actual state. Play waits for
+both active audio and foreground-service ownership; Android background-start
+denial returns a one-use action to open Magpie for the selected, account-scoped
+item. A pending start is cancelled by caller disconnection, account changes, or
+independent controls. Stale item/show IDs are rejected before interrupting audio.
+Local controls do not wait for unrelated library refreshes. Speed undo expires
+after ten minutes and preserves later changes. Sleep durations round up to whole
+minutes; podcast and article speed preferences stay separate. Rendered article
+positions remain local text bookmarks.
+
+Structured filing/undo, free-form requests, subscriptions, and destination actions
+remain part of checklist item 8. Google describes AppFunctions/Gemini integration as an
 experimental private preview; launcher/tile availability does not establish
 Gemini support or phone acceptance.
 

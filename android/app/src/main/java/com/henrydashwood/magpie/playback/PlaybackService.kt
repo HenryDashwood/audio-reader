@@ -88,6 +88,16 @@ class PlaybackService : MediaLibraryService() {
     private var assistantController: MediaSession.ControllerInfo? = null
     private val cancelledPlayback = mutableMapOf<MediaSession.ControllerInfo, Any>()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private class AutomationPlayback(val controller: MediaSession.ControllerInfo, val revision: Int, val controls: Int) {
+        val result = SettableFuture.create<SessionResult>()
+        lateinit var job: Job
+        var applied = false
+        var foregroundDenied = false
+    }
+    private data class AutomationSpeedUndo(val owner: String, val revision: Int, val kind: ContentKind,
+        val before: Float, val after: Float, val expiresAt: Long)
+    private var automationPlayback: AutomationPlayback? = null
+    private var automationSpeedUndo: AutomationSpeedUndo? = null
     private var playbackRevision = -1
     private var lastReportedAt = 0L
     private val localPodcastPositions = mutableMapOf<String, Long>()
@@ -112,6 +122,11 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onCreate() {
         super.onCreate()
+        setListener(object : androidx.media3.session.MediaSessionService.Listener {
+            override fun onForegroundServiceStartNotAllowedException() {
+                automationPlayback?.let { it.foregroundDenied = true; player.pause() }
+            }
+        })
         store = PreviewStore(this)
         renderer = ArticleRenderer(this)
         ContextCompat.registerReceiver(this, noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -156,6 +171,7 @@ class PlaybackService : MediaLibraryService() {
                 if (!trusted(controller)) return MediaSession.ConnectionResult.reject()
                 val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
                 if (controller.uid == applicationInfo.uid) {
+                    commands.add(SessionCommand(AUTOMATION_CONTROL, Bundle.EMPTY))
                     commands.add(SessionCommand(PLAY_ITEM, Bundle.EMPTY))
                     commands.add(SessionCommand(CANCEL_PREPARATION, Bundle.EMPTY))
                     commands.add(SessionCommand(DISMISS_PLAYER, Bundle.EMPTY))
@@ -178,7 +194,8 @@ class PlaybackService : MediaLibraryService() {
                     Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD, Player.COMMAND_SET_SPEED_AND_PITCH,
                     Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS).any(playerCommands::contains)) {
                     PlaybackStatus.mutableControlVersion.value++
-                    cancelAssistant()
+                    cancelAssistant(preservePlayback = player.playWhenReady &&
+                        (playerCommands.contains(Player.COMMAND_PLAY_PAUSE) || playerCommands.contains(Player.COMMAND_SET_MEDIA_ITEM)))
                     invalidateVoice()
                 }
             }
@@ -186,7 +203,7 @@ class PlaybackService : MediaLibraryService() {
             override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
                 if (controller == voiceController) invalidateVoice()
                 browserJobs.remove(controller)?.toList()?.forEach { it.cancel() }
-                if (controller == assistantController) cancelAssistant()
+                if (controller == assistantController || controller == automationPlayback?.controller) cancelAssistant()
             }
 
             override fun onGetLibraryRoot(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, params: LibraryParams?) =
@@ -223,6 +240,7 @@ class PlaybackService : MediaLibraryService() {
 
             override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
                 if (controller.uid != applicationInfo.uid) return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
+                if (command.customAction == AUTOMATION_CONTROL) return automationCommand(controller, args)
                 if (command.customAction in setOf(BEGIN_VOICE, END_VOICE, VOICE_CONTROL)) {
                     val result = voiceCommand(command.customAction, args)
                     if (command.customAction == BEGIN_VOICE && result.resultCode == SessionResult.RESULT_SUCCESS) voiceController = controller
@@ -264,7 +282,7 @@ class PlaybackService : MediaLibraryService() {
             var observed = library.state.value.revision
             var previousFolders = emptySet<String>()
             library.state.collect { state ->
-                if (state.revision != observed) { observed = state.revision; dismissPlayer(); localPodcastPositions.clear(); filedArticleBookmarks.clear() }
+                if (state.revision != observed) { observed = state.revision; automationSpeedUndo = null; dismissPlayer(); localPodcastPositions.clear(); filedArticleBookmarks.clear() }
                 session.notifyChildrenChanged(MediaLibraryCatalog.ROOT, 3, null)
                 val folders = catalog.containerIds(state)
                 // Like Media3's default subscription, unknown fresh counts prompt a reload.
@@ -314,7 +332,8 @@ class PlaybackService : MediaLibraryService() {
         return future
     }
 
-    private fun cancelAssistant() {
+    private fun cancelAssistant(preservePlayback: Boolean = false) {
+        cancelAutomation(preservePlayback)
         val future = assistantFuture ?: return
         val job = assistantJob
         val controller = checkNotNull(assistantController)
@@ -341,7 +360,7 @@ class PlaybackService : MediaLibraryService() {
 
     /** Resolve first, then let Media3 perform the caller's Prepare or Play command. */
     private fun prepareAssistant(controller: MediaSession.ControllerInfo, requests: List<MediaItem>,
-        startIndex: Int, startPositionMs: Long): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+        startIndex: Int, startPositionMs: Long, resolve: (suspend () -> LibraryItem)? = null): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
         if (requests.size != 1 || startIndex !in listOf(0, C.INDEX_UNSET) ||
             (startPositionMs != C.TIME_UNSET && startPositionMs !in 0..86_400_000))
             return withoutQueuedPlay(controller) {
@@ -369,7 +388,7 @@ class PlaybackService : MediaLibraryService() {
             try {
                 withTimeout(120_000) {
                     previousAssistant?.join(); previousRendering?.join()
-                    val item = withTimeout(30_000) { catalog.resolve(requests.single()) }
+                    val item = withTimeout(30_000) { resolve?.invoke() ?: catalog.resolve(requests.single()) }
                     checkRequest()
                     val reuse = current?.id == item.id && current?.contentVersion == item.contentVersion &&
                         player.currentMediaItem?.mediaId == item.id &&
@@ -380,7 +399,7 @@ class PlaybackService : MediaLibraryService() {
                         PlaybackStatus.mutable.value = Preparation(item.id, "Preparing audio… ${done * 100 / total}%")
                     } else null
                     currentCoroutineContext().ensureActive(); checkRequest()
-                    val start = if (startPositionMs != C.TIME_UNSET) startPositionMs else position ?: resumePosition(item, audio)
+                    val start = if (startPositionMs != C.TIME_UNSET) startPositionMs else if (item.completed) 0 else position ?: resumePosition(item, audio)
                     val media = adopt(item, audio)
                     adopted = true
                     PlaybackStatus.mutable.value = Preparation(voice = audio?.voiceName)
@@ -641,6 +660,171 @@ class PlaybackService : MediaLibraryService() {
         return SessionResult(SessionResult.RESULT_SUCCESS, result)
     }
 
+    /** Commands from our AppFunction service are checked again at the player boundary. */
+    private fun automationCommand(controller: MediaSession.ControllerInfo, args: Bundle): ListenableFuture<SessionResult> {
+        fun result(code: Int, message: String) = Futures.immediateFuture(SessionResult(code, Bundle().apply { putString("error", message) }))
+        val state = library.state.value
+        if (!state.live || state.owner == null || args.getString("owner") != state.owner || args.getInt("revision", -1) != state.revision)
+            return result(SessionError.ERROR_PERMISSION_DENIED, "The account changed. Open Magpie and try again.")
+        val action = args.getString("action")
+        if (action == "status") return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, automationSnapshot()))
+        if (action == "play_item") {
+            val id = args.getString("item_id").orEmpty()
+            val prefix = "${state.owner}:episode:"
+            if (!id.startsWith(prefix) || id.removePrefix(prefix).toIntOrNull()?.let { it > 0 } != true)
+                return result(SessionError.ERROR_BAD_VALUE, "That item belongs to another account. Find it again.")
+        }
+        if (action == "latest" && args.getString("show_id")?.let { id -> state.feeds.none { "${state.owner}:feed:${it.id}" == id } } == true)
+            return result(SessionError.ERROR_BAD_VALUE, "That show belongs to another account or is no longer followed.")
+        if (action in setOf("play_item", "continue", "latest")) return startAutomation(controller, args)
+        val value = args.getDouble("value", Double.NaN)
+        if (current != null && playbackRevision != state.revision)
+            return result(SessionError.ERROR_PERMISSION_DENIED, "The account changed. Open Magpie and try again.")
+        val invalid = when (action) {
+            "skip" -> !value.isFinite() || value !in -86_400.0..86_400.0
+            "seek" -> !value.isFinite() || value !in 0.0..86_400.0
+            "speed" -> !value.isFinite() || value !in 0.5..3.0
+            "sleep" -> !value.isFinite() || value !in 1.0..1440.0
+            "pause", "cancel_sleep", "undo_speed" -> false
+            else -> true
+        }
+        if (invalid) return result(SessionError.ERROR_BAD_VALUE, "Choose a valid playback setting.")
+        if (action !in setOf("cancel_sleep", "undo_speed") && current == null && !(action == "pause" && assistantFuture != null))
+            return result(SessionError.ERROR_INVALID_STATE, "Nothing is loaded. Continue listening first.")
+        if (action in setOf("skip", "seek") && player.duration <= 0)
+            return result(SessionError.ERROR_INVALID_STATE, "The listening position is not available yet.")
+        if (action == "undo_speed") {
+            val undo = automationSpeedUndo
+            if (undo == null || undo.revision != state.revision || undo.owner != state.owner || SystemClock.elapsedRealtime() >= undo.expiresAt)
+                return result(SessionError.ERROR_INVALID_STATE, "There is no recent assistant speed change to undo.")
+            if (store.speed(undo.kind) != undo.after) {
+                automationSpeedUndo = null
+                return result(SessionError.ERROR_INVALID_STATE, "Playback speed has changed since then. I left it as it is.")
+            }
+        }
+        PlaybackStatus.mutableControlVersion.value++
+        cancelAssistant(); invalidateVoice()
+        when (action) {
+            "pause" -> { rendering?.cancel(); PlaybackStatus.mutable.value = Preparation(); player.pause(); persist() }
+            "skip", "seek" -> {
+                val position = (value * 1000).toLong() + if (action == "skip") player.currentPosition else 0
+                player.seekTo(position.coerceIn(0, player.duration)); persist()
+            }
+            "speed" -> {
+                val kind = checkNotNull(current).kind
+                val rate = value.toFloat()
+                automationSpeedUndo = AutomationSpeedUndo(state.owner, state.revision, kind, store.speed(kind), rate, SystemClock.elapsedRealtime() + 600_000)
+                store.saveSpeed(kind, rate); player.setPlaybackSpeed(rate)
+            }
+            "undo_speed" -> {
+                val undo = checkNotNull(automationSpeedUndo); automationSpeedUndo = null
+                store.saveSpeed(undo.kind, undo.before)
+                if (current?.kind == undo.kind) player.setPlaybackSpeed(undo.before)
+            }
+            "sleep" -> setSleepTimer(kotlin.math.ceil(value).toLong() * 60_000)
+            "cancel_sleep" -> cancelSleepTimer()
+        }
+        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, automationSnapshot()))
+    }
+
+    private fun automationSnapshot(): Bundle {
+        val item = current?.takeIf { playbackRevision == library.state.value.revision }
+        return Bundle().apply {
+            putString("item_id", item?.id)
+            putBoolean("playing", item != null && player.isPlaying)
+            putDouble("position", if (item != null) player.currentPosition.coerceAtLeast(0) / 1000.0 else 0.0)
+            if (item != null && player.duration > 0) putDouble("remaining", (player.duration - player.currentPosition).coerceAtLeast(0) / 1000.0)
+            putDouble("speed", player.playbackParameters.speed.toDouble())
+            if (playbackRevision == library.state.value.revision)
+                sleepTimer.state.deadlineMs?.let { putLong("sleep_end", System.currentTimeMillis() + (it - SystemClock.elapsedRealtime()).coerceAtLeast(0)) }
+        }
+    }
+
+    private suspend fun resolveAutomation(args: Bundle): LibraryItem {
+        val state = library.state.value
+        val id = when (args.getString("action")) {
+            "play_item" -> args.getString("item_id") ?: throw IllegalArgumentException("Choose an item to play.")
+            "continue" -> current?.takeIf { playbackRevision == state.revision }?.id ?: store.continuation(state.owner)
+                ?: throw IllegalArgumentException("There is nothing to continue. Choose an item first.")
+            else -> {
+                val show = args.getString("show_id")?.let { id -> state.feeds.firstOrNull { "${state.owner}:feed:${it.id}" == id }
+                    ?: throw IllegalArgumentException("That show belongs to another account or is no longer followed.") }
+                library.shortcutItems(show?.id, limit = 100).firstOrNull { !it.completed && !it.dismissed && it.captureError == null }?.id
+                    ?: throw IllegalArgumentException("There is nothing new to listen to.")
+            }
+        }
+        return catalog.resolve(MediaItem.Builder().setMediaId(id).build())
+    }
+
+    private fun startAutomation(controller: MediaSession.ControllerInfo, args: Bundle): ListenableFuture<SessionResult> {
+        val prepared = prepareAssistant(controller, listOf(MediaItem.EMPTY), 0, C.TIME_UNSET) { resolveAutomation(args) }
+        val pending = AutomationPlayback(controller, library.state.value.revision, PlaybackStatus.controlVersion.value)
+        automationPlayback = pending
+        pending.job = scope.launch(start = CoroutineStart.LAZY) {
+            fun checkRequest() {
+                if (automationPlayback !== pending || pending.revision != library.state.value.revision || pending.controls != PlaybackStatus.controlVersion.value)
+                    throw CancellationException("Listening request changed")
+            }
+            try {
+                withTimeout(145_000) {
+                    val media = awaitPrepared(prepared)
+                    checkRequest()
+                    player.setMediaItem(media.mediaItems.single(), media.startPositionMs)
+                    pending.applied = true
+                    player.prepare(); player.play()
+                    withTimeout(15_000) {
+                        while (!player.isPlaying || !isPlaybackOngoing) {
+                            checkRequest()
+                            if (pending.foregroundDenied) break
+                            player.playerError?.let { throw it }
+                            delay(25)
+                        }
+                    }
+                    checkRequest()
+                    val snapshot = automationSnapshot().apply { putBoolean("foreground_required", pending.foregroundDenied) }
+                    automationPlayback = null
+                    pending.result.set(SessionResult(SessionResult.RESULT_SUCCESS, snapshot))
+                }
+            } catch (failure: Exception) {
+                if (automationPlayback === pending) {
+                    automationPlayback = null
+                    prepared.cancel(false)
+                    if (pending.applied) { player.pause(); persist() }
+                    pending.result.set(SessionResult(SessionError.ERROR_INVALID_STATE, Bundle().apply {
+                        putBoolean("cancelled", failure is CancellationException && failure !is TimeoutCancellationException)
+                        putString("error", if (failure is TimeoutCancellationException) "Playback took too long. Open Magpie and try again."
+                            else com.henrydashwood.magpie.data.AccountLibrary.message(failure))
+                    }))
+                }
+            }
+        }
+        pending.result.addListener({ if (pending.result.isCancelled && automationPlayback === pending) cancelAssistant() }, mainExecutor)
+        pending.job.start()
+        return pending.result
+    }
+
+    private suspend fun awaitPrepared(future: ListenableFuture<MediaSession.MediaItemsWithStartPosition>): MediaSession.MediaItemsWithStartPosition =
+        kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { future.cancel(false) }
+            // Preparation completes on the service's main dispatcher. Resume inline
+            // so no independent control can land between adopting the item and
+            // assigning its media to the player.
+            future.addListener({
+                if (continuation.isActive) try { continuation.resumeWith(Result.success(future.get())) }
+                catch (failure: Exception) { continuation.resumeWith(Result.failure(failure.cause ?: failure)) }
+            }, com.google.common.util.concurrent.MoreExecutors.directExecutor())
+        }
+
+    private fun cancelAutomation(preservePlayback: Boolean) {
+        val pending = automationPlayback ?: return
+        automationPlayback = null
+        pending.job.cancel()
+        if (pending.applied && !preservePlayback) { player.pause(); persist() }
+        pending.result.set(SessionResult(SessionError.ERROR_INVALID_STATE, Bundle().apply {
+            putBoolean("cancelled", true); putString("error", "Listening request changed.")
+        }))
+    }
+
     private fun setSleepTimer(duration: Long): Boolean {
         if (!sleepTimer.start(duration)) return false
         sleepJob?.cancel()
@@ -701,6 +885,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     companion object {
+        const val AUTOMATION_CONTROL = "magpie.automation_control"
         const val BEGIN_VOICE = "magpie.begin_voice"
         const val END_VOICE = "magpie.end_voice"
         const val VOICE_CONTROL = "magpie.voice_control"

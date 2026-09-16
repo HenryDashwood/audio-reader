@@ -327,7 +327,11 @@ class VoiceConversationTest {
         api.response = VoiceResponse(VoiceAction.Unknown, "Playing the second episode a little faster.", actions = listOf(
             VoiceResponse(VoiceAction.Play, "Playing", api.second), VoiceResponse(VoiceAction.Speed, "Faster", speed = 1.5f)))
         ask("Play the second episode and make it faster")
-        compose.waitUntil(10_000) { model.player.value.playing && model.player.value.item?.episodeId == 2 && !model.voice.state.value.visible }
+        try {
+            compose.waitUntil(10_000) { model.player.value.playing && model.player.value.item?.episodeId == 2 && !model.voice.state.value.visible }
+        } catch (failure: ComposeTimeoutException) {
+            throw AssertionError("Compound playback: ${model.player.value}; voice=${model.voice.state.value}; requests=${api.requests.size}; spoken=${output.said}", failure)
+        }
         assertEquals(1.5f, model.player.value.speed); assertEquals(listOf(api.response.spokenResponse), output.said)
     }
 

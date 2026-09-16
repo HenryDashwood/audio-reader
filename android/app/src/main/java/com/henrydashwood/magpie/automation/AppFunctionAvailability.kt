@@ -43,5 +43,15 @@ object AppFunctionAvailability {
         MagpieAppFunctions.FUNCTION_ID_LIST_SHOWS,
         MagpieAppFunctions.FUNCTION_ID_FIND_ITEMS,
         MagpieAppFunctions.FUNCTION_ID_GET_LISTENING_STATUS,
+        MagpieAppFunctions.FUNCTION_ID_PAUSE_LISTENING,
+        MagpieAppFunctions.FUNCTION_ID_SKIP_LISTENING,
+        MagpieAppFunctions.FUNCTION_ID_SEEK_LISTENING,
+        MagpieAppFunctions.FUNCTION_ID_SET_LISTENING_SPEED,
+        MagpieAppFunctions.FUNCTION_ID_UNDO_LISTENING_SPEED,
+        MagpieAppFunctions.FUNCTION_ID_SET_LISTENING_SLEEP_TIMER,
+        MagpieAppFunctions.FUNCTION_ID_CANCEL_LISTENING_SLEEP_TIMER,
+        MagpieAppFunctions.FUNCTION_ID_PLAY_LISTENING_ITEM,
+        MagpieAppFunctions.FUNCTION_ID_CONTINUE_LISTENING,
+        MagpieAppFunctions.FUNCTION_ID_PLAY_LATEST_LISTENING_ITEM,
     )
 }
