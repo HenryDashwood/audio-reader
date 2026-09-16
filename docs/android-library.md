@@ -151,3 +151,23 @@ hide other accounts' pending links, and prevent late replies from altering them.
 Filing updates from an older content ID are rejected, so a late playback completion
 cannot mark replacement text as read. An empty Following search preserves initial
 load errors even when a cached account identity is available for offline capture.
+
+### Incoming captures
+
+The Android share receiver and Capture page preview write only after explicit
+confirmation. They preserve title, optional HTML, `content_format` (`page` for
+sender HTML, `article` for the bundled Readability result), and replacement intent
+in the account inbox. Sync uses the existing `/saved/replace` endpoint for these
+captures; ordinary Add link captures still use `/saved`. No server or Swift
+contract changed. Captures of a pending URL retain its original timestamp.
+Each confirmed capture keeps its own queue ID and upload order, preserving an
+earlier offline HTML copy if a later link-only capture fails, and preventing an
+older acknowledgement from removing newer content. URL-only additions never discard queued HTML.
+
+A share does not upload before confirmation, attach device samples, or silently
+follow an account change. It can be saved offline after the account identity has
+been established. Unconfirmed page HTML stays in the share ViewModel, not an
+activity-state Bundle; process death returns to the original share for review.
+Open Magpie navigates to Saved and prepares durable captures. Extraction uses
+the same pinned script and license as Safari, copied into generated Android assets
+by the variant build task. Backend sanitization remains authoritative.

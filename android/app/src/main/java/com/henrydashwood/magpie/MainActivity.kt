@@ -14,7 +14,10 @@ import com.henrydashwood.magpie.ui.MagpieTheme
 
 class MainActivity : ComponentActivity() {
     private var appleReturn by mutableIntStateOf(0)
+    private var savedReturn by mutableIntStateOf(0)
     private fun handleReturn(intent: Intent?) {
+        if (intent?.getBooleanExtra("open_signin", false) == true) { appleReturn++; intent.removeExtra("open_signin") }
+        if (intent?.getBooleanExtra("open_saved", false) == true) { savedReturn++; intent.removeExtra("open_saved") }
         if (intent?.action == Intent.ACTION_VIEW && intent.data?.scheme == BuildConfig.APPLICATION_ID + ".auth" &&
             intent.data?.host == "apple-sign-in") appleReturn++
     }
@@ -27,6 +30,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         handleReturn(intent)
-        setContent { MagpieTheme { MagpieApp(viewModel(), appleReturn) } }
+        setContent { MagpieTheme { MagpieApp(viewModel(), appleReturn, savedReturn) } }
     }
 }

@@ -54,8 +54,7 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
     }
     override suspend fun save(token: String, episodeId: Int?, url: String?) = decodeEpisode(obj(token, "saved", "POST",
         JSONObject().put("episode_id", episodeId).put("url", url)))
-    override suspend fun capture(token: String, article: PendingArticle) = decodeEpisode(obj(token, "saved", "POST",
-        JSONObject().put("url", article.url).put("saved_at", article.savedAt)))
+    override suspend fun capture(token: String, article: PendingArticle) = decodeEpisode(obj(token, if (article.replaceExisting) "saved/replace" else "saved", "POST", captureBody(article)))
     override suspend fun retrySaved(token: String, episodeId: Int) = decodeEpisode(obj(token, "saved/$episodeId/retry", "POST"))
     override suspend fun replaceSaved(token: String, episodeId: Int) = decodeEpisode(obj(token, "saved/replace", "POST", JSONObject().put("episode_id", episodeId)))
     override suspend fun remove(token: String, episodeId: Int) { request(token, "saved/$episodeId", "DELETE") }
@@ -133,6 +132,8 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
         } finally { connection.disconnect() }
     }
     companion object {
+        fun captureBody(article: PendingArticle) = JSONObject().put("url", article.url).put("saved_at", article.savedAt)
+            .put("title", article.title).put("html", article.html).put("content_format", article.contentFormat)
         private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
         fun decodeSource(json: JSONObject) = SourceResult(json.getString("title"), validateLink(json.getString("feed_url")),
             json.optionalString("publisher"), json.optionalInt("episode_count"))

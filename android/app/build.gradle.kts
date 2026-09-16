@@ -70,3 +70,25 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+// The same pinned Readability extraction used by Safari; keep one source and license.
+abstract class CaptureAssetsTask : DefaultTask() {
+    @get:InputFile @get:PathSensitive(PathSensitivity.NONE)
+    abstract val scriptFile: RegularFileProperty
+    @get:InputFile @get:PathSensitive(PathSensitivity.NONE)
+    abstract val licenseFile: RegularFileProperty
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+    @TaskAction fun copyAssets() {
+        val destination = outputDirectory.dir("capture").get().asFile.apply { mkdirs() }
+        scriptFile.get().asFile.copyTo(destination.resolve("CapturePage.js"), overwrite = true)
+        licenseFile.get().asFile.copyTo(destination.resolve("Readability-LICENSE.txt"), overwrite = true)
+    }
+}
+val captureAssets = tasks.register<CaptureAssetsTask>("captureAssets") {
+    scriptFile.set(rootProject.file("../ios/HearfulShare/CapturePage.js"))
+    licenseFile.set(rootProject.file("../ios/HearfulShare/Readability-LICENSE.txt"))
+    outputDirectory.set(layout.buildDirectory.dir("generated/captureAssets"))
+}
+androidComponents.onVariants { variant ->
+    variant.sources.assets?.addGeneratedSourceDirectory(captureAssets, CaptureAssetsTask::outputDirectory)
+}

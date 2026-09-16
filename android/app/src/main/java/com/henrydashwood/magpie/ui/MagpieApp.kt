@@ -48,7 +48,11 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
+fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        // A separate share task may have queued content while this screen was stopped.
+        model.savedPreparation.sync()
+    }
     val snapshot by model.libraryState.collectAsStateWithLifecycle()
     val loadingItem by model.itemLoading.collectAsStateWithLifecycle()
     val itemError by model.itemError.collectAsStateWithLifecycle()
@@ -94,6 +98,13 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0) {
     LaunchedEffect(destination, snapshot.owner) { if (destination == Destination.Saved) model.savedPreparation.sync() }
     val snackbar = remember { SnackbarHostState() }
     val followControl = remember { ArticleFollowControl() }
+    LaunchedEffect(savedReturn) {
+        if (savedReturn > 0) {
+            showingAccount = false; selectedItemId = null; selectedSource = null; showingPlayer = false
+            destination = Destination.Saved; query = ""; showingSearch = false
+            model.refreshLibrary()
+        }
+    }
     LaunchedEffect(appleReturn) { if (appleReturn > 0) showingAccount = true }
     if (showingAccount) {
         BackHandler { showingAccount = false }

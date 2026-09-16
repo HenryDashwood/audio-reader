@@ -9,7 +9,8 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 import java.util.UUID
 
-data class PendingArticle(val id: String = UUID.randomUUID().toString(), val url: String, val savedAt: String = Instant.now().toString())
+data class PendingArticle(val id: String = UUID.randomUUID().toString(), val url: String, val savedAt: String = Instant.now().toString(),
+    val title: String? = null, val html: String? = null, val contentFormat: String = "page", val replaceExisting: Boolean = false)
 interface ArticleInbox {
     suspend fun pending(owner: String): List<PendingArticle>
     suspend fun add(owner: String, article: PendingArticle)

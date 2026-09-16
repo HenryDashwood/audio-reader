@@ -1,7 +1,7 @@
 # Android parity checklist
 
 Baseline: source review against the current iOS app, 11 September 2026.
-Updated: 15 September 2026.
+Updated: 16 September 2026.
 Numbers match the review. A checked item covers the implementation described
 here; emulator results do not establish physical-device audio or TalkBack quality.
 
@@ -29,7 +29,13 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   text replacement. Changed text clears old playback and bookmarks; failed or
   unchanged replacements preserve the current copy. Queue syncing runs in the
   foreground when Saved opens, on refresh, or on explicit retry.
-- [ ] **6. Incoming sharing.** Receive shared links and support browser content capture.
+- [x] **6. Incoming sharing.** Receive one shared web link and optional HTML with
+  a confirmation preview. Capture page opens an HTTPS page inside Magpie and
+  extracts its visible article using the same pinned Readability script as iOS.
+  Confirmed captures persist in the account queue, preserve offline content, and
+  update existing copies through the established replacement contract. Android
+  browsers do not provide Safari's page preprocessing hook: website sign-in may
+  be needed inside Magpie's browser. Phone/publisher acceptance remains.
 - [ ] **7. Ask Magpie conversations.** Recognition, commands, spoken replies,
   follow-up conversations, and timing preferences.
 - [ ] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
@@ -156,8 +162,48 @@ staging sign-in was restored with Apple and Google connected, and the live Saved
 screen and replacement control were visually checked without changing articles.
 Phone and TalkBack acceptance remain.
 
-The next unchecked item is **6. Incoming sharing: receive shared links and support
-browser content capture**.
+## Incoming sharing implementation
+
+On 16 September 2026, item 6 was implemented using the existing `/saved/replace`
+contract. Shared text/HTML needs one valid web URL and explicit confirmation;
+unsupported or ambiguous input gets a clear explanation. The standalone share
+screen previews text without executing sender HTML. A separate activity task
+keeps its unconfirmed preview available while the user opens Magpie to sign in.
+A changed account requires fresh review. Opening Magpie after a save starts
+foreground preparation in Saved; closing the share keeps accepted content on disk.
+
+Capture page is available from the share preview and saved articles. It opens
+HTTPS pages inside Magpie, allowing website sign-in before the user requests
+extraction. The build bundles the existing iOS Readability asset and license,
+including hidden-content removal, canonical identity checks, and link fallback
+for uncertain articles. Navigation invalidates old extraction callbacks. The
+capture WebView has no native bridge, app tokens, file/content access, insecure
+mixed content, third-party cookies, downloads, or website permission grants.
+Website cookies are separate from the sending browser; Android does not capture
+the sending browser's existing tab DOM. Unconfirmed browser content is not stored
+in an activity Bundle; process death returns to the original share for review.
+
+Confirmed title/HTML/format and replacement intent survive offline storage and
+restart. Each confirmed capture keeps its own ID and upload order, preserving
+earlier offline content if a later capture fails and preventing an older in-flight
+response from removing newer content. Legacy URL-only entries remain compatible. Existing changed
+content handling stops old narration and rejects its old bookmark. No backend,
+Swift contract, release configuration, or production service was changed.
+
+Verification: `make android-check` passed all 83 JVM tests, built both debug
+APKs, and passed lint without compiler warnings. The full Android 16/API 36 run
+passed all 78 then-existing emulator tests, with no skips. After the final queue,
+share-task, and app-resume adjustments, the complete IncomingSharing (9),
+SavedPreparation (8), and LiveLibrary (4) classes passed individually. Across
+these runs all 80 current emulator tests are covered. The combined class filter
+selected only its first class, so individual runs were used to verify the rest.
+Browser capture and 200% text/dark share screenshots were visually inspected.
+The tests use isolated accounts and page fixtures; no live articles were changed.
+The final preview was installed, and Android resolved both plain-text and HTML
+share intents to Magpie. Phone, TalkBack, and publisher sign-in acceptance remain
+outstanding.
+
+The next unchecked item is **7. Ask Magpie conversations**.
 
 ## Shared limitations
 

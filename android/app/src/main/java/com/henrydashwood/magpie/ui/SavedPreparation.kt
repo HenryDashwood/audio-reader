@@ -64,7 +64,7 @@ fun SavedArticlePreparation(item: LibraryItem, model: MagpieModel) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         item.captureError?.let { raw ->
             // The shared backend sometimes includes Safari-specific recovery advice.
-            val message = if (raw.contains("Safari")) "The link is saved, but Magpie could not retrieve the full article. Try again later or open the original page." else raw
+            val message = if (raw.contains("Safari")) "The link is saved, but Magpie could not retrieve the full article. Try again later or capture the page in Magpie." else raw
             Text(message, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             TextButton(onClick = { model.savedPreparation.retry(item) }, enabled = !state.busy,
                 modifier = Modifier.semantics { contentDescription = "Retry preparing ${item.title}" }) { Text("Retry") }
@@ -74,6 +74,12 @@ fun SavedArticlePreparation(item: LibraryItem, model: MagpieModel) {
             }) { Text("Open original") }
         }
         openError?.let { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+        if (item.originalUrl != null) TextButton(onClick = {
+            context.startActivity(Intent(context, com.henrydashwood.magpie.sharing.ShareActivity::class.java).apply {
+                action = Intent.ACTION_SEND; type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, item.originalUrl); putExtra(Intent.EXTRA_SUBJECT, item.title)
+            })
+        }, enabled = !state.busy, modifier = Modifier.semantics { contentDescription = "Capture page for ${item.title}" }) { Text("Capture page") }
         if (item.originalUrl != null) TextButton(onClick = { model.savedPreparation.requestReplacement(item) }, enabled = !state.busy,
             modifier = Modifier.semantics { contentDescription = "Replace saved text for ${item.title}" }) { Text("Replace saved text") }
     }

@@ -29,6 +29,16 @@
                 <data android:scheme="${applicationId}.auth" android:host="apple-sign-in" />
             </intent-filter>
         </activity>
+        <!-- A separate share task keeps the unconfirmed preview available while signing in. -->
+        <activity android:name=".sharing.ShareActivity" android:exported="true"
+            android:launchMode="singleTask" android:taskAffinity="${applicationId}.share">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/html" />
+            </intent-filter>
+        </activity>
         <!-- Media controls need an exported service; onGetSession rejects untrusted callers. -->
         <service
             android:name=".playback.PlaybackService"

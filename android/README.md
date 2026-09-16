@@ -178,6 +178,15 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   copy on failure; changed content stops old narration and resets its bookmark.
   Signed-out captures use a separate device inbox that never uploads automatically;
   Review device links offers an explicit, confirmed import into the current account.
+- Magpie appears in the Android share sheet for one web link, including browser
+  text containing a link and optional shared HTML. A scrollable preview requires
+  confirmation and sign-in before writing to that account's durable queue.
+  Capture page opens an HTTPS page inside Magpie, lets the user sign in to the
+  website if needed, and previews the visible article before saving. The same
+  pinned Readability script used by iOS is bundled at build time. Original-browser
+  cookies are not imported; JavaScript has no native bridge or app credentials.
+  Saved articles also offer Capture page to recover pages the server cannot read.
+  Open Magpie prepares confirmed captures; Done returns to the sharing app.
 - Separate persisted podcast/article speeds, an installed offline voice chooser,
   voice previews, and links to voice downloads, privacy, and email support.
 - A native Material mini player with artwork/title, contextual Follow, play/pause,
@@ -313,10 +322,10 @@ The sample repository and sample capture inboxes remain separate while signed ou
 There is no automatic upload of sample content, preview progress, or sample URLs.
 Account metadata/text currently lives in memory: a fresh launch needs a connection,
 and there is no durable queue for offline account edits or progress uploads.
-New saved links have their own durable queue. A previously identified session can
-queue links after an offline restart; a new session must identify its account first.
-Incoming share capture,
-podcast downloading, Gemini integration, and microphone recording remain future
+New saved links and confirmed shared content have their own durable queue. A
+previously identified session can queue captures after an offline restart; a new
+session must identify its account first. Podcast downloading, Gemini integration,
+and microphone recording remain future
 work. Backups and device transfers of preview preferences are disabled.
 
 Article rendering currently completes before playback starts, with a 30,000
@@ -355,7 +364,7 @@ sessions. On the Pixel, verify those first, then an incoming call, interruption
 recovery, and process-death resume. Borrow a Samsung before broad release.
 
 The next functional work includes persistent offline account caching, durable
-progress synchronisation, incoming sharing, and
+progress synchronisation, and
 microphone/confirmation/TalkBack coordination.
 Keep AppFunctions an optional adapter over the same action layer.
 
@@ -399,3 +408,40 @@ Signing in replaces the sample catalogue with the account library. Samples and
 local capture inboxes are never attached automatically. Item/bookmark keys include
 the server and account identity, and late replies cannot repopulate a signed-out
 account. See [account-library implementation](../docs/android-library.md).
+
+## Incoming sharing and browser capture
+
+`ShareActivity` accepts `ACTION_SEND` with `text/plain` or `text/html`. It reads
+`EXTRA_TEXT` (or a single plain-text/web-URI ClipData item), optional
+`EXTRA_SUBJECT`/`EXTRA_TITLE`, and `EXTRA_HTML_TEXT`. It requires one unambiguous
+HTTP(S) URL without credentials. Multiple links, arbitrary content/file URIs,
+unsupported types, and payloads over 2 MB UTF-8 are rejected with an explanation.
+Shared HTML is previewed as plain text; it never executes in the share screen.
+
+Capture page is an explicit HTTPS browser action. It does not access the sending
+browser's tab or cookies. The user can authenticate to a publisher in Magpie's
+WebView, then choose Preview article. Extraction excludes hidden content and
+uses the existing iOS article identity/ambiguity checks. It falls back to a link
+when extraction is uncertain. Navigation during capture invalidates its reply.
+The WebView has no native bridge, app authorization headers, file/content access,
+third-party cookies, mixed content, downloads, or website permission grants.
+Certificate errors are rejected. Website cookies/storage remain in Magpie's
+WebView profile, separate from Chrome; physical publisher-login acceptance is
+still required. A browser preview survives ordinary Compose updates; activity
+recreation reloads its original URL. Process death returns an unconfirmed capture
+to the original share for fresh review instead of restoring HTML in a Bundle.
+
+Confirmation queues the original URL, title, HTML, content format, timestamp,
+and replacement intent under the current server/account owner. A changed account
+requires review again. Captures use the existing `/saved/replace` contract,
+including the iOS warning that changed text resets listening. Each confirmed
+capture keeps its own queue ID and upload order. This preserves an earlier offline
+HTML copy if a later link-only capture fails, and an older in-flight acknowledgement
+cannot remove the new content. Legacy URL-only
+queue rows remain readable. Opening Magpie navigates to Saved and starts normal
+foreground preparation; resuming an already-open app also checks its queue; closing the share leaves accepted content on disk.
+
+`IncomingSharingTest` covers confirmation, cancellation, repeated intent delivery,
+activity recreation, disk persistence, offline failure/retry, account changes,
+queue replacement races, real WebView extraction, invalid content identity,
+and 200% text/dark appearance. These use isolated accounts and page fixtures.
