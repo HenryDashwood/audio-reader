@@ -111,22 +111,35 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         require(id.startsWith(prefix)) { "This shortcut belongs to another account." }
         val episodeId = id.removePrefix(prefix).toIntOrNull()?.takeIf { it > 0 }
             ?: throw IllegalArgumentException("That shortcut is no longer available.")
-        val row = api.episode(current, episodeId)
-        check(version)
-        require(row.id == episodeId) { "The requested item could not be found." }
-        return acceptVoiceEpisode(row, version)
+        return writes.withLock {
+            check(version)
+            val row = api.episode(current, episodeId)
+            check(version)
+            require(row.id == episodeId) { "The requested item could not be found." }
+            acceptEpisode(row, version)
+        }
     }
 
     /** Fresh read-only results without replacing the search currently displayed in the app. */
-    suspend fun shortcutItems(feedId: String? = null): List<LibraryItem> {
-        if (!state.value.live) return state.value.items.filter { feedId == null || it.sourceId == feedId }
+    suspend fun shortcutItems(feedId: String? = null, query: String = "", savedOnly: Boolean = false): List<LibraryItem> {
+        require(query.length <= 200 && !(savedOnly && feedId != null)) { "Choose a shorter library search." }
+        if (!state.value.live) return state.value.items.filter { (feedId == null || it.sourceId == feedId) &&
+            (query.isBlank() || "${it.title} ${it.source} ${it.description}".contains(query, ignoreCase = true)) }
         val (current, version) = credentials()
-        if (feedId != null) require(state.value.feeds.any { it.id == feedId }) { "That show is no longer followed." }
-        val rows = if (feedId == null) api.latest(current) else api.episodes(current, feedId, "")
-        check(version)
-        val items = rows.map { it.item(state.value) }
-        mutable.value = state.value.copy(items = merge(state.value.items, items))
-        return items.map { row -> state.value.items.first { it.id == row.id } }
+        return writes.withLock {
+            check(version)
+            if (feedId != null) require(state.value.feeds.any { it.id == feedId }) { "That show is no longer followed." }
+            val rows = when {
+                savedOnly -> api.saved(current)
+                feedId != null -> api.episodes(current, feedId, query)
+                query.isNotBlank() -> api.search(current, query)
+                else -> api.latest(current)
+            }
+            check(version)
+            val items = rows.map { it.item(state.value) }
+            mutable.value = state.value.copy(items = merge(state.value.items, items))
+            items.map { row -> state.value.items.first { it.id == row.id } }
+        }
     }
 
     suspend fun content(id: String): LibraryItem {
@@ -317,11 +330,14 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     // Finish any older refresh before adopting a confirmed receipt. Otherwise an omitted
     // filed item can retain an older unplayed snapshot even after the follow-up refresh.
     suspend fun acceptVoiceEpisode(row: RemoteEpisode, sessionRevision: Int): LibraryItem = writes.withLock {
+        acceptEpisode(row, sessionRevision)
+    }
+    private fun acceptEpisode(row: RemoteEpisode, sessionRevision: Int): LibraryItem {
         check(sessionRevision)
         require(state.value.live && row.id > 0)
         val item = row.item(state.value)
         mutable.value = state.value.copy(items = merge(state.value.items, listOf(item)))
-        state.value.items.first { it.id == item.id }
+        return state.value.items.first { it.id == item.id }
     }
     private fun requireItem(item: LibraryItem) { require(state.value.items.any { it.id == item.id }) { "This item belongs to a different library." } }
     private suspend fun mutate(work: suspend (String) -> (() -> Unit)) {
@@ -351,7 +367,8 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
             episodeId = id, contentId = contentId, sourceId = state.feeds.firstOrNull { feedUrl != null && it.url == feedUrl }?.id ?: feedUrl ?: source,
             audioUrl = audioUrl, wordCount = wordCount, textLoaded = podcast,
             remotePositionMs = if (completed) 0 else (positionSeconds * 1000).toLong().coerceAtLeast(0),
-            completed = completed, dismissed = dismissed, captureError = captureError)
+            completed = completed, dismissed = dismissed, captureError = captureError,
+            durationSeconds = durationSeconds?.takeIf { it > 0 })
     }
     private fun merge(existing: List<LibraryItem>, rows: List<LibraryItem>): List<LibraryItem> {
         val items = existing.associateBy { it.id }.toMutableMap()

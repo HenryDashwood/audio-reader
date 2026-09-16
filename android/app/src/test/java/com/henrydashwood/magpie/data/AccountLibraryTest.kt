@@ -34,6 +34,7 @@ class AccountLibraryTest {
         var fail = false
         var gate: CompletableDeferred<Unit>? = null
         var oldSearch: CompletableDeferred<Unit>? = null
+        var episodeGate: CompletableDeferred<Unit>? = null
         var contentId = 7
         var requestedContent: Int? = null
         var saves = 0
@@ -51,6 +52,11 @@ class AccountLibraryTest {
         override suspend fun latest(token: String) = latestRows
         override suspend fun saved(token: String) = savedRows
         override suspend fun episodes(token: String, feedId: String, query: String) = latestRows
+        override suspend fun episode(token: String, episodeId: Int): RemoteEpisode {
+            val snapshot = (latestRows + savedRows).first { it.id == episodeId }
+            episodeGate?.await()
+            return snapshot
+        }
         override suspend fun search(token: String, query: String): List<RemoteEpisode> {
             if (query == "old") oldSearch?.await()
             return listOf(RemoteEpisode(if (query == "old") 10 else 11, query))
@@ -340,6 +346,22 @@ class AccountLibraryTest {
         library.refresh()
         assertTrue(library.state.value.items.first { it.episodeId == filed.id }.completed)
         assertTrue(library.state.value.latestIds.isEmpty())
+    }
+
+    @Test fun anOlderItemLookupCannotOverwriteAConfirmedFiling() = runTest {
+        val api = Api()
+        val library = AccountLibrary(api, "https://media.invalid")
+        library.changeSession("alice")
+        val item = library.state.value.items.first { it.episodeId == 1 }
+        val filed = api.latestRows.first().copy(completed = true)
+        api.episodeGate = CompletableDeferred()
+        val lookup = launch { library.shortcutItem(item.id) }
+        runCurrent() // The lookup captured an old, unplayed row and is still pending.
+        val receipt = launch { library.acceptVoiceEpisode(filed, library.state.value.revision) }
+        runCurrent()
+        api.episodeGate!!.complete(Unit)
+        lookup.join(); receipt.join()
+        assertTrue(library.state.value.items.first { it.id == item.id }.completed)
     }
 
 }

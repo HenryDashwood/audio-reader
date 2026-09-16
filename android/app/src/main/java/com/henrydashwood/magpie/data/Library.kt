@@ -24,6 +24,7 @@ data class LibraryItem(
     val completed: Boolean = false,
     val dismissed: Boolean = false,
     val captureError: String? = null,
+    val durationSeconds: Int? = null,
 )
 
 interface LibraryRepository {

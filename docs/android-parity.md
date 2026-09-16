@@ -42,8 +42,8 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   includes actual offline speech output; phone microphone/TalkBack acceptance remains.
 - [ ] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
   Launcher/pinned actions, Quick Settings, account-scoped Continue listening,
-  and trusted Ask microphone launches are implemented. Assistant library browsing,
-  search, and structured actions remain; the newsletter action also depends on item 9.
+  trusted Ask microphone launches, and media-client library browsing/search are
+  implemented. Structured actions remain; the newsletter action also depends on item 9.
 - [ ] **9. Newsletters.** Address presentation/sharing, sender approval/blocking, and signup.
 - [x] **10. AI consent controls.** The discovery flow discloses AI data sharing
   before granting permission. Settings reads, reviews, grants, and withdraws the
@@ -344,8 +344,42 @@ final full run passed after the ordering fix. The updated 200% text/dark shortcu
 screen was visually inspected. Microphone input uses controlled callbacks in
 these tests; physical speech quality, TalkBack, and Bluetooth acceptance remain.
 
-Item 8 remains unchecked until assistant library browsing/search and the
-structured action equivalents (library lookup with duration/unheard
+The third milestone exposes Latest, Saved, followed shows, and account search to
+trusted Android media clients. Media3 and legacy platform browsers use the same
+service player and account repository. Browsing does not load article text or
+expose playback URIs, and it preserves the app's displayed search. Folder IDs are
+account-scoped; subscriptions to old folders are invalidated after an account
+change. Unpaged legacy folder requests and overflow-safe pagination are supported.
+
+Prepare resolves the item and its bookmark without starting playback. Play then
+uses the prepared podcast or on-device article audio. Search supports a named
+episode, a followed show's latest unfinished item, or Latest for an empty playback
+query. A loaded item's newer clock is retained. Pending lookups/rendering are
+bounded and cancelled on account changes, independent media controls, sleep expiry,
+audio disconnection, or caller disconnection. Caller-provided URIs and queues are
+rejected. Legacy service binding admits only Media3's anonymous browser placeholder;
+the actual caller is checked before library/player access.
+
+Focused verification: all 17 media-library emulator tests passed, including
+modern and legacy preparation/playback, unpaged browsing, search isolation,
+pagination, account-switch notifications, delayed-result cancellation, offline
+article rendering/bookmarks, and rejection of a separate app without media access.
+Controlled regressions exposed two additional races: an older single-item read
+could overwrite a confirmed filing, and Media3 could drain a queued Play after
+preparation was cancelled, restarting the previous item. Single-item lookups now
+join the repository's serialized updates, and a short-lived playback guard stops
+the cancelled caller's queued Play while preserving the old item/bookmark. A fresh
+explicit Play remains available. Both regressions failed before their fixes.
+
+The full Android 16/API 36 run passed all 138 emulator cases with no failures or
+skips before these final race fixes. The final `make android-check` passed 135 JVM
+tests, both debug APK builds, and lint without compiler warnings. Final focused
+runs passed all 17 media-library, 3 playback, and 16 conversation tests. One initial
+conversation assertion timed out waiting for a filed item to leave the player;
+it passed in isolation and in the complete conversation rerun without further
+production changes. The test now retains receipt/error/player-state diagnostics.
+
+Item 8 remains unchecked until the structured action equivalents (library lookup with duration/unheard
 filters, playback controls/status, filing, undo, free-form requests, subscription,
 and destination actions) are implemented and verified. Future assistant adapters
 must preserve the trusted microphone launch boundary and Android permission step.

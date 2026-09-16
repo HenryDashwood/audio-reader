@@ -204,7 +204,12 @@ class VoiceConversationTest {
     @Test fun filingCurrentEpisodeCannotLaterReportItsOldPositionAsUnplayed() {
         play(); api.response = VoiceResponse(VoiceAction.Played, "Marked as played.", api.podcast.copy(completed = true, positionSeconds = 0.0))
         ask("Mark this episode as played"); idle()
-        compose.waitUntil(5_000) { model.player.value.item == null }
+        assertNull("Filing reply: ${model.voice.state.value}", model.voice.state.value.error)
+        assertTrue("Filing was not received: ${api.requests}", api.filed)
+        try { compose.waitUntil(5_000) { model.player.value.item == null } }
+        catch (failure: ComposeTimeoutException) {
+            throw AssertionError("Filed item remained loaded: player=${model.player.value}, voice=${model.voice.state.value}, preparation=${PlaybackStatus.state.value}", failure)
+        }
         compose.onNodeWithText("Close").performClick()
         assertFalse(model.player.value.playing); assertTrue(api.writesAfterFiling.isEmpty())
         assertTrue(library.state.value.items.first { it.episodeId == 1 }.completed)

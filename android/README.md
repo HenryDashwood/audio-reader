@@ -366,8 +366,23 @@ still produces the existing capability explanation without a network fallback.
 Android 14+ uses the PendingIntent tile launch API; Android 12–13 use the guarded
 legacy overload because the replacement is unavailable there.
 
-Assistant media-library browsing/search and structured automation remain part of
-checklist item 8. Google describes AppFunctions/Gemini integration as an
+Trusted Android media clients can browse Latest, Saved, and followed shows, search
+the account library, and prepare or play an item through Magpie's playback service.
+Both Media3 browsers and legacy platform browsers are supported. Browsing exposes
+metadata and scoped IDs, without loading article text or exposing playback URIs.
+Search does not replace the search displayed in Magpie. Folder IDs are invalidated
+when accounts change; unrelated apps without Android media access are rejected.
+
+Preparation resolves the account item and its bookmark, and renders article audio
+on device when necessary. It stays paused until the client sends Play. Search can
+select a named episode or the latest unfinished item from a followed show; an empty
+playback search selects Latest. Controls from another media client, cancellation,
+account changes, sleep expiry, and audio disconnection invalidate pending preparations.
+Cancelled or failed preparation also suppresses the requester's queued Play,
+preserving the previous item's paused position until a fresh explicit Play.
+Podcast clocks and article text bookmarks remain separate. Arbitrary URIs and
+multi-item queues are unsupported. Structured automation remains part of checklist
+item 8. Google describes AppFunctions/Gemini integration as an
 experimental private preview; launcher/tile availability does not establish
 Gemini support or phone acceptance.
 

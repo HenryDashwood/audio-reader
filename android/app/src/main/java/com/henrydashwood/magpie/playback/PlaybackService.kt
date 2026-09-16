@@ -8,16 +8,19 @@ import android.content.IntentFilter
 import android.media.AudioManager
 import androidx.core.content.ContextCompat
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.LibraryResult
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionError
@@ -36,6 +39,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
@@ -64,9 +71,9 @@ object PlaybackStatus {
 // Media3 still marks session negotiation and some service controls as unstable.
 // All use is contained here and exercised through the real controller in PlaybackTest.
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-class PlaybackService : MediaSessionService() {
+class PlaybackService : MediaLibraryService() {
     private lateinit var player: ExoPlayer
-    private lateinit var session: MediaSession
+    private lateinit var session: MediaLibrarySession
     private lateinit var store: PreviewStore
     private lateinit var renderer: ArticleRenderer
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -74,6 +81,13 @@ class PlaybackService : MediaSessionService() {
     private var current: LibraryItem? = null
     private var rendered: RenderedArticle? = null
     private val library by lazy { (application as MagpieApplication).library }
+    private val catalog by lazy { MediaLibraryCatalog(library, store) }
+    private val browserJobs = mutableMapOf<MediaSession.ControllerInfo, MutableSet<Job>>()
+    private var assistantJob: Job? = null
+    private var assistantFuture: SettableFuture<MediaSession.MediaItemsWithStartPosition>? = null
+    private var assistantController: MediaSession.ControllerInfo? = null
+    private val cancelledPlayback = mutableMapOf<MediaSession.ControllerInfo, Any>()
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var playbackRevision = -1
     private var lastReportedAt = 0L
     private val localPodcastPositions = mutableMapOf<String, Long>()
@@ -87,6 +101,7 @@ class PlaybackService : MediaSessionService() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
                 PlaybackStatus.mutableControlVersion.value++
+                cancelAssistant()
                 invalidateVoice()
             }
         }
@@ -126,12 +141,20 @@ class PlaybackService : MediaSessionService() {
             })
         }
         val activity = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        session = MediaSession.Builder(this, player).setSessionActivity(activity).setCallback(object : MediaSession.Callback {
+        val sessionPlayer = object : ForwardingPlayer(player) {
+            private fun mayPlay() = cancelledPlayback.isEmpty() ||
+                session.controllerForCurrentRequest?.let { it !in cancelledPlayback } == true
+            override fun play() { if (mayPlay()) super.play() }
+            override fun setPlayWhenReady(playWhenReady: Boolean) {
+                if (!playWhenReady || mayPlay()) super.setPlayWhenReady(playWhenReady)
+            }
+        }
+        session = MediaLibrarySession.Builder(this, sessionPlayer, object : MediaLibrarySession.Callback {
             // Media3's custom-command negotiation builder is still marked unstable.
             @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
             override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
-                val connection = super.onConnect(session, controller)
-                val commands = connection.availableSessionCommands.buildUpon()
+                if (!trusted(controller)) return MediaSession.ConnectionResult.reject()
+                val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon()
                 if (controller.uid == applicationInfo.uid) {
                     commands.add(SessionCommand(PLAY_ITEM, Bundle.EMPTY))
                     commands.add(SessionCommand(CANCEL_PREPARATION, Bundle.EMPTY))
@@ -143,7 +166,10 @@ class PlaybackService : MediaSessionService() {
                     commands.add(SessionCommand(VOICE_CONTROL, Bundle.EMPTY))
                 }
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
-                    .setAvailableSessionCommands(commands.build()).build()
+                    .setAvailableSessionCommands(commands.build())
+                    // Magpie owns a single item; arbitrary queues/URIs cannot enter its player.
+                    .setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS.buildUpon()
+                        .remove(Player.COMMAND_CHANGE_MEDIA_ITEMS).build()).build()
             }
 
             override fun onPlayerInteractionFinished(session: MediaSession, controllerInfo: MediaSession.ControllerInfo, playerCommands: Player.Commands) {
@@ -152,13 +178,48 @@ class PlaybackService : MediaSessionService() {
                     Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD, Player.COMMAND_SET_SPEED_AND_PITCH,
                     Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS).any(playerCommands::contains)) {
                     PlaybackStatus.mutableControlVersion.value++
+                    cancelAssistant()
                     invalidateVoice()
                 }
             }
 
             override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
                 if (controller == voiceController) invalidateVoice()
+                browserJobs.remove(controller)?.toList()?.forEach { it.cancel() }
+                if (controller == assistantController) cancelAssistant()
             }
+
+            override fun onGetLibraryRoot(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, params: LibraryParams?) =
+                Futures.immediateFuture(LibraryResult.ofItem(catalog.root(), params))
+
+            override fun onGetItem(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, mediaId: String) =
+                libraryResult(browser) { LibraryResult.ofItem(catalog.item(mediaId), null) }
+
+            override fun onGetChildren(session: MediaLibrarySession, browser: MediaSession.ControllerInfo,
+                parentId: String, page: Int, pageSize: Int, params: LibraryParams?) = libraryResult(browser) {
+                LibraryResult.ofItemList(catalog.children(parentId, page, pageSize), params)
+            }
+
+            override fun onSearch(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, query: String, params: LibraryParams?) =
+                libraryResult(browser) {
+                    val results = catalog.search(query)
+                    session.notifySearchResultChanged(browser, query, results.size, params)
+                    LibraryResult.ofVoid(params)
+                }
+
+            override fun onGetSearchResult(session: MediaLibrarySession, browser: MediaSession.ControllerInfo,
+                query: String, page: Int, pageSize: Int, params: LibraryParams?) = libraryResult(browser) {
+                MediaLibraryCatalog.validatePage(page, pageSize)
+                LibraryResult.ofItemList(MediaLibraryCatalog.paginate(catalog.search(query), page, pageSize).map(MediaLibraryCatalog::media), params)
+            }
+
+            override fun onSetMediaItems(session: MediaSession, controller: MediaSession.ControllerInfo,
+                mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<MediaSession.MediaItemsWithStartPosition> =
+                prepareAssistant(controller, mediaItems, startIndex, startPositionMs)
+
+            override fun onAddMediaItems(session: MediaSession, controller: MediaSession.ControllerInfo,
+                mediaItems: MutableList<MediaItem>): ListenableFuture<MutableList<MediaItem>> =
+                Futures.immediateFailedFuture(UnsupportedOperationException("Choose one Magpie item to play."))
 
             override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
                 if (controller.uid != applicationInfo.uid) return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
@@ -174,6 +235,7 @@ class PlaybackService : MediaSessionService() {
                     return Futures.immediateFuture(result)
                 }
                 PlaybackStatus.mutableControlVersion.value++
+                cancelAssistant()
                 invalidateVoice()
                 when (command.customAction) {
                     PLAY_ITEM -> {
@@ -197,11 +259,18 @@ class PlaybackService : MediaSessionService() {
                 }
                 return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
-        }).build()
+        }).setSessionActivity(activity).build()
         scope.launch {
             var observed = library.state.value.revision
+            var previousFolders = emptySet<String>()
             library.state.collect { state ->
                 if (state.revision != observed) { observed = state.revision; dismissPlayer(); localPodcastPositions.clear(); filedArticleBookmarks.clear() }
+                session.notifyChildrenChanged(MediaLibraryCatalog.ROOT, 3, null)
+                val folders = catalog.containerIds(state)
+                // Like Media3's default subscription, unknown fresh counts prompt a reload.
+                // Removed/account-scoped folders are explicitly emptied.
+                (previousFolders + folders).forEach { session.notifyChildrenChanged(it, if (it in folders) Int.MAX_VALUE else 0, null) }
+                previousFolders = folders
                 val playing = current
                 val updated = state.items.firstOrNull { it.id == playing?.id }
                 if (playing?.kind == ContentKind.Article && updated != null && playing.contentId != updated.contentId) {
@@ -218,7 +287,132 @@ class PlaybackService : MediaSessionService() {
         if (!library.state.value.live) store.lastItem?.let { id -> library.state.value.items.find { it.id == id && it.kind == ContentKind.Podcast }?.let { load(it, null, false) } }
     }
 
+    private fun <T : Any> libraryResult(controller: MediaSession.ControllerInfo,
+        work: suspend () -> LibraryResult<T>): ListenableFuture<LibraryResult<T>> {
+        val future = SettableFuture.create<LibraryResult<T>>()
+        val revision = library.state.value.revision
+        lateinit var job: Job
+        job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val result = withTimeout(30_000) { work() }
+                if (library.state.value.revision != revision) throw CancellationException("Account changed")
+                future.set(result)
+            } catch (_: TimeoutCancellationException) {
+                future.set(LibraryResult.ofError<T>(SessionError(SessionError.ERROR_IO, "Magpie took too long to load this library. Try again.", Bundle.EMPTY)))
+            } catch (_: CancellationException) {
+                future.cancel(false)
+            } catch (failure: Exception) {
+                val code = if (failure is IllegalArgumentException) SessionError.ERROR_BAD_VALUE else SessionError.ERROR_IO
+                future.set(LibraryResult.ofError<T>(SessionError(code, com.henrydashwood.magpie.data.AccountLibrary.message(failure), Bundle.EMPTY)))
+            } finally {
+                browserJobs[controller]?.let { jobs -> jobs.remove(job); if (jobs.isEmpty()) browserJobs.remove(controller) }
+            }
+        }
+        browserJobs.getOrPut(controller) { mutableSetOf() }.add(job)
+        future.addListener({ if (future.isCancelled) job.cancel() }, mainExecutor)
+        job.start()
+        return future
+    }
+
+    private fun cancelAssistant() {
+        val future = assistantFuture ?: return
+        val job = assistantJob
+        val controller = checkNotNull(assistantController)
+        // Clear ownership before completing the future: Media3 may drain its queue inline.
+        releaseAssistant(future)
+        PlaybackStatus.mutable.value = Preparation()
+        withoutQueuedPlay(controller) { job?.cancel(); future.cancel(false) }
+    }
+
+    private fun releaseAssistant(future: SettableFuture<MediaSession.MediaItemsWithStartPosition>) {
+        if (assistantFuture === future) { assistantJob = null; assistantFuture = null; assistantController = null }
+    }
+
+    private fun <T> withoutQueuedPlay(controller: MediaSession.ControllerInfo, complete: () -> T): T {
+        // A failed/cancelled SetMediaItem does not remove that caller's queued Play.
+        // Suppress playback while Media3 drains those commands, preserving the old
+        // item/bookmark. A disconnected caller is reported as null by Media3.
+        val marker = Any()
+        cancelledPlayback[controller] = marker
+        return try { complete() } finally {
+            mainHandler.post { if (cancelledPlayback[controller] === marker) cancelledPlayback.remove(controller) }
+        }
+    }
+
+    /** Resolve first, then let Media3 perform the caller's Prepare or Play command. */
+    private fun prepareAssistant(controller: MediaSession.ControllerInfo, requests: List<MediaItem>,
+        startIndex: Int, startPositionMs: Long): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+        if (requests.size != 1 || startIndex !in listOf(0, C.INDEX_UNSET) ||
+            (startPositionMs != C.TIME_UNSET && startPositionMs !in 0..86_400_000))
+            return withoutQueuedPlay(controller) {
+                Futures.immediateFailedFuture(IllegalArgumentException("Choose one Magpie item and a valid listening position."))
+            }
+        PlaybackStatus.mutableControlVersion.value++
+        val previousAssistant = assistantJob
+        cancelAssistant()
+        val previousRendering = rendering
+        previousRendering?.cancel()
+        invalidateVoice(); feedback.close(); sleepTimer.check()
+        persist(); player.pause()
+        val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+        assistantFuture = future; assistantController = controller
+        val revision = library.state.value.revision
+        val controls = PlaybackStatus.controlVersion.value
+        PlaybackStatus.mutable.value = Preparation(message = "Finding your listening item…")
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            var audio: RenderedArticle? = null
+            var adopted = false
+            fun checkRequest() {
+                if (assistantFuture !== future || future.isCancelled || library.state.value.revision != revision ||
+                    PlaybackStatus.controlVersion.value != controls) throw CancellationException("Listening request changed")
+            }
+            try {
+                withTimeout(120_000) {
+                    previousAssistant?.join(); previousRendering?.join()
+                    val item = withTimeout(30_000) { catalog.resolve(requests.single()) }
+                    checkRequest()
+                    val reuse = current?.id == item.id && current?.contentVersion == item.contentVersion &&
+                        player.currentMediaItem?.mediaId == item.id &&
+                        (item.kind == ContentKind.Podcast || rendered?.let { it.voiceSelection == store.voiceId && it.file.isFile } == true)
+                    val position = if (reuse) player.currentPosition.coerceAtLeast(0) else null
+                    audio = if (reuse) rendered else if (item.kind == ContentKind.Article) renderer.render(item, store.voiceId) { done, total ->
+                        checkRequest()
+                        PlaybackStatus.mutable.value = Preparation(item.id, "Preparing audio… ${done * 100 / total}%")
+                    } else null
+                    currentCoroutineContext().ensureActive(); checkRequest()
+                    val start = if (startPositionMs != C.TIME_UNSET) startPositionMs else position ?: resumePosition(item, audio)
+                    val media = adopt(item, audio)
+                    adopted = true
+                    PlaybackStatus.mutable.value = Preparation(voice = audio?.voiceName)
+                    // Completing this on the application thread lets Media3 apply it atomically.
+                    releaseAssistant(future)
+                    future.set(MediaSession.MediaItemsWithStartPosition(listOf(media), 0, start))
+                }
+            } catch (_: TimeoutCancellationException) {
+                if (assistantFuture === future) PlaybackStatus.mutable.value = Preparation(error = "That item took too long to prepare. Open Magpie and try again.")
+                releaseAssistant(future)
+                if (!future.isDone) withoutQueuedPlay(controller) { future.setException(IllegalStateException("Listening preparation timed out")) }
+            } catch (_: CancellationException) {
+                if (assistantFuture === future) PlaybackStatus.mutable.value = Preparation()
+                releaseAssistant(future)
+                if (!future.isDone) withoutQueuedPlay(controller) { future.cancel(false) }
+            } catch (failure: Exception) {
+                if (assistantFuture === future) PlaybackStatus.mutable.value = Preparation(error = com.henrydashwood.magpie.data.AccountLibrary.message(failure))
+                releaseAssistant(future)
+                if (!future.isDone) withoutQueuedPlay(controller) { future.setException(failure) }
+            } finally {
+                if (!adopted && audio !== rendered) audio?.file?.delete()
+                releaseAssistant(future)
+            }
+        }
+        assistantJob = job
+        future.addListener({ if (future.isCancelled) job.cancel() }, mainExecutor)
+        job.start()
+        return future
+    }
+
     private fun play(item: LibraryItem) {
+        cancelAssistant()
         feedback.close()
         // Clear an elapsed deadline before a new, explicit request to listen.
         sleepTimer.check()
@@ -252,9 +446,21 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun load(item: LibraryItem, audio: RenderedArticle?, autoplay: Boolean) {
+        val start = resumePosition(item, audio)
+        val media = adopt(item, audio)
+        player.setMediaItem(media, start)
+        player.prepare()
+        player.playWhenReady = autoplay
+    }
+
+    private fun resumePosition(item: LibraryItem, audio: RenderedArticle?): Long =
+        if (item.completed) 0 else if (audio != null) resumeAt(audio.chunks, store.bookmark(item.id), item.contentVersion)
+        else if (item.episodeId != null) localPodcastPositions[item.id] ?: item.remotePositionMs else store.position(item.id)
+
+    private fun adopt(item: LibraryItem, audio: RenderedArticle?): MediaItem {
         persist()
         player.stop()
-        rendered?.file?.delete()
+        if (rendered !== audio) rendered?.file?.delete()
         rendered = audio
         current = item
         playbackRevision = library.state.value.revision
@@ -262,13 +468,7 @@ class PlaybackService : MediaSessionService() {
         store.lastItem = item.id
         store.saveContinuation(library.state.value.owner, item.id)
         val uri = audio?.file?.toURI()?.toString() ?: item.audioUrl ?: "asset:///welcome.wav"
-        val media = MediaItem.Builder().setMediaId(item.id).setUri(uri).setMediaMetadata(
-            MediaMetadata.Builder().setTitle(item.title).setArtist(item.source).setIsPlayable(true).build(),
-        ).build()
-        val start = if (audio != null) resumeAt(audio.chunks, store.bookmark(item.id), item.contentVersion) else if (item.episodeId != null) localPodcastPositions[item.id] ?: item.remotePositionMs else store.position(item.id)
-        player.setMediaItem(media, start)
-        player.prepare()
-        player.playWhenReady = autoplay
+        return MediaLibraryCatalog.media(item).buildUpon().setUri(uri).build()
     }
 
     private fun persist(completed: Boolean = false) {
@@ -316,6 +516,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun dismissPlayer() {
+        cancelAssistant()
         invalidateVoice()
         // Keep each item's bookmark, but forget what to restore into the mini player.
         persist(completed = player.playbackState == Player.STATE_ENDED)
@@ -352,6 +553,7 @@ class PlaybackService : MediaSessionService() {
     private fun voiceCommand(action: String, args: Bundle): SessionResult {
         val token = args.getString("token") ?: return SessionResult(SessionError.ERROR_BAD_VALUE)
         if (action == BEGIN_VOICE) {
+            cancelAssistant()
             if (!token.matches(Regex("[a-zA-Z0-9-]{1,64}")) || args.getInt("revision", -1) != library.state.value.revision)
                 return SessionResult(SessionError.ERROR_BAD_VALUE)
             sleepTimer.check()
@@ -459,6 +661,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun expireSleepTimer() {
+        cancelAssistant()
         PlaybackStatus.mutableControlVersion.value++
         invalidateVoice()
         val wasPlaying = player.isPlaying
@@ -470,10 +673,18 @@ class PlaybackService : MediaSessionService() {
         if (wasPlaying) feedback.finished()
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
-        if (controllerInfo.uid == applicationInfo.uid || controllerInfo.isTrusted) session else null
+    private fun trusted(controller: MediaSession.ControllerInfo) = controller.uid == applicationInfo.uid || controller.isTrusted
+    // Legacy browser binding supplies an anonymous placeholder here. The real
+    // caller is checked in onConnect before any library or player access.
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? {
+        val legacyBinding = controllerInfo.uid < 0 &&
+            controllerInfo.controllerVersion == MediaSession.ControllerInfo.LEGACY_CONTROLLER_VERSION &&
+            controllerInfo.packageName == MediaSession.ControllerInfo.LEGACY_CONTROLLER_PACKAGE_NAME
+        return if (trusted(controllerInfo) || legacyBinding) session else null
+    }
 
     override fun onDestroy() {
+        cancelAssistant()
         unregisterReceiver(noisyReceiver)
         invalidateVoice()
         persist(completed = player.playbackState == Player.STATE_ENDED)
