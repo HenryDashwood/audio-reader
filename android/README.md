@@ -416,7 +416,27 @@ after ten minutes and preserves later changes. Sleep durations round up to whole
 minutes; podcast and article speed preferences stay separate. Rendered article
 positions remain local text bookmarks.
 
-Structured filing/undo, free-form requests, subscriptions, and destination actions
+Structured filing marks an explicit or current item played/read, dismissed, or
+restored through the existing account action API. Library Undo reverses the last
+reversible filing or subscription action; speed Undo remains a separate local
+action. These typed requests do not use AI or require AI consent. The shared
+account coordinator rejects overlapping changes, retains original request IDs
+after uncertain failures, and keeps confirmed receipts until local reconciliation
+finishes. Retrying a current-item request retains its original target even if
+playback has changed. Pending requests and receipts clear on account changes.
+After checking a stopped or unconfirmed request, a caller can explicitly request
+a new change; normal retries never silently repeat a potentially completed action.
+The player drains older podcast progress before a server mutation, applies filing
+and restored text bookmarks through the same voice playback coordination, and
+leaves uncertain results paused. Independent controls and caller cancellation
+cancel the original request without resuming old audio. Network cancellation
+closes the connection; no account credentials follow redirects.
+An uncertain podcast clock also stays off the server when the user switches to
+another item, until the corresponding result or a new item state is confirmed.
+Retry context and these progress guards are in memory; durable recovery across
+process death remains part of the offline/progress work in checklist item 11.
+
+Free-form requests, subscriptions, and destination actions
 remain part of checklist item 8. Google describes AppFunctions/Gemini integration as an
 experimental private preview; launcher/tile availability does not establish
 Gemini support or phone acceptance.

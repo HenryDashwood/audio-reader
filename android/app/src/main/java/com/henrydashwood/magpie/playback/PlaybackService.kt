@@ -104,7 +104,11 @@ class PlaybackService : MediaLibraryService() {
     private val filedArticleBookmarks = mutableMapOf<String, ArticleBookmark>()
     private val reportLock = Mutex()
     private var sleepJob: Job? = null
-    private data class VoiceHold(val token: String, val revision: Int, val item: LibraryItem?, var resume: Boolean)
+    private data class VoiceHold(val token: String, val revision: Int, val item: LibraryItem?, var resume: Boolean,
+        val requests: MutableSet<String> = mutableSetOf())
+    // A lost receipt may already have filed the item on the server. Keep its old
+    // clock off the wire even after independent controls invalidate the voice hold.
+    private val uncertainProgress = mutableMapOf<String, MutableSet<String>>()
     private var voiceHold: VoiceHold? = null
     private var voiceController: MediaSession.ControllerInfo? = null
     private val noisyReceiver = object : BroadcastReceiver() {
@@ -282,7 +286,7 @@ class PlaybackService : MediaLibraryService() {
             var observed = library.state.value.revision
             var previousFolders = emptySet<String>()
             library.state.collect { state ->
-                if (state.revision != observed) { observed = state.revision; automationSpeedUndo = null; dismissPlayer(); localPodcastPositions.clear(); filedArticleBookmarks.clear() }
+                if (state.revision != observed) { observed = state.revision; automationSpeedUndo = null; uncertainProgress.clear(); dismissPlayer(); localPodcastPositions.clear(); filedArticleBookmarks.clear() }
                 session.notifyChildrenChanged(MediaLibraryCatalog.ROOT, 3, null)
                 val folders = catalog.containerIds(state)
                 // Like Media3's default subscription, unknown fresh counts prompt a reload.
@@ -500,7 +504,7 @@ class PlaybackService : MediaLibraryService() {
         else rendered?.let { audio ->
             bookmarkAt(audio.chunks, if (completed) 0 else player.currentPosition, item.contentVersion)?.let { store.saveBookmark(item.id, it) }
         }
-        if (voiceHold == null && item.episodeId != null && item.kind == ContentKind.Podcast && playbackRevision == library.state.value.revision &&
+        if (voiceHold == null && item.id !in uncertainProgress && item.episodeId != null && item.kind == ContentKind.Podcast && playbackRevision == library.state.value.revision &&
             (completed || !player.isPlaying || SystemClock.elapsedRealtime() - lastReportedAt >= 30_000)) {
             lastReportedAt = SystemClock.elapsedRealtime()
             val version = playbackRevision
@@ -597,7 +601,21 @@ class PlaybackService : MediaLibraryService() {
         }
         val result = Bundle()
         when (args.getString("action")) {
-            "drain" -> Unit
+            "drain" -> {
+                val request = args.getString("request_id") ?: hold.token
+                if (!request.matches(Regex("[a-zA-Z0-9-]{1,64}"))) return SessionResult(SessionError.ERROR_BAD_VALUE)
+                hold.requests += request
+                listOfNotNull(current, hold.item).filter { it.kind == ContentKind.Podcast }.forEach {
+                    uncertainProgress.getOrPut(it.id) { mutableSetOf() }.add(request)
+                }
+            }
+            "confirm" -> {
+                val request = args.getString("request_id")
+                if (request == null || request !in hold.requests) return SessionResult(SessionError.ERROR_BAD_VALUE)
+                uncertainProgress.values.forEach { it.remove(request) }
+                uncertainProgress.entries.removeAll { it.value.isEmpty() }
+                hold.requests.remove(request)
+            }
             "pause" -> { hold.resume = false; player.pause() }
             "resume", "play" -> {
                 val id = args.getString("id") ?: hold.item?.id ?: current?.id
@@ -624,6 +642,7 @@ class PlaybackService : MediaLibraryService() {
             "cancel_sleep" -> cancelSleepTimer()
             "restore" -> {
                 val item = library.state.value.items.find { it.id == args.getString("id") }
+                item?.let { uncertainProgress.remove(it.id) }
                 if (item?.kind == ContentKind.Podcast) {
                     val position = args.getLong("position_ms").coerceAtLeast(0)
                     localPodcastPositions[item.id] = position; store.savePosition(item.id, position)
@@ -635,6 +654,7 @@ class PlaybackService : MediaLibraryService() {
             }
             "file" -> {
                 val id = args.getString("id")
+                uncertainProgress.remove(id)
                 val item = library.state.value.items.find { it.id == id }
                 if (item?.kind == ContentKind.Article) {
                     // Keep the bookmark for Undo even when a receipt is replayed after cancellation.

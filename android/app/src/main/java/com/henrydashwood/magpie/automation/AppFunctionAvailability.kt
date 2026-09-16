@@ -53,5 +53,7 @@ object AppFunctionAvailability {
         MagpieAppFunctions.FUNCTION_ID_PLAY_LISTENING_ITEM,
         MagpieAppFunctions.FUNCTION_ID_CONTINUE_LISTENING,
         MagpieAppFunctions.FUNCTION_ID_PLAY_LATEST_LISTENING_ITEM,
+        MagpieAppFunctions.FUNCTION_ID_FILE_LISTENING_ITEM,
+        MagpieAppFunctions.FUNCTION_ID_UNDO_LAST_LIBRARY_ACTION,
     )
 }

@@ -219,7 +219,12 @@ class VoiceConversationTest {
         play(); output.gate = CompletableDeferred()
         api.response = VoiceResponse(VoiceAction.Played, "Marked as played.", api.podcast.copy(completed = true, positionSeconds = 0.0))
         ask("Mark this episode as played")
-        compose.waitUntil(5_000) { model.voice.state.value.phase == VoicePhase.Speaking && model.player.value.item == null }
+        try {
+            compose.waitUntil(5_000) { model.voice.state.value.phase == VoicePhase.Speaking && model.player.value.item == null }
+        } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+            throw AssertionError("Filing confirmation: voice=${model.voice.state.value}, player=${model.player.value}, " +
+                "requests=${api.requests.size}, filed=${api.filed}, spoken=${output.said}", failure)
+        }
         compose.onNodeWithText("Close").performClick()
         assertFalse(model.player.value.playing); assertTrue(api.writesAfterFiling.isEmpty())
         output.gate = null; api.response = VoiceResponse(VoiceAction.Restore, "Restored your episode.", api.podcast)

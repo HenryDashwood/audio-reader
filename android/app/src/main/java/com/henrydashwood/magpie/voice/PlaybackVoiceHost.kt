@@ -12,6 +12,7 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
     private data class UndoSpeed(val revision: Int, val kind: ContentKind, val before: Float, val applied: Float)
     private var undo: UndoSpeed? = null
     private var interruptedKind: ContentKind? = null
+    private var requestId: String? = null
     private fun playbackKind() = playing()?.kind ?: interruptedKind ?: ContentKind.Podcast
     override fun account() = library.state.value.let { VoiceAccount(it.owner, it.revision, it.live, playing()?.episodeId,
         java.util.Locale.getDefault().country.takeIf { country -> country.matches(Regex("[A-Za-z]{2}")) }) }
@@ -27,6 +28,10 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
     private suspend fun control(token: String, action: String, fill: Bundle.() -> Unit = {}): Bundle {
         if (!valid(token, library.state.value.revision)) throw CancellationException("Playback changed")
         return send(PlaybackService.VOICE_CONTROL, Bundle().apply { putString("token", token); putString("action", action); fill() })
+    }
+    suspend fun drain(token: String, requestId: String) {
+        this.requestId = requestId
+        control(token, "drain") { putString("request_id", requestId) }
     }
     private suspend fun speed(token: String, rate: Float, kind: ContentKind = playbackKind()): String {
         val result = control(token, "speed") { putFloat("rate", rate); putString("kind", kind.name) }
@@ -63,7 +68,7 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
         val token = PlaybackStatus.voiceToken.value ?: throw CancellationException("Playback changed")
         return object : VoiceOperation {
             override suspend fun response(onDelta: (String) -> Unit): VoiceResponse {
-                control(token, "drain")
+                drain(token, request.requestId)
                 return operation.response(onDelta)
             }
             override suspend fun cancel() = operation.cancel()
@@ -89,6 +94,7 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
             }
         }
         if (refresh) library.refresh()
+        requestId?.let { id -> control(token, "confirm") { putString("request_id", id) }; requestId = null }
     }
     override suspend fun apply(response: VoiceResponse, token: String, revision: Int): Boolean {
         var toPlay: RemoteEpisode? = null

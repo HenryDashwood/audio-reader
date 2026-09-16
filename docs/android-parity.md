@@ -43,8 +43,8 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
 - [ ] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
   Launcher/pinned actions, Quick Settings, account-scoped Continue listening,
   trusted Ask microphone launches, media-client library browsing/search, structured
-  lookup/status, and playback controls are implemented. Filing/undo, free-form
-  requests, subscriptions, and destination actions remain; the newsletter action also depends on item 9.
+  lookup/status, playback controls, and structured filing/Undo are implemented.
+  Free-form requests, subscriptions, and destination actions remain; the newsletter action also depends on item 9.
 - [ ] **9. Newsletters.** Address presentation/sharing, sender approval/blocking, and signup.
 - [x] **10. AI consent controls.** The discovery flow discloses AI data sharing
   before granting permission. Settings reads, reviews, grants, and withdraws the
@@ -445,7 +445,49 @@ handoff remain separate acceptance checks; the emulator did not trigger that
 denial. Physical assistant/Gemini, phone audio, Bluetooth, and TalkBack acceptance
 are not established by these tests.
 
-Item 8 remains unchecked until structured filing/undo, free-form requests,
+The sixth milestone adds structured played/read, dismissed, and restored actions,
+plus library Undo, using the existing authenticated `/actions` contract. Explicit
+IDs are validated before interruption; an omitted ID selects the loaded item.
+Uncertain current-item retries retain that original target even if playback moves
+on. A shared account coordinator rejects concurrent mutations and retains both
+request IDs and confirmed receipts until reconciliation completes. Session changes
+clear this context and discard late replies. These typed actions do not use AI.
+An explicit new-change option allows a fresh attempt after reviewing a stopped or
+unconfirmed request; default retries retain their original identity and target.
+
+Playback coordination reuses the voice hold, progress-write drain, filing, and
+bookmark restoration paths. Older progress finishes before the server change;
+confirmed filing cannot be overwritten by the previous player clock. Uncertain
+results leave audio paused. Caller cancellation, account changes, or independent
+media controls cancel the original account request. The cancellable HTTP transport
+also closes the socket, bounds JSON receipts, and refuses credential redirects.
+Library Undo and local speed Undo are separate structured actions with explicit
+descriptions; free-form Undo context remains part of the next adapter milestone.
+
+A controlled regression against the previous service reproduced a lost filing
+reply followed by switching playback: the old podcast clock cleared the server's
+completed state. The service now guards uncertain progress by original request
+ID, including after the playback hold is invalidated. Confirming another request
+does not release an older uncertainty. Filing/restoration receipts adopt the
+confirmed item state, and request confirmation releases the matching guard.
+These guards and retry receipts are in-memory; durable process-death recovery
+remains part of item 11.
+
+Verification for this milestone: `make android-check` passed all 143 JVM tests,
+built both debug APKs, and reported no compiler warnings or lint errors; eight
+existing lint warnings and one hint remain. All 36 structured-action tests passed
+on API 36.1. The regression for an uncertain filing followed by switching playback
+failed against the previous service, then passed with the progress guard.
+The shared voice group passed 15 of 16 cases; its confirmation-state timeout
+passed on a focused rerun with the same five-second limit. Failure-state
+diagnostics are retained. All 17 media-library tests and seven reader tests passed.
+The initial full 179-case run passed 177 cases, exposing manual-scroll inertia in
+a reader test and service teardown timing in a media test. Their final group
+reruns pass after using a stable manual drag and awaiting player dismissal before
+releasing test controllers. All ten HTTP voice/action transport cases passed in
+the full run. No backend or Swift contract changed.
+
+Item 8 remains unchecked until free-form requests,
 subscription, and destination actions are implemented and verified. Future assistant adapters
 must preserve the trusted microphone launch boundary and Android permission step.
 Newsletter shortcut support also depends on item 9. Platform-specific release

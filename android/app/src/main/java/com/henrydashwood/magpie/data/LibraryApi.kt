@@ -41,7 +41,8 @@ interface LibraryApi {
 
 /** Uses the existing Swift/backend wire contract. Authorization never follows redirects. */
 class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (String) -> Unit = {}) : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi,
-    com.henrydashwood.magpie.voice.VoiceApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized) {
+    com.henrydashwood.magpie.voice.VoiceApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized),
+    LibraryActionApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized) {
     override suspend fun userId(token: String) = obj(token, "me").getString("id")
     override suspend fun feeds(token: String) = array(token, "feeds").objects().map(::decodeFeed)
     override suspend fun latest(token: String) = list(token, "episodes?limit=30")

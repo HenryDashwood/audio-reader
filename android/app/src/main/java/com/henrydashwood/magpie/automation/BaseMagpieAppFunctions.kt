@@ -55,6 +55,14 @@ data class ListeningStart(
     /** Optional one-use action for opening Magpie to finish starting the selected item. */ val openMagpie: PendingIntent?,
 )
 
+/** Confirmed library result. An unavailable Undo returns changed=false and an explanation. */
+@AppFunctionSerializable(isDescribedByKDoc = true)
+data class LibraryChange(
+    val changed: Boolean,
+    val message: String,
+    val item: ListeningItem?,
+)
+
 @RequiresApi(36)
 @AppFunctionServiceEntryPoint(serviceName = "MagpieAppFunctions", appFunctionXmlFileName = "magpie_app_functions")
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -205,6 +213,98 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
      */
     @AppFunction(isEnabled = false, isDescribedByKDoc = true)
     suspend fun playLatestListeningItem(showId: String? = null): ListeningStart = start("latest", Bundle().apply { putString("show_id", showId) })
+
+    /**
+     * Marks an item played/read, dismisses it from Latest, or marks it unplayed/unread.
+     * Updates the signed-in account on every device without using AI. Repeat the same request after a connection failure to recover its result.
+     * @param filing One of played, dismissed, or restored. Restored clears both played and dismissed state.
+     * @param itemId Optional unchanged account-scoped ID from findItems; omitted uses the currently loaded item.
+     * @param startNewChange Defaults to false, recovering an uncertain previous result. Set true only when the user explicitly requests a new change after checking a stopped or unconfirmed request.
+     */
+    @AppFunction(isEnabled = false, isDescribedByKDoc = true)
+    suspend fun fileListeningItem(filing: String, itemId: String? = null, startNewChange: Boolean? = null): LibraryChange = action(timeoutMs = 90_000) {
+        val action = when (filing) {
+            "played" -> "mark_played"
+            "dismissed" -> "dismiss"
+            "restored" -> "restore"
+            else -> throw AppFunctionInvalidArgumentException("Choose played, dismissed, or restored.")
+        }
+        changeLibrary(action, itemId, startNewChange == true)
+    }
+
+    /**
+     * Undoes the account's most recent reversible library change, including filing or a voice-command subscription change.
+     * Does not undo a local playback-speed change; use undoListeningSpeed for that.
+     * Repeat after a connection failure to recover the same Undo result. Only announce a change when changed is true.
+     * @param startNewChange Defaults to false. Set true only when the user explicitly requests a new Undo after checking a stopped or unconfirmed request; never automatically repeat a potentially completed Undo.
+     */
+    @AppFunction(isEnabled = false, isDescribedByKDoc = true)
+    suspend fun undoLastLibraryAction(startNewChange: Boolean? = null): LibraryChange = action(timeoutMs = 90_000) { changeLibrary("undo", null, startNewChange == true) }
+
+    private suspend fun changeLibrary(action: String, suppliedId: String?, startNewChange: Boolean): LibraryChange {
+        val state = ready(waitForLibrary = false)
+        fun episodeId(id: String): Int {
+            val prefix = "${state.owner}:episode:"
+            require(id.startsWith(prefix)) { "That item belongs to another account. Find it again." }
+            return id.removePrefix(prefix).toIntOrNull()?.takeIf { it > 0 }
+                ?: throw AppFunctionInvalidArgumentException("Choose a valid library item.")
+        }
+        suppliedId?.let(::episodeId)
+        val media = connect()
+        val token = java.util.UUID.randomUUID().toString()
+        var acquired = false
+        var safeToResume = true
+        var operation: com.henrydashwood.magpie.voice.VoiceOperation? = null
+        suspend fun send(name: String, args: Bundle): Bundle {
+            checkAccount(state)
+            val result = awaitResult(media.sendCustomCommand(SessionCommand(name, Bundle.EMPTY), args))
+            checkAccount(state)
+            if (result.resultCode != SessionResult.RESULT_SUCCESS) throw CancellationException("Listening changed")
+            return result.extras
+        }
+        val host = com.henrydashwood.magpie.voice.PlaybackVoiceHost(library, PreviewStore(this),
+            { library.state.value.items.firstOrNull { it.id == media.currentMediaItem?.mediaId } }, {}, ::send)
+        fun checkHold() {
+            checkAccount(state)
+            if (!host.valid(token, state.revision)) throw CancellationException("Listening changed")
+        }
+        try {
+            checkAccount(state)
+            val id = if (action == "undo") null else suppliedId ?: library.actions.pendingCurrentItem(action)?.takeUnless { startNewChange }?.let { "${state.owner}:episode:$it" }
+                ?: send(PlaybackService.AUTOMATION_CONTROL, Bundle().apply {
+                putString("action", "status"); putString("owner", state.owner); putInt("revision", state.revision)
+            }).getString("item_id") ?: throw AppFunctionInvalidArgumentException("Choose an item, or start listening first.")
+            val response = library.actions.run(action, id?.let(::episodeId), useCurrent = suppliedId == null && action != "undo", startNewChange = startNewChange, before = { requestId ->
+                host.begin(token, state.revision); acquired = true
+                host.drain(token, requestId)
+                checkHold()
+            }, send = { requestId ->
+                safeToResume = false
+                val request = library.libraryAction(action, id?.let(::episodeId), requestId, state.revision)
+                operation = request
+                coroutineScope {
+                    val result = async { request.response() }
+                    val interrupted = launch {
+                        com.henrydashwood.magpie.playback.PlaybackStatus.voiceToken.first { it != token }
+                        result.cancel(CancellationException("Listening changed"))
+                    }
+                    try { result.await().also { operation = null } } finally { interrupted.cancel() }
+                }
+            }, reconcile = { receipt ->
+                safeToResume = false
+                checkHold(); host.reconcile(receipt, token, state.revision); checkHold()
+                safeToResume = true
+            })
+            val item = response.episode?.let { row -> library.state.value.items.firstOrNull { it.episodeId == row.id } }?.let(::item)
+            return LibraryChange(response.action != com.henrydashwood.magpie.voice.VoiceAction.Unknown, response.spokenResponse, item)
+        } finally {
+            withContext(NonCancellable) {
+                withTimeoutOrNull(5_000) { operation?.let { runCatching { it.cancel() } } }
+                if (acquired) withTimeoutOrNull(5_000) { runCatching { host.end(token, safeToResume) } }
+            }
+            media.release()
+        }
+    }
 
     private fun requireDuration(value: Double, signed: Boolean = false) {
         if (!value.isFinite() || value !in (if (signed) -86_400.0 else 0.0)..86_400.0)

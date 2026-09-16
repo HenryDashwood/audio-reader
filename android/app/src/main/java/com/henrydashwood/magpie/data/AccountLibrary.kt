@@ -27,6 +27,22 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     private val writes = Mutex()
     private val mutable = MutableStateFlow(if (initiallySignedIn) LibraryState(live = true, loading = true) else preview())
     val state = mutable.asStateFlow()
+    val actions = LibraryActionExecution { state.value.takeIf { it.live && it.owner != null }?.let { "${it.revision}:${it.owner}" } }
+
+    fun libraryAction(action: String, episodeId: Int?, requestId: String, sessionRevision: Int): com.henrydashwood.magpie.voice.VoiceOperation {
+        val (current, version) = credentials()
+        check(sessionRevision)
+        val actions = checkNotNull(api as? LibraryActionApi) { "Library actions are unavailable." }
+        return object : com.henrydashwood.magpie.voice.VoiceOperation {
+            override suspend fun response(onDelta: (String) -> Unit): com.henrydashwood.magpie.voice.VoiceResponse {
+                check(version)
+                val response = actions.libraryAction(current, action, episodeId, requestId)
+                check(version)
+                return response
+            }
+            override suspend fun cancel() = actions.cancelLibraryAction(current, requestId)
+        }
+    }
 
     private fun preview() = SampleLibrary().items.let { items -> LibraryState(revision = revision, items = items,
         latestIds = items.map { it.id }, feeds = items.groupBy { it.source }.map { (source, stories) ->
@@ -37,6 +53,7 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         if (value == token) return
         token = value
         revision++
+        actions.invalidate()
         searchVersion++
         mutable.value = if (value == null) preview() else LibraryState(live = true, revision = revision, loading = true,
             owner = identityStore?.owner(digest(server + ":" + value)))

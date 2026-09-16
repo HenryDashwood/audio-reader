@@ -222,8 +222,20 @@ class ArticleReaderTest {
             assertEquals(expected, view.readingMarker.rect!!.top.toDouble(), 30.0)
         }
         capture("article-marker-scrolled")
-        compose.onNodeWithTag("article-webview").performTouchInput { swipeDown() }
+        // A small, slow drag disables Follow without a fling that could keep
+        // moving during the later assertion about automatic scrolling.
+        compose.onNodeWithTag("article-webview").performTouchInput {
+            swipe(center, center + androidx.compose.ui.geometry.Offset(0f, 80f), durationMillis = 1_000)
+        }
         compose.onNode(hasContentDescription("Follow reading position") and hasAnyAncestor(hasTestTag("mini-player"))).assertIsDisplayed()
+        var lastY = compose.runOnUiThread { view.scrollY }
+        var stableSince = android.os.SystemClock.elapsedRealtime()
+        compose.waitUntil(5_000) {
+            val y = compose.runOnUiThread { view.scrollY }
+            if (y != lastY) { lastY = y; stableSince = android.os.SystemClock.elapsedRealtime() }
+            android.os.SystemClock.elapsedRealtime() - stableSince >= 300
+        }
+        assertTrue("The manual drag must leave room to observe automatic scrolling", lastY > 0)
         compose.runOnIdle { position.value = position.value!!.copy(startUtf16 = 0, endUtf16 = 2) }
         compose.waitUntil(5_000) { compose.runOnUiThread { view.readingMarker.rect!!.top < 600 } }
         val stoppedAt = compose.runOnUiThread { view.scrollY }

@@ -101,4 +101,60 @@ class VoiceWireTest {
         assertEquals("DELETE", connection.requestMethod); assertTrue(connection.disconnected)
         assertTrue(runCatching { api.cancel("token", "../me") }.isFailure)
     }
+    @Test fun typedFilingUsesTheExistingActionsContractAndDecodesItsReceipt() = runBlocking {
+        lateinit var connection: Connection
+        val payload = """{
+          "action":"mark_played", "spoken_response":"Marked as played.",
+          "episode":{"id":2,"title":"Example","completed":true,"position_seconds":0}
+        }"""
+        val api = HttpVoiceApi("https://voice.invalid", connect = { url -> Connection(url, payload.byteInputStream()).also { connection = it } })
+        val result = api.libraryAction("original-account", "mark_played", 2, "filing-1")
+        assertEquals("https://voice.invalid/actions", connection.url.toString()); assertEquals("POST", connection.requestMethod)
+        assertEquals("application/json", connection.getRequestProperty("Accept"))
+        assertEquals("Bearer original-account", connection.getRequestProperty("Authorization")); assertFalse(connection.instanceFollowRedirects)
+        val body = JSONObject(connection.body.toString("UTF-8"))
+        assertEquals(setOf("action", "episode_id", "request_id"), body.keys().asSequence().toSet())
+        assertEquals("mark_played", body.getString("action")); assertEquals(2, body.getInt("episode_id")); assertEquals("filing-1", body.getString("request_id"))
+        assertEquals(VoiceAction.Played, result.action); assertTrue(result.episode!!.completed); assertTrue(connection.disconnected)
+    }
+    @Test fun typedActionsRejectInvalidRequestsRedirectsAndUnauthorizedResponses() = runBlocking {
+        var requests = 0
+        val rejected = mutableListOf<String>()
+        val api = HttpVoiceApi("https://voice.invalid", rejected::add, connect = { url ->
+            requests++; Connection(url, "".byteInputStream(), 401, "{\"detail\":{\"spoken_response\":\"Sign in again\"}}")
+        })
+        for ((action, id, requestId) in listOf(Triple("invalid", 1, "id"), Triple("mark_played", null, "id"), Triple("undo", null, "../id")))
+            assertTrue(runCatching { api.libraryAction("one", action, id, requestId) }.isFailure)
+        assertEquals(0, requests)
+        assertEquals("Sign in again", runCatching { api.libraryAction("one", "undo", null, "undo-1") }.exceptionOrNull()!!.message)
+        assertEquals(listOf("one"), rejected)
+        val redirect = HttpVoiceApi("https://voice.invalid", connect = { url -> requests++; Connection(url, "".byteInputStream(), 302) })
+        assertTrue(runCatching { redirect.libraryAction("one", "undo", null, "undo-2") }.exceptionOrNull() is VoiceFailure)
+        assertEquals(2, requests)
+    }
+    @Test fun cancellingTypedFilingDisconnectsItsReaderAndUsesTheOriginalRequestForCancellation() = runBlocking {
+        val reading = CountDownLatch(1); val closed = CountDownLatch(1)
+        val input = object : InputStream() {
+            override fun read(): Int { reading.countDown(); closed.await(10, TimeUnit.SECONDS); return -1 }
+            override fun close() { closed.countDown() }
+        }
+        val connections = mutableListOf<Connection>()
+        val api = HttpVoiceApi("https://voice.invalid", connect = { url ->
+            Connection(url, if (url.path == "/actions") input else "".byteInputStream()).also { connections += it }
+        })
+        var completed = false
+        val pending = launch(Dispatchers.Default) { api.libraryAction("original", "dismiss", 2, "filing-2"); completed = true }
+        assertTrue(reading.await(5, TimeUnit.SECONDS)); withTimeout(5_000) { pending.cancelAndJoin() }
+        assertTrue(connections.first().disconnected); assertFalse(completed)
+        api.cancelLibraryAction("original", "filing-2")
+        val cancel = connections.last()
+        assertEquals("DELETE", cancel.requestMethod); assertEquals("/command/filing-2", cancel.url.path)
+        assertEquals("Bearer original", cancel.getRequestProperty("Authorization"))
+    }
+    @Test fun malformedAndOversizedTypedReceiptsNeverConfirmAMutation() = runBlocking {
+        for (body in listOf("{", "{\"action\":\"mark_played\",\"spoken_response\":\"Done\"}", " ".repeat(VoiceLines.MAX_LINE + 1))) {
+            val api = HttpVoiceApi("https://voice.invalid", connect = { url -> Connection(url, body.byteInputStream()) })
+            assertTrue(runCatching { api.libraryAction("one", "mark_played", 2, "filing-3") }.exceptionOrNull() is VoiceFailure)
+        }
+    }
 }

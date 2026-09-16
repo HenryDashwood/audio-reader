@@ -97,7 +97,14 @@ class MediaLibraryTest {
     }
     @After fun finish() {
         api.searchGate?.complete(Unit)
-        main { platform?.disconnect(); observer.pause(); browser.release(); observer.release() }
+        // Wait for the service to close before disconnecting its controllers. A
+        // queued Pause can otherwise be dropped and leave a foreground service
+        // restarting with the previous test's repository.
+        val dismissed = await(main { observer.sendCustomCommand(
+            androidx.media3.session.SessionCommand(PlaybackService.DISMISS_PLAYER, android.os.Bundle.EMPTY), android.os.Bundle.EMPTY) })
+        assertEquals(0, dismissed.resultCode)
+        waitFor { observer.currentMediaItem == null }
+        main { platform?.disconnect(); browser.release(); observer.release() }
         scenario?.close(); stopService(); app.libraryOverride = null
     }
     private fun legacy(): PlatformController {

@@ -24,7 +24,7 @@ object VoiceWire {
     } catch (error: VoiceFailure) { throw error }
     catch (error: Exception) { throw VoiceFailure(VoiceExecution.UNCONFIRMED, error) }
 
-    private fun response(json: JSONObject, depth: Int = 0): VoiceResponse {
+    fun response(json: JSONObject, depth: Int = 0): VoiceResponse {
         require(depth < 4)
         val children = json.optJSONArray("actions")
         require((children?.length() ?: 0) <= 32)
