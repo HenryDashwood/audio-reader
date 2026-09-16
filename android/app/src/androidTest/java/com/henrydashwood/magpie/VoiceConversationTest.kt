@@ -334,7 +334,8 @@ class VoiceConversationTest {
         ask("Play the second episode then mark it as played"); idle()
         compose.waitUntil(5_000) { model.player.value.playing }
         assertEquals(1, model.player.value.item?.episodeId)
-        assertTrue(library.state.value.items.first { it.episodeId == 2 }.completed)
+        assertTrue("Compound filing state: ${model.voice.state.value}; requests=${api.requests.size}; confirmed=${api.secondFiled}; spoken=${output.said.size}",
+            library.state.value.items.first { it.episodeId == 2 }.completed)
         assertFalse(library.state.value.latestIds.any { id -> library.state.value.items.any { it.id == id && it.episodeId == 2 } })
         assertEquals(1, output.said.size)
     }

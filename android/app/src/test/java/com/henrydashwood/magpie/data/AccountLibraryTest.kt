@@ -324,4 +324,22 @@ class AccountLibraryTest {
         assertFalse(library.state.value.items.any { it.episodeId == 99 })
     }
 
+    @Test fun anOlderRefreshCannotOverwriteAConfirmedVoiceFiling() = runTest {
+        val api = Api()
+        val library = AccountLibrary(api, "https://voice.invalid")
+        library.changeSession("alice")
+        val filed = api.latestRows.first().copy(completed = true)
+        api.gate = CompletableDeferred()
+        val oldRefresh = launch { library.refresh() }
+        runCurrent() // Latest has returned the old row; the feeds request is still pending.
+        api.latestRows = emptyList()
+        val adoption = launch { library.acceptVoiceEpisode(filed, library.state.value.revision) }
+        runCurrent()
+        api.gate!!.complete(Unit)
+        oldRefresh.join(); adoption.join()
+        library.refresh()
+        assertTrue(library.state.value.items.first { it.episodeId == filed.id }.completed)
+        assertTrue(library.state.value.latestIds.isEmpty())
+    }
+
 }

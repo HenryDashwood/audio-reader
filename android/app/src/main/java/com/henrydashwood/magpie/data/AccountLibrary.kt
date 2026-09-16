@@ -314,12 +314,14 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
             }
         }
     }
-    fun acceptVoiceEpisode(row: RemoteEpisode, sessionRevision: Int): LibraryItem {
+    // Finish any older refresh before adopting a confirmed receipt. Otherwise an omitted
+    // filed item can retain an older unplayed snapshot even after the follow-up refresh.
+    suspend fun acceptVoiceEpisode(row: RemoteEpisode, sessionRevision: Int): LibraryItem = writes.withLock {
         check(sessionRevision)
         require(state.value.live && row.id > 0)
         val item = row.item(state.value)
         mutable.value = state.value.copy(items = merge(state.value.items, listOf(item)))
-        return state.value.items.first { it.id == item.id }
+        state.value.items.first { it.id == item.id }
     }
     private fun requireItem(item: LibraryItem) { require(state.value.items.any { it.id == item.id }) { "This item belongs to a different library." } }
     private suspend fun mutate(work: suspend (String) -> (() -> Unit)) {
