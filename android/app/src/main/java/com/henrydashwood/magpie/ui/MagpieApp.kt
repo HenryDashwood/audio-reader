@@ -142,7 +142,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
                         val isPlaying = playback.item?.id == selectedItem.id && playback.playing
                         ReaderToolbarActions(selectedItem, isPlaying, showingSearch,
                             { if (isPlaying) model.pause() else model.play(selectedItem) },
-                            { showingSearch = !showingSearch; query = "" })
+                            { showingSearch = !showingSearch; query = "" }, onAsk = { model.voice.open(selectedItem.episodeId) })
                     } else if (selectedSource != null || destination == Destination.Following || destination == Destination.Saved) {
                         IconButton(onClick = { showingSearch = !showingSearch; query = "" }) {
                             Icon(if (showingSearch) Icons.Rounded.Close else Icons.Rounded.Search,
@@ -152,7 +152,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
                     if (selectedItem == null && selectedSource == null && destination == Destination.Latest && latestItems.isNotEmpty()) {
                         ClearLatestButton(model)
                     }
-                    if (selectedItem == null) AskMagpieButton()
+                    if (selectedItem == null) AskMagpieButton { model.voice.open(null) }
                 },
             )
         },
@@ -206,6 +206,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0) {
     }
     SourceManagementDialog(model)
     ReplaceSavedTextDialog(model)
+    AskConversation(model)
     if (showingPlayer) ModalBottomSheet(onDismissRequest = { showingPlayer = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         FullPlayer(playback, preparation, model::toggle, model::skip, model::seek, model::speed,
             sleepTimer, model::startSleepTimer, model::cancelSleepTimer, close = { showingPlayer = false }) {

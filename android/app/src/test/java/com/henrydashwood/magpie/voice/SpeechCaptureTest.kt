@@ -94,4 +94,26 @@ class SpeechCaptureTest {
         assertEquals(1, second.closed); assertEquals(0, first.closed)
         active.cancelAndJoin(); assertEquals(1, first.closed)
     }
+
+    @Test fun earlyEngineSilenceDoesNotShortenTheFollowUpWindowOrReannounceReadiness() = runTest {
+        val window = SpeechInputWindow { testScheduler.currentTime }
+        val engines = mutableListOf<Engine>(); var ready = 0
+        val result = async { window.listen({ Engine().also(engines::add) }, 30_000, { ready++ }, {}) }
+        runCurrent(); engines.first().emit(RecognitionEvent.Ready); runCurrent()
+        advanceTimeBy(3_000); engines.first().emit(RecognitionEvent.Silence); runCurrent()
+        advanceTimeBy(250); runCurrent(); assertEquals(2, engines.size)
+        engines.last().emit(RecognitionEvent.Ready); runCurrent(); assertEquals(1, ready)
+        advanceTimeBy(20_000); runCurrent(); assertFalse(result.isCompleted)
+        engines.last().emit(RecognitionEvent.Final("A follow-up question")); runCurrent()
+        assertEquals("A follow-up question", result.await()); assertTrue(engines.all { it.closed == 1 })
+    }
+
+    @Test fun finishingAnEmptyCaptureDoesNotRestartTheMicrophone() = runTest {
+        val window = SpeechInputWindow { testScheduler.currentTime }; val engines = mutableListOf<Engine>()
+        val result = async { window.listen({ Engine().also(engines::add) }, 30_000, {}, {}) }
+        runCurrent(); engines.first().emit(RecognitionEvent.Ready); runCurrent()
+        window.finish(); runCurrent(); assertEquals(1, engines.first().stopped)
+        engines.first().emit(RecognitionEvent.Silence); runCurrent()
+        assertNull(result.await()); assertEquals(1, engines.size); assertEquals(1, engines.first().closed)
+    }
 }

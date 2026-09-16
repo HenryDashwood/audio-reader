@@ -5,7 +5,7 @@ import android.annotation.SuppressLint
 import androidx.core.content.edit
 import com.henrydashwood.magpie.playback.ArticleBookmark
 
-val playbackRates = listOf(0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+val playbackRates = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f)
 
 /** Local preview state only. This is deliberately not the backend's position_seconds contract. */
 class PreviewStore(context: Context) {
@@ -28,8 +28,13 @@ class PreviewStore(context: Context) {
         get() = preferences.getStringSet("finished", emptySet())!!.toSet()
         set(value) { preferences.edit { putStringSet("finished", value) } }
     // Fall back to the original shared speed so existing preview installs retain their preference.
-    fun speed(kind: ContentKind): Float = preferences.getFloat("speed:${kind.name}", preferences.getFloat("speed", 1f)).coerceIn(0.75f, 2f)
-    fun saveSpeed(kind: ContentKind, value: Float) { preferences.edit { putFloat("speed:${kind.name}", value.coerceIn(0.75f, 2f)) } }
+    fun speed(kind: ContentKind): Float = preferences.getFloat("speed:${kind.name}", preferences.getFloat("speed", 1f)).takeIf { it.isFinite() }?.coerceIn(0.5f, 3f) ?: 1f
+    fun saveSpeed(kind: ContentKind, value: Float) { require(value.isFinite()); preferences.edit { putFloat("speed:${kind.name}", value.coerceIn(0.5f, 3f)) } }
+    var conversation: com.henrydashwood.magpie.voice.ConversationPreferences
+        get() = com.henrydashwood.magpie.voice.ConversationPreferences(
+            preferences.getBoolean("conversation_keep_listening", true),
+            preferences.getInt("conversation_wait", 15).takeIf { it in com.henrydashwood.magpie.voice.ConversationPreferences.waitOptions } ?: 15)
+        set(value) { preferences.edit { putBoolean("conversation_keep_listening", value.keepListening); putInt("conversation_wait", value.followUpSeconds) } }
     var voiceId: String?
         get() = preferences.getString("voice", null)
         set(value) { preferences.edit { putString("voice", value) } }

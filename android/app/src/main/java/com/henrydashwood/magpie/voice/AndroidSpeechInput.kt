@@ -21,10 +21,10 @@ import java.util.Locale
 enum class RecognitionAvailability { Ready, DownloadNeeded, Downloading, Unavailable, Unknown }
 
 /** Always uses the on-device factory, including when an older engine cannot report its models. */
-class AndroidSpeechInput(private val context: Context, val locale: Locale = Locale.UK) {
-    private val capture = SpeechCapture()
+class AndroidSpeechInput(private val context: Context, val locale: Locale = Locale.UK) : VoiceInput {
+    private val capture = SpeechInputWindow()
 
-    suspend fun availability(): RecognitionAvailability = withContext(Dispatchers.Main.immediate) {
+    override suspend fun availability(): RecognitionAvailability = withContext(Dispatchers.Main.immediate) {
         if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) return@withContext RecognitionAvailability.Unavailable
         if (Build.VERSION.SDK_INT < 33) return@withContext RecognitionAvailability.Unknown
         val engine = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
@@ -52,7 +52,7 @@ class AndroidSpeechInput(private val context: Context, val locale: Locale = Loca
     }
 
     /** User-initiated only. Requesting a download is not evidence that a model is ready. */
-    suspend fun requestModelDownload() = withContext(Dispatchers.Main.immediate) {
+    override suspend fun requestModelDownload(): Unit = withContext(Dispatchers.Main.immediate) {
         if (Build.VERSION.SDK_INT < 33 || !SpeechRecognizer.isOnDeviceRecognitionAvailable(context))
             throw VoiceFailure("Install an offline speech recognition language in Android settings, then try again.")
         val engine = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
@@ -76,28 +76,31 @@ class AndroidSpeechInput(private val context: Context, val locale: Locale = Loca
             }
             withTimeoutOrNull(300_000) { result.await(); true }
                 ?: throw VoiceFailure("The recognition download is taking longer than expected. Check its status in Android speech settings.")
+            Unit
         } finally { engine.destroy() }
     }
 
-    suspend fun listen(firstWordsMs: Long = 8_000, onReady: () -> Unit = {}, onPartial: (String) -> Unit = {}): String? =
+    override suspend fun listen(firstWordsMs: Long, onReady: () -> Unit, onPartial: (String) -> Unit): String? =
         withContext(Dispatchers.Main.immediate) {
             if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
                 throw VoiceFailure("Allow microphone access to speak to Magpie.")
             if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context))
                 throw VoiceFailure("On-device speech recognition is unavailable. Install an offline recognition service to use the microphone.")
-            val engine = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-            capture.listen(object : RecognitionEngine {
+            capture.listen(create = {
+                val engine = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                object : RecognitionEngine {
                 override fun start(emit: (RecognitionEvent) -> Unit) {
                     engine.setRecognitionListener(Listener(emit))
                     engine.startListening(intent(locale))
                 }
                 override fun finish() { engine.stopListening() }
                 override fun close() { try { engine.cancel() } finally { engine.destroy() } }
+                }
             }, firstWordsMs, onReady, onPartial)
         }
 
     /** Call on the main thread. Cancellation of listen() immediately closes the native recognizer. */
-    fun finish() = capture.finish()
+    override fun finish() = capture.finish()
 
     internal class Listener(private val emit: (RecognitionEvent) -> Unit) : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) = emit(RecognitionEvent.Ready)

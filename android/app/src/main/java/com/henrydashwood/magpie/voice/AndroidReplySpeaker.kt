@@ -13,9 +13,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Short-lived, offline-only spoken replies. Long-form item playback remains in Media3. */
-class AndroidReplySpeaker(private val context: Context, private val selectedVoice: () -> String?) {
+class AndroidReplySpeaker(private val context: Context, private val selectedVoice: () -> String?) : VoiceOutput {
     private val speaker = SpokenReply { open() }
-    suspend fun speak(text: String) = withContext(Dispatchers.Main.immediate) { speaker.speak(text) }
+    override suspend fun speak(text: String) = withContext(Dispatchers.Main.immediate) { speaker.speak(text) }
 
     private suspend fun open(): ReplyEngine {
         val tts = SpeechVoices.open(context)

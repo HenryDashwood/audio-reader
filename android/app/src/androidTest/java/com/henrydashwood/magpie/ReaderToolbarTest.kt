@@ -45,14 +45,15 @@ class ReaderToolbarTest {
         }
     }
 
-    @Test fun sampleToolbarSharesTextAndExplainsUnavailableConversation() {
+    @Test fun sampleToolbarSharesTextAndOpensConversation() {
         val playing = mutableStateOf(false)
         val searching = mutableStateOf(false)
         var shared: Intent? = null
+        var asked = false
         compose.setContent {
             MagpieTheme { Row {
                 ReaderToolbarActions(article, playing.value, searching.value, { playing.value = !playing.value },
-                    { searching.value = !searching.value }, { shared = it })
+                    { searching.value = !searching.value }, { shared = it }, onAsk = { asked = true })
             } }
         }
         compose.onNodeWithContentDescription("Listen").performClick()
@@ -66,8 +67,7 @@ class ReaderToolbarTest {
         compose.onNodeWithContentDescription("Find in this page").performClick()
         compose.onNodeWithContentDescription("Close search").assertIsDisplayed()
         compose.onNodeWithContentDescription("Ask Magpie").performClick()
-        compose.onNodeWithText("No microphone audio is being recorded.", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Close").performClick()
+        compose.runOnIdle { assertTrue(asked) }
         compose.onNodeWithContentDescription("Ask Magpie").assertIsDisplayed()
     }
 

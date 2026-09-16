@@ -1,6 +1,7 @@
 package com.henrydashwood.magpie.voice
 
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 
 sealed interface RecognitionEvent {
@@ -89,5 +90,30 @@ class SpeechCapture(private val nowMillis: () -> Long = { System.nanoTime() / 1_
         val trimmed = text.trim()
         if (trimmed.length > 2_000) throw VoiceFailure("That was too long for one request. Please ask in a shorter sentence.")
         return trimmed
+    }
+}
+
+/** Some on-device engines end silence before the chosen follow-up window has elapsed. */
+class SpeechInputWindow(private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 }) {
+    private val capture = SpeechCapture(nowMillis)
+    private var finished = false
+    fun finish() { finished = true; capture.finish() }
+    suspend fun listen(create: () -> RecognitionEngine, firstWordsMs: Long,
+        onReady: () -> Unit, onPartial: (String) -> Unit): String? {
+        require(firstWordsMs in 1_000..30_000)
+        finished = false
+        var deadline: Long? = null
+        var heardWords = false
+        while (true) {
+            val remaining = deadline?.let { it - nowMillis() } ?: firstWordsMs
+            if (finished || remaining < 1_000) return null
+            val result = capture.listen(create(), remaining.coerceAtMost(30_000), onReady = {
+                if (deadline == null) { deadline = nowMillis() + firstWordsMs; onReady() }
+            }, onPartial = {
+                heardWords = heardWords || it.isNotBlank(); onPartial(it)
+            })
+            if (result != null || finished || heardWords || deadline == null) return result
+            delay(250) // Avoid hammering a recognizer that reports silence immediately.
+        }
     }
 }

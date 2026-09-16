@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 open class MagpieApplication : Application() {
+    open fun voiceInput(): com.henrydashwood.magpie.voice.VoiceInput = com.henrydashwood.magpie.voice.AndroidSpeechInput(this)
+    open fun voiceOutput(selected: () -> String?): com.henrydashwood.magpie.voice.VoiceOutput = com.henrydashwood.magpie.voice.AndroidReplySpeaker(this, selected)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     open val articleInbox: ArticleInboxStore by lazy { ArticleInboxStore(this) }
     open val deviceLinkInbox: LinkInbox by lazy { LinkInbox(this) }

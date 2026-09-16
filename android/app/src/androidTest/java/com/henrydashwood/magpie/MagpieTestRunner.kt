@@ -7,6 +7,10 @@ import com.henrydashwood.magpie.auth.*
 
 /** UI tests use an isolated signed-out session, never the owner's live account. */
 class MagpieTestApplication : MagpieApplication() {
+    var voiceInputOverride: com.henrydashwood.magpie.voice.VoiceInput? = null
+    var voiceOutputOverride: com.henrydashwood.magpie.voice.VoiceOutput? = null
+    override fun voiceInput() = voiceInputOverride ?: super.voiceInput()
+    override fun voiceOutput(selected: () -> String?) = voiceOutputOverride ?: super.voiceOutput(selected)
     override val articleInbox by lazy { com.henrydashwood.magpie.data.ArticleInboxStore(this, "magpie_test_account_captures") }
     override val deviceLinkInbox by lazy { com.henrydashwood.magpie.data.LinkInbox(this, "magpie_test_device_links") }
     var libraryOverride: com.henrydashwood.magpie.data.AccountLibrary? = null

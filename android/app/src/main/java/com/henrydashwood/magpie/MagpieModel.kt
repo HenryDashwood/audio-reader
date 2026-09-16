@@ -26,6 +26,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import com.henrydashwood.magpie.voice.*
 
 data class PlayerState(
     val item: LibraryItem? = null,
@@ -96,11 +101,37 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         })
     private var controller: MediaController? = null
     private val connection = MediaController.Builder(application, SessionToken(application, ComponentName(application, PlaybackService::class.java))).buildAsync()
+    val speechInput by lazy { (getApplication<Application>() as MagpieApplication).voiceInput() }
+    private val mutableConversationSettings = MutableStateFlow(store.conversation)
+    val conversationSettings = mutableConversationSettings.asStateFlow()
+    fun setConversationPreferences(value: ConversationPreferences) { store.conversation = value; mutableConversationSettings.value = value }
+    val voice by lazy {
+        VoiceSession(viewModelScope, PlaybackVoiceHost(repository, store, { player.value.item }, {
+            contentJob?.cancel(); voiceCatalog.stop(); voiceRefresh?.cancel()
+        }, ::voiceCommand), speechInput,
+            (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, { store.conversation })
+    }
+    private suspend fun voiceCommand(action: String, args: Bundle): Bundle {
+        val media = controller?.takeIf { it.isConnected } ?: throw VoiceFailure("The player is still connecting. Please try again.")
+        val result = withTimeout(if (args.getString("action") == "drain") 30_000 else 5_000) {
+            suspendCancellableCoroutine<androidx.media3.session.SessionResult> { continuation ->
+                val future = media.sendCustomCommand(SessionCommand(action, Bundle.EMPTY), args)
+                future.addListener({
+                    if (continuation.isActive) try { continuation.resume(future.get()) }
+                    catch (failure: Exception) { continuation.resumeWithException(failure) }
+                }, getApplication<Application>().mainExecutor)
+            }
+        }
+        if (result.resultCode < 0) throw VoiceFailure("Playback changed or is not ready for that request. Please try again.")
+        updatePlayer()
+        return result.extras
+    }
 
     init {
         viewModelScope.launch {
             var revision = -1
             repository.state.collect { snapshot ->
+                voice.activate()
                 if (revision != snapshot.revision) {
                     revision = snapshot.revision
                     discovery.reset()
@@ -136,6 +167,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
             } catch (_: Exception) { mutableNotice.value = "The player could not connect. Close and reopen Magpie to try again." }
         }, application.mainExecutor)
         viewModelScope.launch { while (isActive) { delay(500); updatePlayer() } }
+        viewModelScope.launch { PlaybackStatus.voiceToken.collect { voice.playbackChanged(it) } }
     }
 
     private fun updatePlayer() {
@@ -159,6 +191,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         if (libraryState.value.live && libraryState.value.owner != null) repository.search(feedId, query)
     }
     fun openItem(item: LibraryItem, play: Boolean = false) {
+        if (play) voice.close(resume = false)
         contentJob?.cancel()
         mutableItemError.value = null
         if (!libraryState.value.live || item.textLoaded) { if (play) playReady(item); return }
@@ -406,6 +439,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        voice.close(resume = false)
         closeVoiceSettings()
         MediaController.releaseFuture(connection)
     }

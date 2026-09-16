@@ -1,7 +1,12 @@
 package com.henrydashwood.magpie.playback
 
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioManager
+import androidx.core.content.ContextCompat
 import android.os.Bundle
 import android.os.SystemClock
 import androidx.media3.common.AudioAttributes
@@ -18,6 +23,7 @@ import androidx.media3.session.SessionResult
 import androidx.media3.session.SessionError
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
 import com.henrydashwood.magpie.MainActivity
 import com.henrydashwood.magpie.MagpieApplication
 import kotlinx.coroutines.sync.Mutex
@@ -43,6 +49,8 @@ data class Preparation(val itemId: String? = null, val message: String? = null, 
 
 /** Only status crosses into the UI; the service owns the player and rendering lifecycle. */
 object PlaybackStatus {
+    internal val mutableVoiceToken = MutableStateFlow<String?>(null)
+    val voiceToken = mutableVoiceToken.asStateFlow()
     internal val mutable = MutableStateFlow(Preparation())
     val state = mutable.asStateFlow()
     internal val mutableSleepTimer = MutableStateFlow(SleepTimerState())
@@ -67,8 +75,17 @@ class PlaybackService : MediaSessionService() {
     private var playbackRevision = -1
     private var lastReportedAt = 0L
     private val localPodcastPositions = mutableMapOf<String, Long>()
+    private val filedArticleBookmarks = mutableMapOf<String, ArticleBookmark>()
     private val reportLock = Mutex()
     private var sleepJob: Job? = null
+    private data class VoiceHold(val token: String, val revision: Int, val item: LibraryItem?, var resume: Boolean)
+    private var voiceHold: VoiceHold? = null
+    private var voiceController: MediaSession.ControllerInfo? = null
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) invalidateVoice()
+        }
+    }
     private val feedback = PlaybackFeedback(scope)
     private val sleepTimer = SleepTimer(SystemClock::elapsedRealtime,
         changed = { PlaybackStatus.mutableSleepTimer.value = it }, expired = ::expireSleepTimer)
@@ -77,6 +94,7 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         store = PreviewStore(this)
         renderer = ArticleRenderer(this)
+        ContextCompat.registerReceiver(this, noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED)
         // Private disposable preview audio only; no user downloads are stored here.
         File(cacheDir, "narration").deleteRecursively()
         File(cacheDir, "narration").mkdirs()
@@ -115,13 +133,39 @@ class PlaybackService : MediaSessionService() {
                     commands.add(SessionCommand(DISMISS_PLAYER, Bundle.EMPTY))
                     commands.add(SessionCommand(SET_SLEEP_TIMER, Bundle.EMPTY))
                     commands.add(SessionCommand(CANCEL_SLEEP_TIMER, Bundle.EMPTY))
+                    commands.add(SessionCommand(BEGIN_VOICE, Bundle.EMPTY))
+                    commands.add(SessionCommand(END_VOICE, Bundle.EMPTY))
+                    commands.add(SessionCommand(VOICE_CONTROL, Bundle.EMPTY))
                 }
                 return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
                     .setAvailableSessionCommands(commands.build()).build()
             }
 
+            override fun onPlayerInteractionFinished(session: MediaSession, controllerInfo: MediaSession.ControllerInfo, playerCommands: Player.Commands) {
+                // Includes an explicit Pause while already paused, which emits no player event.
+                if (listOf(Player.COMMAND_PLAY_PAUSE, Player.COMMAND_STOP, Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+                    Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD, Player.COMMAND_SET_SPEED_AND_PITCH,
+                    Player.COMMAND_SET_MEDIA_ITEM, Player.COMMAND_CHANGE_MEDIA_ITEMS).any(playerCommands::contains)) invalidateVoice()
+            }
+
+            override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
+                if (controller == voiceController) invalidateVoice()
+            }
+
             override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
                 if (controller.uid != applicationInfo.uid) return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
+                if (command.customAction in setOf(BEGIN_VOICE, END_VOICE, VOICE_CONTROL)) {
+                    val result = voiceCommand(command.customAction, args)
+                    if (command.customAction == BEGIN_VOICE && result.resultCode == SessionResult.RESULT_SUCCESS) voiceController = controller
+                    if (result.resultCode == SessionResult.RESULT_SUCCESS && args.getString("action") == "drain") {
+                        // Finish older progress writes before the server can file this item.
+                        val drained = SettableFuture.create<SessionResult>()
+                        scope.launch { reportLock.withLock { drained.set(result) } }
+                        return drained
+                    }
+                    return Futures.immediateFuture(result)
+                }
+                invalidateVoice()
                 when (command.customAction) {
                     PLAY_ITEM -> {
                         val item = library.state.value.items.find { it.id == args.getString("id") }
@@ -134,16 +178,8 @@ class PlaybackService : MediaSessionService() {
                         PlaybackStatus.mutable.value = Preparation()
                     }
                     SET_SLEEP_TIMER -> {
-                        if (!sleepTimer.start(args.getLong(SLEEP_DURATION_MS))) {
+                        if (!setSleepTimer(args.getLong(SLEEP_DURATION_MS))) {
                             return Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
-                        }
-                        sleepJob?.cancel()
-                        sleepJob = scope.launch {
-                            while (sleepTimer.state.running) {
-                                val remaining = checkNotNull(sleepTimer.state.deadlineMs) - SystemClock.elapsedRealtime()
-                                delay(remaining.coerceIn(1L, 1_000L))
-                                sleepTimer.check()
-                            }
                         }
                     }
                     CANCEL_SLEEP_TIMER -> cancelSleepTimer()
@@ -156,7 +192,7 @@ class PlaybackService : MediaSessionService() {
         scope.launch {
             var observed = library.state.value.revision
             library.state.collect { state ->
-                if (state.revision != observed) { observed = state.revision; dismissPlayer(); localPodcastPositions.clear() }
+                if (state.revision != observed) { observed = state.revision; dismissPlayer(); localPodcastPositions.clear(); filedArticleBookmarks.clear() }
                 val playing = current
                 val updated = state.items.firstOrNull { it.id == playing?.id }
                 if (playing?.kind == ContentKind.Article && updated != null && playing.contentId != updated.contentId) {
@@ -235,7 +271,7 @@ class PlaybackService : MediaSessionService() {
         else rendered?.let { audio ->
             bookmarkAt(audio.chunks, if (completed) 0 else player.currentPosition, item.contentVersion)?.let { store.saveBookmark(item.id, it) }
         }
-        if (item.episodeId != null && item.kind == ContentKind.Podcast && playbackRevision == library.state.value.revision &&
+        if (voiceHold == null && item.episodeId != null && item.kind == ContentKind.Podcast && playbackRevision == library.state.value.revision &&
             (completed || !player.isPlaying || SystemClock.elapsedRealtime() - lastReportedAt >= 30_000)) {
             lastReportedAt = SystemClock.elapsedRealtime()
             val version = playbackRevision
@@ -269,6 +305,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun dismissPlayer() {
+        invalidateVoice()
         // Keep each item's bookmark, but forget what to restore into the mini player.
         persist(completed = player.playbackState == Player.STATE_ENDED)
         rendering?.cancel()
@@ -295,6 +332,114 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private fun invalidateVoice() {
+        voiceHold = null
+        voiceController = null
+        PlaybackStatus.mutableVoiceToken.value = null
+    }
+
+    private fun voiceCommand(action: String, args: Bundle): SessionResult {
+        val token = args.getString("token") ?: return SessionResult(SessionError.ERROR_BAD_VALUE)
+        if (action == BEGIN_VOICE) {
+            if (!token.matches(Regex("[a-zA-Z0-9-]{1,64}")) || args.getInt("revision", -1) != library.state.value.revision)
+                return SessionResult(SessionError.ERROR_BAD_VALUE)
+            sleepTimer.check()
+            val preparing = PlaybackStatus.state.value.takeIf { it.message != null }?.itemId
+                ?.let { id -> library.state.value.items.find { it.id == id } }
+            voiceHold = VoiceHold(token, library.state.value.revision, preparing ?: current,
+                preparing != null || player.playWhenReady)
+            PlaybackStatus.mutableVoiceToken.value = token
+            rendering?.cancel()
+            PlaybackStatus.mutable.value = Preparation()
+            player.pause()
+            feedback.close()
+            return SessionResult(SessionResult.RESULT_SUCCESS)
+        }
+        val hold = voiceHold?.takeIf { it.token == token && it.revision == library.state.value.revision }
+            ?: return SessionResult(SessionError.ERROR_INVALID_STATE)
+        if (action == END_VOICE) {
+            invalidateVoice()
+            val item = hold.item?.let { old -> library.state.value.items.find { it.id == old.id && it.contentVersion == old.contentVersion } }
+            if (args.getBoolean("resume", true) && hold.resume && item != null) play(item)
+            return SessionResult(SessionResult.RESULT_SUCCESS)
+        }
+        val result = Bundle()
+        when (args.getString("action")) {
+            "drain" -> Unit
+            "pause" -> { hold.resume = false; player.pause() }
+            "resume", "play" -> {
+                val id = args.getString("id") ?: hold.item?.id ?: current?.id
+                val item = library.state.value.items.find { it.id == id && it.textLoaded }
+                    ?: return SessionResult(SessionError.ERROR_BAD_VALUE)
+                hold.resume = false
+                play(item)
+            }
+            "seek" -> {
+                if (current == null || player.duration <= 0) return SessionResult(SessionError.ERROR_INVALID_STATE)
+                val delta = args.getLong("delta_ms").coerceIn(-7_200_000, 7_200_000)
+                player.seekTo((player.currentPosition + delta).coerceIn(0, player.duration))
+            }
+            "speed" -> {
+                val kind = ContentKind.entries.firstOrNull { it.name == args.getString("kind") }
+                    ?: current?.kind ?: ContentKind.Podcast
+                val rate = args.getFloat("rate")
+                if (!rate.isFinite() || rate !in .5f..3f) return SessionResult(SessionError.ERROR_BAD_VALUE)
+                result.putFloat("previous_rate", store.speed(kind)); result.putString("kind", kind.name)
+                store.saveSpeed(kind, rate)
+                if (current?.kind == kind) player.setPlaybackSpeed(rate)
+            }
+            "sleep" -> if (!setSleepTimer(args.getLong(SLEEP_DURATION_MS))) return SessionResult(SessionError.ERROR_BAD_VALUE)
+            "cancel_sleep" -> cancelSleepTimer()
+            "restore" -> {
+                val item = library.state.value.items.find { it.id == args.getString("id") }
+                if (item?.kind == ContentKind.Podcast) {
+                    val position = args.getLong("position_ms").coerceAtLeast(0)
+                    localPodcastPositions[item.id] = position; store.savePosition(item.id, position)
+                    if (current?.id == item.id) player.seekTo(position)
+                } else if (item != null) {
+                    filedArticleBookmarks.remove(item.id)?.takeIf { it.contentVersion == item.contentVersion }
+                        ?.let { store.saveBookmark(item.id, it) }
+                }
+            }
+            "file" -> {
+                val id = args.getString("id")
+                val item = library.state.value.items.find { it.id == id }
+                if (item?.kind == ContentKind.Article) {
+                    // Keep the bookmark for Undo even when a receipt is replayed after cancellation.
+                    store.bookmark(item.id)?.let { filedArticleBookmarks[item.id] = it }
+                }
+                if (item?.completed == true) {
+                    store.clearBookmark(item.id); store.savePosition(item.id, 0)
+                    localPodcastPositions[item.id] = 0
+                }
+                if (current?.id == id || hold.item?.id == id) {
+                    hold.resume = false
+                    // The server already filed it. Never report the old clock as unplayed.
+                    rendering?.cancel(); current = null; store.lastItem = null
+                    player.stop(); player.clearMediaItems()
+                    rendered?.file?.delete(); rendered = null
+                    PlaybackStatus.mutable.value = Preparation()
+                    cancelSleepTimer()
+                }
+            }
+            else -> return SessionResult(SessionError.ERROR_NOT_SUPPORTED)
+        }
+        return SessionResult(SessionResult.RESULT_SUCCESS, result)
+    }
+
+    private fun setSleepTimer(duration: Long): Boolean {
+        if (!sleepTimer.start(duration)) return false
+        sleepJob?.cancel()
+        sleepJob = scope.launch {
+            while (sleepTimer.state.running) {
+                val remaining = checkNotNull(sleepTimer.state.deadlineMs) - SystemClock.elapsedRealtime()
+                delay(remaining.coerceIn(1L, 1_000L))
+                sleepTimer.check()
+            }
+        }
+        return true
+    }
+
     private fun cancelSleepTimer() {
         sleepJob?.cancel()
         sleepJob = null
@@ -302,6 +447,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun expireSleepTimer() {
+        invalidateVoice()
         val wasPlaying = player.isPlaying
         // Also stop buffering or narration preparation so it cannot start after the deadline.
         rendering?.cancel()
@@ -315,6 +461,8 @@ class PlaybackService : MediaSessionService() {
         if (controllerInfo.uid == applicationInfo.uid || controllerInfo.isTrusted) session else null
 
     override fun onDestroy() {
+        unregisterReceiver(noisyReceiver)
+        invalidateVoice()
         persist(completed = player.playbackState == Player.STATE_ENDED)
         cancelSleepTimer()
         feedback.close()
@@ -329,6 +477,9 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
+        const val BEGIN_VOICE = "magpie.begin_voice"
+        const val END_VOICE = "magpie.end_voice"
+        const val VOICE_CONTROL = "magpie.voice_control"
         const val PLAY_ITEM = "magpie.play_sample"
         const val DISMISS_PLAYER = "magpie.dismiss_player"
         const val CANCEL_PREPARATION = "magpie.cancel_preparation"

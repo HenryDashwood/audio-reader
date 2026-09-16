@@ -73,7 +73,7 @@ class MagpieNavigationTest {
             if (tab != "Following") compose.onNodeWithText(tab).performClick()
             compose.onAllNodesWithContentDescription("Ask Magpie").assertCountEquals(1)
             compose.onNodeWithContentDescription("Ask Magpie").performClick()
-            compose.onNodeWithText("No microphone audio is being recorded.", substring = true).assertIsDisplayed()
+            compose.onNodeWithText("Type a request").assertIsDisplayed()
             if (tab == "Settings") compose.activityRule.scenario.recreate()
             compose.onNodeWithText("Close").performClick()
         }

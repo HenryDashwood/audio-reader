@@ -36,8 +36,10 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   update existing copies through the established replacement contract. Android
   browsers do not provide Safari's page preprocessing hook: website sign-in may
   be needed inside Magpie's browser. Phone/publisher acceptance remains.
-- [ ] **7. Ask Magpie conversations.** Recognition, commands, spoken replies,
-  follow-up conversations, and timing preferences.
+- [x] **7. Ask Magpie conversations.** On-device recognition and spoken replies,
+  typed input, local and account commands, explicit AI consent, follow-up timing,
+  interruption recovery, and service-owned playback coordination. Emulator coverage
+  includes actual offline speech output; phone microphone/TalkBack acceptance remains.
 - [ ] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
 - [ ] **9. Newsletters.** Address presentation/sharing, sender approval/blocking, and signup.
 - [x] **10. AI consent controls.** The discovery flow discloses AI data sharing
@@ -203,9 +205,7 @@ The final preview was installed, and Android resolved both plain-text and HTML
 share intents to Magpie. Phone, TalkBack, and publisher sign-in acceptance remain
 outstanding.
 
-The next unchecked item is **7. Ask Magpie conversations**.
-
-## Ask Magpie implementation in progress
+## Ask Magpie implementation
 
 On 16 September 2026, the Android voice core gained whole-utterance local
 playback/sleep commands, explicit conversation-ending and undo phrases, bounded
@@ -217,10 +217,9 @@ have succeeded. Late receipts cannot clear a newer request or cross accounts.
 Invalid or ambiguous timer durations are left unresolved rather than silently
 using a different duration.
 
-This is the foundation for item 7, which remains unchecked. The Android Ask UI
-still discloses that conversation is unavailable until recognition, command
-streaming, spoken replies, media coordination, and follow-up timing are wired in.
 The first core milestone passed 95 JVM tests, both debug APKs, and lint.
+At that stage the Ask UI was still a placeholder; the completed integration is
+described below.
 
 The second milestone implements the existing `/command/stream` NDJSON and
 `DELETE /command/{request_id}` contracts. Incremental text is presentation only;
@@ -252,9 +251,45 @@ without compiler warnings. All five `VoiceAudioTest` cases passed on Android
 16/API 36 with no skips, including an actual offline spoken reply, missing-voice
 and permission handling, recognition callback mapping, and the native capability
 query. Recognition timing and cancellation use controlled engine callbacks;
-this does not establish real microphone transcription quality. Ask remains a
-placeholder until the conversation screen, media coordination, and follow-up
-flow are integrated. Item 7 remains unchecked.
+this does not establish real microphone transcription quality.
+
+
+The fourth milestone connects Ask Magpie throughout the app and article reader.
+The conversation screen accepts microphone or typed input, shows provisional
+captions and completed turns, requests microphone permission explicitly, and
+provides recognition capability checks and model downloads. AI permission is
+required before sending library requests; local playback and timer controls
+work without it. Follow-up capture begins only after spoken audio finishes and
+honours Keep listening and the selected 10/15/20/30-second wait. Typed requests
+and TalkBack use manual turns. Closing, backgrounding, and recreation stop the
+microphone; returning requires another explicit Listen tap.
+
+The playback service owns each conversation's pause/resume decision. Explicit
+media controls, account changes, unplugging audio, and sleep expiry invalidate
+that decision. Uncertain remote outcomes leave playback paused and retain the
+original request for recovery. Already-confirmed server filing is reconciled
+before speaking, so cancelling a confirmation cannot silently reverse it.
+Compound responses speak once before the final playback choice. Undo restores
+podcast media positions and same-version local article text bookmarks without
+sending Android article seconds to the backend. Filing another library item
+preserves unrelated playback.
+
+Verification of the integrated flow: `make android-check` passed 130 JVM tests,
+built both debug APKs, and passed lint without compiler warnings. The full
+Android 16/API 36 suite passed all 103 then-existing tests. The final conversation
+class passed 15 of 16 cases; its article Undo test initially captured an old
+bookmark before the service finished seeking. After waiting for the actual
+service position, that case passed in isolation. Across the full run and focused
+reruns all 107 current emulator cases are covered, with no skips. Coverage includes
+actual offline spoken replies and article narration, consent decline/grant,
+original-request recovery, account changes, explicit media controls, sleep expiry,
+compound actions, current and non-current filing/Undo, follow-up timing, and
+activity recreation. The 200% text/dark conversation screenshot was visually
+inspected, including system-bar contrast. Tests use isolated accounts and controlled
+recognition callbacks; no live transcripts or library mutations were sent.
+Physical microphone, TalkBack, Bluetooth, and phone audio acceptance remain.
+
+The next unchecked item is **8. Assistant and shortcuts**.
 
 ## Shared limitations
 

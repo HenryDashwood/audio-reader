@@ -151,7 +151,7 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
 - Following, Latest, Saved, source detail, local library search, and a rich article reader.
 - Article/episode toolbars with playback, original-page opening, Android sharing,
   find, and an Ask Magpie entry point. Original-page opening requires a web URL;
-  samples share their text. Ask explains that conversation is not yet connected.
+  samples share their text. Ask opens a conversation with microphone and typed input.
 - The same Ask Magpie control is available on Following, Latest, Saved, Settings,
   and feed pages, including during search. Browser links use Material's Open in new icon.
 - Light/dark themes, scalable text, labelled controls, heading semantics, and
@@ -196,7 +196,7 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   stops/clears session media, and forgets the last item so the bar stays dismissed
   after recreation/relaunch. Explicit Play brings it back from the saved position.
 - A bundled original sample recording, a mini player and full player, seek,
-  pause/resume, and playback speed from 0.75× to 2×.
+  pause/resume, and playback speed from 0.5× to 3×.
 - A sleep timer beside playback speed, with the iOS choices of 5, 10, 15, 30,
   45, and 60 minutes, a rounded-up countdown, replacement, and cancellation.
   The playback service owns its monotonic deadline, so closing the player or
@@ -204,7 +204,7 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   pauses do not extend the timer. Expiry pauses audio, preserves the bookmark,
   cancels pending narration, and plays a quiet completion tone only if audio was
   playing. Timers clear when the service/process ends and are not restored after
-  a restart. Voice timer commands await Android's voice integration.
+  a restart. Ask Magpie can also set and cancel the timer.
 - Media3 playback owned by a `MediaSessionService`, with system media controls,
   audio focus, unplug-to-pause, and playback independent of the activity.
 - Google offline TTS rendered into short WAV chunks and assembled into **one**
@@ -287,8 +287,8 @@ Signed-out samples retain the account-required explanation and fixed catalogue.
 Add sources searches podcasts and library episodes, discovers feeds from websites,
 and previews content before subscribing.
 Settings links to Sign-in Methods for Apple and Google sign-in, connected provider status,
-real account sign-out and deletion. Conversation, assistant, and newsletters
-retain explicit unavailable states until their integrations exist. AI Data Sharing
+real account sign-out and deletion. Assistant and newsletters retain explicit
+unavailable states until their integrations exist. AI Data Sharing
 can be reviewed, granted, or withdrawn in Settings.
 
 ## Settings parity
@@ -306,8 +306,11 @@ article start, including regeneration of cached narration from its text bookmark
 Voice previews use transient audio focus and stop when Settings leaves the
 foreground. Voice downloads return to a refreshed catalogue.
 
-Conversation timing, Android assistant integration, and newsletter addresses
-still require their corresponding Android integrations. The Settings sections make those boundaries visible. Siri itself
+Conversation settings persist Keep listening after replies and a 10, 15, 20, or
+30-second follow-up wait. With TalkBack, each turn requires an explicit Listen tap
+so spoken announcements cannot enter an automatically opened microphone.
+Android assistant integration and newsletter addresses still require their
+corresponding integrations. The Settings sections make those boundaries visible. Siri itself
 is iOS-only. Privacy/support links use the same destinations as the Swift client.
 
 ## Deliberate prototype boundaries
@@ -324,9 +327,34 @@ Account metadata/text currently lives in memory: a fresh launch needs a connecti
 and there is no durable queue for offline account edits or progress uploads.
 New saved links and confirmed shared content have their own durable queue. A
 previously identified session can queue captures after an offline restart; a new
-session must identify its account first. Podcast downloading, Gemini integration,
-and microphone recording remain future
-work. Backups and device transfers of preview preferences are disabled.
+session must identify its account first. Podcast downloading and Gemini integration
+remain future work. Backups and device transfers of preview preferences are disabled.
+
+## Ask Magpie
+
+Listen asks for microphone permission and uses Android's on-device recognition
+service, with an English (United Kingdom) model. Capability checks distinguish
+missing, downloadable, and pending models; downloads require an explicit action.
+There is no network recognition fallback. Recognition, spoken replies, and article
+narration remain on device. Audio recordings are not retained. Typed requests are
+available when the microphone or offline model is unavailable.
+
+Local playback, speed, undo-speed, sleep-timer, and end-conversation commands work
+without an account or AI permission. Library requests use the existing account
+AI consent and command-stream contracts. Partials are captions; only final
+recognition text becomes a command. Conversation context is kept in memory and
+cleared across accounts. Interrupted requests retain their original ID for
+Check previous request, avoiding a second server mutation.
+
+The playback service pauses audio for a conversation and owns its resume decision.
+Spoken replies finish before new playback or follow-up capture. Closing or
+backgrounding the screen stops speech and recognition. Account changes, explicit
+media controls, sleep expiry, and a disconnected audio route invalidate the old
+resume decision. An uncertain remote result leaves playback paused until the
+user checks the original request or explicitly resumes. Server filing receipts
+never resend mutations or report an old
+clock over a newly completed episode. The final compound playback choice starts
+only after the other confirmed effects have been applied.
 
 Article rendering currently completes before playback starts, with a 30,000
 character guard and a timeout per chunk. Only the current rendered article is
