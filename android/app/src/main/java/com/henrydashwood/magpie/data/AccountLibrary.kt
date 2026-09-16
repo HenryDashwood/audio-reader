@@ -121,16 +121,18 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     }
 
     /** Fresh read-only results without replacing the search currently displayed in the app. */
-    suspend fun shortcutItems(feedId: String? = null, query: String = "", savedOnly: Boolean = false): List<LibraryItem> {
+    suspend fun shortcutItems(feedId: String? = null, query: String = "", savedOnly: Boolean = false, limit: Int? = null): List<LibraryItem> {
         require(query.length <= 200 && !(savedOnly && feedId != null)) { "Choose a shorter library search." }
+        require(limit == null || limit in 1..100 && !savedOnly) { "Choose between one and 100 results." }
         if (!state.value.live) return state.value.items.filter { (feedId == null || it.sourceId == feedId) &&
-            (query.isBlank() || "${it.title} ${it.source} ${it.description}".contains(query, ignoreCase = true)) }
+            (query.isBlank() || "${it.title} ${it.source} ${it.description}".contains(query, ignoreCase = true)) }.take(limit ?: Int.MAX_VALUE)
         val (current, version) = credentials()
         return writes.withLock {
             check(version)
             if (feedId != null) require(state.value.feeds.any { it.id == feedId }) { "That show is no longer followed." }
             val rows = when {
                 savedOnly -> api.saved(current)
+                limit != null -> api.find(current, feedId, query, limit)
                 feedId != null -> api.episodes(current, feedId, query)
                 query.isNotBlank() -> api.search(current, query)
                 else -> api.latest(current)

@@ -27,6 +27,8 @@ interface LibraryApi {
     suspend fun saved(token: String): List<RemoteEpisode>
     suspend fun episodes(token: String, feedId: String, query: String): List<RemoteEpisode>
     suspend fun search(token: String, query: String): List<RemoteEpisode>
+    suspend fun find(token: String, feedId: String?, query: String, limit: Int): List<RemoteEpisode> =
+        (if (feedId != null) episodes(token, feedId, query) else if (query.isNotBlank()) search(token, query) else latest(token)).take(limit)
     suspend fun episode(token: String, episodeId: Int): RemoteEpisode = throw UnsupportedOperationException("Episode lookup is unavailable")
     suspend fun text(token: String, episodeId: Int, contentId: Int?): RemoteText
     suspend fun save(token: String, episodeId: Int? = null, url: String? = null): RemoteEpisode
@@ -49,6 +51,16 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
         return list(token, "feeds/$feedId/episodes?limit=50&q=${encode(query.take(200))}")
     }
     override suspend fun search(token: String, query: String) = list(token, "search/episodes?q=${encode(query.take(200))}")
+    override suspend fun find(token: String, feedId: String?, query: String, limit: Int): List<RemoteEpisode> {
+        require(limit in 1..100 && query.length <= 200)
+        if (feedId != null) require(feedId.toIntOrNull()?.let { it > 0 } == true)
+        val path = when {
+            feedId != null -> "feeds/$feedId/episodes?limit=$limit&q=${encode(query)}"
+            query.isNotBlank() -> "search/episodes?limit=$limit&q=${encode(query)}"
+            else -> "episodes?limit=$limit"
+        }
+        return list(token, path)
+    }
     override suspend fun episode(token: String, episodeId: Int): RemoteEpisode {
         require(episodeId > 0)
         return decodeEpisode(obj(token, "episodes/$episodeId"))

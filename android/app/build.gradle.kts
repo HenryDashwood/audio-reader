@@ -1,7 +1,10 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
 }
+
+ksp { arg("appfunctions:aggregateAppFunctions", "true") }
 
 android {
     namespace = "com.henrydashwood.magpie"
@@ -56,6 +59,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
     implementation("androidx.media3:media3-exoplayer:1.11.0")
     implementation("androidx.media3:media3-session:1.11.0")
+    implementation("androidx.appfunctions:appfunctions:1.0.0-alpha11")
+    ksp("androidx.appfunctions:appfunctions-compiler:1.0.0-alpha11")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("org.jsoup:jsoup:1.23.2")
     implementation("androidx.browser:browser:1.10.0")

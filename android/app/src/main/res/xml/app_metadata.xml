@@ -1,0 +1,3 @@
+<AppFunctionAppMetadata xmlns:appfn="http://schemas.android.com/apk/androidx.appfunctions"
+    appfn:displayDescription="@string/app_functions_description"
+    appfn:description="Magpie is a personal podcast and article library. Use listShows to find followed shows, then findItems to find items. Item and show IDs belong to the signed-in account: use returned IDs unchanged and repeat a lookup if the account changes. Library searches are read-only and do not enable AI data sharing. Unknown durations are not estimates of listening time." />

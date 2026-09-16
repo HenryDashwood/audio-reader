@@ -381,8 +381,27 @@ account changes, sleep expiry, and audio disconnection invalidate pending prepar
 Cancelled or failed preparation also suppresses the requester's queued Play,
 preserving the previous item's paused position until a fresh explicit Play.
 Podcast clocks and article text bookmarks remain separate. Arbitrary URIs and
-multi-item queues are unsupported. Structured automation remains part of checklist
-item 8. Google describes AppFunctions/Gemini integration as an
+multi-item queues are unsupported.
+
+On Android 16 devices with a compatible AppFunctions metadata indexer, Magpie
+also publishes structured AppFunctions for
+listing followed shows, finding library items, and checking listening status.
+Discovery follows account sign-in state; every invocation also checks the account
+independently. Searches support show, unheard, duration, and result-count filters
+against up to 100 candidates. Unknown durations are excluded only when a duration
+ceiling is requested. Results contain scoped IDs and metadata, without article
+text, credentials, or playback URLs. Account changes discard pending results;
+caller cancellation stops the pending lookup. Status reads the existing service
+player without starting playback. Devices below API 36 keep the service disabled.
+Platform integration is verified on the API 36.1 emulator. The original API 36
+image does not register the current schema; these actions are unavailable there.
+Run `AppFunctionsTest` on an API 36.1 or newer emulator; it explicitly skips older
+images. This is separate from the app's Android 12 minimum. The KSP compiler
+generates the permission-protected service and schema from the
+annotated Kotlin functions; generated files are not committed.
+
+Structured playback controls, filing/undo, requests, subscriptions, and destination
+actions remain part of checklist item 8. Google describes AppFunctions/Gemini integration as an
 experimental private preview; launcher/tile availability does not establish
 Gemini support or phone acceptance.
 

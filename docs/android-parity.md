@@ -379,9 +379,35 @@ conversation assertion timed out waiting for a filed item to leave the player;
 it passed in isolation and in the complete conversation rerun without further
 production changes. The test now retains receipt/error/player-state diagnostics.
 
-Item 8 remains unchecked until the structured action equivalents (library lookup with duration/unheard
-filters, playback controls/status, filing, undo, free-form requests, subscription,
-and destination actions) are implemented and verified. Future assistant adapters
+The fourth milestone adds structured AppFunctions for listing followed shows,
+finding library items, and reading listening status. Discovery follows account
+availability, and each invocation independently validates the current account.
+Find supports show, unheard, duration, and result-count filters across the first
+100 candidates. Unknown durations remain unknown and are excluded by a supplied
+duration ceiling. Scoped show IDs cannot cross accounts. Search preserves the
+app's displayed results and does not load article text. Status connects to the
+existing player without starting it. Android 12–15 keep this service disabled.
+
+Nine platform integration tests passed on the separate Android 16/API 36.1
+small-phone emulator, with no failures or skips. They invoke the generated service
+through Android's AppFunctionManager, covering schema serialization, default and
+filtered results, validation, stale account IDs, signed-out access despite stale
+discovery state, sign-out/sign-in discovery updates, account changes during a
+lookup, caller cancellation, and read-only player status. The APK contains the
+generated metadata and schema. A compatibility attempt on the original API 36
+image timed out waiting for registration; its legacy registry does not index the
+current generated schema. That run was stopped after the first setup timeout; the next case was interrupted.
+Structured actions are unavailable on that image; the test suite explicitly
+requires API 36.1 or newer images, while ordinary app/media tests remain on API 36.
+The final `make android-check` passed all 135 JVM
+tests and both APK builds, with no compiler warnings or lint errors. Lint still
+reports eight warnings and one hint in existing credentials, dependencies, assets,
+shortcuts, and convenience-API usage. This establishes platform integration, not Gemini
+availability or physical assistant acceptance.
+
+Item 8 remains unchecked until structured playback controls, filing, undo,
+free-form requests, subscription, and destination actions are implemented and
+verified. Future assistant adapters
 must preserve the trusted microphone launch boundary and Android permission step.
 Newsletter shortcut support also depends on item 9. Platform-specific release
 and physical-assistant acceptance remain separate from emulator verification.

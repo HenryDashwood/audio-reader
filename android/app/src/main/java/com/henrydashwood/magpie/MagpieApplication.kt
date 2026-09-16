@@ -24,6 +24,7 @@ open class MagpieApplication : Application() {
     }
     open val library: AccountLibrary by lazy {
         AccountLibrary(HttpLibraryApi(BuildConfig.ACCOUNT_API_URL, accounts::rejectToken), BuildConfig.ACCOUNT_API_URL, accounts.state.value.signedIn, articleInbox).also { repository ->
+            scope.launch { com.henrydashwood.magpie.automation.AppFunctionAvailability.observe(this@MagpieApplication, repository) }
             scope.launch {
                 combine(accounts.accessToken, accounts.state.map { it.libraryRevision }.distinctUntilChanged()) { token, revision -> token to revision }
                     .collectLatest { (token, revision) ->
