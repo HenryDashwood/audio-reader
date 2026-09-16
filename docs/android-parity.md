@@ -236,7 +236,25 @@ Verification: `make android-check` passed 104 JVM tests, both debug APKs, and li
 without compiler warnings. All six `VoiceWireTest` cases passed on Android 16/API
 36, including streaming Unicode, compound effects, 401 handling, redirect rejection,
 and disconnecting a blocked reader. These use isolated connections and never send
-live transcripts or account mutations. No microphone behavior is claimed yet.
+live transcripts or account mutations.
+
+The third milestone adds an on-device-only recognition adapter, microphone
+permission checks, language capability detection and explicit model downloads,
+plus spoken replies using the selected installed offline voice. Partial
+recognition stays provisional until a final result arrives. First-word, silence,
+startup, and final-result waits are bounded; cancellation destroys the native
+recognizer. Replies wait for actual audio completion, split long text without
+breaking Unicode, and stop on cancellation or audio interruption. Engine callbacks
+from an earlier attempt cannot complete a later one. No recording is retained.
+
+Verification: `make android-check` passed 118 JVM tests, both debug APKs, and lint
+without compiler warnings. All five `VoiceAudioTest` cases passed on Android
+16/API 36 with no skips, including an actual offline spoken reply, missing-voice
+and permission handling, recognition callback mapping, and the native capability
+query. Recognition timing and cancellation use controlled engine callbacks;
+this does not establish real microphone transcription quality. Ask remains a
+placeholder until the conversation screen, media coordination, and follow-up
+flow are integrated. Item 7 remains unchecked.
 
 ## Shared limitations
 
