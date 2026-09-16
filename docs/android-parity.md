@@ -41,6 +41,9 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   interruption recovery, and service-owned playback coordination. Emulator coverage
   includes actual offline speech output; phone microphone/TalkBack acceptance remains.
 - [ ] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
+  Launcher/pinned actions, Quick Settings, account-scoped Continue listening,
+  and trusted Ask microphone launches are implemented. Assistant library browsing,
+  search, and structured actions remain; the newsletter action also depends on item 9.
 - [ ] **9. Newsletters.** Address presentation/sharing, sender approval/blocking, and signup.
 - [x] **10. AI consent controls.** The discovery flow discloses AI data sharing
   before granting permission. Settings reads, reviews, grants, and withdraws the
@@ -316,13 +319,36 @@ Tests use isolated accounts and restore their Quick Settings configuration; they
 do not submit live requests or change the owner's library. Physical launcher,
 TalkBack, Bluetooth, microphone, and assistant acceptance remain separate.
 
-Item 8 remains unchecked until assistant library browsing/search, trusted
-hands-free microphone activation (the current Ask shortcut still needs a Listen
-tap), and the structured action equivalents (library lookup with duration/unheard
+The second milestone connects trusted Ask launcher/pin/tile launches to the
+microphone. A private installation proof distinguishes these launches from forged
+exported intents; only the foreground, unlocked conversation can request Android
+permission and start listening. TalkBack retains manual Listen. The launch is
+consumed once and does not survive backgrounding, recreation, closing, typing a
+new request, or account changes. Delayed permission replies cannot activate a
+different conversation. Repeated disposal cannot reverse a service decision to
+keep playback paused after an explicit interruption.
+
+Regression checking exposed an overlapping-refresh race: an old library response
+could replace a confirmed voice filing with its earlier unplayed snapshot.
+Confirmed receipts now join the repository's existing serialized updates. A
+controlled JVM regression reproduced the failure before the fix and passes after it.
+
+Verification of the second milestone: `make android-check` passed all 134 JVM
+tests, built both debug APKs, and passed lint without compiler warnings. The final
+Android 16/API 36 full run passed all 124 emulator cases with no failures or skips,
+including all 17 shortcut cases and all 16 conversation cases. Coverage includes
+trusted launcher and native tile activation, forged intents, launch consumption,
+background/recreation cancellation, and controlled permission denial/late-grant
+callbacks. The initial conversation run exposed the filing failure above; the
+final full run passed after the ordering fix. The updated 200% text/dark shortcut
+screen was visually inspected. Microphone input uses controlled callbacks in
+these tests; physical speech quality, TalkBack, and Bluetooth acceptance remain.
+
+Item 8 remains unchecked until assistant library browsing/search and the
+structured action equivalents (library lookup with duration/unheard
 filters, playback controls/status, filing, undo, free-form requests, subscription,
-and destination actions) are implemented and verified. A microphone launch must
-distinguish a user-invoked launcher/tile/assistant action from an arbitrary app's
-forged exported intent, retain the Android permission step, and stop on backgrounding.
+and destination actions) are implemented and verified. Future assistant adapters
+must preserve the trusted microphone launch boundary and Android permission step.
 Newsletter shortcut support also depends on item 9. Platform-specific release
 and physical-assistant acceptance remain separate from emulator verification.
 

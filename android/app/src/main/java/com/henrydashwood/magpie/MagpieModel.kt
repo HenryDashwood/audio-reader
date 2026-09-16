@@ -210,7 +210,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                 withTimeout(30_000) {
                     if (request.action in setOf(ShortcutAction.Ask, ShortcutAction.Saved, ShortcutAction.Following, ShortcutAction.Shortcuts, ShortcutAction.Player)) {
                         mutableShortcutNavigation.value = request
-                        if (request.action == ShortcutAction.Ask) voice.open(null)
+                        if (request.action == ShortcutAction.Ask) voice.open(null, listenOnOpen = request.listenOnOpen)
                         return@withTimeout
                     }
                     val snapshot = libraryState.first { !it.loading }

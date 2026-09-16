@@ -17,7 +17,7 @@ abstract class MagpieTile : TileService() {
         super.onClick()
         // Library titles and account actions stay behind the device lock screen.
         unlockAndRun {
-            val intent = MagpieShortcuts.intent(this, ShortcutRequest(action))
+            val intent = MagpieShortcuts.trustedIntent(this, ShortcutRequest(action))
             if (Build.VERSION.SDK_INT >= 34) {
                 startActivityAndCollapse(PendingIntent.getActivity(this, action.ordinal, intent,
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))

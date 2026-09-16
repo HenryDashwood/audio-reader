@@ -1,6 +1,7 @@
 package com.henrydashwood.magpie.ui
 
 import android.Manifest
+import android.app.KeyguardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
@@ -36,6 +37,7 @@ import com.henrydashwood.magpie.MagpieModel
 import com.henrydashwood.magpie.voice.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,6 +54,9 @@ fun AskConversation(model: MagpieModel) {
     var availability by remember { mutableStateOf<RecognitionAvailability?>(null) }
     var downloading by remember { mutableStateOf(false) }
     var capabilityError by remember { mutableStateOf<String?>(null) }
+    // Deliberately not saveable: an old permission result must not reopen the mic after recreation.
+    var permissionRequest by remember { mutableStateOf<Int?>(null) }
+    var approvedPermission by remember { mutableStateOf<Int?>(null) }
     suspend fun checkRecognition() {
         try { availability = model.speechInput.availability(); capabilityError = null }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -63,8 +68,32 @@ fun AskConversation(model: MagpieModel) {
         model.voice.listen(autoFollowUp = !accessible, accessible = accessible)
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (model.voice.state.value.visible && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
-            if (granted) listen() else permissionError = "Microphone access is off. Allow it in Android app settings to speak, or type your request below."
+        val request = permissionRequest
+        permissionRequest = null
+        if (request != null && model.voice.acceptsMicrophoneRequest(request)) {
+            if (granted) approvedPermission = request
+            else permissionError = "Microphone access is off. Allow it in Android app settings to speak, or type your request below."
+        }
+    }
+    fun requestListening() {
+        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) listen()
+        else {
+            permissionRequest = model.voice.microphoneRequestVersion
+            permission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    LaunchedEffect(approvedPermission) {
+        approvedPermission?.let { request ->
+            lifecycle.currentStateFlow.first { it == Lifecycle.State.RESUMED }
+            approvedPermission = null
+            if (model.voice.acceptsMicrophoneRequest(request) && context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != true) listen()
+        }
+    }
+    LaunchedEffect(state.launchListening) {
+        state.launchListening?.let { launch ->
+            lifecycle.currentStateFlow.first { it == Lifecycle.State.RESUMED }
+            if (model.voice.consumeLaunchListening(launch) && accessibility?.isTouchExplorationEnabled != true &&
+                context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != true) requestListening()
         }
     }
     DisposableEffect(lifecycle) {
@@ -148,8 +177,7 @@ fun AskConversation(model: MagpieModel) {
                         modifier = Modifier.fillMaxWidth(), maxLines = 3)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(modifier = Modifier.weight(1f), onClick = {
-                            if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) listen()
-                            else permission.launch(Manifest.permission.RECORD_AUDIO)
+                            requestListening()
                         }, enabled = !downloading && availability !in setOf(RecognitionAvailability.Unavailable, RecognitionAvailability.DownloadNeeded, RecognitionAvailability.Downloading)) {
                             Text(if (state.phase == VoicePhase.Listening) "Done speaking" else if (state.busy) "Ask again" else "Listen")
                         }

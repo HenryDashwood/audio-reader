@@ -353,7 +353,16 @@ activity does not replay its original shortcut intent.
 Ask Magpie and Continue listening also have Quick Settings tiles. Android 13+
 can show the native Add tile prompt from Settings; Android 12 users can add them
 with Quick Settings → Edit. Tiles request device unlock before opening the app.
-Ask opens the conversation without recording; Listen remains an explicit tap.
+The Ask launcher shortcut, home-screen pin, and tile start listening once Magpie
+is in the foreground and unlocked. Android microphone permission is still required;
+denial leaves typed input available. TalkBack keeps the explicit Listen tap.
+An installation-specific random proof, stored privately and excluded from backup,
+is published only to the Android shortcut host and permission-protected tile.
+Ordinary exported intents cannot authorize recording, even if they request it.
+The launch is consumed once; backgrounding, recreation, closing, typing another
+request, and account changes invalidate pending permission replies. Returning to
+the app never reopens the microphone automatically. Missing offline recognition
+still produces the existing capability explanation without a network fallback.
 Android 14+ uses the PendingIntent tile launch API; Android 12–13 use the guarded
 legacy overload because the replacement is unavailable there.
 
@@ -364,7 +373,7 @@ Gemini support or phone acceptance.
 
 ## Ask Magpie
 
-Listen asks for microphone permission and uses Android's on-device recognition
+Listen (or an Ask shortcut) asks for microphone permission and uses Android's on-device recognition
 service, with an English (United Kingdom) model. Capability checks distinguish
 missing, downloadable, and pending models; downloads require an explicit action.
 There is no network recognition fallback. Recognition, spoken replies, and article

@@ -20,7 +20,7 @@ class MainActivity : ComponentActivity() {
     private var savedReturn by mutableIntStateOf(0)
     private var shortcut by mutableStateOf<ShortcutRequest?>(null)
     private fun handleReturn(intent: Intent?, acceptShortcut: Boolean = true) {
-        if (acceptShortcut) MagpieShortcuts.take(intent)?.let { shortcut = it }
+        if (acceptShortcut) MagpieShortcuts.take(this, intent)?.let { shortcut = it }
         if (intent?.getBooleanExtra("open_signin", false) == true) { appleReturn++; intent.removeExtra("open_signin") }
         if (intent?.getBooleanExtra("open_saved", false) == true) { savedReturn++; intent.removeExtra("open_saved") }
         if (intent?.action == Intent.ACTION_VIEW && intent.data?.scheme == BuildConfig.APPLICATION_ID + ".auth" &&

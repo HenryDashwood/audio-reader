@@ -30,7 +30,7 @@ interface VoiceHost {
 enum class VoicePhase { Idle, Preparing, Listening, Thinking, Speaking, Consent }
 data class VoiceSessionState(val visible: Boolean = false, val phase: VoicePhase = VoicePhase.Idle,
     val turns: List<ConversationTurn> = emptyList(), val heard: String = "", val reply: String = "",
-    val error: String? = null, val recoverable: Boolean = false) {
+    val error: String? = null, val recoverable: Boolean = false, val launchListening: String? = null) {
     val busy: Boolean get() = phase in setOf(VoicePhase.Preparing, VoicePhase.Listening, VoicePhase.Thinking, VoicePhase.Speaking)
 }
 
@@ -58,9 +58,18 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         accountKey = key; conversation.activate(key); deferredTranscript = null
         mutable.value = VoiceSessionState()
     }
-    fun open(viewedEpisodeId: Int?) {
+    fun open(viewedEpisodeId: Int?, listenOnOpen: Boolean = false) {
+        close()
         activate(); viewedId = viewedEpisodeId; conversation.forgetIfStale()
-        mutable.value = VoiceSessionState(visible = true, turns = conversation.turns, recoverable = conversation.pending != null)
+        mutable.value = VoiceSessionState(visible = true, turns = conversation.turns, recoverable = conversation.pending != null,
+            launchListening = if (listenOnOpen) UUID.randomUUID().toString() else null)
+    }
+    val microphoneRequestVersion: Int get() = version
+    fun acceptsMicrophoneRequest(requestVersion: Int) = requestVersion == version && state.value.visible && !state.value.busy
+    fun consumeLaunchListening(id: String): Boolean {
+        if (!state.value.visible || state.value.launchListening != id) return false
+        mutable.update { it.copy(launchListening = null) }
+        return true
     }
     fun listen(autoFollowUp: Boolean = true, accessible: Boolean = false) {
         if (state.value.phase == VoicePhase.Listening) { input.finish(); return }
@@ -85,11 +94,12 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
     fun close(resume: Boolean = true) {
         version++
         turn?.let { current ->
-            current.resume = resume
+            // Disposal/recreation may close again after an explicit no-resume interruption.
+            current.resume = current.resume && resume
             current.operation?.let { operation -> scope.launch { runCatching { operation.cancel() } } }
         }
         job?.cancel()
-        mutable.update { it.copy(visible = false, phase = VoicePhase.Idle, heard = "", reply = "") }
+        mutable.update { it.copy(visible = false, phase = VoicePhase.Idle, heard = "", reply = "", launchListening = null) }
     }
 
     private fun start(text: String?, autoFollowUp: Boolean, accessible: Boolean = false, allowConsent: Boolean = false) {
@@ -101,7 +111,7 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         turn?.operation?.let { operation -> scope.launch { runCatching { operation.cancel() } } }
         previous?.cancel()
         val id = ++version
-        mutable.update { it.copy(phase = VoicePhase.Preparing, error = null, heard = "", reply = "") }
+        mutable.update { it.copy(phase = VoicePhase.Preparing, error = null, heard = "", reply = "", launchListening = null) }
         job = scope.launch {
             previous?.join()
             if (id != version) return@launch

@@ -1,12 +1,19 @@
 package com.henrydashwood.magpie
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ShortcutManager
 import androidx.activity.compose.setContent
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.activity.result.ActivityResultRegistry
+import androidx.activity.result.ActivityResultRegistryOwner
+import androidx.activity.result.contract.ActivityResultContract
+import androidx.core.app.ActivityOptionsCompat
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -21,6 +28,7 @@ import com.henrydashwood.magpie.playback.PlaybackService
 import com.henrydashwood.magpie.shortcuts.*
 import com.henrydashwood.magpie.ui.MagpieApp
 import com.henrydashwood.magpie.ui.MagpieTheme
+import com.henrydashwood.magpie.ui.AskConversation
 import com.henrydashwood.magpie.voice.*
 import kotlinx.coroutines.*
 import org.junit.*
@@ -37,6 +45,7 @@ class ShortcutsTest {
     private var scenario: ActivityScenario<MainActivity>? = null
     private var externalActivity: MainActivity? = null
     private var listens = 0
+    private var microphoneActive = false
     private val owner get() = checkNotNull(library.state.value.owner)
     private class Api : LibraryApi {
         val first = RemoteEpisode(1, "Shortcut first podcast", source = "Shortcut show", feedUrl = "https://fixture.invalid/feed", audioUrl = "asset:///welcome.wav", positionSeconds = 12.0)
@@ -65,13 +74,17 @@ class ShortcutsTest {
         override suspend fun position(token: String, episodeId: Int, seconds: Double, completed: Boolean) {}
     }
     @Before fun prepare() {
+        InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(app.packageName, Manifest.permission.RECORD_AUDIO)
         app.stopService(Intent(app, PlaybackService::class.java))
         api = Api(); library = AccountLibrary(api, "https://shortcuts-fixture.invalid")
         runBlocking(Dispatchers.Main) { library.changeSession("one") }
         PreviewStore(app).saveContinuation(owner, null)
         app.libraryOverride = library
         app.voiceInputOverride = object : VoiceInput {
-            override suspend fun listen(firstWordsMs: Long, onReady: () -> Unit, onPartial: (String) -> Unit): String? { listens++; awaitCancellation() }
+            override suspend fun listen(firstWordsMs: Long, onReady: () -> Unit, onPartial: (String) -> Unit): String? {
+                listens++; microphoneActive = true
+                try { onReady(); awaitCancellation() } finally { microphoneActive = false }
+            }
             override fun finish() {}
         }
         scenario = ActivityScenario.launch(MainActivity::class.java)
@@ -110,10 +123,10 @@ class ShortcutsTest {
         assertEquals(Intent.ACTION_MAIN, externalActivity!!.intent.action)
     }
 
-    @Test fun launcherPublishesFourExecutableShortcutsAndAskNeverStartsTheMicrophone() {
+    @Test fun launcherPublishesFourExecutableShortcutsAndUntrustedAskNeverStartsTheMicrophone() {
         val shortcuts = app.getSystemService(ShortcutManager::class.java).dynamicShortcuts
         assertEquals(4, shortcuts.size)
-        assertEquals(MagpieShortcuts.basics.toSet(), shortcuts.map { MagpieShortcuts.take(Intent(checkNotNull(it.intent)))!!.action }.toSet())
+        assertEquals(MagpieShortcuts.basics.toSet(), shortcuts.map { MagpieShortcuts.take(app, Intent(checkNotNull(it.intent)))!!.action }.toSet())
         deliver(ShortcutRequest(ShortcutAction.Ask))
         compose.onNodeWithText("Type a request").assertIsDisplayed()
         assertEquals(0, listens)
@@ -122,6 +135,85 @@ class ShortcutsTest {
         compose.onNodeWithText("Close").performClick()
         deliver(ShortcutRequest(ShortcutAction.Saved))
         compose.onNodeWithContentDescription("Add link").assertExists()
+    }
+
+    @Test fun trustedLauncherStartsListeningOnceAndStopsAcrossBackgroundAndRecreation() {
+        fun launch() {
+            val published = app.getSystemService(ShortcutManager::class.java).dynamicShortcuts.first { it.id == "magpie-ask" }
+            scenario!!.onActivity { it.startActivity(Intent(checkNotNull(published.intent)).addCategory(Intent.CATEGORY_LAUNCHER)) }
+        }
+        launch()
+        compose.waitUntil(10_000) { listens == 1 && microphoneActive }
+        assertFalse(scenarioIntentHasProof())
+        scenario!!.recreate(); scenario!!.onActivity { model = ViewModelProvider(it)[MagpieModel::class.java] }
+        compose.waitUntil(5_000) { !microphoneActive }
+        compose.onNodeWithText("Listen").assertIsDisplayed(); assertEquals(1, listens)
+        launch(); compose.waitUntil(10_000) { listens == 2 && microphoneActive }
+        scenario!!.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+        compose.waitUntil(5_000) { !microphoneActive }
+        scenario!!.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        compose.onNodeWithText("Listen").assertIsDisplayed(); assertEquals(2, listens)
+    }
+
+    private fun scenarioIntentHasProof(): Boolean {
+        var proof = false
+        scenario!!.onActivity { proof = it.intent.hasExtra("shortcut_microphone") }
+        return proof
+    }
+
+    @Test fun forgedProofAndOrdinaryIntentFlagsCannotAuthorizeTheMicrophone() {
+        val forged = MagpieShortcuts.intent(app, ShortcutRequest(ShortcutAction.Ask, listenOnOpen = true))
+            .putExtra("shortcut_microphone", "0".repeat(64)).putExtra("listenOnOpen", true)
+        assertFalse(checkNotNull(MagpieShortcuts.take(app, Intent(forged))).listenOnOpen)
+        scenario!!.onActivity { it.startActivity(forged.addCategory(Intent.CATEGORY_LAUNCHER)) }
+        compose.onNodeWithText("Listen").assertIsDisplayed(); assertEquals(0, listens)
+        val published = app.getSystemService(ShortcutManager::class.java).dynamicShortcuts.first { it.id == "magpie-ask" }
+        val copied = Intent(checkNotNull(published.intent))
+        assertTrue(checkNotNull(MagpieShortcuts.take(app, copied)).listenOnOpen)
+        assertNull(MagpieShortcuts.take(app, copied))
+        assertFalse(copied.hasExtra("shortcut_microphone"))
+        val changedAction = Intent(checkNotNull(published.intent)).putExtra("shortcut_action", "Saved")
+        assertFalse(checkNotNull(MagpieShortcuts.take(app, changedAction)).listenOnOpen)
+    }
+
+    @Test fun permissionDenialAndLateGrantCannotStartANewConversation() {
+        var permissionGranted = false
+        var requests = 0
+        var permissionCode = 0
+        val registry = object : ActivityResultRegistry() {
+            override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?) {
+                assertEquals(Manifest.permission.RECORD_AUDIO, input)
+                permissionCode = requestCode; requests++
+            }
+        }
+        scenario!!.onActivity { activity ->
+            val permissionContext = object : android.content.ContextWrapper(activity) {
+                override fun checkSelfPermission(permission: String): Int =
+                    if (permission == Manifest.permission.RECORD_AUDIO && !permissionGranted) PackageManager.PERMISSION_DENIED else super.checkSelfPermission(permission)
+            }
+            activity.setContent {
+                CompositionLocalProvider(LocalContext provides permissionContext,
+                    LocalActivityResultRegistryOwner provides object : ActivityResultRegistryOwner { override val activityResultRegistry = registry }) {
+                    MagpieTheme { AskConversation(model) }
+                }
+            }
+        }
+        compose.runOnUiThread { model.voice.open(null, listenOnOpen = true) }
+        compose.waitUntil(5_000) { requests == 1 }; assertEquals(0, listens)
+        compose.runOnUiThread { registry.dispatchResult(permissionCode, false) }
+        compose.onNodeWithText("Microphone access is off.", substring = true).assertExists(); assertEquals(0, listens)
+        compose.onNodeWithText("Listen").performClick()
+        compose.waitUntil(5_000) { requests == 2 }
+        compose.runOnUiThread {
+            model.voice.background(); model.voice.open(null)
+            permissionGranted = true; registry.dispatchResult(permissionCode, true)
+        }
+        compose.onNodeWithText("Listen").assertIsDisplayed(); assertEquals(0, listens)
+        compose.runOnUiThread { permissionGranted = false }
+        compose.onNodeWithText("Listen").performClick()
+        compose.waitUntil(5_000) { requests == 3 }
+        compose.runOnUiThread { permissionGranted = true; registry.dispatchResult(permissionCode, true) }
+        compose.waitUntil(10_000) { listens == 1 && microphoneActive }
     }
 
     @Test fun latestRunsOnceAcrossRecreationAndAcceptsAnotherExplicitDelivery() {
@@ -206,9 +298,9 @@ class ShortcutsTest {
         compose.onNodeWithText("Cancel").performClick(); api.episodeGate!!.complete(Unit)
         waitIdle(); assertFalse(model.player.value.playing)
         val malformed = MagpieShortcuts.intent(app, ShortcutRequest(ShortcutAction.PlayItem)).putExtra("shortcut_item", "x".repeat(200))
-        assertNull(MagpieShortcuts.take(malformed)); assertEquals(Intent.ACTION_MAIN, malformed.action)
+        assertNull(MagpieShortcuts.take(app, malformed)); assertEquals(Intent.ACTION_MAIN, malformed.action)
         val ai = MagpieShortcuts.intent(app, ShortcutRequest(ShortcutAction.Ask)).putExtra("shortcut_action", "SendTranscript").putExtra("transcript", "Play anything")
-        assertNull(MagpieShortcuts.take(ai)); assertEquals(0, listens)
+        assertNull(MagpieShortcuts.take(app, ai)); assertEquals(0, listens)
     }
 
     @Test fun emptyLatestAndNoContinuationExplainHowToProceed() {
@@ -221,7 +313,7 @@ class ShortcutsTest {
         assertFalse(model.player.value.playing)
     }
 
-    @Test fun actualQuickSettingsTileOpensAskWithoutRecording() {
+    @Test fun actualQuickSettingsTileStartsTheTrustedMicrophoneLaunch() {
         val component = ComponentName(app, AskMagpieTile::class.java)
         val info = app.packageManager.getServiceInfo(component, PackageManager.ComponentInfoFlags.of(0))
         assertEquals("android.permission.BIND_QUICK_SETTINGS_TILE", info.permission); assertTrue(info.exported)
@@ -235,7 +327,8 @@ class ShortcutsTest {
             compose.waitUntil(10_000) { shell("dumpsys activity services ${app.packageName}").contains("AskMagpieTile") }
             shell("cmd statusbar click-tile ${component.flattenToString()}")
             compose.waitUntil(10_000) { model.voice.state.value.visible }
-            compose.onNodeWithText("Type a request").assertIsDisplayed(); assertEquals(0, listens)
+            compose.onNodeWithText("Type a request").assertIsDisplayed()
+            compose.waitUntil(10_000) { listens == 1 && microphoneActive }
         } finally {
             shell("cmd statusbar collapse")
             shell("cmd statusbar set-tiles $originalTiles")
@@ -255,11 +348,11 @@ class ShortcutsTest {
                 if (add != null) confirmed = add.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
             }
             manager.pinnedShortcuts.any { shortcut ->
-                MagpieShortcuts.take(Intent(checkNotNull(shortcut.intent)))?.let { it.owner == owner && it.itemId == request.itemId } == true
+                MagpieShortcuts.take(app, Intent(checkNotNull(shortcut.intent)))?.let { it.owner == owner && it.itemId == request.itemId } == true
             }
         }
-        val pinned = manager.pinnedShortcuts.first { MagpieShortcuts.take(Intent(checkNotNull(it.intent)))?.itemId == request.itemId }
-        val delivered = checkNotNull(MagpieShortcuts.take(Intent(checkNotNull(pinned.intent))))
+        val pinned = manager.pinnedShortcuts.first { MagpieShortcuts.take(app, Intent(checkNotNull(it.intent)))?.itemId == request.itemId }
+        val delivered = checkNotNull(MagpieShortcuts.take(app, Intent(checkNotNull(pinned.intent))))
         assertEquals(owner, delivered.owner)
         // The instrumentation install is removed by Gradle, including this fixture's home-screen pin.
         deliver(delivered); waitPlaying(7)

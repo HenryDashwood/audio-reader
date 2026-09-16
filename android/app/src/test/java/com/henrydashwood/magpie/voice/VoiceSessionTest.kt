@@ -160,4 +160,41 @@ class VoiceSessionTest {
         assertTrue(host.applied.isEmpty()); assertTrue(session.state.value.recoverable)
         assertEquals("Missing offline voice", session.state.value.error)
     }
+
+    @Test fun shortcutMicrophoneLaunchIsConsumedOnceAndNeverSurvivesClosingOrAccountChanges() = runTest {
+        val host = Host(); val input = Input()
+        val session = VoiceSession(this, host, input, {}, { ConversationPreferences() })
+        session.open(null, listenOnOpen = true)
+        val first = checkNotNull(session.state.value.launchListening)
+        assertTrue(session.consumeLaunchListening(first)); assertFalse(session.consumeLaunchListening(first))
+        assertFalse(input.active) // Only the foreground permission-aware UI can start capture.
+        session.open(null, listenOnOpen = true)
+        val oldPermission = session.microphoneRequestVersion
+        session.background()
+        assertNull(session.state.value.launchListening); assertFalse(session.acceptsMicrophoneRequest(oldPermission))
+        session.open(null, listenOnOpen = true)
+        val previousAccount = session.microphoneRequestVersion
+        host.account = VoiceAccount("two", 2, true, null); session.activate()
+        assertFalse(session.acceptsMicrophoneRequest(previousAccount)); assertNull(session.state.value.launchListening)
+    }
+
+    @Test fun typingOrOpeningAnotherConversationInvalidatesAnOutstandingMicrophonePermissionRequest() = runTest {
+        val session = VoiceSession(this, Host(), Input(), {}, { ConversationPreferences(false) })
+        session.open(null)
+        val permission = session.microphoneRequestVersion
+        assertTrue(session.acceptsMicrophoneRequest(permission))
+        session.submit("Find a show"); runCurrent()
+        assertFalse(session.acceptsMicrophoneRequest(permission))
+        val next = session.microphoneRequestVersion
+        session.open(null); assertFalse(session.acceptsMicrophoneRequest(next))
+        session.close()
+    }
+
+    @Test fun reopeningBeforeCancellationFinishesCannotUndoAnExplicitNoResumeDecision() = runTest {
+        val host = Host(); val input = Input()
+        val session = VoiceSession(this, host, input, {}, { ConversationPreferences() })
+        session.open(null); session.listen(); runCurrent(); assertTrue(input.active)
+        session.close(resume = false); session.open(null); runCurrent()
+        assertFalse(input.active); assertFalse(host.ends.last())
+    }
 }
