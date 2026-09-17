@@ -134,9 +134,13 @@ properties file. The repository helper also inherits Gradle's standard
 `ORG_GRADLE_PROJECT_MAGPIE_ACCOUNT_API_URL` environment variables. Client IDs are
 public identifiers; no Google client secret belongs in either mobile app.
 Debug builds default to the registered server client and the staging origin.
-Explicit properties (including empty values) override those defaults. Release
-builds retain empty defaults until a release certificate is registered and the
-intended backend is supplied. No release signing configuration was changed.
+Explicit properties (including empty values) override the debug defaults. Release
+builds default to production and the shared web/server client ID, but require
+private signing inputs and a matching declared certificate fingerprint before
+building. No release key or Play app exists yet, and registration still needs
+verification with the distributed build. See [Android release preparation](android-release.md)
+for the signing properties and the distinction between local/upload and Play
+app-signing certificates.
 
 Deploy through the existing staging and manual production promotion process in
 [backend releases](backend-releases.md), after configuring the chosen environment.
