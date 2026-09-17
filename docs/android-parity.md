@@ -1,7 +1,7 @@
 # Android parity checklist
 
 Baseline: source review against the current iOS app, 11 September 2026.
-Updated: 16 September 2026.
+Updated: 17 September 2026.
 Numbers match the review. A checked item covers the implementation described
 here; emulator results do not establish physical-device audio or TalkBack quality.
 
@@ -43,8 +43,8 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
 - [ ] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
   Launcher/pinned actions, Quick Settings, account-scoped Continue listening,
   trusted Ask microphone launches, media-client library browsing/search, structured
-  lookup/status, playback controls, and structured filing/Undo are implemented.
-  Free-form requests, subscriptions, and destination actions remain; the newsletter action also depends on item 9.
+  lookup/status, playback controls, structured filing/Undo, and destination actions
+  are implemented. Free-form requests and subscriptions remain; the newsletter action also depends on item 9.
 - [ ] **9. Newsletters.** Address presentation/sharing, sender approval/blocking, and signup.
 - [x] **10. AI consent controls.** The discovery flow discloses AI data sharing
   before granting permission. Settings reads, reviews, grants, and withdraws the
@@ -487,8 +487,39 @@ reruns pass after using a stable manual drag and awaiting player dismissal befor
 releasing test controllers. All ten HTTP voice/action transport cases passed in
 the full run. No backend or Swift contract changed.
 
-Item 8 remains unchecked until free-form requests,
-subscription, and destination actions are implemented and verified. Future assistant adapters
+The seventh milestone adds structured navigation actions for Latest, Following,
+Saved, Now Playing, Shortcuts, a listening item's details, and a followed show's
+items. The assistant receives an immutable, one-use action for the user to open;
+creating it does not open an activity, start playback, or request microphone access.
+Generic destinations remain discoverable before sign-in. Item/show actions require
+an authenticated account and validate unchanged scoped IDs.
+
+Delayed actions revalidate the account before interrupting a conversation or
+loading content. Opening a removed show fails with an explanation. The screen
+also checks account/catalog ownership when consuming the resolved route, guarding
+a change between model resolution and the next UI frame. Opening an item or show
+preserves the existing player. Validated shortcuts cancel earlier article preparation
+before waiting for their own lookup, preventing an old request from starting
+audio late. All actions reuse the app's existing navigation and
+permission boundaries; they do not add external deep links or AI requests.
+
+Verification on 17 September 2026: `make android-check` passed all 143 JVM tests,
+built both APKs, and reported no compiler warnings or lint errors. Eight existing
+lint warnings and one hint remain. Three assistant-interface checks cover typed
+navigation results, invalid targets, signed-out access, and availability changes.
+The full 21-case shortcut run passed 18 cases; three new link journeys completed
+their assertions but failed activity cleanup. Inspection of AndroidX's lifecycle
+matcher identified the changed data URI as well as categories. Restoring the test
+launch intent after the actual handoff fixes cleanup; all three focused reruns
+passed. The additional earlier-preparation cancellation regression passed too,
+providing passing coverage of all 22 shortcut cases. The delayed UI-consumption
+regression covers both an account switch and a show removed after resolution.
+All six ordinary navigation tests passed, including Saved and activity recreation.
+The reinstalled sample preview opened Latest through the navigation intent; its
+settled screen was visually inspected with no player active.
+
+Item 8 remains unchecked until free-form requests and subscription actions are
+implemented and verified. Future assistant adapters
 must preserve the trusted microphone launch boundary and Android permission step.
 Newsletter shortcut support also depends on item 9. Platform-specific release
 and physical-assistant acceptance remain separate from emulator verification.

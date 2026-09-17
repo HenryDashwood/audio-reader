@@ -63,6 +63,14 @@ data class LibraryChange(
     val item: ListeningItem?,
 )
 
+/** An action the user can open to navigate in Magpie. Creating it does not change playback or open a screen. */
+@AppFunctionSerializable(isDescribedByKDoc = true)
+data class MagpieDestination(
+    val title: String,
+    /** Immutable, one-use action. Ask the user to open it; do not announce that the screen is already open. */
+    val openMagpie: PendingIntent,
+)
+
 @RequiresApi(36)
 @AppFunctionServiceEntryPoint(serviceName = "MagpieAppFunctions", appFunctionXmlFileName = "magpie_app_functions")
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -91,6 +99,57 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
     private fun item(value: LibraryItem) = ListeningItem(value.id, value.title, value.source,
         if (value.kind == ContentKind.Podcast) "podcast" else "article", value.completed, value.durationSeconds)
     private fun scopedShowId(state: LibraryState, feed: LibraryFeed) = "${state.owner}:feed:${feed.id}"
+
+    /**
+     * Returns an action to open a Magpie screen without starting playback or the microphone.
+     * Ask the user to open the returned action. Also available before sign-in.
+     * @param destination One of latest, following, saved, nowPlaying, or shortcuts.
+     */
+    @AppFunction(isEnabled = true, isDescribedByKDoc = true)
+    suspend fun openMagpieDestination(destination: String): MagpieDestination = action {
+        val choice = when (destination) {
+            "latest" -> com.henrydashwood.magpie.shortcuts.ShortcutAction.OpenLatest
+            "following" -> com.henrydashwood.magpie.shortcuts.ShortcutAction.Following
+            "saved" -> com.henrydashwood.magpie.shortcuts.ShortcutAction.Saved
+            "nowPlaying" -> com.henrydashwood.magpie.shortcuts.ShortcutAction.Player
+            "shortcuts" -> com.henrydashwood.magpie.shortcuts.ShortcutAction.Shortcuts
+            else -> throw AppFunctionInvalidArgumentException("Choose latest, following, saved, nowPlaying, or shortcuts.")
+        }
+        val state = if (library.state.value.live) ready() else library.state.value
+        destination(com.henrydashwood.magpie.shortcuts.ShortcutRequest(choice, owner = state.owner ?: "sample"), choice.label)
+    }
+
+    /**
+     * Returns an action to open an item's details or article without playing it. Ask the user to open the returned action.
+     * @param itemId Unchanged account-scoped ID from findItems.
+     */
+    @AppFunction(isEnabled = false, isDescribedByKDoc = true)
+    suspend fun openListeningItem(itemId: String): MagpieDestination = action {
+        val state = ready()
+        val found = library.shortcutItem(itemId)
+        checkAccount(state)
+        destination(com.henrydashwood.magpie.shortcuts.ShortcutRequest(
+            com.henrydashwood.magpie.shortcuts.ShortcutAction.ReadItem, owner = state.owner, itemId = found.id), found.title)
+    }
+
+    /**
+     * Returns an action to open a followed show's list of items without playing it. Ask the user to open the returned action.
+     * @param showId Unchanged account-scoped ID from listShows.
+     */
+    @AppFunction(isEnabled = false, isDescribedByKDoc = true)
+    suspend fun openFollowedShow(showId: String): MagpieDestination = action {
+        val state = ready()
+        val feed = state.feeds.firstOrNull { scopedShowId(state, it) == showId }
+            ?: throw AppFunctionElementNotFoundException("That show belongs to another account or is no longer followed. List shows again.")
+        destination(com.henrydashwood.magpie.shortcuts.ShortcutRequest(
+            com.henrydashwood.magpie.shortcuts.ShortcutAction.OpenFeed, owner = state.owner, feedId = feed.id), feed.title)
+    }
+
+    private fun destination(request: com.henrydashwood.magpie.shortcuts.ShortcutRequest, title: String): MagpieDestination {
+        val intent = com.henrydashwood.magpie.shortcuts.MagpieShortcuts.intent(this, request)
+            .setData(android.net.Uri.Builder().scheme("magpie-automation").authority("open").appendPath(java.util.UUID.randomUUID().toString()).build())
+        return MagpieDestination(title, PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT))
+    }
 
     /**
      * Lists followed shows and publications. Use the returned ID to restrict findItems to a show.

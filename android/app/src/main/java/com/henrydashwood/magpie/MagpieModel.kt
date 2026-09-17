@@ -199,7 +199,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     fun consumeShortcutNavigation() { mutableShortcutNavigation.value = null }
     fun cancelShortcut() { shortcutVersion++; shortcutJob?.cancel(); shortcutJob = null; mutableShortcutWorking.value = null }
     fun runShortcut(request: ShortcutRequest) {
-        cancelShortcut(); voice.close(resume = false); contentJob?.cancel()
+        cancelShortcut()
         val version = shortcutVersion
         val controls = PlaybackStatus.controlVersion.value
         val initial = libraryState.value
@@ -208,19 +208,34 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         shortcutJob = viewModelScope.launch {
             try {
                 withTimeout(30_000) {
-                    if (request.action in setOf(ShortcutAction.Ask, ShortcutAction.Saved, ShortcutAction.Following, ShortcutAction.Shortcuts, ShortcutAction.Player)) {
+                    fun checkScope() {
+                        check(libraryState.value.revision == initial.revision && libraryState.value.live == initial.live) { "Your account changed. Open the shortcut again." }
+                        check(request.owner == null || request.owner == (libraryState.value.owner ?: if (!libraryState.value.live) "sample" else null)) { "This shortcut belongs to another account. Sign in to that account or create a new shortcut." }
+                    }
+                    // A delayed assistant handoff must be validated before it can
+                    // close a conversation, change a screen, or prepare content.
+                    if (request.owner != null) libraryState.first { !it.loading }
+                    checkScope()
+                    contentJob?.cancel()
+                    if (request.action in setOf(ShortcutAction.Ask, ShortcutAction.Saved, ShortcutAction.Following, ShortcutAction.OpenLatest, ShortcutAction.Shortcuts, ShortcutAction.Player)) {
+                        voice.close(resume = false)
                         mutableShortcutNavigation.value = request
                         if (request.action == ShortcutAction.Ask) voice.open(null, listenOnOpen = request.listenOnOpen)
                         return@withTimeout
                     }
                     val snapshot = libraryState.first { !it.loading }
                     fun checkAccount() {
-                        check(libraryState.value.revision == initial.revision && libraryState.value.live == initial.live) { "Your account changed. Open the shortcut again." }
+                        checkScope()
                         check(PlaybackStatus.controlVersion.value == controls) { "Playback changed. Open the shortcut again when you are ready." }
-                        check(request.owner == null || request.owner == (libraryState.value.owner ?: "sample")) { "This shortcut belongs to another account. Sign in to that account or create a new shortcut." }
                     }
                     checkAccount()
                     check(!snapshot.live || snapshot.owner != null) { "Your library could not load. Open Magpie and try again." }
+                    if (request.action == ShortcutAction.OpenFeed) {
+                        check(snapshot.feeds.any { it.id == request.feedId }) { "That show is no longer followed. Find it again." }
+                        voice.close(resume = false)
+                        mutableShortcutNavigation.value = request
+                        return@withTimeout
+                    }
                     player.first { it.connected }
                     checkAccount()
                     val item = when (request.action) {
@@ -235,6 +250,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                     checkAccount()
                     val loaded = if (item.textLoaded) item else repository.content(item.id)
                     checkAccount()
+                    voice.close(resume = false)
                     mutableShortcutNavigation.value = request.copy(itemId = loaded.id)
                     if (request.action != ShortcutAction.ReadItem) playReady(loaded)
                 }

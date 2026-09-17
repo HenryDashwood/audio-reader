@@ -119,11 +119,22 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     }
     LaunchedEffect(shortcutNavigation) {
         shortcutNavigation?.let { request ->
+            // The account/catalog can change after the model resolved the route
+            // but before Compose consumes it on the next frame.
+            val current = model.libraryState.value
+            val currentOwner = current.owner ?: if (!current.live) "sample" else null
+            if ((request.owner != null && request.owner != currentOwner) ||
+                (request.action == ShortcutAction.OpenFeed && current.feeds.none { it.id == request.feedId })) {
+                model.consumeShortcutNavigation()
+                return@let
+            }
             showingAccount = false; showingShortcuts = false; showingPlayer = false
             selectedItemId = null; selectedSource = null; query = ""; showingSearch = false
             when (request.action) {
                 ShortcutAction.Saved -> destination = Destination.Saved
                 ShortcutAction.Following -> destination = Destination.Following
+                ShortcutAction.OpenLatest -> destination = Destination.Latest
+                ShortcutAction.OpenFeed -> { destination = Destination.Following; selectedSource = request.feedId }
                 ShortcutAction.Shortcuts -> showingShortcuts = true
                 ShortcutAction.ReadItem -> selectedItemId = request.itemId
                 ShortcutAction.Ask -> Unit

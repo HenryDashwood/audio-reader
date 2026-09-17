@@ -436,7 +436,14 @@ another item, until the corresponding result or a new item state is confirmed.
 Retry context and these progress guards are in memory; durable recovery across
 process death remains part of the offline/progress work in checklist item 11.
 
-Free-form requests, subscriptions, and destination actions
+Assistant navigation can open Latest, Following, Saved, Now Playing, Shortcuts,
+an item, or a followed show. Returned actions are immutable and one-use; the user
+opens them to navigate without starting audio or microphone capture. Generic
+screens remain available before sign-in. Account-bound actions are checked again
+when opened and when the screen consumes the route. Removed shows are rejected,
+and opening an item or show preserves ongoing playback.
+
+Free-form requests and subscriptions
 remain part of checklist item 8. Google describes AppFunctions/Gemini integration as an
 experimental private preview; launcher/tile availability does not establish
 Gemini support or phone acceptance.

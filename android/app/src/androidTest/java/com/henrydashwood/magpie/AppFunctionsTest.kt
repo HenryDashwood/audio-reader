@@ -258,7 +258,8 @@ class AppFunctionsTest {
         assertEquals(3, success(MagpieAppFunctions.FUNCTION_ID_FIND_ITEMS).getAppFunctionDataList(key)!!.size)
     }
     @Test fun discoveryDisablesAfterSignOutAndEnablesAfterSignIn() = runBlocking {
-        val names = AppFunctionAvailability.functionIds.map { androidx.appfunctions.metadata.AppFunctionName(app.packageName, it) }
+        val names = AppFunctionAvailability.functionIds.filter { it != MagpieAppFunctions.FUNCTION_ID_OPEN_MAGPIE_DESTINATION }
+            .map { androidx.appfunctions.metadata.AppFunctionName(app.packageName, it) }
         withContext(Dispatchers.Main) { library.changeSession(null) }
         withTimeout(5_000) { while (manager.getAppFunctionStates(names).any { it.isEnabled }) delay(20) }
         val result = execute(MagpieAppFunctions.FUNCTION_ID_LIST_SHOWS)
@@ -266,6 +267,30 @@ class AppFunctionsTest {
         withContext(Dispatchers.Main) { library.changeSession("two") }
         withTimeout(5_000) { while (manager.getAppFunctionStates(names).any { !it.isEnabled }) delay(20) }
         assertEquals(1, success(MagpieAppFunctions.FUNCTION_ID_LIST_SHOWS).getAppFunctionDataList(key)!!.size)
+    }
+    @Test fun navigationActionsValidateTargetsAndDoNotStartPlayback() = runBlocking {
+        val item = success(MagpieAppFunctions.FUNCTION_ID_OPEN_LISTENING_ITEM,
+            parameters(MagpieAppFunctions.FUNCTION_ID_OPEN_LISTENING_ITEM).setString("itemId", itemId(1)).build()).getAppFunctionData(key)!!
+        assertEquals("Short podcast", item.getString("title")); assertTrue(item.getParcelable("openMagpie", android.app.PendingIntent::class.java)!!.isImmutable)
+        val show = success(MagpieAppFunctions.FUNCTION_ID_OPEN_FOLLOWED_SHOW,
+            parameters(MagpieAppFunctions.FUNCTION_ID_OPEN_FOLLOWED_SHOW).setString("showId", "$owner:feed:10").build()).getAppFunctionData(key)!!
+        assertEquals("Test show", show.getString("title")); assertTrue(show.getParcelable("openMagpie", android.app.PendingIntent::class.java)!!.isImmutable)
+        val before = api.episodeQueries
+        for ((id, field, value) in listOf(
+            Triple(MagpieAppFunctions.FUNCTION_ID_OPEN_LISTENING_ITEM, "itemId", "old:episode:1"),
+            Triple(MagpieAppFunctions.FUNCTION_ID_OPEN_FOLLOWED_SHOW, "showId", "old:feed:10"),
+            Triple(MagpieAppFunctions.FUNCTION_ID_OPEN_MAGPIE_DESTINATION, "destination", "playEverything"))) {
+            assertTrue(execute(id, parameters(id).setString(field, value).build()) is ExecuteAppFunctionResponse.Error)
+        }
+        assertEquals(before, api.episodeQueries)
+        assertFalse(withContext(Dispatchers.Main) { observer.isPlaying }); assertEquals(0, api.texts)
+    }
+    @Test fun genericNavigationRemainsAvailableWhenSignedOut() = runBlocking {
+        withContext(Dispatchers.Main) { library.changeSession(null) }
+        val id = MagpieAppFunctions.FUNCTION_ID_OPEN_MAGPIE_DESTINATION
+        val result = success(id, parameters(id).setString("destination", "latest").build()).getAppFunctionData(key)!!
+        assertEquals("Latest", result.getString("title")); assertTrue(result.getParcelable("openMagpie", android.app.PendingIntent::class.java)!!.isImmutable)
+        assertEquals(0, api.episodeQueries); assertEquals(0, api.queries)
     }
     @Test fun listeningStatusDoesNotStartPlayback() = runBlocking {
         val result = success(MagpieAppFunctions.FUNCTION_ID_GET_LISTENING_STATUS).getAppFunctionData(key)!!

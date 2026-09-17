@@ -1,6 +1,10 @@
 package com.henrydashwood.magpie
 
 import android.Manifest
+import android.app.PendingIntent
+import androidx.appfunctions.*
+import androidx.test.filters.SdkSuppress
+import com.henrydashwood.magpie.automation.MagpieAppFunctions
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -42,6 +46,7 @@ class ShortcutsTest {
     private lateinit var api: Api
     private lateinit var library: AccountLibrary
     private lateinit var model: MagpieModel
+    private lateinit var launchIntent: Intent
     private var scenario: ActivityScenario<MainActivity>? = null
     private var externalActivity: MainActivity? = null
     private var listens = 0
@@ -54,9 +59,13 @@ class ShortcutsTest {
         var latestCalls = 0
         var episodeCalls = 0
         var episodeGate: CompletableDeferred<Unit>? = null
+        var textGate: CompletableDeferred<Unit>? = null
+        var texts = 0
+        var cancelledTexts = 0
         var latestRows = listOf(first, second)
+        var following = true
         override suspend fun userId(token: String) = "shortcut-user-$token"
-        override suspend fun feeds(token: String) = listOf(LibraryFeed("10", "Shortcut show", 2, false, "https://fixture.invalid/feed"))
+        override suspend fun feeds(token: String) = if (following) listOf(LibraryFeed("10", "Shortcut show", 2, false, "https://fixture.invalid/feed")) else emptyList()
         override suspend fun latest(token: String): List<RemoteEpisode> { latestCalls++; return latestRows }
         override suspend fun saved(token: String) = emptyList<RemoteEpisode>()
         override suspend fun episodes(token: String, feedId: String, query: String) = listOf(second)
@@ -65,7 +74,11 @@ class ShortcutsTest {
             episodeCalls++; episodeGate?.await()
             return listOf(first, second, hidden).first { it.id == episodeId }
         }
-        override suspend fun text(token: String, episodeId: Int, contentId: Int?) = RemoteText(episodeId, 1, "Text for a shortcut.", null, 5)
+        override suspend fun text(token: String, episodeId: Int, contentId: Int?): RemoteText {
+            texts++
+            try { textGate?.await() } catch (failure: CancellationException) { cancelledTexts++; throw failure }
+            return RemoteText(episodeId, 1, "Text for a shortcut.", null, 5)
+        }
         override suspend fun save(token: String, episodeId: Int?, url: String?) = first
         override suspend fun remove(token: String, episodeId: Int) {}
         override suspend fun played(token: String, episodeId: Int, played: Boolean) {}
@@ -88,11 +101,14 @@ class ShortcutsTest {
             override fun finish() {}
         }
         scenario = ActivityScenario.launch(MainActivity::class.java)
-        scenario!!.onActivity { model = ViewModelProvider(it)[MagpieModel::class.java] }
+        scenario!!.onActivity { model = ViewModelProvider(it)[MagpieModel::class.java]; launchIntent = Intent(it.intent) }
         compose.waitUntil(10_000) { model.player.value.connected }
     }
     @After fun finish() {
         if (::model.isInitialized) compose.runOnUiThread { model.cancelShortcut(); model.voice.close(false); model.dismissPlayer() }
+        // ActivityScenario matches data URI and categories when tracking lifecycle
+        // events. Restore its launch identity only after testing the real handoff.
+        scenario?.onActivity { it.intent = Intent(launchIntent) }
         scenario?.close()
         externalActivity?.let { activity -> compose.runOnUiThread { activity.finishAndRemoveTask() } }
         app.stopService(Intent(app, PlaybackService::class.java))
@@ -105,6 +121,29 @@ class ShortcutsTest {
     }
     private fun waitPlaying(id: Int) = compose.waitUntil(15_000) { model.player.value.playing && model.player.value.item?.episodeId == id }
     private fun waitIdle() = compose.waitUntil(10_000) { model.shortcutWorking.value == null }
+    @androidx.annotation.RequiresApi(36)
+    private fun assistantAction(id: String, name: String, value: String): PendingIntent = runBlocking {
+        Assume.assumeTrue("Requires the current AppFunctions metadata indexer",
+            android.os.Build.VERSION.SDK_INT_FULL >= android.os.Build.VERSION_CODES_FULL.BAKLAVA_1)
+        val manager = checkNotNull(AppFunctionManager.getInstance(app))
+        withTimeout(60_000) {
+            while (true) {
+                try { manager.setAppFunctionEnabled(id, AppFunctionManager.APP_FUNCTION_STATE_ENABLED); break }
+                catch (_: IllegalArgumentException) { delay(500) }
+            }
+        }
+        val metadata = manager.searchAppFunctions(AppFunctionSearchSpec(packageNames = setOf(app.packageName))).first { it.id == id }
+        val result = manager.executeAppFunction(ExecuteAppFunctionRequest(app.packageName, id,
+            AppFunctionData.Builder(metadata.parameters, metadata.components).setString(name, value).build()))
+        assertTrue(result.toString(), result is ExecuteAppFunctionResponse.Success)
+        (result as ExecuteAppFunctionResponse.Success).returnValue
+            .getAppFunctionData(ExecuteAppFunctionResponse.Success.PROPERTY_RETURN_VALUE)!!.getParcelable("openMagpie", android.app.PendingIntent::class.java)!!
+    }
+    @androidx.annotation.RequiresApi(36)
+    private fun open(action: PendingIntent) {
+        assertTrue(action.isImmutable)
+        compose.runOnUiThread { action.send() }
+    }
     private fun shell(command: String): String =
         android.os.ParcelFileDescriptor.AutoCloseInputStream(InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)).use { it.readBytes().toString(Charsets.UTF_8).trim() }
 
@@ -260,11 +299,88 @@ class ShortcutsTest {
         deliver(ShortcutRequest(ShortcutAction.PlayItem, owner, "$owner:episode:7")); waitPlaying(7)
     }
 
+    @Test @SdkSuppress(minSdkVersion = 36)
+    fun assistantDestinationsOpenTheRequestedScreensWithoutStartingAudioOrMicrophone() {
+        fun destination(name: String) = assistantAction(MagpieAppFunctions.FUNCTION_ID_OPEN_MAGPIE_DESTINATION, "destination", name)
+        val latest = destination("latest")
+        open(latest)
+        compose.onNodeWithContentDescription("Clear Latest").assertExists()
+        try { latest.send(); fail("A destination action must be one-use") } catch (_: PendingIntent.CanceledException) {}
+        open(destination("following")); compose.onNodeWithTag("following-list").assertExists()
+        open(destination("saved")); compose.onNodeWithContentDescription("Add link").assertExists()
+        open(destination("shortcuts")); compose.onNodeWithTag("shortcuts-list").assertExists()
+        compose.onNodeWithContentDescription("Back").performClick()
+        assertFalse(model.player.value.playing); assertEquals(0, listens)
+        deliver(ShortcutRequest(ShortcutAction.Latest)); waitPlaying(1)
+        val before = model.player.value.positionMs
+        open(destination("nowPlaying")); compose.onNodeWithContentDescription("Close player").assertExists()
+        assertTrue(model.player.value.playing); assertEquals(1, model.player.value.item?.episodeId)
+        assertTrue(model.player.value.positionMs >= before); assertEquals(0, listens)
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 36)
+    fun assistantItemAndShowLinksOpenTheirContentAndPreserveTheCurrentPlayer() {
+        deliver(ShortcutRequest(ShortcutAction.Latest)); waitPlaying(1)
+        val show = assistantAction(MagpieAppFunctions.FUNCTION_ID_OPEN_FOLLOWED_SHOW, "showId", "$owner:feed:10")
+        open(show)
+        compose.onNodeWithContentDescription("Back").assertExists()
+        compose.onNodeWithTag("story-list").assertExists()
+        compose.onNodeWithText("Shortcut second podcast").assertExists()
+        val item = assistantAction(MagpieAppFunctions.FUNCTION_ID_OPEN_LISTENING_ITEM, "itemId", "$owner:episode:7")
+        open(item)
+        compose.onNodeWithContentDescription("Find in this page").assertExists()
+        assertTrue(model.player.value.playing); assertEquals(1, model.player.value.item?.episodeId)
+        assertEquals(0, listens)
+    }
+
+    @Test @SdkSuppress(minSdkVersion = 36)
+    fun delayedAssistantLinksRejectChangedAccountsAndRemovedShows() {
+        val old = assistantAction(MagpieAppFunctions.FUNCTION_ID_OPEN_MAGPIE_DESTINATION, "destination", "shortcuts")
+        runBlocking(Dispatchers.Main) { library.changeSession("two") }
+        val calls = api.episodeCalls
+        open(old)
+        compose.onNodeWithText("another account", substring = true).assertExists()
+        compose.onNodeWithTag("shortcuts-list").assertDoesNotExist()
+        assertEquals(calls, api.episodeCalls)
+        val show = assistantAction(MagpieAppFunctions.FUNCTION_ID_OPEN_FOLLOWED_SHOW, "showId", "$owner:feed:10")
+        api.following = false
+        runBlocking(Dispatchers.Main) { library.refresh() }
+        open(show)
+        compose.onNodeWithText("no longer followed", substring = true).assertExists()
+        compose.onNodeWithTag("following-list").assertExists()
+        assertFalse(model.player.value.playing); assertEquals(0, listens)
+    }
+
     @Test fun aDifferentAccountsPinnedItemNeverQueriesOrPlays() {
         val another = "a".repeat(64)
         deliver(ShortcutRequest(ShortcutAction.PlayItem, another, "$another:episode:7"))
         compose.waitUntil(5_000) { model.notice.value?.contains("another account") == true }
         assertEquals(0, api.episodeCalls); assertFalse(model.player.value.playing)
+    }
+
+    @Test fun queuedNavigationRechecksTheAccountAndShowBeforeTheScreenConsumesIt() {
+        fun holdRoute(request: ShortcutRequest) {
+            scenario!!.onActivity { it.setContent { androidx.compose.material3.Text("Waiting to display navigation") } }
+            compose.waitForIdle()
+            compose.runOnUiThread { model.runShortcut(request) }
+            compose.waitUntil(5_000) { model.shortcutNavigation.value != null }
+        }
+        fun display() {
+            scenario!!.onActivity { it.setContent { MagpieTheme { MagpieApp(model) } } }
+            compose.waitUntil(5_000) { model.shortcutNavigation.value == null }
+        }
+        holdRoute(ShortcutRequest(ShortcutAction.Shortcuts, owner))
+        runBlocking(Dispatchers.Main) { library.changeSession("two") }
+        display()
+        compose.onNodeWithTag("shortcuts-list").assertDoesNotExist()
+        compose.onNodeWithTag("following-list").assertExists()
+        holdRoute(ShortcutRequest(ShortcutAction.OpenFeed, owner, feedId = "10"))
+        api.following = false
+        runBlocking(Dispatchers.Main) { library.refresh() }
+        display()
+        compose.onNodeWithTag("following-list").assertExists()
+        compose.onNodeWithTag("story-list").assertDoesNotExist()
+        assertFalse(model.player.value.playing); assertEquals(0, listens)
     }
 
     @Test fun accountChangeDuringLookupDiscardsTheLateItem() {
@@ -276,6 +392,21 @@ class ShortcutsTest {
         api.episodeGate!!.complete(Unit); waitIdle()
         assertFalse(model.player.value.playing)
         assertTrue(library.state.value.items.none { it.id.startsWith(oldOwner) })
+    }
+
+    @Test fun aValidatedShortcutCancelsEarlierContentPreparationBeforeWaitingForItsOwnLookup() {
+        api.latestRows += api.first.copy(id = 8, title = "Pending reading", audioUrl = null, contentId = 1)
+        runBlocking(Dispatchers.Main) { library.refresh() }
+        api.textGate = CompletableDeferred(); api.episodeGate = CompletableDeferred()
+        compose.runOnUiThread { model.play(model.library.first { it.episodeId == 8 }) }
+        compose.waitUntil(5_000) { api.texts == 1 }
+        deliver(ShortcutRequest(ShortcutAction.ReadItem, owner, "$owner:episode:7"))
+        compose.waitUntil(5_000) { api.episodeCalls == 1 && api.cancelledTexts == 1 }
+        api.textGate!!.complete(Unit)
+        assertFalse(model.player.value.playing)
+        api.episodeGate!!.complete(Unit); waitIdle()
+        compose.onNodeWithContentDescription("Find in this page").assertExists()
+        assertFalse(model.player.value.playing)
     }
 
     @Test fun explicitExternalPauseInvalidatesAPendingPlaybackShortcut() {

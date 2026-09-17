@@ -13,7 +13,7 @@ import java.util.UUID
 
 enum class ShortcutAction(val label: String) {
     Ask("Ask Magpie"), Continue("Continue listening"), Latest("Play latest"), Saved("Saved articles"),
-    Following("Following"), Player("Now playing"), Shortcuts("Shortcuts"), ReadItem("Open item"),
+    Following("Following"), OpenLatest("Latest"), OpenFeed("Open show"), Player("Now playing"), Shortcuts("Shortcuts"), ReadItem("Open item"),
     PlayItem("Play item"), PlayFeed("Play a show's latest"),
 }
 data class ShortcutRequest(val action: ShortcutAction, val owner: String? = null,
@@ -60,7 +60,7 @@ object MagpieShortcuts {
             if (item != null && (item.isBlank() || item.length > 160)) return@runCatching null
             if (feed != null && (feed.isBlank() || feed.length > 256)) return@runCatching null
             if (action in setOf(ShortcutAction.ReadItem, ShortcutAction.PlayItem) && (owner == null || item == null)) return@runCatching null
-            if (action == ShortcutAction.PlayFeed && (owner == null || feed == null)) return@runCatching null
+            if (action in setOf(ShortcutAction.PlayFeed, ShortcutAction.OpenFeed) && (owner == null || feed == null)) return@runCatching null
             val supplied = intent.getStringExtra(MICROPHONE)
             val expected = if (action == ShortcutAction.Ask && supplied?.length == 64) microphoneProof(context, create = false) else null
             val listen = expected != null && MessageDigest.isEqual(expected.toByteArray(), supplied!!.toByteArray())
@@ -74,7 +74,7 @@ object MagpieShortcuts {
     fun icon(action: ShortcutAction) = when (action) {
         ShortcutAction.Ask -> R.drawable.ic_shortcut_mic
         ShortcutAction.Saved -> R.drawable.ic_shortcut_bookmark
-        ShortcutAction.ReadItem, ShortcutAction.Following, ShortcutAction.Shortcuts -> R.drawable.ic_shortcut_article
+        ShortcutAction.ReadItem, ShortcutAction.Following, ShortcutAction.OpenLatest, ShortcutAction.OpenFeed, ShortcutAction.Shortcuts -> R.drawable.ic_shortcut_article
         else -> R.drawable.ic_shortcut_play
     }
     private fun info(context: Context, request: ShortcutRequest, label: String): ShortcutInfo {

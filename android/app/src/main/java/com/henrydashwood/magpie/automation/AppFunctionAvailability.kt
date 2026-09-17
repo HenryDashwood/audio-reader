@@ -27,7 +27,7 @@ object AppFunctionAvailability {
             for (attempt in 0..3) {
                 try {
                     for (id in functionIds) manager.setAppFunctionEnabled(id,
-                        if (enabled) AppFunctionManager.APP_FUNCTION_STATE_ENABLED else AppFunctionManager.APP_FUNCTION_STATE_DISABLED)
+                        if (enabled || id == MagpieAppFunctions.FUNCTION_ID_OPEN_MAGPIE_DESTINATION) AppFunctionManager.APP_FUNCTION_STATE_ENABLED else AppFunctionManager.APP_FUNCTION_STATE_DISABLED)
                     break
                 } catch (cancelled: CancellationException) { throw cancelled
                 } catch (_: Exception) {
@@ -55,5 +55,8 @@ object AppFunctionAvailability {
         MagpieAppFunctions.FUNCTION_ID_PLAY_LATEST_LISTENING_ITEM,
         MagpieAppFunctions.FUNCTION_ID_FILE_LISTENING_ITEM,
         MagpieAppFunctions.FUNCTION_ID_UNDO_LAST_LIBRARY_ACTION,
+        MagpieAppFunctions.FUNCTION_ID_OPEN_MAGPIE_DESTINATION,
+        MagpieAppFunctions.FUNCTION_ID_OPEN_LISTENING_ITEM,
+        MagpieAppFunctions.FUNCTION_ID_OPEN_FOLLOWED_SHOW,
     )
 }
