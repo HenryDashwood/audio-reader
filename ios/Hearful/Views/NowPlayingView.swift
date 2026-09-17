@@ -6,83 +6,95 @@ import SwiftUI
 struct NowPlayingView: View {
     let openArticle: (Episode) -> Void
     @ObservedObject private var player = PlaybackCoordinator.shared
+    @ObservedObject private var articlePlayer = ArticlePlayer.shared
     @ObservedObject private var sleepTimer = SleepTimer.shared
     @Environment(\.dismiss) private var dismiss
     @State private var scrubPosition: TimeInterval = 0
 
     var body: some View {
-        VStack(spacing: 28) {
-            // The capsule reads as "drag me down" to anyone who can see it and
-            // means nothing at all to anyone who cannot, so it is decorative
-            // and there is a real button beside it. Swiping a sheet away has
-            // no simple VoiceOver equivalent — only the two-finger scrub, which
-            // almost nobody knows — and a screen you can enter but not leave is
-            // worse than one you cannot enter.
-            ZStack {
-                Capsule()
-                    .fill(.secondary.opacity(0.4))
-                    .frame(width: 40, height: 5)
-                    .accessibilityHidden(true)
-                HStack {
-                    Spacer()
+        ScrollView {
+            VStack(spacing: 28) {
+                // The capsule reads as "drag me down" to anyone who can see it and
+                // means nothing at all to anyone who cannot, so it is decorative
+                // and there is a real button beside it. Swiping a sheet away has
+                // no simple VoiceOver equivalent — only the two-finger scrub, which
+                // almost nobody knows — and a screen you can enter but not leave is
+                // worse than one you cannot enter.
+                ZStack {
+                    Capsule()
+                        .fill(.secondary.opacity(0.4))
+                        .frame(width: 40, height: 5)
+                        .accessibilityHidden(true)
+                    HStack {
+                        Spacer()
+                        Button {
+                            dismiss()
+                        } label: {
+                            Image(systemName: "chevron.down")
+                                .font(.body.weight(.semibold))
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Close player")
+                        .accessibilityHint("Goes back to the list you came from")
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.horizontal, 8)
+
+                Artwork(
+                    url: player.currentEpisode?.imageURL, title: player.currentEpisode?.feedTitle ?? "", size: 260
+                )
+                .shadow(radius: 12, y: 6)
+                .padding(.top, 12)
+
+                if let episode = player.currentEpisode {
                     Button {
-                        dismiss()
+                        openArticle(episode)
                     } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.body.weight(.semibold))
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
+                        HStack(spacing: 8) {
+                            Text(episode.title)
+                                .font(.title3.weight(.semibold))
+                                .multilineTextAlignment(.center)
+                                .lineLimit(3)
+                            Image(systemName: "chevron.right")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
+                        }
+                        .padding(.horizontal, 28)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Close player")
-                    .accessibilityHint("Goes back to the list you came from")
+                    .accessibilityLabel("Open article: \(episode.title)")
+                    .accessibilityHint(
+                        "Closes the player and opens the article without stopping playback")
+                } else {
+                    Text("Nothing playing")
+                        .font(.title3.weight(.semibold))
                 }
-            }
-            .padding(.top, 8)
-            .padding(.horizontal, 8)
 
-            Artwork(
-                url: player.currentEpisode?.imageURL, title: player.currentEpisode?.feedTitle ?? "", size: 260
-            )
-            .shadow(radius: 12, y: 6)
-            .padding(.top, 12)
-
-            if let episode = player.currentEpisode {
-                Button {
-                    openArticle(episode)
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(episode.title)
-                            .font(.title3.weight(.semibold))
-                            .multilineTextAlignment(.center)
-                            .lineLimit(3)
-                        Image(systemName: "chevron.right")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                    }
-                    .padding(.horizontal, 28)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .contentShape(Rectangle())
+                scrubber
+                transport
+                HStack(spacing: 16) {
+                    speedControl
+                    sleepControl
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open article: \(episode.title)")
-                .accessibilityHint(
-                    "Closes the player and opens the article without stopping playback")
-            } else {
-                Text("Nothing playing")
-                    .font(.title3.weight(.semibold))
-            }
 
-            scrubber
-            transport
-            HStack(spacing: 16) {
-                speedControl
-                sleepControl
+                if player.mode == .article, let message = articlePlayer.progressError {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                        .accessibilityLabel(message)
+                }
+                Spacer(minLength: 0)
             }
-
-            Spacer(minLength: 0)
         }
+        .scrollBounceBehavior(.basedOnSize)
         // A nil episode removes this screen's Siri context automatically.
         .userActivity("com.henrydashwood.hearful.viewNowPlaying", element: player.currentEpisode) {
             episode, activity in

@@ -324,6 +324,8 @@ class PlaybackPosition(Base):
     episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), primary_key=True)
     position_seconds: Mapped[float]
     content_id: Mapped[int | None] = mapped_column(ForeignKey("article_contents.id", ondelete="SET NULL"))
+    article_text_version: Mapped[str | None]
+    article_offset_utf16: Mapped[int | None]
     completed: Mapped[bool] = mapped_column(default=False)
     #: She has asked for this one to go, without having heard it. Kept apart
     #: from `completed` deliberately: both take an episode out of the feed, but
@@ -424,6 +426,28 @@ class VoiceCommandReceipt(Base):
     cancel_requested: Mapped[bool] = mapped_column(default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     result_json: Mapped[str | None] = mapped_column(Text)
+
+
+class PodcastProgressReceipt(Base):
+    """Committed in the same transaction as a guarded podcast position."""
+
+    __tablename__ = "podcast_progress_receipts"
+    accepted_revision: Mapped[str]
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    request_id: Mapped[str] = mapped_column(primary_key=True)
+    fingerprint: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ArticleProgressReceipt(Base):
+    """Acknowledges one exact text bookmark without replaying it after a lost reply."""
+
+    __tablename__ = "article_progress_receipts"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    request_id: Mapped[str] = mapped_column(primary_key=True)
+    fingerprint: Mapped[str]
+    accepted_revision: Mapped[str]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class VoiceUndo(Base):

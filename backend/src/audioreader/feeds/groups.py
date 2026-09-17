@@ -87,7 +87,11 @@ async def catalog(session: AsyncSession, user_id: uuid.UUID) -> Catalog:
 
 
 async def _catalog(session: AsyncSession, user_id: uuid.UUID) -> Catalog:
-    subscriptions = list(await session.scalars(select(Subscription).where(Subscription.user_id == user_id)))
+    subscriptions = list(
+        await session.scalars(
+            select(Subscription).where(Subscription.user_id == user_id).execution_options(populate_existing=True)
+        )
+    )
     roots = {s.group_feed_id for s in subscriptions if s.group_feed_id is not None}
     result = Catalog()
     if not roots:
@@ -164,6 +168,9 @@ async def _catalog(session: AsyncSession, user_id: uuid.UUID) -> Catalog:
 
 
 async def combine(session: AsyncSession, user_id: uuid.UUID, root_id: int, source_id: int) -> None:
+    from audioreader import positions
+
+    await positions.lock_user(session, user_id)
     # Serialize grouping changes for one listener, including two simultaneous
     # opposite merges, so roots cannot form a cycle.
     subscriptions = list(
@@ -188,6 +195,9 @@ async def combine(session: AsyncSession, user_id: uuid.UUID, root_id: int, sourc
 
 
 async def separate(session: AsyncSession, user_id: uuid.UUID, root_id: int, source_id: int) -> None:
+    from audioreader import positions
+
+    await positions.lock_user(session, user_id)
     subscriptions = list(
         await session.scalars(
             select(Subscription).where(Subscription.user_id == user_id).order_by(Subscription.id).with_for_update()
@@ -205,6 +215,7 @@ async def preserve_states(session: AsyncSession, user_id: uuid.UUID, root_id: in
     """Separating sources keeps the state they shared while combined."""
     from audioreader import positions
 
+    await positions.lock_user(session, user_id)
     user = await session.get(User, user_id)
     if user is None:
         return
@@ -217,6 +228,8 @@ async def preserve_states(session: AsyncSession, user_id: uuid.UUID, root_id: in
             row = PlaybackPosition(user_id=user_id, episode_id=item_id)
             session.add(row)
         row.position_seconds = state.position_seconds
+        row.article_text_version = state.article_text_version
+        row.article_offset_utf16 = state.article_offset_utf16
         row.completed = state.completed
         row.dismissed = state.dismissed
         row.updated_at = state.updated_at

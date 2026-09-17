@@ -17,6 +17,8 @@ import kotlinx.coroutines.withContext
 import com.henrydashwood.magpie.playback.VoiceCatalog
 import kotlinx.coroutines.Job
 import com.henrydashwood.magpie.data.LibraryItem
+import com.henrydashwood.magpie.data.ItemFiling
+import com.henrydashwood.magpie.data.ItemFilingAction
 import com.henrydashwood.magpie.data.PreviewStore
 import com.henrydashwood.magpie.playback.PlaybackService
 import com.henrydashwood.magpie.playback.PlaybackStatus
@@ -87,6 +89,17 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     val finished = mutableFinished.asStateFlow()
     private val mutablePlayer = MutableStateFlow(PlayerState(item = library.find { it.id == store.lastItem }, speed = store.speed(library.find { it.id == store.lastItem }?.kind ?: ContentKind.Podcast)))
     val player = mutablePlayer.asStateFlow()
+    fun listeningPresentation(item: LibraryItem, playback: PlayerState = player.value): com.henrydashwood.magpie.data.ListeningPresentation {
+        val current = playback.item?.id == item.id && playback.durationMs > 0
+        val live = libraryState.value.live
+        val offset = PlaybackStatus.readingPosition.value?.takeIf { current && it.itemId == item.id && it.contentVersion == item.contentVersion }?.startUtf16
+            ?: if (live) item.articleBookmark?.offsetUtf16 ?: 0 else store.bookmark(item.id)?.takeIf { it.contentVersion == item.contentVersion }?.offsetUtf16 ?: 0
+        return com.henrydashwood.magpie.data.listeningPresentation(item,
+            positionMs = if (current) playback.positionMs else if (live) item.remotePositionMs else store.position(item.id),
+            durationMs = if (current && item.kind == ContentKind.Podcast) playback.durationMs else (item.durationSeconds?.toLong() ?: 0) * 1_000,
+            completed = if (current && playback.positionMs > 0) false else item.id in finished.value,
+            articleOffset = offset)
+    }
     private fun readSettings() = ListeningSettings(store.speed(ContentKind.Podcast), store.speed(ContentKind.Article), store.voiceId)
     private val mutableSettings = MutableStateFlow(readSettings())
     val settings = mutableSettings.asStateFlow()
@@ -107,13 +120,15 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     private val connection = MediaController.Builder(application, SessionToken(application, ComponentName(application, PlaybackService::class.java))).buildAsync()
     val speechInput by lazy { (getApplication<Application>() as MagpieApplication).voiceInput() }
     private val mutableConversationSettings = MutableStateFlow(store.conversation)
+    val diagnosticsEnabled get() = (getApplication<Application>() as MagpieApplication).diagnosticsEnabled
+    fun setDiagnosticsEnabled(enabled: Boolean) = (getApplication<Application>() as MagpieApplication).setDiagnosticsEnabled(enabled)
     val conversationSettings = mutableConversationSettings.asStateFlow()
     fun setConversationPreferences(value: ConversationPreferences) { store.conversation = value; mutableConversationSettings.value = value }
     val voice by lazy {
         VoiceSession(viewModelScope, PlaybackVoiceHost(repository, store, { player.value.item }, {
             contentJob?.cancel(); voiceCatalog.stop(); voiceRefresh?.cancel()
         }, ::voiceCommand), speechInput,
-            (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, { store.conversation }, repository.voiceConversation)
+            (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, { store.conversation }, repository.voiceConversation, com.henrydashwood.magpie.telemetry.LibraryVoiceTelemetry(repository))
     }
     val newsletterSpeech by lazy {
         com.henrydashwood.magpie.voice.SpokenInformation(viewModelScope,
@@ -121,6 +136,12 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
             (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, repository.voiceConversation) {
                 mutableNotice.value = it
             }
+    }
+    val itemFiling by lazy {
+        ItemFiling(viewModelScope, repository,
+            PlaybackVoiceHost(repository, store, { player.value.item }, {
+                voiceCatalog.stop(); voiceRefresh?.cancel(); contentJob?.cancel()
+            }, ::voiceCommand, resetRestoredBookmark = true)) { mutableNotice.value = it }
     }
     fun readNewsletterAddress(spell: Boolean) {
         val state = newsletters.state.value
@@ -161,6 +182,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                     mutableLinkCapture.value = LinkCaptureState()
                     mutableSourceCapture.value = LinkCaptureState()
                     mutableNotice.value = null
+                    itemFiling.reset()
                     mutableClearingLatest.value = false
                     mutableClearLatestError.value = null
                     mutableImportingLinks.value = false
@@ -536,14 +558,32 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleFinished(item: LibraryItem) {
-        if (libraryState.value.live) { libraryAction { repository.played(item, item.id !in finished.value) }; return }
-        val next = if (item.id in finished.value) finished.value - item.id else finished.value + item.id
-        store.finished = next
-        mutableFinished.value = next
-        mutableNotice.value = if (item.id in next) "Marked as read: ${item.title}" else "Marked as unread: ${item.title}"
+        fileItem(item, if (item.id in finished.value) ItemFilingAction.Restore else ItemFilingAction.Finish)
+    }
+    fun fileItem(item: LibraryItem, action: ItemFilingAction) {
+        if (libraryState.value.live) { itemFiling.file(item, action); return }
+        val revision = libraryState.value.revision
+        libraryAction {
+            fun checkSample() {
+                if (libraryState.value.live || libraryState.value.revision != revision) throw CancellationException("Account changed")
+            }
+            checkSample()
+            if (player.value.item?.id == item.id) voiceCommand(PlaybackService.DISMISS_PLAYER, Bundle.EMPTY)
+            checkSample()
+            withContext(Dispatchers.IO) { store.fileSample(item.id, action) }
+            checkSample()
+            mutableFinished.value = store.finished
+            mutableDismissedFromLatest.value = store.dismissedFromLatest
+            mutableNotice.value = when (action) {
+                ItemFilingAction.Finish -> if (item.kind == ContentKind.Article) "Marked as read" else "Marked as played"
+                ItemFilingAction.Restore -> "Restored"
+                ItemFilingAction.Dismiss -> "Dismissed from Latest"
+            } + ": ${item.title}"
+        }
     }
 
     override fun onCleared() {
+        itemFiling.reset()
         newsletterSpeech.stop(resume = false)
         voice.close(resume = false)
         closeVoiceSettings()

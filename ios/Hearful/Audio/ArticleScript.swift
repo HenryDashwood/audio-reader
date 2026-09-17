@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import NaturalLanguage
 
 /// An article's text prepared for speech: ordered chunks laid out on an
@@ -81,6 +82,25 @@ nonisolated struct ArticleScript: Equatable {
         return chunks.count - 1
     }
 
+    /// Resume at the containing chunk's start; voice timing never enters this coordinate.
+    func index(atUTF16 offset: Int) -> Int? {
+        guard !chunks.isEmpty, offset >= 0 else { return nil }
+        return chunks.lastIndex { $0.textRange.location <= offset } ?? chunks.startIndex
+    }
+
+    static func textVersion(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func isScalarBoundary(_ offset: Int, in text: String) -> Bool {
+        isScalarBoundary(offset, inUTF16: Array(text.utf16))
+    }
+    static func isScalarBoundary(_ offset: Int, inUTF16 units: [UInt16]) -> Bool {
+        guard offset >= 0, offset <= units.count else { return false }
+        return offset == 0 || offset == units.count ||
+            !((0xD800...0xDBFF).contains(units[offset - 1]) && (0xDC00...0xDFFF).contains(units[offset]))
+    }
+
     /// A paragraph as speakable utterances: whole if short, else sentences
     /// packed greedily up to the limit so pauses stay natural.
     static func pieces(of paragraph: String, limit: Int = chunkCharacterLimit) -> [String] {
@@ -88,19 +108,21 @@ nonisolated struct ArticleScript: Equatable {
         let sentences = sentences(of: paragraph)
         guard !sentences.isEmpty else { return [paragraph] }
 
+        let source = paragraph as NSString
         var pieces: [String] = []
-        var current = ""
+        var searchStart = 0
+        var current: NSRange?
         for sentence in sentences {
-            if current.isEmpty {
-                current = sentence
-            } else if current.count + sentence.count + 1 <= limit {
-                current += " " + sentence
-            } else {
-                pieces.append(current)
-                current = sentence
-            }
+            let range = source.range(of: sentence, range: NSRange(location: searchStart, length: source.length - searchStart))
+            guard range.location != NSNotFound else { continue }
+            if let previous = current {
+                let combined = NSRange(location: previous.location, length: NSMaxRange(range) - previous.location)
+                if source.substring(with: combined).count <= limit { current = combined }
+                else { pieces.append(source.substring(with: previous)); current = range }
+            } else { current = range }
+            searchStart = NSMaxRange(range)
         }
-        if !current.isEmpty { pieces.append(current) }
+        if let current { pieces.append(source.substring(with: current)) }
         return pieces
     }
 

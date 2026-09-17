@@ -50,6 +50,10 @@ fun AskConversation(model: MagpieModel) {
     val haptic = LocalHapticFeedback.current
     val accessibility = context.getSystemService(AccessibilityManager::class.java)
     var typed by remember { mutableStateOf("") }
+    var dismissRequest by remember { mutableStateOf<VoiceRequest?>(null) }
+    LaunchedEffect(state.recoveryRequests) {
+        if (state.recoveryRequests.none { it.requestId == dismissRequest?.requestId }) dismissRequest = null
+    }
     var permissionError by remember { mutableStateOf<String?>(null) }
     var availability by remember { mutableStateOf<RecognitionAvailability?>(null) }
     var downloading by remember { mutableStateOf(false) }
@@ -72,7 +76,10 @@ fun AskConversation(model: MagpieModel) {
         permissionRequest = null
         if (request != null && model.voice.acceptsMicrophoneRequest(request)) {
             if (granted) approvedPermission = request
-            else permissionError = "Microphone access is off. Allow it in Android app settings to speak, or type your request below."
+            else {
+                model.voice.microphoneDenied(accessibility?.isTouchExplorationEnabled == true)
+                permissionError = "Microphone access is off. Allow it in Android app settings to speak, or type your request below."
+            }
         }
     }
     fun requestListening() {
@@ -170,6 +177,22 @@ fun AskConversation(model: MagpieModel) {
                                 .onFailure { capabilityError = "Android settings could not open." }
                         }) { Text("Android speech settings") }
                     }
+                    if (state.recoveryRequests.isNotEmpty() && !state.busy) {
+                        item {
+                            Text("Unfinished requests", Modifier.semantics { heading() })
+                            Text("These stay on this device until resolved or dismissed. Signing out removes them.")
+                        }
+                        items(state.recoveryRequests.size) { index ->
+                            val request = state.recoveryRequests[index]
+                            Column {
+                                Text(request.transcript)
+                                TextButton(onClick = { model.voice.retryRequest(request.requestId) },
+                                    modifier = Modifier.semantics { contentDescription = "Check request: ${request.transcript}" }) { Text("Check this request") }
+                                TextButton(onClick = { dismissRequest = request },
+                                    modifier = Modifier.semantics { contentDescription = "Dismiss request: ${request.transcript}" }) { Text("Dismiss request") }
+                            }
+                        }
+                    }
                     item { Text("Recognition and spoken replies run on this device. Library requests share recognised words and relevant library context only with your account’s AI permission.", style = MaterialTheme.typography.bodySmall) }
                 }
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -187,6 +210,12 @@ fun AskConversation(model: MagpieModel) {
                 }
             }
         }
+    }
+    dismissRequest?.let { request ->
+        AlertDialog(onDismissRequest = { dismissRequest = null }, title = { Text("Stop checking this request?") },
+            text = { Text("Magpie will cancel any unfinished work. Library changes already made will remain.") },
+            confirmButton = { TextButton(onClick = { dismissRequest = null; model.voice.dismissRequest(request.requestId) }) { Text("Dismiss request") } },
+            dismissButton = { TextButton(onClick = { dismissRequest = null }) { Text("Keep request") } })
     }
     if (state.phase == VoicePhase.Consent) AIConsentDialog(false, state.error, model.voice::allowAI, model.voice::declineAI)
 }

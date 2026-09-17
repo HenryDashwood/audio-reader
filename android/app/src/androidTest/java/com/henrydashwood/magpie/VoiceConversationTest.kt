@@ -58,7 +58,14 @@ class VoiceConversationTest {
         val said = mutableListOf<String>()
         override suspend fun speak(text: String) { said += text; gate?.await(); delegate?.speak(text) }
     }
-    private class Api : LibraryApi, DiscoveryApi, VoiceApi {
+    private class Api : LibraryApi, DiscoveryApi, VoiceApi, LibraryActionApi {
+        var typedUndoRequests = 0
+        override suspend fun libraryAction(token: String, action: String, episodeId: Int?, requestId: String): VoiceResponse {
+            assertEquals("undo", action); assertNull(episodeId)
+            typedUndoRequests++; gate?.await(); applyResponse()
+            return response
+        }
+        override suspend fun cancelLibraryAction(token: String, requestId: String) { cancellations += "$token:$requestId" }
         var allowed = true
         var grants = 0
         var filed = false
@@ -99,6 +106,10 @@ class VoiceConversationTest {
         override suspend fun setAIConsent(token: String, granted: Boolean): Boolean { grants++; allowed = granted; return allowed }
         override fun events(token: String, request: VoiceRequest) = flow {
             requests += request; emit(VoiceEvent.Delta("Working…")); gate?.await()
+            applyResponse()
+            emit(VoiceEvent.Result(response))
+        }
+        private fun applyResponse() {
             response.effects.forEach { effect ->
                 if (effect.action in setOf(VoiceAction.Played, VoiceAction.Restore)) {
                     if (effect.episode?.id == 1) filed = effect.action == VoiceAction.Played
@@ -106,7 +117,6 @@ class VoiceConversationTest {
                     if (effect.episode?.id == 3) articleFiled = effect.action == VoiceAction.Played
                 }
             }
-            emit(VoiceEvent.Result(response))
         }
         override suspend fun cancel(token: String, requestId: String) { cancellations += "$token:$requestId" }
     }
@@ -235,7 +245,8 @@ class VoiceConversationTest {
         compose.onNodeWithText("Close").performClick()
         assertFalse(model.player.value.playing); assertTrue(api.writesAfterFiling.isEmpty())
         output.gate = null; api.response = VoiceResponse(VoiceAction.Restore, "Restored your episode.", api.podcast)
-        ask("Undo that"); idle(); compose.onNodeWithText("Close").performClick()
+        ask("Undo that"); idle(); assertNull(model.voice.state.value.error); assertEquals(1, api.typedUndoRequests)
+        compose.onNodeWithText("Close").performClick()
         play()
         assertTrue(model.player.value.positionMs >= 12_000); assertTrue(model.player.value.positionMs < 20_000)
     }
@@ -258,7 +269,7 @@ class VoiceConversationTest {
         api.response = VoiceResponse(VoiceAction.Played, "Marked as read.", api.article.copy(completed = true))
         ask("Mark this article as read"); idle(); assertNull(store.bookmark(item.id))
         api.response = VoiceResponse(VoiceAction.Restore, "Restored your article.", api.article.copy(positionSeconds = 999.0))
-        ask("Undo that"); idle()
+        ask("Undo that"); idle(); assertNull(model.voice.state.value.error); assertEquals(1, api.typedUndoRequests)
         assertEquals(before, store.bookmark(item.id))
     }
 
@@ -274,7 +285,7 @@ class VoiceConversationTest {
         compose.waitUntil(5_000) { model.player.value.playing }
         assertEquals(1, model.player.value.item?.episodeId)
         api.response = VoiceResponse(VoiceAction.Restore, "Restored your article.", api.article)
-        ask("Undo that"); idle()
+        ask("Undo that"); idle(); assertNull(model.voice.state.value.error); assertEquals(1, api.typedUndoRequests)
         assertEquals(before, store.bookmark(item.id))
         compose.waitUntil(5_000) { model.player.value.playing }
     }

@@ -13,12 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from audioreader.models import (
     AppleBrowserFlow,
     ArticleContent,
+    ArticleProgressReceipt,
     AuthSession,
     Feed,
     InboundMessage,
     NewsletterInboxAlias,
     NewsletterSignup,
     PlaybackPosition,
+    PodcastProgressReceipt,
     SavedArticle,
     Subscription,
     User,
@@ -61,7 +63,7 @@ async def combine_accounts(session: AsyncSession, target: User, source: User) ->
     # merge could remove imported subscriptions. Keep target command receipts
     # (retry deduplication), but invalidate both accounts' undo state.
     await session.execute(delete(VoiceUndo).where(VoiceUndo.user_id.in_([target.id, source.id])))
-    for table in (AppleBrowserFlow, AuthSession, VoiceCommandReceipt):
+    for table in (AppleBrowserFlow, AuthSession, VoiceCommandReceipt, PodcastProgressReceipt, ArticleProgressReceipt):
         await session.execute(delete(table).where(table.user_id == source.id))
     await session.flush()
     await session.execute(delete(User).where(User.id == source.id))

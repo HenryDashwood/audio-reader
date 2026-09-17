@@ -190,11 +190,17 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
         }
         try {
             if (command != null) {
+                // Structured Undo owns the shared request lease inside changeLibrary.
+                if (command == LocalCommand.Undo) context.release(token)
                 val result = localRequest(command, state)
                 context.userSaid(text); context.appSaid(result.message)
                 return@action result
             }
-            val allowed = try { withTimeoutOrNull(20_000) { library.aiConsent() } }
+            context.restore(checkNotNull(state.owner)); checkAccount(state)
+            val recovering = text.lowercase(java.util.Locale.ROOT).trimEnd('.', '?', '!') in
+                setOf("try again", "did that work", "what happened", "check that request")
+            val typedRecovery = recovering && context.pending?.let { context.structured(it.requestId) } != null
+            val allowed = if (typedRecovery) true else try { withTimeoutOrNull(20_000) { library.aiConsent() } }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { null }
             checkAccount(state)
@@ -242,13 +248,13 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
                         caller.cancel(CancellationException("Listening changed"))
                     }
                     try {
-                        val recovering = text.lowercase(java.util.Locale.ROOT).trimEnd('.', '?', '!') in
-                            setOf("try again", "did that work", "what happened", "check that request")
+                        context.restore(checkNotNull(state.owner)); checkHold()
                         val voiceRequest = context.request(text, playingEpisodeId = host.account().playingEpisodeId,
                             country = host.account().country, recover = recovering)
                         requestCreated = true
                         safeToResume = false
                         val response = withTimeoutOrNull(20_000) {
+                            context.persist(checkNotNull(state.owner)); checkHold()
                             host.prepareRequest(voiceRequest, token); checkHold()
                             context.receipt ?: host.operation(voiceRequest, state.revision).also { operation = it }.response()
                                 .also { context.confirmed(voiceRequest, account, it) }
@@ -258,15 +264,21 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
                             return@coroutineScope handoff("The result is not confirmed yet. Open Magpie to check the same request.", recovery = true)
                         }
                         operation = null
-                        checkHold(); host.reconcile(response, token, state.revision); checkHold()
+                        context.persist(checkNotNull(state.owner))
+                        val restored = context.wasRestored(voiceRequest.requestId)
+                        checkHold()
+                        if (restored) host.reconcileRecovered(response, token, state.revision)
+                        else host.reconcile(response, token, state.revision)
+                        checkHold()
                         safeToResume = true
-                        host.apply(response, token, state.revision)
+                        if (!restored) host.apply(response, token, state.revision)
                         checkAccount(state)
-                        context.applied(voiceRequest, account, response.effects.map {
+                        context.complete(voiceRequest, account, response.effects.map {
                             "${it.action.wire}: ${it.spokenResponse}" + (it.episode?.let { row -> " [episode_id=${row.id}]" } ?: "")
-                        })
+                        }, checkNotNull(state.owner))
+                        checkAccount(state)
                         val playback = started
-                        val message = if (playback?.openMagpie != null) "Open Magpie to finish starting playback." else response.spokenResponse
+                        val message = if (playback?.openMagpie != null) "Open Magpie to finish starting playback." else if (restored) response.recoveryMessage else response.spokenResponse
                         context.appSaid(message)
                         MagpieRequestResult(message, response.expectsReply, playback?.status?.item ?: response.episode?.let { row ->
                             library.state.value.items.firstOrNull { it.episodeId == row.id }?.let(::item)
@@ -548,11 +560,15 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
         }
         try {
             checkAccount(state)
-            val id = if (action == "undo") null else suppliedId ?: library.actions.pendingCurrentItem(action)?.takeUnless { startNewChange }?.let { "${state.owner}:episode:$it" }
+            val id = if (action == "undo") null else suppliedId ?: (if (startNewChange) null else library.actions.pendingCurrentItem(action))?.let { "${state.owner}:episode:$it" }
                 ?: send(PlaybackService.AUTOMATION_CONTROL, Bundle().apply {
                 putString("action", "status"); putString("owner", state.owner); putInt("revision", state.revision)
             }).getString("item_id") ?: throw AppFunctionInvalidArgumentException("Choose an item, or start listening first.")
-            val response = library.actions.run(action, id?.let(::episodeId), useCurrent = suppliedId == null && action != "undo", startNewChange = startNewChange, before = { requestId ->
+            val label = when (action) { "mark_played" -> "Mark as played"; "dismiss" -> "Dismiss"; "restore" -> "Restore"; else -> "Undo the last library change" }
+            val title = library.state.value.items.firstOrNull { it.id == id }?.title
+            var historical = false
+            val response = library.actions.run(action, id?.let(::episodeId), useCurrent = suppliedId == null && action != "undo", startNewChange = startNewChange,
+                label = if (title == null) label else "$label: $title", before = { requestId ->
                 library.speedUndo = null
                 host.begin(token, state.revision); acquired = true
                 host.drain(token, requestId)
@@ -573,9 +589,15 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
                 safeToResume = false
                 checkHold(); host.reconcile(receipt, token, state.revision); checkHold()
                 safeToResume = true
+            }, reconcileRecovered = { receipt ->
+                safeToResume = false
+                checkHold(); host.reconcileRecovered(receipt, token, state.revision); checkHold()
+                historical = true
+                safeToResume = true
             })
             val item = response.episode?.let { row -> library.state.value.items.firstOrNull { it.episodeId == row.id } }?.let(::item)
-            return LibraryChange(response.action != com.henrydashwood.magpie.voice.VoiceAction.Unknown, response.spokenResponse, item)
+            return LibraryChange(response.action != com.henrydashwood.magpie.voice.VoiceAction.Unknown,
+                if (historical) response.recoveryMessage else response.spokenResponse, item)
         } finally {
             withContext(NonCancellable) {
                 withTimeoutOrNull(5_000) { operation?.let { runCatching { it.cancel() } } }

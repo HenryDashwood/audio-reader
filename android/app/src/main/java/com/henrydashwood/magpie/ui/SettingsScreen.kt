@@ -35,6 +35,7 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
     val library by model.libraryState.collectAsStateWithLifecycle()
     val preferences by model.settings.collectAsStateWithLifecycle()
     val conversation by model.conversationSettings.collectAsStateWithLifecycle()
+    val diagnostics by model.diagnosticsEnabled.collectAsStateWithLifecycle()
     var showingWait by remember { mutableStateOf(false) }
     val voices by model.voices.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -96,6 +97,10 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
         item { HorizontalDivider(); SettingsHeading("Newsletters") }
         item { NewsletterAddressSection(model) }
         item { HorizontalDivider(); SettingsHeading("Privacy & Support") }
+        item { ListItem(headlineContent = { Text("Share app diagnostics") },
+            supportingContent = { Text("Send voice-request outcomes and crash or freeze summaries. Never your words or audio.") },
+            trailingContent = { Switch(diagnostics, model::setDiagnosticsEnabled,
+                Modifier.semantics { contentDescription = "Share app diagnostics" }) }) }
         item { SettingsAction("Privacy Policy", Icons.AutoMirrored.Rounded.OpenInNew) { open(Intent(Intent.ACTION_VIEW, "https://audio-reader-production.up.railway.app/privacy".toUri())) } }
         item { SettingsAction("Email Support", Icons.Rounded.Email) { open(Intent(Intent.ACTION_SENDTO, "mailto:hcndashwood@gmail.com".toUri())) } }
         item { AISharingSettings(model) }

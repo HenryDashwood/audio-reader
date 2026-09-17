@@ -74,6 +74,15 @@ struct ArticleScriptTests {
         #expect(script.chunks[1].textRange.location == ("Café 😀 starts here.\n\n" as NSString).length)
     }
 
+    @Test func multipleSpacesAndLineBreaksBetweenSentencesNeverDropSpokenText() {
+        let sentence = "Café 🦉 beside the river makes a memorable place to read a whole sentence."
+        let text = Array(repeating: sentence, count: 12).joined(separator: "   \n")
+        let script = ArticleScript(text: text)
+        #expect(script.chunks.count > 1)
+        #expect(script.chunks.map(\.text).joined().filter { !$0.isWhitespace } == text.filter { !$0.isWhitespace })
+        for chunk in script.chunks { #expect((text as NSString).substring(with: chunk.textRange) == chunk.text) }
+    }
+
     @Test func sentenceSizedChunksKeepContiguousSourceRanges() {
         let sentence = "A sentence long enough to be repeated several times. "
         let text = String(repeating: sentence, count: 12)

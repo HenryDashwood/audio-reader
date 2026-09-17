@@ -42,6 +42,9 @@ class HttpVoiceApi(private val baseUrl: String, private val unauthorized: (Strin
 
     private fun exchange(token: String, path: String, body: JSONObject, stream: Boolean): Flow<VoiceEvent> = callbackFlow {
         val connection = connection(path, token, "POST")
+        body.optString("request_id").takeIf { it.isNotBlank() }?.let {
+            connection.setRequestProperty("traceparent", com.henrydashwood.magpie.telemetry.telemetryTrace(it))
+        }
         if (!stream) { connection.readTimeout = 30_000; connection.setRequestProperty("Accept", "application/json") }
         val worker = launch {
             try {

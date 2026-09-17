@@ -100,6 +100,18 @@ class FeedDiscoveryRead(BaseModel):
     candidates: list[FeedDiscoveryCandidateRead]
 
 
+class ArticleBookmark(BaseModel):
+    text_version: str = Field(pattern=r"^[a-f0-9]{64}$")
+    offset_utf16: int = Field(ge=0, strict=True)
+
+
+class ArticleProgressState(BaseModel):
+    text_version: str = Field(pattern=r"^[a-f0-9]{64}$")
+    content_id: int | None = None
+    revision: str
+    bookmark: ArticleBookmark | None = None
+
+
 class EpisodeRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -129,6 +141,9 @@ class EpisodeRead(BaseModel):
     # The requesting user's playback position, filled in by the routers from
     # playback_positions; None means never played.
     position_seconds: float | None = None
+    # Opaque comparison token for guarded podcast progress. Absent on older servers/articles.
+    progress_revision: str | None = None
+    article_bookmark: ArticleBookmark | None = None
     completed: bool = False
     #: She asked for this one to go without hearing it. Distinct from
     #: completed: both leave the feed, only one is a claim about listening.
@@ -167,6 +182,7 @@ class EpisodeTextRead(BaseModel):
     # Null when only plain text could be recovered — the reader falls back to
     # `text`, so an article is never unreadable for want of markup.
     html: str | None = None
+    article_progress: ArticleProgressState | None = None
 
 
 class PodcastSearchResult(BaseModel):
@@ -309,6 +325,36 @@ class PositionUpdate(BaseModel):
     def positive_or_absent(cls, value: int | None) -> int | None:
         # Same reasoning: a nonsense length is dropped, not refused.
         return value if value is not None and value > 0 else None
+
+
+class PodcastProgressUpdate(BaseModel):
+    """A persisted report may be retried only against the playback state it observed."""
+
+    request_id: str = Field(pattern=r"^[a-zA-Z0-9-]{1,64}$")
+    expected_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
+    position_seconds: float = Field(ge=0, allow_inf_nan=False)
+    completed: bool = False
+
+
+class PodcastProgressRead(BaseModel):
+    episode: EpisodeRead
+    # The original write's token. The episode may already describe a later action.
+    accepted_revision: str
+
+
+class ArticleProgressUpdate(BaseModel):
+    request_id: str = Field(pattern=r"^[a-zA-Z0-9-]{1,64}$")
+    expected_revision: str = Field(pattern=r"^[a-f0-9]{64}$")
+    text_version: str = Field(pattern=r"^[a-f0-9]{64}$")
+    content_id: int | None = Field(default=None, gt=0, strict=True)
+    offset_utf16: int = Field(ge=0, strict=True)
+    completed: bool = False
+
+
+class ArticleProgressRead(BaseModel):
+    episode: EpisodeRead
+    progress: ArticleProgressState
+    accepted_revision: str
 
 
 class EpisodeStateUpdate(BaseModel):

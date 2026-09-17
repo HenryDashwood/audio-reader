@@ -9,7 +9,8 @@ import kotlinx.coroutines.CancellationException
 class PlaybackVoiceHost(private val library: AccountLibrary, private val store: PreviewStore,
     private val playing: () -> LibraryItem?, private val prepare: () -> Unit,
     private val send: suspend (String, Bundle) -> Bundle,
-    private val startPlayback: (suspend (LibraryItem) -> Unit)? = null) : VoiceHost {
+    private val startPlayback: (suspend (LibraryItem) -> Unit)? = null,
+    private val resetRestoredBookmark: Boolean = false) : VoiceHost {
     private var interruptedKind: ContentKind? = null
     private var requestId: String? = null
     private fun playbackKind() = playing()?.kind ?: interruptedKind ?: ContentKind.Podcast
@@ -81,7 +82,13 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
                 }
                 VoiceAction.Restore -> {
                     val item = library.acceptVoiceEpisode(checkNotNull(effect.episode), revision)
-                    control(token, "restore") { putString("id", item.id); putLong("position_ms", item.remotePositionMs) }
+                    control(token, "restore") {
+                        putString("id", item.id); putLong("position_ms", item.remotePositionMs)
+                        putBoolean("reset_bookmark", resetRestoredBookmark)
+                    }
+                    // Explicit unread/unplayed starts over. Undo keeps its
+                    // original bookmark through the default reconciliation path.
+                    if (resetRestoredBookmark) control(token, "file") { putString("id", item.id) }
                     refresh = true
                 }
                 VoiceAction.Subscribed, VoiceAction.Unsubscribed -> refresh = true
@@ -91,6 +98,44 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
         if (refresh) library.refresh()
         requestId?.let { id -> control(token, "confirm") { putString("request_id", id) }; requestId = null }
     }
+    override suspend fun cancelRecovery(request: VoiceRequest, token: String, revision: Int) {
+        if (!valid(token, revision)) throw CancellationException("Playback changed")
+        library.voiceOperation(request, revision).cancel()
+        if (!valid(token, revision)) throw CancellationException("Playback changed")
+        library.refresh()
+        library.state.value.error?.let { throw VoiceFailure(it) }
+        if (!valid(token, revision)) throw CancellationException("Playback changed")
+        keepFiledPlaybackPaused(token)
+        control(token, "confirm") { putString("request_id", request.requestId) }
+        requestId = null
+    }
+
+    override suspend fun reconcileRecovered(response: VoiceResponse, token: String, revision: Int) {
+        // A receipt can be days old. Reconcile current server state without
+        // replaying old filing/bookmark/player effects over newer user intent.
+        for (id in response.effects.mapNotNull { it.episode?.id }.distinct()) {
+            if (!valid(token, revision)) throw CancellationException("Playback changed")
+            try { library.recoverVoiceEpisode(id, revision) }
+            catch (failure: com.henrydashwood.magpie.auth.AccountFailure) {
+                if (failure.status != 404) throw failure
+            }
+        }
+        if (response.effects.any { it.action in setOf(VoiceAction.Played, VoiceAction.Dismiss, VoiceAction.Restore, VoiceAction.Subscribed, VoiceAction.Unsubscribed) }) {
+            library.refresh()
+            library.state.value.error?.let { throw VoiceFailure(it) }
+        }
+        if (!valid(token, revision)) throw CancellationException("Playback changed")
+        keepFiledPlaybackPaused(token)
+        requestId?.let { id -> control(token, "confirm") { putString("request_id", id) }; requestId = null }
+    }
+
+    private suspend fun keepFiledPlaybackPaused(token: String) {
+        // Recovery can discover that the interrupted item was filed elsewhere.
+        // Do not automatically resume its old clock (including on legacy servers).
+        // Preserve bookmarks and let a later explicit Play establish new intent.
+        if (playing()?.let { it.completed || it.dismissed } == true) control(token, "pause")
+    }
+
     override suspend fun apply(response: VoiceResponse, token: String, revision: Int): Boolean {
         var toPlay: RemoteEpisode? = null
         for (effect in response.effects) {

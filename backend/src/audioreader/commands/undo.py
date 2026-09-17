@@ -31,6 +31,9 @@ def state(row):
         "completed": bool(row and row.completed),
         "dismissed": bool(row and row.dismissed),
         "position_seconds": row.position_seconds if row else 0.0,
+        "content_id": row.content_id if row else None,
+        "article_text_version": row.article_text_version if row else None,
+        "article_offset_utf16": row.article_offset_utf16 if row else None,
     }
 
 
@@ -73,6 +76,7 @@ async def remember(session, user, before):
 
 
 async def undo_last(session, user):
+    await positions.lock_user(session, user.id)
     row = await session.get(VoiceUndo, user.id)
     if row is None:
         return InterpretResult(Action.UNKNOWN, "There is no recent reversible voice action to undo.")
@@ -83,7 +87,11 @@ async def undo_last(session, user):
         episode_id = saved["episode_id"]
         position = await session.get(PlaybackPosition, (user.id, episode_id))
         effective = (await positions.positions_for(session, user, [episode_id])).get(episode_id)
-        if state(effective) != saved["after"]:
+        current = state(effective)
+        # Legacy undo snapshots predate text bookmarks. They cannot erase a newer one.
+        if any(current.get(key) != value for key, value in saved["after"].items()) or (
+            "article_text_version" not in saved["after"] and current["article_text_version"] is not None
+        ):
             return InterpretResult(Action.UNKNOWN, "That item has changed since then. I left it as it is.")
         episode = await session.get(Episode, episode_id, options=[joinedload(Episode.feed)])
         if position is None or episode is None:

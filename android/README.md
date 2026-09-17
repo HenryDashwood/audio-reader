@@ -352,8 +352,9 @@ The service stops and clears account playback when the session changes.
 
 The sample repository and sample capture inboxes remain separate while signed out.
 There is no automatic upload of sample content, preview progress, or sample URLs.
-Account metadata/text currently lives in memory: a fresh launch needs a connection,
-and there is no durable queue for offline account edits or progress uploads.
+Account metadata/text now has a private durable cache, and guarded podcast
+positions have an account-scoped retry journal. Shared article bookmarks work in
+both native players, and structured assistant requests have durable recovery.
 New saved links and confirmed shared content have their own durable queue. A
 previously identified session can queue captures after an offline restart; a new
 session must identify its account first. Podcast downloading and Gemini integration
@@ -439,7 +440,7 @@ independent controls. Stale item/show IDs are rejected before interrupting audio
 Local controls do not wait for unrelated library refreshes. Speed undo expires
 after ten minutes and preserves later changes. Sleep durations round up to whole
 minutes; podcast and article speed preferences stay separate. Rendered article
-positions remain local text bookmarks.
+positions use guarded shared text bookmarks when supported, with local bookmarks for older servers.
 
 Structured filing marks an explicit or current item played/read, dismissed, or
 restored through the existing account action API. Library Undo reverses the last
@@ -458,8 +459,9 @@ cancel the original request without resuming old audio. Network cancellation
 closes the connection; no account credentials follow redirects.
 An uncertain podcast clock also stays off the server when the user switches to
 another item, until the corresponding result or a new item state is confirmed.
-Retry context and these progress guards are in memory; durable recovery across
-process death remains part of the offline/progress work in checklist item 11.
+Retry context remains in memory. Guarded podcast progress now persists its filing
+guards; reconciling them with recovered request receipts across process death
+remains part of checklist item 11.
 
 Assistant navigation can open Latest, Following, Saved, Now Playing, Shortcuts,
 an item, or a followed show. Returned actions are immutable and one-use; the user
@@ -486,8 +488,13 @@ server mutation. Concurrent library requests cannot take over each other's conve
 player controls remain available to interrupt a pending request. Caller cancellation, account changes, and independent player
 controls stop pending work using its original account and leave uncertain audio
 paused. Speed Undo is shared across the app and assistant, expires after ten
-minutes, and preserves later manual changes. These conversation receipts and
-handoffs do not survive process death; durable recovery remains in item 11.
+minutes, and preserves later manual changes. Free-form requests and their receipts
+now survive process death; the one-use navigation handoffs remain in memory. After
+a restart, open Ask Magpie to review unfinished requests. Structured filing/Undo
+requests use the same journal and recovery controls, preserving their original
+route, item and request ID. They can be checked or dismissed without AI consent.
+An interrupted current-item action retains its original item when playback changes;
+starting a new change keeps the older request available for review.
 
 `followPublicationUrl` discovers website/feed addresses without AI. A single feed
 is followed directly; multiple feeds return named choices without subscribing.
@@ -512,11 +519,23 @@ narration remain on device. Audio recordings are not retained. Typed requests ar
 available when the microphone or offline model is unavailable.
 
 Local playback, speed, undo-speed, sleep-timer, and end-conversation commands work
-without an account or AI permission. Library requests use the existing account
-AI consent and command-stream contracts. Partials are captions; only final
-recognition text becomes a command. Conversation context is kept in memory and
-cleared across accounts. Interrupted requests retain their original ID for
-Check previous request, avoiding a second server mutation.
+without an account or AI permission. Free-form library requests use the existing account
+AI consent and command-stream contracts; explicit library Undo uses the typed
+action route without AI. Partials are captions; only final
+recognition text becomes a command. Live conversation history stays in memory and
+clears across accounts. Unfinished free-form requests retain their original text,
+ID, target, recent context and any confirmed receipt in private storage excluded
+from backup. They are saved before dispatch and before local reconciliation.
+
+Ask Magpie lists each unfinished request after a restart. Check this request uses
+the original ID/body; an already-saved receipt needs no repeated command. Recovery
+refreshes current library state rather than applying an old filing receipt over
+newer changes, and reports historical playback results without restarting audio or
+changing speed. A confirmed Dismiss request cancels unfinished server work, refreshes
+the library, releases its progress guard, and removes that recovery record; it does
+not undo completed changes. Cancellation, storage or connection failures retain
+the record. Dismissal works without AI consent. Signing out clears the account's
+journal. Loading recovery does not start the microphone or send a command.
 
 The playback service pauses audio for a conversation and owns its resume decision.
 Spoken replies finish before new playback or follow-up capture. Closing or
@@ -528,22 +547,64 @@ never resend mutations or report an old
 clock over a newly completed episode. The final compound playback choice starts
 only after the other confirmed effects have been applied.
 
-Article rendering currently completes before playback starts, with a 30,000
-character guard and a timeout per chunk. Only the current rendered article is
-retained; rendering files are private disposable cache data. This establishes
-an audio baseline, not the final latency strategy. Measure time to first audio,
-chunk transitions, and battery on the Pixel before choosing incremental rendering.
+Article narration prepares the resume passage first, then synthesizes passages
+as Media3 needs them. Long articles no longer have the 30,000-character guard.
+The whole article remains one media item, including for assistant and system
+controls. Its duration initially includes estimates for unprepared passages;
+measured audio durations replace those estimates without changing text bookmarks.
+The private disposable cache keeps at most six completed passages unless a file
+is still being read, plus the passage currently being prepared. Seeking can
+regenerate an evicted passage. Cancellation, replacement and account changes
+close the voice and discard its temporary audio. A later synthesis failure stops
+playback without marking the article finished. Each passage has a voice timeout.
+Measure audible transitions, startup latency and battery on the Pixel separately.
 
 Article bookmarks contain the immutable content version and a **UTF-16 offset**
 into the exact input text. For now, resume repeats the start of the current chunk.
 The visual reading marker uses word timings when the voice supplies them; durable
 resume remains at the chunk boundary. Podcast bookmarks use actual media milliseconds. Article positions are **never** written
-to the backend's existing `position_seconds` field. A future cross-platform API
-change must preserve the frozen released Swift clients.
+to the backend's existing `position_seconds` field. Shared article progress uses
+the guarded text-bookmark contract documented in `docs/progress-sync.md`.
 
 On a fresh process, the last sample podcast is restored paused. A last-read article
 is offered in the UI and regenerated from its bookmark on explicit Play. Full
 system-initiated playback resumption after process death is future work.
+
+## Offline account library
+
+Following, Latest, Saved, opened feed lists and fetched article text/HTML are saved
+in app-private storage outside disposable caches and excluded from backup. A known
+session restores only its server-bound account snapshot before refreshing. Failed
+refreshes retain the restored content with a retry message; feed browsing and
+search retain previously known matching items. Search while offline covers only
+items this device has already seen. Podcast audio still needs a connection.
+
+Saved article content IDs and text versions survive restart. Confirmed filing,
+removal, replacement and source changes update the snapshot; replacing text cannot
+revive the previous copy after restart. Signing out clears that account's snapshot
+and immediately replaces its UI with samples. Late reads/writes cannot publish
+another account's content. Corrupt or incompatible snapshots are discarded; a disk
+write failure warns about offline availability without retrying a server mutation.
+Storage uses serialized [AtomicFile](https://developer.android.com/reference/android/util/AtomicFile)
+replacement and performs file I/O away from the UI thread.
+
+Podcast progress uses an account-scoped durable journal when the server supplies
+a comparison token. Playback saves locally every three seconds and on pause or
+completion, retains exact requests after lost replies, and uploads later samples
+only after acknowledgement. Startup and periodic retries run while the app process
+is alive. Newer server filing/progress blocks the old playback session instead of
+being overwritten. Sign-out clears the journal. Voice filing guards are persisted
+before a server change; unresolved guards survive restart. See
+[the progress protocol](../docs/progress-sync.md).
+
+Article playback now uses the shared UTF-16 bookmark contract when advertised by
+the server. Explicit Play refreshes the selected text and remote bookmark, falling
+back to the matching cached snapshot offline. Durable exact requests survive
+restart; newer filing or changed text blocks the old playback session. Completion
+uses the same guarded report, and voice filing holds and sign-out cover both
+article and podcast journals. Locally rendered article seconds never use the
+media-position API. The Swift player consumes the same text coordinate, independently
+of voice speed or estimated playback duration.
 
 ## Verification and next device checks
 
@@ -563,9 +624,25 @@ Bluetooth routing, TalkBack speech arbitration, battery use, or long screen-off
 sessions. On the Pixel, verify those first, then an incoming call, interruption
 recovery, and process-death resume. Borrow a Samsung before broad release.
 
-The next functional work includes persistent offline account caching, durable
-progress synchronisation, and
-microphone/confirmation/TalkBack coordination.
+Item menus on Latest, publication lists, search results and the reader offer
+read/unread or played/unplayed, individual dismissal, and restoration to Latest.
+They have visible buttons and accessibility actions as well as optional swipes.
+Signed-in changes use the same durable typed requests as assistant actions,
+without AI consent. A lost reply can be retried or checked in Ask Magpie after
+reopening the app. Filing the active item stops its old progress; marking it
+unread/unplayed resets its bookmark, while Undo retains the previous bookmark.
+Sample changes stay local and are saved before being acknowledged.
+
+Latest groups unfinished listening items under Continue listening without
+duplicating rows. Library rows show live playback state, podcast time remaining,
+text-based article progress and finished status. Publication dates appear in lists
+and the reader; publisher artwork appears in lists, publication headers, both
+players and system media metadata. Optional metadata survives account caches and
+request recovery, with placeholders for missing or unavailable images.
+
+All sixteen functional areas in [the parity checklist](../docs/android-parity.md)
+are implemented. Physical microphone, confirmation, TalkBack, Bluetooth and
+long-session audio acceptance remain separate from emulator verification.
 Keep AppFunctions an optional adapter over the same action layer.
 
 Following has a leading Add sources action. While signed in, typing searches the
@@ -645,3 +722,32 @@ foreground preparation; resuming an already-open app also checks its queue; clos
 activity recreation, disk persistence, offline failure/retry, account changes,
 queue replacement races, real WebView extraction, invalid content identity,
 and 200% text/dark appearance. These use isolated accounts and page fixtures.
+
+## Reliability diagnostics
+
+Settings → Privacy & Support → Share app diagnostics controls voice-attempt and
+crash/freeze summaries. It defaults to enabled; turning it off immediately stops
+new reports and clears pending diagnostics without affecting the library or
+playback. Signed-out sample sessions never report.
+
+Spoken requests record coarse outcomes, capture/response timing, local transport
+or sleep actions, and whether TalkBack was active. The request and its summary
+share a trace ID when a backend command was sent. No transcript, audio, article
+content, exception message or raw stack enters a diagnostic payload. Android
+recognition does not expose an initial audio-buffer time, so that field is omitted.
+
+Reports use the existing authenticated `/events/voice` and `/events/diagnostic`
+contracts. A private queue outside Android backups retains at most 50 reports per
+account for 30 days, retries after connectivity returns, and clears on sign-out
+or opt-out. Session checks prevent delayed requests from using a different
+account's credentials. Recent acknowledgements prevent a recovered crash from
+being queued twice after a restart.
+
+Android system process-exit records supply Java/native crash and fatal ANR
+summaries on the next launch. A random process marker connects them to a private
+account/session record; the OS never receives the account ID or token. Only a
+matching account and credential can submit the previous exit. A separate check
+records foreground main-thread freezes lasting at least five seconds, after the
+thread responds again; background, screen-off and debugger sessions are excluded.
+These are best-effort summaries: they do not collect stack traces or replace
+physical-device performance and crash acceptance.

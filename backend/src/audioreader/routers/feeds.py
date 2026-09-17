@@ -1,13 +1,15 @@
+import hashlib
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from audioreader import episode_search, positions, saved
+from audioreader import article_progress, episode_search, positions, saved
 from audioreader.auth.dependencies import get_current_user
 from audioreader.config import settings
 from audioreader.db import get_session
@@ -24,11 +26,23 @@ from audioreader.feeds.poller import feed_is_failing
 from audioreader.feeds.search import PodcastSearchError, search_podcasts
 from audioreader.llm.client import LLMClient
 from audioreader.llm.provider import get_discovery_llm_client
-from audioreader.models import PLAYABLE_EPISODE, Episode, Feed, SavedArticle, Subscription, User
+from audioreader.models import (
+    PLAYABLE_EPISODE,
+    ArticleProgressReceipt,
+    Episode,
+    Feed,
+    PodcastProgressReceipt,
+    SavedArticle,
+    Subscription,
+    User,
+    utcnow,
+)
 from audioreader.newsletters import companions
 from audioreader.ratelimit import SlidingWindow
 from audioreader.routers.auth import has_current_ai_data_sharing_consent
 from audioreader.schemas import (
+    ArticleProgressRead,
+    ArticleProgressUpdate,
     EpisodeRead,
     EpisodeStateUpdate,
     EpisodeTextRead,
@@ -38,6 +52,8 @@ from audioreader.schemas import (
     FeedPreview,
     FeedRead,
     FeedSourceRead,
+    PodcastProgressRead,
+    PodcastProgressUpdate,
     PodcastSearchResult,
     PositionUpdate,
     PublicationSearchRequest,
@@ -153,6 +169,10 @@ async def episodes_read(session: AsyncSession, user: User, episodes: Sequence[Ep
             read.position_seconds = position.position_seconds
             read.completed = position.completed
             read.dismissed = position.dismissed
+        if episode.audio_url is None:
+            read.article_bookmark = article_progress.bookmark(stored.get(episode.id))
+        if episode.audio_url is not None:
+            read.progress_revision = positions.revision(user, episode.id, stored.get(episode.id))
         reads.append(await saved.decorate(session, user, read))
     return reads
 
@@ -623,13 +643,18 @@ async def get_episode_text(
     if content is not None:
         from audioreader.text import word_count
 
-        return EpisodeTextRead(
-            episode_id=episode.id,
-            content_id=content.id,
-            title=content.title,
-            text=content.text,
-            html=articles.rendered(content.html),
-            word_count=word_count(content.text),
+        return await article_progress.decorate_text(
+            session,
+            user,
+            episode,
+            EpisodeTextRead(
+                episode_id=episode.id,
+                content_id=content.id,
+                title=content.title,
+                text=content.text,
+                html=articles.rendered(content.html),
+                word_count=word_count(content.text),
+            ),
         )
     if episode.feed_id is None:
         raise HTTPException(
@@ -641,12 +666,17 @@ async def get_episode_text(
             status_code=422,
             detail={"spoken_response": "Sorry, I could not get the text of that article."},
         )
-    return EpisodeTextRead(
-        episode_id=episode.id,
-        title=episode.title,
-        text=text,
-        word_count=articles.known_word_count(episode),
-        html=html,
+    return await article_progress.decorate_text(
+        session,
+        user,
+        episode,
+        EpisodeTextRead(
+            episode_id=episode.id,
+            title=episode.title,
+            text=text,
+            word_count=articles.known_word_count(episode),
+            html=html,
+        ),
     )
 
 
@@ -662,6 +692,114 @@ async def put_state(episode_id: int, body: EpisodeStateUpdate, session: Session,
     if episode is None:
         raise HTTPException(status_code=404, detail="episode not found")
     await positions.set_episode_state(session, user, episode_id, played=body.played, dismissed=body.dismissed)
+
+
+@episodes_router.put("/{episode_id}/progress", response_model=PodcastProgressRead)
+async def put_podcast_progress(episode_id: int, body: PodcastProgressUpdate, session: Session, user: CurrentUser):
+    """Retry-safe podcast progress; an old queued clock cannot overwrite newer state."""
+    await positions.lock_user(session, user.id)
+    episode = await saved.accessible_episode(session, user, episode_id)
+    if episode is None:
+        raise HTTPException(404, detail="episode not found")
+    if episode.audio_url is None:
+        raise HTTPException(
+            422, detail={"spoken_response": "Article progress must use a text bookmark, not audio seconds."}
+        )
+    fingerprint = hashlib.sha256(f"{episode_id}:{body.model_dump_json()}".encode()).hexdigest()
+    receipt = await session.get(PodcastProgressReceipt, (user.id, body.request_id))
+    if receipt is not None:
+        if receipt.fingerprint != fingerprint:
+            raise HTTPException(
+                409, detail={"spoken_response": "That progress request was already used for another update."}
+            )
+        # A lost reply is an acknowledgement, not another write. Return current
+        # state, since she may have filed or played it elsewhere after acceptance.
+        return PodcastProgressRead(
+            episode=(await episodes_read(session, user, [episode]))[0], accepted_revision=receipt.accepted_revision
+        )
+    effective = (await positions.positions_for(session, user, [episode_id])).get(episode_id)
+    if body.expected_revision != positions.revision(user, episode_id, effective):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "progress_changed",
+                "spoken_response": "This item changed on another device. Its newer progress was kept.",
+            },
+        )
+    position = await positions.upsert_position(
+        session, user, episode_id, body.position_seconds, body.completed, commit=False
+    )
+    accepted = positions.revision(user, episode_id, position)
+    session.add(
+        PodcastProgressReceipt(
+            user_id=user.id, request_id=body.request_id, fingerprint=fingerprint, accepted_revision=accepted
+        )
+    )
+    # Expired receipts still cannot repeat a write: the old comparison token no
+    # longer matches. Limit storage without weakening the conflict check.
+    await session.execute(
+        delete(PodcastProgressReceipt).where(
+            PodcastProgressReceipt.user_id == user.id, PodcastProgressReceipt.created_at < utcnow() - timedelta(days=7)
+        )
+    )
+    await session.commit()
+    return PodcastProgressRead(episode=(await episodes_read(session, user, [episode]))[0], accepted_revision=accepted)
+
+
+@episodes_router.put("/{episode_id}/article-progress", response_model=ArticleProgressRead)
+async def put_article_progress(episode_id: int, body: ArticleProgressUpdate, session: Session, user: CurrentUser):
+    await positions.lock_user(session, user.id)
+    episode = await saved.accessible_episode(session, user, episode_id)
+    progress, text = await article_progress.current(session, user, episode)
+    fingerprint = hashlib.sha256(f"{episode_id}:{body.model_dump_json()}".encode()).hexdigest()
+    receipt = await session.get(ArticleProgressReceipt, (user.id, body.request_id))
+    if receipt is not None:
+        if receipt.fingerprint != fingerprint:
+            raise HTTPException(409, detail="That article progress request was already used for another update.")
+        return ArticleProgressRead(
+            episode=(await episodes_read(session, user, [episode]))[0],
+            progress=progress,
+            accepted_revision=receipt.accepted_revision,
+        )
+    if (
+        body.expected_revision != progress.revision
+        or body.text_version != progress.text_version
+        or body.content_id != progress.content_id
+    ):
+        raise HTTPException(
+            409,
+            detail={
+                "code": "progress_changed",
+                "spoken_response": "This article changed on another device. Its newer text and progress were kept.",
+            },
+        )
+    prefix = article_progress.prefix_at(text, body.offset_utf16)
+    # A compatibility estimate for older Swift clients only. Modern clients use
+    # the exact text offset; Android never uploads locally rendered seconds.
+    seconds = len(prefix.split()) * 60 / 170
+    position = await positions.upsert_position(
+        session, user, episode_id, seconds, body.completed, content_id=body.content_id, commit=False
+    )
+    position.article_text_version = body.text_version
+    position.article_offset_utf16 = body.offset_utf16
+    await session.flush()
+    current, _ = await article_progress.current(session, user, episode)
+    session.add(
+        ArticleProgressReceipt(
+            user_id=user.id, request_id=body.request_id, fingerprint=fingerprint, accepted_revision=current.revision
+        )
+    )
+    await session.execute(
+        delete(ArticleProgressReceipt).where(
+            ArticleProgressReceipt.user_id == user.id, ArticleProgressReceipt.created_at < utcnow() - timedelta(days=7)
+        )
+    )
+    await session.commit()
+    return ArticleProgressRead(
+        episode=(await episodes_read(session, user, [episode]))[0],
+        progress=current,
+        accepted_revision=current.revision,
+    )
 
 
 @episodes_router.put("/{episode_id}/position", status_code=204)

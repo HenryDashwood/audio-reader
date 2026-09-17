@@ -19,9 +19,11 @@ from audioreader.auth.identity import VerifiedIdentity
 from audioreader.config import settings
 from audioreader.models import (
     AppleBrowserFlow,
+    ArticleProgressReceipt,
     AuthSession,
     NewsletterInboxAlias,
     PlaybackPosition,
+    PodcastProgressReceipt,
     Subscription,
     User,
     UserIdentity,
@@ -324,6 +326,8 @@ async def delete_user(session: AsyncSession, user: User) -> None:
         UserIdentity,
         NewsletterInboxAlias,
         VoiceCommandReceipt,
+        PodcastProgressReceipt,
+        ArticleProgressReceipt,
         VoiceUndo,
     ):
         await session.execute(delete(table).where(table.user_id == user.id))

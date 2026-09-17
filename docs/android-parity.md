@@ -45,7 +45,7 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   trusted Ask microphone launches, media-client library browsing/search, structured
   lookup/status, playback controls, structured filing/Undo, destination actions, and
   free-form requests, following a publication URL, and the newsletter-address action
-  are implemented. All 52 assistant integration checks pass on the emulator;
+  are implemented. All 56 assistant integration checks pass on the emulator;
   real-assistant and phone acceptance remain separate.
 - [x] **9. Newsletters.** Address presentation/sharing/read-aloud, sender approval/blocking,
   explicit signup and the newsletter-address assistant action are implemented.
@@ -55,27 +55,41 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   before granting permission. Settings reads, reviews, grants, and withdraws the
   same backend account permission used by iOS. Declining never runs an AI search.
   Implemented alongside item 3 because web discovery depends on it.
-- [ ] **11. Progress sync and offline content.** Account-scoped caches and backend
+- [x] **11. Progress sync and offline content.** Account-scoped caches and backend
   progress reporting. Do not send rendered Android article seconds through the
   existing position API; its timeline differs from the iOS article timeline.
-  Podcast reporting is implemented; persistent caches, a durable retry queue, and
-  cross-device article bookmarks remain.
-- [ ] **12. Per-item filing.** Played/unplayed, read/unread outside Saved,
-  individual Latest dismissal, and restoration. Saved read/unread and Clear Latest
-  already update the backend.
-- [ ] **13. Listening status and metadata.** Continue listening, live progress,
+  Persistent account content caches and durable guarded podcast progress are
+  implemented. Free-form and structured filing/Undo recovery survive restart.
+  Shared article bookmarks are connected to Android and iOS playback with durable
+  retries and text-based resume. Both clients verify the same Unicode coordinate
+  independently of voice timing. Automated contract, restart, completion and
+  conflict checks pass; physical-device acceptance remains separate.
+- [x] **12. Per-item filing.** Played/unplayed and read/unread across Latest,
+  publication lists, search, Saved and the reader; individual Latest dismissal
+  and restoration. Visible menus, accessibility actions, durable typed retries
+  and playback coordination are implemented. Unread resets a bookmark; Undo
+  preserves the prior bookmark. Samples remain local.
+- [x] **13. Listening status and metadata.** Continue listening, live progress,
   completed/current-item labels, publication dates, and publisher artwork.
-  Shortcut/tile continuation is implemented with item 8; the in-app presentation
-  and remaining metadata still need work.
-- [ ] **14. Article startup and length.** Avoid full upfront synthesis and the
-  30,000-character guard, with cancellation and stable text bookmarks preserved.
+  Latest groups unfinished listening items without duplication. Rows follow the
+  active player, use actual podcast duration, and keep article progress in text
+  coordinates. Dates and artwork survive account caches and request recovery;
+  artwork also reaches publication headers, both players and system media controls.
+- [x] **14. Article startup and length.** Playback prepares the resume passage
+  first, then generates audio as the player needs it, without the 30,000-character
+  guard. A bounded private cache, cancellable offline voice, one shared media item
+  and text-coordinate bookmarks preserve seeking, completion and account isolation.
 - [x] **15. End-of-item behavior.** Completing a podcast or narrated article marks
   it finished (on the backend when signed in), resets its replay bookmark, clears the player and timer,
   and plays a completion tone. Saved updates without reopening. Pausing or
   manually closing an unfinished item preserves its bookmark and does not mark it
-  finished. Live Latest respects server filtering. Remaining per-item filing and
-  status presentation are tracked in items 12–13.
-- [ ] **16. Diagnostics.** Account-connected voice attempts and crash/hang reporting.
+  finished. Live Latest respects server filtering. Per-item filing and status
+  presentation are covered by items 12–13.
+- [x] **16. Diagnostics.** Account-connected voice attempts and crash/freeze
+  summaries, private bounded retries, original-session attribution and a Settings
+  opt-out. No transcripts, audio, titles or raw stacks enter diagnostic payloads.
+  Unit and emulator checks cover privacy, restart, account changes and a controlled
+  foreground freeze; physical-device crash and performance acceptance remain.
 
 ## First implementation
 
@@ -634,9 +648,375 @@ sender screens and the manual-signup result were visually inspected. Items 8 and
 9 are complete within this implementation and emulator scope; physical speech,
 TalkBack and real-assistant acceptance remain release checks.
 
+## Offline library storage
+
+Item 11 now stores Following, Latest, Saved, opened feed listings and fetched
+article text/HTML in atomic account-specific files outside the disposable cache.
+Snapshots contain library data, not credentials or conversation state. Known
+sessions restore only their remembered server/account; new identities must first
+resolve through the server. Successful live replies replace the cached lists.
+Offline feed browsing and local search retain matching known content with a
+connection message; search does not claim to cover unseen account items.
+
+Confirmed filing, removal, content replacement and source changes update the
+snapshot. Immutable Saved content selections survive restart without reusing
+replaced text. Sign-out clears the account snapshot after any older disk write;
+late cache reads cannot restore its UI. Initial restoration is serialized with
+refreshes and mutations. Cache errors cannot turn accepted server writes into
+reported failures, and corrupt or incompatible files are discarded.
+
+Verification on 17 September 2026: the Android gate passed 175 JVM tests, built
+both APKs, and reported no compiler warnings or lint errors; eight existing lint
+warnings and one hint remain. Seven new repository cases cover recreation while
+offline, account/server separation, sign-out/read/write races, concurrent initial
+refresh, confirmed mutations/content replacement and disk-write failures. Two
+Android storage tests round-trip every field through fresh store instances and
+reject malformed, future-version and foreign-account files. All five live-library
+emulator journeys pass, including new repository/storage/identity-store instances
+opening a cached article while fixture network calls fail. A focused rerun also checked the actual rendered page text and its visual-ready
+callback; the finished offline reader screenshot was visually inspected.
+
+This completes the content-cache portion of item 11. Durable progress retry,
+cross-device article bookmarks, and process-death request/receipt recovery remain
+open. Podcast audio downloads and cached article images are outside parity scope.
+
+## Guarded progress protocol
+
+The server and Android HTTP adapter now support retry-safe podcast progress, with
+an opaque comparison token and an immutable request ID. Stale clocks cannot
+replace newer filing/progress, and a lost reply can be recovered without repeating
+the write. Current Swift models decode the optional token while released clients
+retain their existing endpoint. Account linking/deletion clean up the new receipt
+storage. See [the protocol and verification](progress-sync.md).
+
+The backend gate passes 1,002 tests plus 96 repository-script tests; frozen Swift
+compatibility passes, and all 16 current iOS auth/position tests pass. Android's
+175-test build gate and two protocol checks pass. The iOS build emitted 15 cached
+precompiled-module warnings, separate from its passing test result.
+
+Android playback now journals local positions before upload, preserves the exact
+request after a lost reply, and coalesces later samples separately. Completion uses
+the same guarded write. Preparation does not upload zero; service teardown retains
+its final application-owned disk write. Startup restores the account's clock,
+and retries run while the app process is alive. A newer server revision prevents
+an old playback session from reporting over filing or progress from another device.
+Voice filing guards persist before the server mutation and survive reopening
+storage; matching confirmation is required to release them. Sign-out clears the
+journal. A corrupt journal fails closed while leaving cached library content usable.
+
+Cross-device text bookmarks and process-death conversation/request recovery remain
+open, including recovery of the original request needed to resolve an uncertain
+filing guard after process death.
+
+
+Durable-queue verification on 17 September 2026: the final Android gate passes
+189 JVM tests, builds both APKs, and has no compiler warnings or lint errors;
+eight existing lint warnings and one hint remain. Ten queue tests and four
+repository tests cover exact retries, coalescing, completion, lost replies,
+newer canonical state, concurrent local samples, missing caches, account changes,
+recreation, and durable filing guards. Two Android storage tests verify fresh
+journal instances, isolation and corruption handling. Three service tests exercise
+offline pause/retry, natural completion and voice progress drains.
+
+The full emulator suite ran 220 tests: 219 passed and one reader gesture assertion
+failed. It reproduced with Compose's batched synthetic drag; the same bounded drag
+paced through Android's input system passed with the original assertions intact.
+The complete seven-test reader suite then passed, and its reading-marker
+screenshots were visually checked. This was a test-input correction, with no
+reader implementation change. The final three service checks also pass; their
+completion assertion waits for both the disk write and asynchronous library
+update. Across the full run and focused reruns, all 220 emulator cases are covered
+with no skipped cases. Phone, TalkBack and Bluetooth acceptance remain
+separate from these emulator checks.
+
+## Durable free-form request recovery
+
+Ask Magpie and the free-form assistant adapter now save the original request before
+sending it and save a confirmed receipt before reconciling local effects. The
+account/server-scoped journal is private, excluded from backup, and uses atomic
+file replacement away from the UI thread. It retains every unfinished request,
+including older ones after a newer request starts. Sign-out serializes cleanup
+after older writes; account changes reject late reads and receipts.
+
+The conversation screen restores a scrollable list of unfinished requests without
+opening the microphone or sending a command. Explicit checking keeps the original
+ID, body, target and context. Stored receipts reconcile current server state and
+report the historical result without replaying old playback/speed changes or old
+filing state. A confirmed dismissal cancels unfinished server work, refreshes the
+library, releases the matching progress guard and removes the local record without
+undoing prior changes. It works after AI consent is withdrawn. Failed reads,
+writes, cancellation or network requests preserve recovery rather than silently
+creating a replacement request. Storage is bounded; reaching the limit requires
+resolving or dismissing an older request, never discarding it automatically.
+
+The full Android gate passes 198 JVM tests and builds both APKs with no compiler
+warnings or lint errors; eight existing lint warnings and one hint remain. Nine
+new JVM cases cover original request/receipt retention, older selection, account
+and sign-out races, disk failures, restart, and cancellation. Four emulator UI
+cases pass, including newer filing preservation, exact request retries, dismissal
+confirmation, sign-out cleanup and large-text/dark-mode controls. The recovery
+screen was visually inspected. The complete emulator suite passed all 227 tests
+with no failures or skips, including 53 assistant cases and both journal-storage
+cases.
+
+Item 11 remains open for cross-device article bookmarks; structured filing/Undo
+recovery is described below. One-use assistant navigation handoffs remain intentionally
+process-local; unfinished requests are accessible from Ask Magpie after a restart.
+
+## Durable structured filing and Undo recovery
+
+Structured assistant filing/Undo now uses the same account-scoped journal and
+recovery list as free-form requests. Original action routes, request IDs and
+item targets are saved before pausing/draining playback or contacting the server;
+receipts are saved before reconciliation. A current-item retry loads its original
+target before consulting the player. Explicitly starting a new change retains
+older unfinished work in Ask Magpie.
+
+Recovery and confirmed dismissal use the original typed route without AI consent.
+Ask Magpie's explicit library Undo also uses that route. Both assistant and Ask
+recovery reconcile fresh server state instead of replaying a historical filing
+receipt or undoing a subsequent action. All routes share a single execution lease,
+so a typed action cannot interrupt another library request. Sign-out clears the
+journal; failed storage and invalid receipts preserve the original request. The
+journal reads the earlier free-form format and writes schema 2 so an older app
+cannot mistake a structured request label for an AI command.
+
+The full emulator run covered 232 cases: 229 passed, and three existing Undo
+cases failed because their mock server only supported the former AI route. The
+fixture now supports typed Undo and additionally asserts that route is used;
+the original podcast/article bookmark assertions remain unchanged. All 16
+conversation cases then passed. After the final recovery pause fix, all 56
+assistant cases passed, including the case where checking a historical receipt
+must leave a now-filed current item paused. Three journal-storage cases verify
+format migration and typed receipt validation. All six recovery UI cases also
+pass on the final code, and the 200% text/dark-mode screenshot was visually
+inspected. Across the full run and focused reruns, all 233 emulator cases are
+covered with no skips. Physical phone, TalkBack and Bluetooth checks remain
+separate.
+
+The final Android gate passes all 202 JVM tests and builds both APKs without
+compiler warnings or lint errors. Eight existing lint warnings and one hint
+remain. The backend gate also passes 1,002 backend and 96 repository-script
+tests after the local-request privacy disclosure update.
+
+## Shared article bookmark contract
+
+The backend now accepts guarded UTF-16 bookmarks tied to an exact article-text
+hash and selected saved version, with immutable retry receipts. Text responses
+provide the capability/revision and matching bookmark. Filing, text replacement,
+older-client writes, grouped copies, Undo and account linking preserve newer
+intent. Swift and Android models/adapters support the additive contract and old
+payloads. Both native player integrations are described below.
+See [the protocol](progress-sync.md#guarded-article-bookmarks).
+
+The backend gate passes 1,014 tests plus 96 repository-script tests. Eleven new
+protocol tests and a reversible-migration test cover Unicode offsets, retries,
+conflicts, selected versions, filing/Undo, privacy, expiry, rollback and deletion;
+account-linking coverage also includes bookmarks and receipts. All 21 frozen
+released-client checks pass on macOS. The iOS auth/position contract suite passes
+19 tests, with 13 missing cached-module build warnings reported separately.
+Android passes all 202 JVM tests and builds both APKs with no compiler warnings
+or lint errors; eight existing lint warnings and one hint remain. Two Android
+wire tests and three journal-storage cases pass, including exact typed retries,
+invalid acknowledgements, old payloads and article bookmarks in saved receipts.
+
 ## Shared limitations
 
 Podcast downloads and offline article images are not counted as Android parity
 gaps because the reviewed iOS implementation does not provide them either.
 Physical TalkBack, Bluetooth, narration quality, and completion-tone audibility
 still need intentional phone acceptance testing.
+
+## Android shared article playback
+
+Android playback now consumes the shared article protocol. Explicit Play refreshes
+cached text selections and bookmarks, with matching offline content as fallback.
+The service persists text-version/content-ID/UTF-16 samples outside its lifecycle,
+retries immutable requests, and handles natural completion through one guarded
+report. Later samples wait behind an acknowledged request; newer filing or text
+replacement blocks the old playback. Article journals participate in the same
+filing holds, drains, request confirmation, periodic retry and sign-out cleanup as
+podcasts. Cached summaries retain optional bookmark/capability fields.
+
+Verification on 17 September 2026 covers 219 JVM tests, including 12 article queue
+tests and five repository cases. Four emulator service tests pass: offline
+pause/recreation/retry, a newer server bookmark despite already-cached text,
+natural completion without a legacy write, and durable filing guards. Two article
+journal tests and the cache round-trip checks also pass.
+
+The full emulator run covered 240 cases: 236 passed and four existing article
+cases failed. The refresh path duplicated initial text fetching and asked older
+API adapters for an unavailable episode lookup. Preparation now resolves text once
+in the service, and adapters without the progress interface retain cached playback.
+The original assertions remain unchanged. All 56 assistant, 17 media-browser,
+eight saved-preparation and 16 voice-conversation tests then passed, followed by
+all four article-service cases. Across that run and these focused reruns, 241
+unique emulator cases are covered with no remaining failures or skips.
+The subsequent Swift integration is described below. Physical-device acceptance remains open.
+
+The final Android gate builds both debug APKs and passes all 219 JVM tests, with
+no compiler warnings or lint errors. Eight existing lint warnings and one hint
+remain. No backend or Swift implementation changed during this Android player
+milestone; their contract-verification results above still apply.
+
+## iOS shared article playback and cross-platform coordinates
+
+The Swift player now uses the shared text bookmark, with a durable journal scoped
+to the server and signed-in session. Explicit Play refreshes the selected text and
+bookmark; matching cached text and local progress support an offline restart.
+Preparation alone creates no zero-position report. Pause, switching articles and
+completion retain the outgoing text identity, and modern articles cannot also send
+a legacy seconds report. Newer server changes block old samples. Confirmed filing
+blocks queued progress, and sign-out retires reporting before clearing the journal.
+Android's durable pre-command filing guards and request recovery remain Android
+features; this change does not add those command journals to iOS.
+
+Both clients check the same exact Unicode text hash and UTF-16 bookmark, including
+an emoji before and within the resumed passage. Different Android rendered
+durations and Swift estimated seconds resolve to that same passage. The Swift
+splitter also preserves original whitespace between sentences, preventing dropped
+speech and incorrect coordinates in long paragraphs.
+
+Final verification on 17 September 2026: 575 Swift tests pass, with one existing
+opt-in recorded-audio benchmark skipped. The initial expanded run exposed a
+completion test using another parallel test's sign-in state; injectable session
+identity isolates the fixture, and a new regression verifies that queued reports
+cannot borrow a new account's credentials. The final compile check has no warnings.
+The test build reported 13 missing cached precompiled-module warnings, separately
+from its passing results. Android passes all 220 JVM tests, builds both debug APKs
+and passes lint with no compiler warnings or lint errors; eight existing lint
+warnings and one hint remain. The prior 241-case emulator coverage still applies
+because this final Android change adds only a shared-coordinate unit test.
+
+## Per-item filing controls
+
+Visible item menus now expose read/unread or played/unplayed, dismissal from
+Latest and restoration. The same actions are available to accessibility services;
+article swipe shortcuts remain optional. Search results and the reader expose
+the actions too. Sample changes are acknowledged after an atomic local write,
+and finished samples leave Latest while remaining available in their publication.
+
+Signed-in actions use the existing typed request journal and shared execution
+lease without AI permission. Duplicate taps cannot repeat a mutation. A lost
+reply retains its original request ID for the Retry change button or Ask Magpie
+recovery after reopening. Playback holds and progress guards prevent the old
+clock from undoing filing, while account changes reject late replies. An explicit
+unread/unplayed action clears the local bookmark and stops affected playback;
+Undo keeps its existing bookmark-restoration behavior.
+
+Verification on 17 September 2026: the full Android emulator suite passes all
+249 tests without failures or skips. Eight filing journeys cover list/reader
+actions, podcast playback, article bookmarks, restoration, lost replies, fresh
+repository recovery, duplicate taps, account changes, shared request ownership,
+and search at 200% text size in dark mode. The menu screenshot was visually
+inspected. After separating explicit unread from Undo's bookmark restore, all
+eight filing, 16 voice-conversation and six navigation tests passed again.
+The final Android gate passes all 220 JVM tests and builds both APKs without
+compiler warnings or lint errors; eight existing lint warnings and one hint
+remain. Phone and TalkBack acceptance remain separate.
+
+## Listening status and publisher metadata
+
+Latest now separates Continue listening from new items while displaying each item
+once. Completed and dismissed items are excluded from that section. Library rows
+show preparing, playing or paused state, remaining podcast minutes and a progress
+bar. The active podcast uses Media3's measured duration; reaching its final minute
+is not treated as completion. Article progress uses the matching text bookmark,
+including Unicode coordinates, without converting rendered seconds to a shared
+article clock. Finished articles say Read; finished podcasts say Played.
+
+Publication dates follow the reader's locale and time zone in library rows and the
+article header. Publisher HTTPS artwork appears in Following, publication headers,
+library rows, both players and Media3 metadata. Missing artwork keeps a decorative
+placeholder. Account caches and recovered typed receipts retain the additive date
+and image fields, and old snapshots remain readable. No backend or Swift contract
+changes were needed for this item.
+
+Verification on 17 September 2026: all 225 JVM tests and 254 emulator tests pass,
+with no failures or skips. Five metadata journeys cover live playback with a
+measured duration that differs from feed metadata, pause/seek, Continue listening,
+completion/dismissal labels, cache persistence, account changes, additive decoding,
+unsafe artwork rejection and large text in dark mode. The 200% text screenshot
+was visually inspected. Image rendering uses a deterministic fixture loader in
+these tests; it does not establish every publisher's image availability.
+All five metadata journeys passed again after the final preparation-label polish.
+Both debug APKs build without compiler warnings or lint errors. Eleven lint
+warnings and one hint remain: eight warnings and the hint predate this item;
+three recommend newer Coil versions. Coil 3.3.0 is intentionally used because its
+Kotlin version matches this project's compiler. Phone and TalkBack acceptance
+remain separate.
+
+## Incremental article narration
+
+Article playback now prepares only the passage containing its saved text bookmark
+before starting. Media3 loads subsequent passages on demand. The old 30,000-character
+limit and full-article WAV join are no longer part of playback. The same installed
+offline voice policy applies; no network speech fallback was added.
+
+The article remains one item in the shared player, notifications and assistant
+controls. Its individual passages form periods in one Media3 window. Unprepared
+passages initially have estimated durations, replaced by measured durations as
+audio becomes available. Bookmarks use original text coordinates, and reading
+highlights use the player's actual period offsets and the voice's word markers.
+A seek near the end does not synthesize all earlier passages. Looking up the
+current bookmark does not allocate the entire article timeline on every tick.
+
+The disposable cache retains six complete audio passages, plus any files still
+being read and one passage being prepared. Seeking can regenerate evicted audio.
+Only complete WAV files become readable. Closing, replacement and account changes
+cancel pending work, shut down the voice and remove temporary files. Cancellation
+also releases a file prepared just as its reader was cancelled. A failure while
+preparing a later passage reports a playback error and never marks the item read.
+
+Verification on 17 September 2026: all 261 emulator tests pass with no failures or
+skips. Six deterministic tests demonstrate long-article playback before later
+audio exists, resume beyond 35,000 characters, backward seeking, a single media
+item/window, bounded cache storage, active reader protection, startup and loader
+cancellation, and failure without completion. The installed offline Google voice
+also passes five shared-bookmark journeys, including a long article resuming
+beyond the former limit and account-change cleanup. Existing reader, completion,
+assistant, filing, interruption, speed and sleep tests pass in the full suite.
+The Android gate passes all 225 JVM tests and builds both APKs without compiler
+warnings or lint errors; the existing eleven lint warnings and one hint remain.
+Audible transition quality, latency, battery use and long screen-off sessions
+still require phone acceptance.
+
+## Reliability diagnostics
+
+Spoken attempts now report coarse outcomes and capture/response timing through the
+existing authenticated voice-event contract. Local transport/sleep commands,
+empty recognition, permission denial, cancellation and errors are represented.
+Typed requests do not create spoken-attempt records. A backend command and its
+voice summary share a trace ID. No transcript, audio, title, exception message or
+stack enters these payloads, and unavailable microphone-buffer timing is omitted.
+
+The private queue survives recreation, holds at most 50 reports per account for
+30 days, and is excluded from device backups. Reports retry without interfering
+with playback. Account/session checks surround disk and network work, and
+acknowledgements retain recent event IDs to avoid re-queuing an acknowledged
+crash. Sign-out and the new Share app diagnostics setting clear pending reports.
+Samples do not upload diagnostics. The privacy page documents Android behavior.
+
+Java/native crash and fatal unresponsive-app summaries come from Android's process
+exit history after restart. A random marker in the OS record refers to private
+account, credential and version information; only a matching session can report
+that exit. Raw OS traces and descriptions are never read. A separate watchdog
+reports recovered foreground main-thread freezes of at least five seconds,
+excluding background, screen-off and debugger sessions. Activity visibility is
+tracked from application startup so opening the library later still works.
+
+Unit coverage checks queue bounds, expiration, retries, account switches, late
+replies, original crash versions, private OS markers, timing and trace correlation.
+Emulator coverage checks authenticated wire payloads, disk/marker recreation,
+settings persistence and opt-out, a real controlled foreground freeze, and the
+settings control at 200% text size in dark mode. Crash-history attribution uses
+fixtures; it does not claim a physical-device crash or ANR test.
+
+Verification on 17 September 2026: all 266 emulator tests pass with no failures or
+skips, including the five new diagnostics journeys. The 200% text/dark-mode
+screenshot was visually inspected. All 240 JVM tests pass; both debug APKs build
+without compiler warnings or lint errors. Eleven existing lint warnings and one
+hint remain. Backend checks pass 1,014 backend and 96 repository-script tests.
+The diagnostics feature uses the existing API without changing Swift contracts.
+All sixteen implementation items are now checked; physical-device acceptance,
+release configuration and deployment remain separate.

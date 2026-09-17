@@ -21,6 +21,18 @@ class PreviewStore(context: Context) {
         check(preferences.edit().putStringSet("latest_dismissed", dismissed).commit()) { "Latest could not be cleared on this device. Please try again." }
         return dismissed
     }
+    @SuppressLint("UseKtx")
+    fun fileSample(id: String, action: ItemFilingAction) {
+        val edit = preferences.edit()
+        when (action) {
+            ItemFilingAction.Finish -> edit.putStringSet("finished", finished + id)
+            ItemFilingAction.Dismiss -> edit.putStringSet("latest_dismissed", dismissedFromLatest + id)
+            ItemFilingAction.Restore -> edit.putStringSet("finished", finished - id)
+                .putStringSet("latest_dismissed", dismissedFromLatest - id)
+        }
+        if (action != ItemFilingAction.Dismiss) edit.remove("version:$id").remove("offset:$id").putLong("position:$id", 0)
+        check(edit.commit()) { "The change could not be saved on this device. Please try again." }
+    }
     var saved: Set<String>
         get() = preferences.getStringSet("saved", setOf("walking"))!!.toSet()
         set(value) { preferences.edit { putStringSet("saved", value) } }
@@ -35,6 +47,9 @@ class PreviewStore(context: Context) {
             preferences.getBoolean("conversation_keep_listening", true),
             preferences.getInt("conversation_wait", 15).takeIf { it in com.henrydashwood.magpie.voice.ConversationPreferences.waitOptions } ?: 15)
         set(value) { preferences.edit { putBoolean("conversation_keep_listening", value.keepListening); putInt("conversation_wait", value.followUpSeconds) } }
+    var diagnosticsEnabled: Boolean
+        get() = preferences.getBoolean("diagnostics_enabled", true)
+        set(value) { preferences.edit { putBoolean("diagnostics_enabled", value) } }
     var voiceId: String?
         get() = preferences.getString("voice", null)
         set(value) { preferences.edit { putString("voice", value) } }

@@ -12,6 +12,7 @@ from audioreader.auth.apple import AppleIdentity
 from audioreader.config import settings
 from audioreader.models import (
     ArticleContent,
+    ArticleProgressReceipt,
     AuthSession,
     Episode,
     Feed,
@@ -19,6 +20,7 @@ from audioreader.models import (
     NewsletterInboxAlias,
     NewsletterSignup,
     PlaybackPosition,
+    PodcastProgressReceipt,
     SavedArticle,
     Subscription,
     User,
@@ -93,6 +95,8 @@ async def test_link_combines_libraries_preserves_target_session_and_both_logins(
                 episode_id=saved_episode.id,
                 content_id=capture.id,
                 position_seconds=42,
+                article_text_version="a" * 64,
+                article_offset_utf16=8,
                 updated_at=later,
             ),
             PlaybackPosition(user_id=target_id, episode_id=episode.id, position_seconds=90, updated_at=earlier),
@@ -109,6 +113,18 @@ async def test_link_combines_libraries_preserves_target_session_and_both_logins(
             ),
             VoiceCommandReceipt(user_id=target_id, request_id="keep", fingerprint="one"),
             VoiceCommandReceipt(user_id=source_id, request_id="retire", fingerprint="two"),
+            PodcastProgressReceipt(
+                user_id=target_id, request_id="keep-progress", fingerprint="one", accepted_revision="a" * 64
+            ),
+            PodcastProgressReceipt(
+                user_id=source_id, request_id="retire-progress", fingerprint="two", accepted_revision="b" * 64
+            ),
+            ArticleProgressReceipt(
+                user_id=target_id, request_id="keep-article", fingerprint="one", accepted_revision="c" * 64
+            ),
+            ArticleProgressReceipt(
+                user_id=source_id, request_id="retire-article", fingerprint="two", accepted_revision="d" * 64
+            ),
             VoiceUndo(user_id=target_id, payload="{}"),
             VoiceUndo(user_id=source_id, payload="{}"),
         ]
@@ -140,10 +156,14 @@ async def test_link_combines_libraries_preserves_target_session_and_both_logins(
     assert saved.content_id == capture.id
     assert (await session.get(ArticleContent, capture.id)).owner_user_id == target_id
     assert (await session.get(PlaybackPosition, (target_id, saved_episode.id))).position_seconds == 42
+    bookmark = await session.get(PlaybackPosition, (target_id, saved_episode.id))
+    assert bookmark.article_text_version == "a" * 64 and bookmark.article_offset_utf16 == 8
     assert await session.scalar(select(Feed.owner_user_id).where(Feed.id == private.id)) == target_id
     assert await session.scalar(select(InboundMessage.user_id)) == target_id
     assert await session.scalar(select(NewsletterSignup.user_id)) == target_id
     assert list(await session.scalars(select(VoiceCommandReceipt.request_id))) == ["keep"]
+    assert list(await session.scalars(select(PodcastProgressReceipt.request_id))) == ["keep-progress"]
+    assert list(await session.scalars(select(ArticleProgressReceipt.request_id))) == ["keep-article"]
     assert await session.scalar(select(func.count()).select_from(VoiceUndo)) == 0
     monkeypatch.setattr(settings, "inbound_email_domain", "in.magpie.test")
     for token in ("current-inbox", "original-inbox"):

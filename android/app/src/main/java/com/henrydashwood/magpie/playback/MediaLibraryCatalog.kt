@@ -90,9 +90,9 @@ class MediaLibraryCatalog(private val library: AccountLibrary, private val store
         }
         check(state)
         require(item.captureError == null) { "Open Magpie to retry this article capture." }
-        val loaded = if (item.textLoaded) item else library.content(item.id)
-        check(state)
-        return loaded
+        // The service resolves current text/progress once, after selection and
+        // cancellation checks. Browsing and resolving must not load it twice.
+        return item
     }
     companion object {
         const val ROOT = "magpie-library"
@@ -106,6 +106,7 @@ class MediaLibraryCatalog(private val library: AccountLibrary, private val store
         }
         fun media(item: LibraryItem): MediaItem = MediaItem.Builder().setMediaId(item.id).setMediaMetadata(
             MediaMetadata.Builder().setTitle(item.title).setArtist(item.source)
+                .setArtworkUri(publisherArtwork(item.imageUrl)?.let(android.net.Uri::parse))
                 .setDescription(item.description.take(500)).setIsBrowsable(false).setIsPlayable(item.captureError == null)
                 .setDurationMs(item.durationSeconds?.toLong()?.times(1000)).build(),
         ).build()

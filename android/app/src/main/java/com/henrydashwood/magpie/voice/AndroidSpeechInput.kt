@@ -83,7 +83,7 @@ class AndroidSpeechInput(private val context: Context, val locale: Locale = Loca
     override suspend fun listen(firstWordsMs: Long, onReady: () -> Unit, onPartial: (String) -> Unit): String? =
         withContext(Dispatchers.Main.immediate) {
             if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
-                throw VoiceFailure("Allow microphone access to speak to Magpie.")
+                throw VoiceFailure("Allow microphone access to speak to Magpie.", code = "permission_denied")
             if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context))
                 throw VoiceFailure("On-device speech recognition is unavailable. Install an offline recognition service to use the microphone.")
             capture.listen(create = {

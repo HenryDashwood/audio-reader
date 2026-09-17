@@ -19,6 +19,7 @@ final class AuthController: ObservableObject {
             case .signedIn:
                 if positionReporter == nil { positionReporter = PositionReporter() }
             case .signedOut, .checking:
+                positionReporter?.invalidate()
                 positionReporter = nil
             }
         }
@@ -219,6 +220,8 @@ final class AuthController: ObservableObject {
     private func accept(_ response: AuthResponse) {
         sessionGeneration += 1
         linkedProviders = nil
+        positionReporter?.invalidate()
+        positionReporter = nil
         KeychainTokenStore.token = response.token
         user = response.user
         state = .signedIn
@@ -255,6 +258,9 @@ final class AuthController: ObservableObject {
 
     private func forgetSession() {
         sessionGeneration += 1
+        positionReporter?.invalidate()
+        positionReporter = nil
+        try? FileArticleProgressStorage.shared.clearAll()
         google.signOut()
         linkedProviders = nil
         linkingError = nil

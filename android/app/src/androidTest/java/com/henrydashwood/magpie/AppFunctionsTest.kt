@@ -21,6 +21,7 @@ class AppFunctionsTest {
     private val app get() = ApplicationProvider.getApplicationContext<MagpieTestApplication>()
     private lateinit var library: AccountLibrary
     private lateinit var api: Api
+    private lateinit var recoveryDirectory: java.io.File
     private lateinit var manager: AppFunctionManager
     private var scenario: ActivityScenario<MainActivity>? = null
     private lateinit var model: MagpieModel
@@ -167,7 +168,9 @@ class AppFunctionsTest {
             android.os.Build.VERSION.SDK_INT_FULL >= android.os.Build.VERSION_CODES_FULL.BAKLAVA_1)
         stopPlayer()
         ContentKind.entries.forEach { originalRates[it] = PreviewStore(app).speed(it) }
-        api = Api(); library = AccountLibrary(api, "https://functions-fixture.invalid")
+        recoveryDirectory = java.io.File(app.noBackupFilesDir, "assistant-recovery-${java.util.UUID.randomUUID()}")
+        api = Api(); library = AccountLibrary(api, "https://functions-fixture.invalid",
+            conversationStore = FileConversationStore(recoveryDirectory))
         withContext(Dispatchers.Main) { library.changeSession("one"); app.libraryOverride = library }
         app.voiceOutputOverride = VoiceOutput { }
         scenario = ActivityScenario.launch(MainActivity::class.java)
@@ -203,6 +206,8 @@ class AppFunctionsTest {
         scenario?.onActivity { model.voice.close(false); it.intent = launchIntent }
         scenario?.close()
         stopPlayer()
+        withContext(Dispatchers.Main) { library.changeSession(null) }
+        recoveryDirectory.deleteRecursively()
         withContext(Dispatchers.Main) { originalRates.forEach { (kind, rate) -> PreviewStore(app).saveSpeed(kind, rate) }; app.libraryOverride = null; app.voiceOutputOverride = null }
     }
     @Suppress("DEPRECATION") // Inspect only this app's service lifecycle in an isolated emulator test.
@@ -335,6 +340,63 @@ class AppFunctionsTest {
         assertEquals("Find a history podcast", api.voiceRequests.single().transcript)
         assertEquals(1, api.grants)
         assertTrue(runCatching { open.send() }.exceptionOrNull() is android.app.PendingIntent.CanceledException)
+    }
+    @Test fun assistantRecoversDiskReceiptAndOlderRequestWithoutReplayingOldPlayback() = runBlocking {
+        val older = VoiceRequest("Find history", "older-durable-request", 1, 2, country = "GB")
+        val newer = VoiceRequest("Play the short podcast", "newer-durable-request", 2, 1, country = "GB")
+        val store = FileConversationStore(recoveryDirectory)
+        store.write(owner, listOf(RecoverableVoiceRequest(older), RecoverableVoiceRequest(newer,
+            VoiceResponse(VoiceAction.Play, "Playing the short podcast.", api.short))))
+        val result = ask("try again")
+        assertTrue(result.getString("message")?.startsWith("Earlier result:") == true)
+        assertTrue(api.voiceRequests.isEmpty()); assertFalse(withContext(Dispatchers.Main) { observer.isPlaying })
+        assertEquals(older, store.read(owner).single().request)
+        ask("try again")
+        assertEquals(older, api.voiceRequests.single()); assertTrue(store.read(owner).isEmpty())
+    }
+    @Test fun assistantChecksStoredTypedUndoWithoutAIOrRepeatingTheMutation() = runBlocking {
+        api.allowed = false
+        val undo = VoiceRequest("Undo the last library change", "stored-typed-undo")
+        val store = FileConversationStore(recoveryDirectory)
+        store.write(owner, listOf(RecoverableVoiceRequest(undo,
+            VoiceResponse(VoiceAction.Restore, "Restored Short podcast.", api.short), StructuredLibraryRequest("undo", null))))
+        // Newer server filing must win over an old Undo receipt.
+        api.filed["one" to 1] = api.short.copy(completed = true)
+        val result = ask("try again")
+        assertTrue(result.getString("message")?.startsWith("Earlier result:") == true)
+        assertTrue(library.state.value.items.first { it.episodeId == 1 }.completed)
+        assertTrue(api.voiceRequests.isEmpty()); assertTrue(api.filings.isEmpty()); assertEquals(0, api.grants)
+        assertTrue(store.read(owner).isEmpty())
+    }
+    @Test fun recoveringFilingKeepsTheNowFiledCurrentItemPaused() = runBlocking {
+        api.allowed = false
+        play()
+        val original = VoiceRequest("Mark as played: Short podcast", "stored-current-filing")
+        val store = FileConversationStore(recoveryDirectory)
+        store.write(owner, listOf(RecoverableVoiceRequest(original,
+            VoiceResponse(VoiceAction.Played, "Marked as played.", api.short.copy(completed = true)),
+            StructuredLibraryRequest("mark_played", 1, true))))
+        api.filed["one" to 1] = api.short.copy(completed = true)
+        ask("try again")
+        assertFalse(withContext(Dispatchers.Main) { observer.isPlaying })
+        assertTrue(library.state.value.items.first { it.episodeId == 1 }.completed)
+        assertTrue(api.filings.isEmpty()); assertTrue(api.voiceRequests.isEmpty()); assertTrue(store.read(owner).isEmpty())
+    }
+    @Test fun typedCurrentRetryLoadsOriginalTargetFromDiskAfterPlaybackChanges() = runBlocking {
+        api.allowed = false
+        play(); api.loseFilingReply = true
+        assertTrue(execute(MagpieAppFunctions.FUNCTION_ID_FILE_LISTENING_ITEM, filing("played")) is ExecuteAppFunctionResponse.Error)
+        val original = api.filings.single()
+        val store = FileConversationStore(recoveryDirectory)
+        assertEquals(StructuredLibraryRequest("mark_played", 1, true), store.read(owner).single().structured)
+        withContext(Dispatchers.Main) { library.voiceConversation.activate(null) }
+        play(3)
+        val result = success(MagpieAppFunctions.FUNCTION_ID_FILE_LISTENING_ITEM, filing("played")).getAppFunctionData(key)!!
+        assertEquals(listOf(1, 1), api.filings.map { it.item })
+        assertEquals(original.request, api.filings.last().request)
+        assertTrue(result.getString("message")?.startsWith("Earlier result:") == true)
+        assertEquals(itemId(3), withContext(Dispatchers.Main) { observer.currentMediaItem?.mediaId })
+        assertTrue(api.voiceRequests.isEmpty()); assertEquals(0, api.grants); assertTrue(store.read(owner).isEmpty())
     }
     @Test fun freeFormClarificationSharesHistoryWithAskMagpie() = runBlocking {
         val question = ask("Play a podcast")

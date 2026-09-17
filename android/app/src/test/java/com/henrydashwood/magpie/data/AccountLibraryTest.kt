@@ -43,6 +43,214 @@ class AccountLibraryTest {
         api.gate!!.complete(Unit); changing.join()
         assertFalse(library.state.value.loading)
     }
+    private class ProgressStore : PodcastProgressStore {
+        val rows = mutableMapOf<String, List<QueuedPodcastProgress>>()
+        override suspend fun read(owner: String) = rows[owner].orEmpty()
+        override suspend fun write(owner: String, entries: List<QueuedPodcastProgress>) { rows[owner] = entries }
+    }
+    private class ProgressApi(val base: Api) : LibraryApi by base, PodcastProgressApi {
+        var gate: CompletableDeferred<Unit>? = null
+        var fail = false
+        var reply: PodcastProgressReceipt? = null
+        override suspend fun podcastProgress(token: String, episodeId: Int, report: PodcastProgressReport): PodcastProgressReceipt {
+            gate?.await()
+            if (fail) throw IOException("Offline")
+            return reply ?: PodcastProgressReceipt(base.latestRows.single().copy(positionSeconds = report.seconds,
+                completed = report.completed, progressRevision = "b".repeat(64)), "b".repeat(64))
+        }
+    }
+    @Test fun queuedClockDoesNotOverwriteFreshRemoteStateOrAuthorizeItselfAgainstNewRevision() = runTest {
+        val api = ProgressApi(Api().apply { latestRows = latestRows.map { it.copy(progressRevision = "a".repeat(64)) } })
+        val queue = PodcastProgressQueue(ProgressStore())
+        val library = AccountLibrary(api, "https://progress.invalid", progressQueue = queue)
+        library.changeSession("alice")
+        val item = library.state.value.items.first { it.episodeId == 1 }
+        library.beginPodcastProgress(item, "play", 42.5); library.recordPodcastProgress(item, "play", 50.0, false)
+        api.base.latestRows = api.base.latestRows.map { it.copy(progressRevision = "c".repeat(64), completed = true) }
+        library.refresh()
+        library.recordPodcastProgress(item, "play", 60.0, false)
+        val fresh = library.state.value.items.first { it.episodeId == 1 }
+        assertTrue(fresh.completed); assertEquals("c".repeat(64), fresh.progressRevision)
+        assertEquals("a".repeat(64), queue.entries(library.state.value.owner!!).single().pending!!.expectedRevision)
+    }
+    @Test fun inflightAcknowledgementAdvancesRevisionWhilePreservingLaterLocalClock() = runTest {
+        val api = ProgressApi(Api().apply { latestRows = latestRows.map { it.copy(progressRevision = "a".repeat(64)) } })
+        val queue = PodcastProgressQueue(ProgressStore())
+        val library = AccountLibrary(api, "https://progress.invalid", progressQueue = queue)
+        library.changeSession("alice")
+        val item = library.state.value.items.first { it.episodeId == 1 }
+        library.beginPodcastProgress(item, "play", 42.5); library.recordPodcastProgress(item, "play", 50.0, false)
+        api.gate = CompletableDeferred()
+        val sending = launch { library.flushPodcastProgress() }; runCurrent()
+        library.recordPodcastProgress(item, "play", 60.0, false)
+        api.gate!!.complete(Unit); sending.join()
+        val fresh = library.state.value.items.first { it.episodeId == 1 }
+        assertEquals(60_000L, fresh.remotePositionMs); assertEquals("b".repeat(64), fresh.progressRevision)
+        assertEquals("b".repeat(64), queue.entries(library.state.value.owner!!).single().pending!!.expectedRevision)
+    }
+    @Test fun missingContentCacheDoesNotStrandAValidDurableReport() = runTest {
+        val base = Api().apply { latestRows = latestRows.map { it.copy(progressRevision = "a".repeat(64)) } }
+        val api = ProgressApi(base); val store = ProgressStore()
+        val first = AccountLibrary(api, "https://progress.invalid", progressQueue = PodcastProgressQueue(store))
+        first.changeSession("alice")
+        val item = first.state.value.items.first { it.episodeId == 1 }
+        first.beginPodcastProgress(item, "play", 42.5); first.recordPodcastProgress(item, "play", 65.0, false)
+        val noList = object : LibraryApi by api, PodcastProgressApi by api {
+            override suspend fun latest(token: String) = emptyList<RemoteEpisode>()
+        }
+        val recreated = AccountLibrary(noList, "https://progress.invalid", progressQueue = PodcastProgressQueue(store))
+        recreated.changeSession("alice")
+        assertFalse(recreated.state.value.items.any { it.episodeId == 1 })
+        recreated.flushPodcastProgress()
+        assertEquals(65_000L, recreated.state.value.items.first { it.episodeId == 1 }.remotePositionMs)
+        assertNull(store.read(recreated.state.value.owner!!).single().pending)
+    }
+    @Test fun offlineRecreationRestoresJournalClockAndLogoutClearsIt() = runTest {
+        val api = ProgressApi(Api().apply { latestRows = latestRows.map { it.copy(progressRevision = "a".repeat(64)) } })
+        val cache = MemoryCache(); val identity = Identity(); val store = ProgressStore()
+        val first = AccountLibrary(api, "https://progress.invalid", identityStore = identity, cache = cache, progressQueue = PodcastProgressQueue(store))
+        first.changeSession("alice")
+        val item = first.state.value.items.first { it.episodeId == 1 }
+        first.beginPodcastProgress(item, "play", 42.5); first.recordPodcastProgress(item, "play", 65.0, false)
+        api.base.fail = true
+        val second = AccountLibrary(api, "https://progress.invalid", identityStore = identity, cache = cache, progressQueue = PodcastProgressQueue(store))
+        second.changeSession("alice")
+        assertEquals(65_000L, second.state.value.items.first { it.episodeId == 1 }.remotePositionMs)
+        val owner = second.state.value.owner!!
+        second.changeSession(null)
+        assertTrue(store.read(owner).isEmpty())
+    }
+    private class MemoryCache : LibraryCache {
+        val rows = mutableMapOf<String, LibrarySnapshot>()
+        var readGate: CompletableDeferred<Unit>? = null
+        var saveGate: CompletableDeferred<Unit>? = null
+        var failSave = false
+        override suspend fun load(owner: String): LibrarySnapshot? { val value = rows[owner]; readGate?.await(); return value }
+        override suspend fun save(snapshot: LibrarySnapshot) {
+            saveGate?.await()
+            if (failSave) throw IOException("Disk full")
+            rows[snapshot.owner] = snapshot
+        }
+        override suspend fun clear(owner: String) { rows.remove(owner) }
+    }
+    private class Identity : AccountIdentityStore {
+        val owners = mutableMapOf<String, String>()
+        override fun owner(sessionKey: String) = owners[sessionKey]
+        override suspend fun remember(sessionKey: String, owner: String) { owners[sessionKey] = owner }
+    }
+    @Test fun cachedLibraryAndLoadedTextSurviveRecreationOfflineWithTheSameSession() = runTest {
+        val api = Api(); val cache = MemoryCache(); val identity = Identity()
+        val original = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        original.changeSession("alice")
+        original.search("1", "")
+        val article = original.content(original.state.value.savedIds.single())
+        val before = original.state.value
+        api.fail = true; api.userFailure = true; api.searchFailure = true
+        val recreated = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        recreated.changeSession("alice")
+        assertEquals(before.items, recreated.state.value.items)
+        assertEquals(before.feeds, recreated.state.value.feeds)
+        assertEquals(article, recreated.content(article.id))
+        assertEquals(1, api.texts)
+        assertNotNull(recreated.state.value.error)
+        recreated.search("1", "")
+        assertEquals(before.feedItems["1"], recreated.state.value.feedResults)
+        recreated.search(null, "Saved article")
+        assertEquals(listOf(article.id), recreated.state.value.searchResults)
+        assertEquals("Could not refresh. Showing items already on this device.", recreated.state.value.error)
+    }
+    @Test fun cacheNeverFallsBackToAnotherAccountAndSignOutRemovesTheOldSnapshot() = runTest {
+        val api = Api(); val cache = MemoryCache(); val identity = Identity()
+        val original = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        original.changeSession("alice")
+        val owner = original.state.value.owner!!
+        val alice = cache.rows[owner]!!
+        api.fail = true; api.userFailure = true
+        val other = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        other.changeSession("bob")
+        assertTrue(other.state.value.items.isEmpty())
+        assertNull(other.state.value.owner)
+        val otherServer = AccountLibrary(api, "https://other.invalid", identityStore = identity, cache = cache)
+        otherServer.changeSession("alice")
+        assertTrue(otherServer.state.value.items.isEmpty())
+        // Even a malformed/mis-keyed cache must not publish another owner's rows.
+        cache.rows[owner] = alice.copy(owner = "another-owner")
+        val corrupt = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        corrupt.changeSession("alice")
+        assertTrue(corrupt.state.value.items.isEmpty())
+        cache.rows[owner] = alice
+        original.changeSession(null)
+        assertFalse(cache.rows.containsKey(owner))
+        assertFalse(original.state.value.live)
+        assertTrue(original.state.value.items.none { it.id.startsWith(owner) })
+    }
+    @Test fun initialCacheRestoreCannotOverwriteAConcurrentRefresh() = runTest {
+        val api = Api(); val cache = MemoryCache(); val identity = Identity()
+        AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache).changeSession("alice")
+        cache.readGate = CompletableDeferred()
+        val library = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        val loading = launch { library.changeSession("alice") }; runCurrent()
+        api.latestRows = listOf(RemoteEpisode(90, "New from another device"))
+        val refresh = launch { library.refresh() }; runCurrent()
+        assertFalse(refresh.isCompleted)
+        cache.readGate!!.complete(Unit); loading.join(); refresh.join()
+        assertEquals("New from another device", library.state.value.items.single { it.id in library.state.value.latestIds }.title)
+        assertEquals(library.state.value.latestIds, cache.rows[library.state.value.owner]!!.latestIds)
+    }
+    @Test fun delayedCacheReadCannotRestoreAnAccountAfterSignOut() = runTest {
+        val api = Api(); val cache = MemoryCache(); val identity = Identity()
+        val original = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        original.changeSession("alice")
+        cache.readGate = CompletableDeferred()
+        val recreated = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        val loading = launch { recreated.changeSession("alice") }; runCurrent()
+        recreated.changeSession(null)
+        cache.readGate!!.complete(Unit); loading.join()
+        assertFalse(recreated.state.value.live)
+        assertTrue(cache.rows.isEmpty())
+    }
+    @Test fun cacheTracksConfirmedFilingAndContentReplacementWithoutRevivingOldText() = runTest {
+        val api = Api(); val cache = MemoryCache(); val identity = Identity()
+        val original = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        original.changeSession("alice")
+        val old = original.content(original.state.value.savedIds.single())
+        val replacement = original.prepareSaved(old, true, original.state.value.revision)
+        assertFalse(replacement.textLoaded)
+        original.played(replacement, true)
+        original.remove(replacement)
+        original.clearLatest()
+        api.fail = true
+        val recreated = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        recreated.changeSession("alice")
+        assertTrue(recreated.state.value.latestIds.isEmpty())
+        assertTrue(recreated.state.value.savedIds.isEmpty())
+        val restored = recreated.state.value.items.first { it.id == old.id }
+        assertFalse(restored.textLoaded)
+        assertEquals(replacement.contentId, restored.contentId)
+        assertTrue(restored.completed)
+    }
+    @Test fun cacheFailureDoesNotRepeatOrFailAnAcceptedServerWrite() = runTest {
+        val api = Api(); val cache = MemoryCache()
+        val library = AccountLibrary(api, "https://cache.invalid", cache = cache)
+        library.changeSession("alice")
+        cache.failSave = true
+        val item = library.state.value.items.first()
+        library.played(item, true)
+        assertEquals(1, api.filings)
+        assertTrue(library.state.value.items.first { it.id == item.id }.completed)
+        assertEquals("Your library is up to date, but it could not be saved for offline use.", library.state.value.error)
+    }
+    @Test fun signOutWaitsForAnOlderCacheWriteThenRemovesIt() = runTest {
+        val api = Api(); val cache = MemoryCache()
+        val library = AccountLibrary(api, "https://cache.invalid", cache = cache)
+        library.changeSession("alice")
+        cache.saveGate = CompletableDeferred()
+        val writing = launch { library.played(library.state.value.items.first(), true) }; runCurrent()
+        val logout = launch { library.changeSession(null) }; runCurrent()
+        assertFalse(library.state.value.live)
+        cache.saveGate!!.complete(Unit); writing.join(); logout.join()
+        assertTrue(cache.rows.isEmpty())
+    }
     private class Api : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, VoiceApi, NewsletterApi {
         var newsletterGate: CompletableDeferred<Unit>? = null
         val newsletterChanges = mutableListOf<Pair<String, Int>>()
@@ -86,6 +294,7 @@ class AccountLibraryTest {
         val subscribed = mutableMapOf<String, List<LibraryFeed>>()
         var fail = false
         var gate: CompletableDeferred<Unit>? = null
+        var searchFailure = false
         var oldSearch: CompletableDeferred<Unit>? = null
         var episodeGate: CompletableDeferred<Unit>? = null
         var contentId = 7
@@ -104,13 +313,14 @@ class AccountLibraryTest {
         }
         override suspend fun latest(token: String) = latestRows
         override suspend fun saved(token: String) = savedRows
-        override suspend fun episodes(token: String, feedId: String, query: String) = latestRows
+        override suspend fun episodes(token: String, feedId: String, query: String): List<RemoteEpisode> { if (searchFailure) throw IOException(); return latestRows }
         override suspend fun episode(token: String, episodeId: Int): RemoteEpisode {
             val snapshot = (latestRows + savedRows).first { it.id == episodeId }
             episodeGate?.await()
             return snapshot
         }
         override suspend fun search(token: String, query: String): List<RemoteEpisode> {
+            if (searchFailure) throw IOException()
             if (query == "old") oldSearch?.await()
             return listOf(RemoteEpisode(if (query == "old") 10 else 11, query))
         }

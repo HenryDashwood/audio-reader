@@ -80,4 +80,68 @@ class LibraryActionExecutionTest {
         val unavailable = VoiceResponse(VoiceAction.Unknown, "There is no recent action to undo.")
         assertEquals(unavailable, execution.run("undo", null, {}, { unavailable }, {}))
     }
+    private class Store : ConversationStore {
+        var rows = emptyList<RecoverableVoiceRequest>()
+        var fail = false
+        override suspend fun read(owner: String) = rows
+        override suspend fun write(owner: String, requests: List<RecoverableVoiceRequest>) {
+            if (fail) throw IOException("Disk full")
+            rows = requests
+        }
+    }
+    @Test fun restartRestoresOriginalCurrentTargetAndExactIdBeforeSending() = runTest {
+        val store = Store()
+        val first = LibraryActionExecution(Conversation(store), { "alice" }) { "1:alice:true" }
+        var original: String? = null
+        assertTrue(runCatching { first.run("mark_played", 1, {}, {
+            original = it; throw IOException("Reply lost")
+        }, {}, useCurrent = true) }.isFailure)
+        val fresh = LibraryActionExecution(Conversation(store), { "alice" }) { "2:alice:true" }
+        assertEquals(1, fresh.pendingCurrentItem("mark_played"))
+        fresh.run("mark_played", 1, {}, { assertEquals(original, it); receipt },
+            { error("Must reconcile historical state") }, useCurrent = true, reconcileRecovered = {})
+        assertTrue(store.rows.isEmpty())
+    }
+    @Test fun confirmedUndoSurvivesRestartWithoutUndoingTheNextChange() = runTest {
+        val store = Store()
+        val first = LibraryActionExecution(Conversation(store), { "alice" }) { "1:alice:true" }
+        var original: String? = null
+        assertTrue(runCatching { first.run("undo", null, {}, { original = it; receipt }, {
+            assertEquals(receipt, store.rows.single().receipt); throw CancellationException()
+        }) }.isFailure)
+        var historical = false
+        val fresh = LibraryActionExecution(Conversation(store), { "alice" }) { "2:alice:true" }
+        fresh.run("undo", null, { assertEquals(original, it) }, { error("Do not undo again") },
+            { error("Do not replay old filing") }, reconcileRecovered = { historical = true })
+        assertTrue(historical); assertTrue(store.rows.isEmpty())
+    }
+    @Test fun newerExplicitChangeKeepsOlderRecoveryAndSharesTheVoiceLease() = runTest {
+        val store = Store(); val conversation = Conversation(store)
+        val execution = LibraryActionExecution(conversation, { "alice" }) { "alice" }
+        assertTrue(runCatching { execution.run("mark_played", 1, {}, { throw IOException() }, {}) }.isFailure)
+        val original = store.rows.single()
+        execution.run("mark_played", 1, {}, { receipt }, {}, startNewChange = true)
+        assertEquals(listOf(original), store.rows)
+        assertTrue(conversation.acquire("voice"))
+        var paused = false
+        assertTrue(runCatching { execution.run("dismiss", 1, { paused = true }, { error("Network") }, {}) }.isFailure)
+        assertFalse(paused); conversation.release("voice")
+        assertEquals(listOf(original), store.rows)
+    }
+    @Test fun journalFailurePreventsPreparationAndAReceiptWriteFailureKeepsRecovery() = runTest {
+        val store = Store().apply { fail = true }; val conversation = Conversation(store)
+        val execution = LibraryActionExecution(conversation, { "alice" }) { "alice" }
+        var began = false
+        assertTrue(runCatching { execution.run("mark_played", 1, { began = true }, { receipt }, {}) }.isFailure)
+        assertFalse(began)
+        store.fail = false
+        assertTrue(runCatching { execution.run("mark_played", 1, {}, { store.fail = true; receipt },
+            { error("Receipt must be saved first") }) }.isFailure)
+        assertEquals(receipt, conversation.receipt)
+        assertNull(store.rows.single().receipt)
+        store.fail = false
+        execution.run("mark_played", 1, {}, { error("Must reuse known receipt") }, {})
+        assertTrue(store.rows.isEmpty())
+    }
+
 }

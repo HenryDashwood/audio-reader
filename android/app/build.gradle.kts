@@ -63,6 +63,10 @@ dependencies {
     ksp("androidx.appfunctions:appfunctions-compiler:1.0.0-alpha11")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("org.jsoup:jsoup:1.23.2")
+    // Coil 3.3 uses Kotlin 2.2, matching the project compiler.
+    implementation("io.coil-kt.coil3:coil-compose:3.3.0")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
+    androidTestImplementation("io.coil-kt.coil3:coil-test:3.3.0")
     implementation("androidx.browser:browser:1.10.0")
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")

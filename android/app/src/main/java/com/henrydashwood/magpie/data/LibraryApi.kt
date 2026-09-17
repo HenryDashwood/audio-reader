@@ -12,13 +12,15 @@ import java.io.ByteArrayOutputStream
 
 data class LibraryFeed(val id: String, val title: String, val count: Int, val articles: Boolean,
     val url: String? = null, val sources: List<String> = emptyList(), val description: String? = null,
-    val sourceDetails: List<FeedSource> = emptyList(), val forwarded: Boolean = false)
+    val sourceDetails: List<FeedSource> = emptyList(), val forwarded: Boolean = false, val imageUrl: String? = null)
 data class RemoteEpisode(val id: Int, val title: String, val description: String = "", val source: String = "Saved articles",
     val feedUrl: String? = null, val audioUrl: String? = null, val link: String? = null,
     val durationSeconds: Int? = null, val wordCount: Int? = null, val positionSeconds: Double = 0.0,
     val completed: Boolean = false, val dismissed: Boolean = false, val contentId: Int? = null,
-    val captureError: String? = null)
-data class RemoteText(val episodeId: Int, val contentId: Int?, val text: String, val html: String?, val wordCount: Int?)
+    val captureError: String? = null, val progressRevision: String? = null, val articleBookmark: RemoteArticleBookmark? = null,
+    val publishedAt: String? = null, val imageUrl: String? = null)
+data class RemoteText(val episodeId: Int, val contentId: Int?, val text: String, val html: String?, val wordCount: Int?,
+    val articleProgress: ArticleProgressState? = null)
 
 interface LibraryApi {
     suspend fun userId(token: String): String
@@ -41,9 +43,12 @@ interface LibraryApi {
 
 /** Uses the existing Swift/backend wire contract. Authorization never follows redirects. */
 class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (String) -> Unit = {},
-    private val connect: (java.net.URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }) : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, NewsletterApi,
+    private val connect: (java.net.URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }) : com.henrydashwood.magpie.telemetry.TelemetryApi, LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, NewsletterApi, PodcastProgressApi, ArticleProgressApi,
     com.henrydashwood.magpie.voice.VoiceApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized),
     LibraryActionApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized) {
+    override suspend fun reportTelemetry(token: String, event: com.henrydashwood.magpie.telemetry.TelemetryEvent) {
+        request(token, "events/${event.kind}", "POST", JSONObject(event.fields), 10_000, event.traceparent)
+    }
     override suspend fun userId(token: String) = obj(token, "me").getString("id")
     override suspend fun feeds(token: String) = array(token, "feeds").objects().map(::decodeFeed)
     override suspend fun latest(token: String) = list(token, "episodes?limit=30")
@@ -70,7 +75,8 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
     override suspend fun text(token: String, episodeId: Int, contentId: Int?): RemoteText {
         val json = obj(token, "episodes/$episodeId/text" + (contentId?.let { "?content_id=$it" } ?: ""))
         return RemoteText(json.getInt("episode_id"), json.optionalInt("content_id"), json.getString("text"),
-            json.optionalString("html"), json.optionalInt("word_count"))
+            json.optionalString("html"), json.optionalInt("word_count"),
+            if (json.isNull("article_progress")) null else decodeArticleProgress(json.getJSONObject("article_progress")))
     }
     override suspend fun save(token: String, episodeId: Int?, url: String?) = decodeEpisode(obj(token, "saved", "POST",
         JSONObject().put("episode_id", episodeId).put("url", url)))
@@ -111,6 +117,33 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
         request(token, path, if (change == SourceChange.Combine) "PUT" else "DELETE")
     }
     private suspend fun list(token: String, path: String) = array(token, path).objects().map(::decodeEpisode)
+    override suspend fun podcastProgress(token: String, episodeId: Int, report: PodcastProgressReport): PodcastProgressReceipt {
+        require(episodeId > 0)
+        val result = obj(token, "episodes/$episodeId/progress", "PUT", JSONObject()
+            .put("request_id", report.requestId).put("expected_revision", report.expectedRevision)
+            .put("position_seconds", report.seconds).put("completed", report.completed))
+        val episode = decodeEpisode(result.getJSONObject("episode"))
+        val accepted = result.getString("accepted_revision")
+        require(episode.id == episodeId && episode.audioUrl != null &&
+            episode.progressRevision?.matches(Regex("[a-f0-9]{64}")) == true && accepted.matches(Regex("[a-f0-9]{64}"))) {
+            "The listening progress reply could not be confirmed."
+        }
+        return PodcastProgressReceipt(episode, accepted)
+    }
+    override suspend fun articleProgress(token: String, episodeId: Int, report: ArticleProgressReport): ArticleProgressReceipt {
+        require(episodeId > 0)
+        val result = obj(token, "episodes/$episodeId/article-progress", "PUT", JSONObject()
+            .put("request_id", report.requestId).put("expected_revision", report.expectedRevision)
+            .put("text_version", report.textVersion).put("content_id", report.contentId)
+            .put("offset_utf16", report.offsetUtf16).put("completed", report.completed))
+        val episode = decodeEpisode(result.getJSONObject("episode"))
+        val progress = decodeArticleProgress(result.getJSONObject("progress"))
+        val accepted = result.getString("accepted_revision")
+        require(episode.id == episodeId && result.getJSONObject("episode").isNull("audio_url") && accepted.matches(Regex("[a-f0-9]{64}"))) {
+            "The article progress reply could not be confirmed."
+        }
+        return ArticleProgressReceipt(episode, progress, accepted)
+    }
     override suspend fun newsletterAddress(token: String) = NewsletterAddress(obj(token, "newsletters/address").getString("address"))
     override suspend fun pendingNewsletters(token: String) = array(token, "newsletters/pending").objects().map { row ->
         PendingNewsletter(row.getInt("id"), row.getString("title"), row.getString("sender_address"),
@@ -131,7 +164,7 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
     }
     private suspend fun array(token: String, path: String) = JSONArray(request(token, path))
     private suspend fun obj(token: String, path: String, method: String = "GET", body: JSONObject? = null) = JSONObject(request(token, path, method, body))
-    private suspend fun request(token: String, path: String, method: String = "GET", body: JSONObject? = null, timeout: Int = 30_000): String = withContext(Dispatchers.IO) {
+    private suspend fun request(token: String, path: String, method: String = "GET", body: JSONObject? = null, timeout: Int = 30_000, traceparent: String? = null): String = withContext(Dispatchers.IO) {
         val base = URI(baseUrl)
         require(base.scheme == "https" && base.host != null && base.userInfo == null)
         val connection = connect(URI(baseUrl.trimEnd('/') + "/" + path).toURL())
@@ -142,6 +175,7 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
             connection.readTimeout = timeout
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("Authorization", "Bearer $token")
+            traceparent?.let { connection.setRequestProperty("traceparent", it) }
             if (body != null) {
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json")
@@ -186,13 +220,26 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
         fun decodeFeed(json: JSONObject) = LibraryFeed(json.getInt("id").toString(), json.getString("title"),
             json.optInt("episode_count"), json.optBoolean("is_article_feed"), json.optionalString("url"),
             json.optJSONArray("sources")?.objects()?.map { it.getString("title") }.orEmpty(), json.optionalString("description"),
-            json.optJSONArray("sources")?.objects()?.map(::decodeFeedSource).orEmpty(), json.optBoolean("forwarded"))
+            json.optJSONArray("sources")?.objects()?.map(::decodeFeedSource).orEmpty(), json.optBoolean("forwarded"), https(json.optionalString("image_url")))
         fun decodeEpisode(json: JSONObject) = RemoteEpisode(json.getInt("id"), json.getString("title"),
             json.optionalString("description") ?: "", json.optionalString("feed_title") ?: "Saved articles",
             json.optionalString("feed_url"), https(json.optionalString("audio_url")), https(json.optionalString("link")),
             json.optionalInt("duration_seconds"), json.optionalInt("word_count"),
             json.optDouble("position_seconds", 0.0).takeIf { it.isFinite() && it >= 0 } ?: 0.0,
-            json.optBoolean("completed"), json.optBoolean("dismissed"), json.optionalInt("content_id"), json.optionalString("capture_error"))
+            json.optBoolean("completed"), json.optBoolean("dismissed"), json.optionalInt("content_id"), json.optionalString("capture_error"), json.optionalString("progress_revision"),
+            if (json.isNull("article_bookmark")) null else decodeArticleBookmark(json.getJSONObject("article_bookmark")),
+            json.optionalString("published_at"), https(json.optionalString("image_url")))
+        fun decodeArticleBookmark(json: JSONObject) = RemoteArticleBookmark(json.getString("text_version"), json.strictOffset("offset_utf16"))
+        fun decodeArticleProgress(json: JSONObject) = ArticleProgressState(json.getString("text_version"),
+            (if (json.isNull("content_id")) null else json.strictOffset("content_id")), json.getString("revision"),
+            if (json.isNull("bookmark")) null else decodeArticleBookmark(json.getJSONObject("bookmark")))
+        private fun JSONObject.strictOffset(key: String): Int {
+            val value = get(key)
+            require(value is Int || value is Long)
+            val number = (value as Number).toLong()
+            require(number in 0..Int.MAX_VALUE.toLong())
+            return number.toInt()
+        }
         private fun https(value: String?): String? = value?.takeIf { runCatching {
             val uri = URI(it); uri.scheme == "https" && uri.host != null && uri.userInfo == null
         }.getOrDefault(false) }

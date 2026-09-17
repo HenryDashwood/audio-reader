@@ -209,7 +209,10 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         // session — silencing whatever else is playing — for no sound at all.
         guard currentEpisode != nil else { return }
         sheTookOver()
-        resumeWithRetries()
+        if mode == .article, article.progressContext != nil, let episode = currentEpisode {
+            wantsPlayback = true
+            article.play(episode)
+        } else { resumeWithRetries() }
     }
 
     /// Her own play, pause or new episode: any interruption still remembered

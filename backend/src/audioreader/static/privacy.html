@@ -30,7 +30,7 @@
 <body>
 
 <h1>Magpie — Privacy Policy</h1>
-<p class="updated">Last updated 31 August 2026</p>
+<p class="updated">Last updated 17 September 2026</p>
 
 <p>
   Magpie is a podcast and article player. All features can be operated on
@@ -189,13 +189,23 @@
   same 30 days, and used the same way.
 </p>
 <p>
-  If the app crashes or freezes, your phone's own diagnostics — Apple's
-  MetricKit — hand us a report of where in the app it happened, which we
-  forward to the same service. These contain no personal information: they
-  describe the app's own code, not you or what you were listening to. Your
-  phone only provides them if you have left iOS's <em>Share With App
-  Developers</em> analytics setting on, and you can turn it off at any time in
-  Settings → Privacy &amp; Security → Analytics &amp; Improvements.
+  If the app crashes or freezes, we send a small summary describing the app
+  failure and its version, not what you were listening to. On iOS, these
+  reports come from Apple's MetricKit. Your phone only provides them if you
+  have left iOS's <em>Share With App Developers</em> analytics setting on;
+  you can turn it off in Settings → Privacy &amp; Security → Analytics &amp;
+  Improvements. On Android, we use the system's recent crash and unresponsive-app
+  records and check whether the visible app's main thread has stopped responding.
+  We do not upload raw crash traces, your words, audio, article text, or listening
+  titles. Reports are sent only for the signed-in account that experienced them.
+</p>
+<p>
+  In Magpie for Android, you can turn off <em>Share app diagnostics</em> under
+  Settings → Privacy &amp; Support. This stops both voice-request diagnostics
+  and crash or freeze reports and clears their pending on-device records.
+  The retry queue holds at most 50 recent reports per account for up to 30 days,
+  is excluded from device backups, and is cleared when you sign out. Switching
+  this off does not affect playback, recognition or your library.
 </p>
 <p>
   It is used to fix the app and for nothing else. It does not build a profile of
@@ -238,6 +248,18 @@
     a temporary, non-persistent browser data store in Magpie.
   </li>
 </ul>
+
+<h2>Unfinished requests on Android</h2>
+<p>
+  Android keeps unfinished voice and typed library requests privately on your
+  device, including their recognised text, original target, recent conversation
+  context and any confirmed result. This lets you check the original request
+  after an interruption without repeating changes. These records are excluded
+  from device backups. Opening the recovery list does not start the microphone
+  or send a command. Records remain until resolved or dismissed, or until you
+  sign out. Dismissing a request cancels unfinished server work and removes its
+  local recovery record; changes already made to your library remain.
+</p>
 
 <h2>What we do not do</h2>
 <ul>

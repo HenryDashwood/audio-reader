@@ -1,7 +1,6 @@
 package com.henrydashwood.magpie.data
 
-import com.henrydashwood.magpie.voice.VoiceAction
-import com.henrydashwood.magpie.voice.VoiceResponse
+import com.henrydashwood.magpie.voice.*
 import kotlinx.coroutines.CancellationException
 import java.util.UUID
 
@@ -12,40 +11,53 @@ interface LibraryActionApi {
 
 /** Main-dispatcher ownership shared by all structured action service instances.
  * Keep both uncertain requests and confirmed-but-unreconciled receipts for retry. */
-class LibraryActionExecution(private val account: () -> String?) {
-    private data class Pending(val account: String, val action: String, val episodeId: Int?, val useCurrent: Boolean,
-        val requestId: String = UUID.randomUUID().toString(), var receipt: VoiceResponse? = null)
-    private var pending: Pending? = null
-    private var active: Pending? = null
-    fun invalidate() { pending = null }
-    fun pendingCurrentItem(action: String): Int? = pending?.takeIf {
-        it.account == account() && it.action == action && it.useCurrent
-    }?.episodeId
+class LibraryActionExecution(private val conversation: Conversation = Conversation(),
+    private val storageOwner: (() -> String?)? = null, private val account: () -> String?) {
+    fun invalidate() { conversation.activate(null) }
+    private suspend fun restore(key: String) {
+        conversation.restore(checkNotNull(storageOwner?.invoke() ?: key))
+        if (account() != key) throw CancellationException("Account changed")
+    }
+    suspend fun pendingCurrentItem(action: String): Int? {
+        val key = account() ?: return null
+        conversation.activate(key)
+        check(!conversation.executing) { "Magpie is already handling a request. Let it finish and try again." }
+        restore(key)
+        return conversation.unfinished(action, useCurrent = true, anyCurrent = true)?.let {
+            conversation.structured(it.requestId)?.episodeId
+        }
+    }
 
     suspend fun run(action: String, episodeId: Int?, before: suspend (String) -> Unit,
         send: suspend (String) -> VoiceResponse, reconcile: suspend (VoiceResponse) -> Unit,
-        useCurrent: Boolean = false, startNewChange: Boolean = false): VoiceResponse {
-        require(action in setOf("mark_played", "dismiss", "restore", "undo")) { "Choose played, dismissed, or restored." }
-        require(if (action == "undo") episodeId == null else episodeId != null && episodeId > 0) { "Choose an item first." }
+        useCurrent: Boolean = false, startNewChange: Boolean = false,
+        label: String = when (action) { "mark_played" -> "Mark item as played"; "dismiss" -> "Dismiss item"; "restore" -> "Restore item"; else -> "Undo the last library change" },
+        reconcileRecovered: suspend (VoiceResponse) -> Unit = reconcile): VoiceResponse {
+        val structured = StructuredLibraryRequest(action, episodeId, useCurrent)
         val key = checkNotNull(account()) { "Open Magpie and sign in first." }
-        check(active?.account != key) { "Magpie is already updating your library. Let it finish and try again." }
-        val request = pending?.takeIf { !startNewChange && it.account == key && it.action == action && it.episodeId == episodeId && it.useCurrent == useCurrent }
-            ?: Pending(key, action, episodeId, useCurrent)
-        pending = request
+        conversation.activate(key)
+        val lease = UUID.randomUUID().toString()
+        check(conversation.acquire(lease)) { "Magpie is already handling a request. Let it finish and try again." }
         fun checkAccount() { if (account() != key) throw CancellationException("Account changed") }
-        active = request
         try {
+            restore(key)
+            val owner = checkNotNull(storageOwner?.invoke() ?: key)
+            val request = conversation.unfinished(action, episodeId, useCurrent)?.takeUnless { startNewChange }?.also {
+                conversation.selectRecovery(it.requestId)
+            } ?: conversation.structuredRequest(structured, label)
+            conversation.persist(owner); checkAccount()
             before(request.requestId); checkAccount()
-            val receipt = request.receipt ?: send(request.requestId).also { response ->
+            val receipt = conversation.receipt ?: send(request.requestId).also { response ->
                 checkAccount()
-                require(response.actions.isEmpty() && response.action in setOf(VoiceAction.Played, VoiceAction.Dismiss, VoiceAction.Restore,
-                    VoiceAction.Subscribed, VoiceAction.Unsubscribed, VoiceAction.Unknown)) { "The library response could not be confirmed." }
-                if (action != "undo") require(response.action.wire == action && response.episode?.id == episodeId) { "The library response did not match the requested item." }
-                request.receipt = response
+                conversation.confirmed(request, key, response)
             }
-            reconcile(receipt); checkAccount()
-            pending = null
+            structured.validate(receipt)
+            conversation.persist(owner); checkAccount()
+            if (conversation.wasRestored(request.requestId)) reconcileRecovered(receipt) else reconcile(receipt)
+            checkAccount()
+            conversation.complete(request, key, listOf("${receipt.action.wire}: ${receipt.spokenResponse}"), owner)
+            checkAccount()
             return receipt
-        } finally { if (active === request) active = null }
+        } finally { conversation.release(lease) }
     }
 }

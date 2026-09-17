@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withTimeout
 import java.io.Reader
 
-class VoiceFailure(override val message: String, cause: Throwable? = null) : Exception(message, cause)
+class VoiceFailure(override val message: String, cause: Throwable? = null, val code: String? = null) : Exception(message, cause)
 enum class VoiceAction(val wire: String) {
     Play("play_episode"), Speed("set_speed"), Played("mark_played"), Dismiss("dismiss"), Restore("restore"),
     Subscribed("subscribed"), Unsubscribed("unsubscribed"), Unknown("unknown");
@@ -14,6 +14,8 @@ enum class VoiceAction(val wire: String) {
 data class VoiceResponse(val action: VoiceAction, val spokenResponse: String,
     val episode: RemoteEpisode? = null, val speed: Float? = null, val expectsReply: Boolean = false,
     val actions: List<VoiceResponse> = emptyList()) {
+    val recoveryMessage: String get() = "Earlier result: $spokenResponse" +
+        if (effects.any { it.action in setOf(VoiceAction.Play, VoiceAction.Speed) }) " Choose Play or a playback speed to continue now." else ""
     val effects: List<VoiceResponse> get() = if (actions.isEmpty()) listOf(this) else actions.flatMap { it.effects }
 }
 sealed interface VoiceEvent {

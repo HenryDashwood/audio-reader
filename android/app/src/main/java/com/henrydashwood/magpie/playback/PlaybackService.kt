@@ -100,6 +100,8 @@ class PlaybackService : MediaLibraryService() {
         set(value) { library.speedUndo = value }
     private var playbackRevision = -1
     private var lastReportedAt = 0L
+    private var progressPlaybackId: String? = null
+    private var hasPlayed = false
     private val localPodcastPositions = mutableMapOf<String, Long>()
     private val filedArticleBookmarks = mutableMapOf<String, ArticleBookmark>()
     private val reportLock = Mutex()
@@ -137,7 +139,7 @@ class PlaybackService : MediaLibraryService() {
         // Private disposable preview audio only; no user downloads are stored here.
         File(cacheDir, "narration").deleteRecursively()
         File(cacheDir, "narration").mkdirs()
-        player = ExoPlayer.Builder(this).build().apply {
+        player = ExoPlayer.Builder(this).setMediaSourceFactory(ArticleMediaSourceFactory(this, renderer)).build().apply {
             setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_SPEECH).build(), true)
             setHandleAudioBecomingNoisy(true)
             setWakeMode(C.WAKE_MODE_LOCAL)
@@ -147,7 +149,10 @@ class PlaybackService : MediaLibraryService() {
                     if (playWhenReady) sleepTimer.check()
                 }
                 override fun onEvents(player: Player, events: Player.Events) { publishReadingPosition() }
-                override fun onIsPlayingChanged(isPlaying: Boolean) { persist() }
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (isPlaying) hasPlayed = true
+                    persist()
+                }
                 override fun onPlaybackParametersChanged(parameters: androidx.media3.common.PlaybackParameters) {
                     current?.let { store.saveSpeed(it.kind, parameters.speed) }
                 }
@@ -163,9 +168,12 @@ class PlaybackService : MediaLibraryService() {
         val sessionPlayer = object : ForwardingPlayer(player) {
             private fun mayPlay() = cancelledPlayback.isEmpty() ||
                 session.controllerForCurrentRequest?.let { it !in cancelledPlayback } == true
-            override fun play() { if (mayPlay()) super.play() }
+            override fun play() { if (mayPlay()) { beginProgressIntent(); super.play() } }
             override fun setPlayWhenReady(playWhenReady: Boolean) {
-                if (!playWhenReady || mayPlay()) super.setPlayWhenReady(playWhenReady)
+                if (!playWhenReady || mayPlay()) {
+                    if (playWhenReady) beginProgressIntent()
+                    super.setPlayWhenReady(playWhenReady)
+                }
             }
         }
         session = MediaLibrarySession.Builder(this, sessionPlayer, object : MediaLibrarySession.Callback {
@@ -248,11 +256,33 @@ class PlaybackService : MediaLibraryService() {
                 if (command.customAction in setOf(BEGIN_VOICE, END_VOICE, VOICE_CONTROL)) {
                     val result = voiceCommand(command.customAction, args)
                     if (command.customAction == BEGIN_VOICE && result.resultCode == SessionResult.RESULT_SUCCESS) voiceController = controller
-                    if (result.resultCode == SessionResult.RESULT_SUCCESS && args.getString("action") == "drain") {
-                        // Finish older progress writes before the server can file this item.
-                        val drained = SettableFuture.create<SessionResult>()
-                        scope.launch { reportLock.withLock { drained.set(result) } }
-                        return drained
+                    val progressAction = args.getString("action")
+                    if (result.resultCode == SessionResult.RESULT_SUCCESS &&
+                        progressAction in setOf("drain", "confirm", "file", "restore")) {
+                        val finished = SettableFuture.create<SessionResult>()
+                        val version = library.state.value.revision
+                        val request = args.getString("request_id") ?: args.getString("token")!!
+                        val ids = if (progressAction == "drain") library.state.value.items
+                            .filter { request in uncertainProgress[it.id].orEmpty() }.mapNotNull { it.episodeId }.toSet()
+                        else library.state.value.items.filter { it.id == args.getString("id") }.mapNotNull { it.episodeId }.toSet()
+                        (application as MagpieApplication).progressWork {
+                            try {
+                                check(version == library.state.value.revision)
+                                when (progressAction) {
+                                    "drain" -> {
+                                        // Save the guard before allowing the server mutation, then
+                                        // wait for earlier app-owned and legacy service writes.
+                                        library.holdProgress(ids, request)
+                                        reportLock.withLock { library.awaitProgress() }
+                                    }
+                                    "confirm" -> library.confirmProgress(request)
+                                    else -> library.blockProgress(ids)
+                                }
+                                check(version == library.state.value.revision)
+                                finished.set(result)
+                            } catch (failure: Exception) { finished.setException(failure) }
+                        }
+                        return finished
                     }
                     return Futures.immediateFuture(result)
                 }
@@ -392,13 +422,17 @@ class PlaybackService : MediaLibraryService() {
             try {
                 withTimeout(120_000) {
                     previousAssistant?.join(); previousRendering?.join()
-                    val item = withTimeout(30_000) { resolve?.invoke() ?: catalog.resolve(requests.single()) }
+                    val item = withTimeout(30_000) {
+                        val selected = resolve?.invoke() ?: catalog.resolve(requests.single())
+                        if (selected.episodeId != null && selected.kind == ContentKind.Article) library.content(selected.id, forPlayback = true) else selected
+                    }
                     checkRequest()
                     val reuse = current?.id == item.id && current?.contentVersion == item.contentVersion &&
                         player.currentMediaItem?.mediaId == item.id &&
-                        (item.kind == ContentKind.Podcast || rendered?.let { it.voiceSelection == store.voiceId && it.file.isFile } == true)
-                    val position = if (reuse) player.currentPosition.coerceAtLeast(0) else null
-                    audio = if (reuse) rendered else if (item.kind == ContentKind.Article) renderer.render(item, store.voiceId) { done, total ->
+                        (item.kind == ContentKind.Podcast || rendered?.let { it.voiceSelection == store.voiceId && !it.closed } == true)
+                    val position = if (reuse && (item.kind == ContentKind.Podcast || item.episodeId == null ||
+                        current?.articleProgress?.revision == item.articleProgress?.revision)) player.currentPosition.coerceAtLeast(0) else null
+                    audio = if (reuse) rendered else if (item.kind == ContentKind.Article) renderer.render(item, store.voiceId, articleResumeOffset(item)) { done, total ->
                         checkRequest()
                         PlaybackStatus.mutable.value = Preparation(item.id, "Preparing audio… ${done * 100 / total}%")
                     } else null
@@ -424,7 +458,7 @@ class PlaybackService : MediaLibraryService() {
                 releaseAssistant(future)
                 if (!future.isDone) withoutQueuedPlay(controller) { future.setException(failure) }
             } finally {
-                if (!adopted && audio !== rendered) audio?.file?.delete()
+                if (!adopted && audio !== rendered) audio?.close()
                 releaseAssistant(future)
             }
         }
@@ -434,14 +468,16 @@ class PlaybackService : MediaLibraryService() {
         return future
     }
 
-    private fun play(item: LibraryItem) {
+    private fun play(item: LibraryItem, newIntent: Boolean = true) {
         cancelAssistant()
         feedback.close()
         // Clear an elapsed deadline before a new, explicit request to listen.
         sleepTimer.check()
-        if (current?.id == item.id && player.playbackState != Player.STATE_IDLE && PlaybackStatus.state.value.message == null &&
+        if ((!newIntent || item.kind == ContentKind.Podcast || item.episodeId == null) &&
+            current?.id == item.id && current?.contentVersion == item.contentVersion && player.playbackState != Player.STATE_IDLE && PlaybackStatus.state.value.message == null &&
             (item.kind == ContentKind.Podcast || rendered?.voiceSelection == store.voiceId)) {
             if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+            if (newIntent) beginProgressIntent(item)
             player.play()
             return
         }
@@ -453,10 +489,12 @@ class PlaybackService : MediaLibraryService() {
         rendering = scope.launch {
             previous?.join()
             try {
-                val audio = if (item.kind == ContentKind.Article) renderer.render(item, store.voiceId) { done, total ->
-                    PlaybackStatus.mutable.value = Preparation(item.id, "Preparing audio… ${done * 100 / total}%")
+                val resolved = if (newIntent && item.episodeId != null && item.kind == ContentKind.Article)
+                    library.content(item.id, forPlayback = true) else item
+                val audio = if (resolved.kind == ContentKind.Article) renderer.render(resolved, store.voiceId, articleResumeOffset(resolved)) { done, total ->
+                    PlaybackStatus.mutable.value = Preparation(resolved.id, "Preparing audio… ${done * 100 / total}%")
                 } else null
-                load(item, audio, true)
+                load(resolved, audio, true)
                 PlaybackStatus.mutable.value = Preparation(voice = audio?.voiceName)
             } catch (_: TimeoutCancellationException) {
                 PlaybackStatus.mutable.value = Preparation(error = "The reading voice took too long to respond. Please try again.")
@@ -476,22 +514,53 @@ class PlaybackService : MediaLibraryService() {
         player.playWhenReady = autoplay
     }
 
+    private fun articleResumeOffset(item: LibraryItem): Int = if (item.completed) 0 else
+        (if (item.articleProgress != null) item.articleBookmark?.let { ArticleBookmark(it.textVersion, it.offsetUtf16) }
+        else store.bookmark(item.id))?.takeIf { it.contentVersion == item.contentVersion }?.offsetUtf16 ?: 0
+
     private fun resumePosition(item: LibraryItem, audio: RenderedArticle?): Long =
-        if (item.completed) 0 else if (audio != null) resumeAt(audio.chunks, store.bookmark(item.id), item.contentVersion)
+        if (item.completed) 0 else if (audio != null) resumeAt(audio.chunks, if (item.articleProgress != null) item.articleBookmark?.let {
+            ArticleBookmark(it.textVersion, it.offsetUtf16)
+        } else store.bookmark(item.id), item.contentVersion)
         else if (item.episodeId != null) localPodcastPositions[item.id] ?: item.remotePositionMs else store.position(item.id)
 
     private fun adopt(item: LibraryItem, audio: RenderedArticle?): MediaItem {
         persist()
         player.stop()
-        if (rendered !== audio) rendered?.file?.delete()
+        if (rendered !== audio) rendered?.close()
         rendered = audio
         current = item
         playbackRevision = library.state.value.revision
+        hasPlayed = false
+        progressPlaybackId = null
+        beginProgressIntent(item, resumePosition(item, audio), audio?.let { bookmarkAt(it.chunks, resumePosition(item, it), item.contentVersion)?.offsetUtf16 })
         player.setPlaybackSpeed(store.speed(item.kind))
         store.lastItem = item.id
         store.saveContinuation(library.state.value.owner, item.id)
-        val uri = audio?.file?.toURI()?.toString() ?: item.audioUrl ?: "asset:///welcome.wav"
+        val uri = audio?.uri ?: item.audioUrl ?: "asset:///welcome.wav"
         return MediaLibraryCatalog.media(item).buildUpon().setUri(uri).build()
+    }
+
+    private fun beginProgressIntent(item: LibraryItem? = current, position: Long = player.currentPosition, articleOffset: Int? = null) {
+        if (item == null || !library.usesGuardedProgress(item)) return
+        val latest = if (item.kind == ContentKind.Article) item else
+            library.state.value.items.firstOrNull { it.id == item.id } ?: return
+        val offset = articleOffset ?: rendered?.let { it.playerBookmark(player.currentTimeline, position, item.contentVersion).offsetUtf16 } ?: 0
+        val version = playbackRevision
+        val id = java.util.UUID.randomUUID().toString()
+        progressPlaybackId = id
+        (application as MagpieApplication).progressWork {
+            if (version == library.state.value.revision) try {
+                if (item.kind == ContentKind.Article) library.beginArticleProgress(latest, id, offset)
+                else library.beginPodcastProgress(latest, id, position.coerceAtLeast(0) / 1000.0)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { progressError(version) }
+        }
+    }
+
+    private fun progressError(version: Int) {
+        if (version == library.state.value.revision) PlaybackStatus.mutable.value = PlaybackStatus.state.value.copy(
+            error = "Listening progress could not be synced. Please check your connection and available storage.")
     }
 
     private fun persist(completed: Boolean = false) {
@@ -502,7 +571,28 @@ class PlaybackService : MediaLibraryService() {
             if (item.episodeId != null) localPodcastPositions[item.id] = position
         }
         else rendered?.let { audio ->
-            bookmarkAt(audio.chunks, if (completed) 0 else player.currentPosition, item.contentVersion)?.let { store.saveBookmark(item.id, it) }
+            audio.playerBookmark(player.currentTimeline, if (completed) 0 else player.currentPosition, item.contentVersion).let { store.saveBookmark(item.id, it) }
+        }
+        if (library.usesGuardedProgress(item)) {
+            val id = progressPlaybackId ?: return
+            if (!hasPlayed || voiceHold != null || item.id in uncertainProgress) return
+            val version = playbackRevision
+            val seconds = player.currentPosition.coerceAtLeast(0) / 1000.0
+            val offset = if (completed) item.text.length else rendered?.let {
+                it.playerBookmark(player.currentTimeline, player.currentPosition, item.contentVersion).offsetUtf16
+            } ?: 0
+            val send = completed || !player.isPlaying || SystemClock.elapsedRealtime() - lastReportedAt >= 30_000
+            if (send) lastReportedAt = SystemClock.elapsedRealtime()
+            // Application ownership lets the final disk write outlive service teardown.
+            (application as MagpieApplication).progressWork {
+                if (version == library.state.value.revision) try {
+                    if (item.kind == ContentKind.Article) library.recordArticleProgress(item, id, offset, completed)
+                    else library.recordPodcastProgress(item, id, seconds, completed)
+                    if (send) library.flushProgress()
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { progressError(version) }
+            }
+            return
         }
         if (voiceHold == null && item.id !in uncertainProgress && item.episodeId != null && item.kind == ContentKind.Podcast && playbackRevision == library.state.value.revision &&
             (completed || !player.isPlaying || SystemClock.elapsedRealtime() - lastReportedAt >= 30_000)) {
@@ -521,7 +611,7 @@ class PlaybackService : MediaLibraryService() {
         val item = current ?: return
         if (player.currentMediaItem?.mediaId != item.id) return
         if (item.episodeId == null) store.finished = store.finished + item.id
-        else {
+        else if (!library.usesGuardedProgress(item)) {
             val version = playbackRevision
             scope.launch {
                 if (version == library.state.value.revision) try { library.played(item, true) }
@@ -550,7 +640,7 @@ class PlaybackService : MediaLibraryService() {
         store.lastItem = null
         player.stop()
         player.clearMediaItems()
-        rendered?.file?.delete()
+        rendered?.close()
         rendered = null
         PlaybackStatus.mutableReadingPosition.value = null
     }
@@ -561,7 +651,11 @@ class PlaybackService : MediaLibraryService() {
         val active = item != null && audio != null && item.kind == ContentKind.Article &&
             player.currentMediaItem?.mediaId == item.id && player.playbackState != Player.STATE_IDLE &&
             player.playbackState != Player.STATE_ENDED && PlaybackStatus.state.value.message == null
-        val range = if (active) readingRangeAt(audio!!.chunks, audio.ranges, player.currentPosition) else null
+        val range = if (active) {
+            val index = player.currentPeriodIndex.coerceIn(audio!!.textChunks.indices)
+            val chunk = audio.playerChunk(player.currentTimeline, index)
+            readingRangeAt(listOf(chunk), audio.ranges(index).map { it.copy(startMs = it.startMs + chunk.startMs) }, player.currentPosition)
+        } else null
         PlaybackStatus.mutableReadingPosition.value = range?.let {
             ArticleReadingPosition(item!!.id, item.contentVersion, it.startUtf16, it.endUtf16)
         }
@@ -596,7 +690,7 @@ class PlaybackService : MediaLibraryService() {
         if (action == END_VOICE) {
             invalidateVoice()
             val item = hold.item?.let { old -> library.state.value.items.find { it.id == old.id && it.contentVersion == old.contentVersion } }
-            if (args.getBoolean("resume", true) && hold.resume && item != null) play(item)
+            if (args.getBoolean("resume", true) && hold.resume && item != null) play(item, newIntent = false)
             return SessionResult(SessionResult.RESULT_SUCCESS)
         }
         val result = Bundle()
@@ -605,7 +699,7 @@ class PlaybackService : MediaLibraryService() {
                 val request = args.getString("request_id") ?: hold.token
                 if (!request.matches(Regex("[a-zA-Z0-9-]{1,64}"))) return SessionResult(SessionError.ERROR_BAD_VALUE)
                 hold.requests += request
-                listOfNotNull(current, hold.item).filter { it.kind == ContentKind.Podcast }.forEach {
+                listOfNotNull(current, hold.item).forEach {
                     uncertainProgress.getOrPut(it.id) { mutableSetOf() }.add(request)
                 }
             }
@@ -645,6 +739,11 @@ class PlaybackService : MediaLibraryService() {
             "restore" -> {
                 val item = library.state.value.items.find { it.id == args.getString("id") }
                 item?.let { uncertainProgress.remove(it.id) }
+                if (item != null && args.getBoolean("reset_bookmark")) {
+                    filedArticleBookmarks.remove(item.id)
+                    store.clearBookmark(item.id)
+                    store.savePosition(item.id, 0)
+                }
                 if (item?.kind == ContentKind.Podcast) {
                     val position = args.getLong("position_ms").coerceAtLeast(0)
                     localPodcastPositions[item.id] = position; store.savePosition(item.id, position)
@@ -672,7 +771,7 @@ class PlaybackService : MediaLibraryService() {
                     // The server already filed it. Never report the old clock as unplayed.
                     rendering?.cancel(); current = null; store.lastItem = null
                     player.stop(); player.clearMediaItems()
-                    rendered?.file?.delete(); rendered = null
+                    rendered?.close(); rendered = null
                     PlaybackStatus.mutable.value = Preparation()
                     cancelSleepTimer()
                 }
@@ -903,7 +1002,7 @@ class PlaybackService : MediaLibraryService() {
         renderer.close()
         session.release()
         player.release()
-        rendered?.file?.delete()
+        rendered?.close()
         PlaybackStatus.mutable.value = Preparation()
         PlaybackStatus.mutableReadingPosition.value = null
         super.onDestroy()
