@@ -66,7 +66,7 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   conflict checks pass; physical-device acceptance remains separate.
 - [x] **12. Per-item filing.** Played/unplayed and read/unread across Latest,
   publication lists, search, Saved and the reader; individual Latest dismissal
-  and restoration. Visible menus, accessibility actions, durable typed retries
+  and restoration. Long-press menus, accessibility actions, durable typed retries
   and playback coordination are implemented. Unread resets a bookmark; Undo
   preserves the prior bookmark. Samples remain local.
 - [x] **13. Listening status and metadata.** Continue listening, live progress,
@@ -114,6 +114,14 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
 The sections below are a chronological implementation record. Earlier descriptions
 of unfinished work are superseded by the checked list above and the current
 acceptance matrix; they are retained as verification history.
+
+## Row interaction alignment
+
+Article and podcast rows follow the iOS layout with a single play control and no
+three-dot button. Leading swipes dismiss from Latest or remove the Saved bookmark;
+trailing swipes complete or restore. Publication rows omit the leading dismissal swipe. Long-press menus
+and TalkBack custom actions retain filing and saving without requiring gestures.
+The reader and source-management toolbar menus remain available.
 
 ## First implementation
 

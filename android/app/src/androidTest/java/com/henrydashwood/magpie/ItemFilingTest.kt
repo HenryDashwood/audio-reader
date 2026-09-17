@@ -100,7 +100,11 @@ class ItemFilingTest {
         app.libraryOverride = null; app.voiceOutputOverride = null
         directory.deleteRecursively()
     }
-    private fun actions(title: String) { compose.onNodeWithContentDescription("Actions for $title").performClick() }
+    private fun actions(title: String) {
+        val toolbar = compose.onAllNodesWithContentDescription("Actions for $title").fetchSemanticsNodes()
+        if (toolbar.isNotEmpty()) compose.onNodeWithContentDescription("Actions for $title").performClick()
+        else compose.onNodeWithText(title).performTouchInput { longClick() }
+    }
     private fun settled() { compose.waitUntil(15_000) { !model.itemFiling.state.value.busy }; assertNull(model.itemFiling.state.value.error) }
     private fun row(id: Int) = library.state.value.items.first { it.episodeId == id }
     @Test fun latestDismissAndFeedRestorationUseVisibleMenus() {
@@ -116,6 +120,26 @@ class ItemFilingTest {
         compose.onNodeWithContentDescription("Back").performClick(); compose.onNodeWithText("Latest").performClick()
         compose.onNodeWithText("A garden article").assertIsDisplayed()
         assertEquals(listOf("dismiss", "restore"), api.calls.map { it.first })
+    }
+    @Test fun rowSwipesMatchIOSAndTalkBackCanFileWithoutGestures() {
+        compose.onNodeWithText("Latest").performClick()
+        for (title in listOf("A garden podcast", "A garden article")) {
+            compose.onNodeWithContentDescription("Actions for $title").assertDoesNotExist()
+            compose.onNodeWithText(title).performTouchInput { swipeRight() }; settled()
+            compose.onNodeWithText(title).assertDoesNotExist()
+        }
+        assertTrue(api.rows.all { it.dismissed && !it.completed })
+        compose.onNodeWithText("Following").performClick(); compose.onNodeWithText("Garden notes").performClick()
+        compose.waitUntil(10_000) { !model.libraryState.value.searching && model.libraryState.value.feedResults.size == 2 }
+        compose.onNodeWithText("A garden podcast").performTouchInput { swipeLeft() }; settled()
+        assertFalse(row(1).dismissed); assertFalse(row(1).completed)
+        // Publication rows have no leading dismissal swipe, as on iOS.
+        compose.onNodeWithText("A garden podcast").performTouchInput { swipeRight() }
+        assertEquals(listOf("dismiss", "dismiss", "restore"), api.calls.map { it.first })
+        val actions = compose.onNodeWithText("A garden podcast").fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsActions.CustomActions]
+        compose.runOnUiThread { assertTrue(actions.first { it.label == "Mark as played" }.action()) }
+        settled(); assertTrue(row(1).completed)
     }
     @Test fun podcastFinishClearsActivePlaybackAndUnplayedRestoresItWithoutAnOldClock() {
         compose.runOnUiThread { model.play(row(1)) }
@@ -212,7 +236,7 @@ class ItemFilingTest {
         compose.onNodeWithContentDescription("Search").performClick()
         compose.onNodeWithText("Search your library").performTextInput("garden")
         compose.waitUntil(10_000) { library.state.value.searchResults.size == 2 }
-        compose.onNodeWithTag("following-list").performScrollToNode(hasContentDescription("Actions for A garden podcast"))
+        compose.onNodeWithTag("following-list").performScrollToNode(hasText("A garden podcast"))
         actions("A garden podcast")
         compose.onNodeWithText("Mark as played").assertIsDisplayed()
         compose.onNodeWithText("Dismiss from Latest").assertIsDisplayed()

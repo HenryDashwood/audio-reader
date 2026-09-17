@@ -149,7 +149,8 @@ class ListeningMetadataTest {
         compose.onNodeWithText("Latest").performClick()
         compose.onNodeWithTag("story-list").performScrollToNode(hasText("8 min left"))
         compose.onNodeWithText("8 min left").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Actions for Continue podcast").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Actions for Continue podcast").assertDoesNotExist()
+        compose.onNodeWithText("Continue podcast").assertHasClickAction()
         compose.waitUntil(10_000) { imageRequests.size >= 2 }
         val bitmap = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
         val output = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let(::File) ?: File(app.filesDir, "screenshots")
