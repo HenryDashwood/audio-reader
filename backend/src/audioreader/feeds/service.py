@@ -127,28 +127,32 @@ async def subscribe(session: AsyncSession, url: str, user: User) -> Feed:
     The duplicate check runs after resolution, so subscribing via the
     homepage and via the feed URL count as the same subscription."""
     feed = await ensure_feed(session, url)
-    if await is_subscribed(session, feed.id, user):
-        raise AlreadySubscribedError(url)
-    # A newsletter of hers that already shows this feed is the subscription:
-    # a second row would show her the publication, and every post, twice.
-    from audioreader.newsletters.companions import newsletter_for  # circular at module level
+    if not await follow_prepared_feed(session, feed, user):
+        if await is_subscribed(session, feed.id, user):
+            raise AlreadySubscribedError(url)
+        from audioreader.newsletters.companions import newsletter_for
 
-    newsletter = await newsletter_for(session, user.id, feed.id)
-    if newsletter is not None:
-        return newsletter
-    # Following a show starts an inbox for what arrives next. Its existing
-    # catalogue remains browsable and searchable, but subscribing must not
-    # turn years of history into dozens of allegedly new items.
-    latest_episode_id = await session.scalar(select(func.max(Episode.id)).where(Episode.feed_id == feed.id))
-    session.add(
-        Subscription(
-            user_id=user.id,
-            feed=feed,
-            latest_after_episode_id=latest_episode_id,
-        )
-    )
+        newsletter = await newsletter_for(session, user.id, feed.id)
+        return newsletter if newsletter is not None else feed
     await session.commit()
     return feed
+
+
+async def follow_prepared_feed(session: AsyncSession, feed: Feed, user: User) -> bool:
+    """Stage a subscription without committing, so import receipts are atomic.
+
+    Existing subscriptions keep their Latest cursor and grouping. Ingestion is
+    completed before the new cursor is read; old catalogue entries stay off Latest.
+    """
+    if await is_subscribed(session, feed.id, user):
+        return False
+    from audioreader.newsletters.companions import newsletter_for
+
+    if await newsletter_for(session, user.id, feed.id) is not None:
+        return False
+    latest_episode_id = await session.scalar(select(func.max(Episode.id)).where(Episode.feed_id == feed.id))
+    session.add(Subscription(user_id=user.id, feed=feed, latest_after_episode_id=latest_episode_id))
+    return True
 
 
 async def clear_latest(session: AsyncSession, user: User) -> None:

@@ -130,9 +130,15 @@ private struct AddSourcesView: View {
         NavigationStack {
             Group {
                 if searchText.isEmpty {
-                    ContentUnavailableView(
-                        "Add a source", systemImage: "plus.circle",
-                        description: Text("Search for a podcast or publication, or paste a web or feed address."))
+                    ContentUnavailableView {
+                        Label("Add a source", systemImage: "plus.circle")
+                    } description: {
+                        Text("Search for a podcast or publication, or paste a web or feed address.")
+                    } actions: {
+                        NavigationLink("Import subscriptions") {
+                            SubscriptionImportView(onFollowing: { dismiss() })
+                        }.accessibilityIdentifier("import-subscriptions")
+                    }
                 } else {
                     searchResults
                 }

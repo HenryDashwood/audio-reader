@@ -52,6 +52,7 @@ data class LinkCaptureState(val showing: Boolean = false, val url: String = "", 
 
 class MagpieModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as MagpieApplication).library
+    val subscriptionImport = com.henrydashwood.magpie.data.SubscriptionImportController(viewModelScope, repository)
     val discovery = com.henrydashwood.magpie.data.SourceDiscovery(viewModelScope, repository)
     suspend fun aiConsent() = repository.aiConsent()
     suspend fun setAIConsent(granted: Boolean) = repository.setAIConsent(granted)

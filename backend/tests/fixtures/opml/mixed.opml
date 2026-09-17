@@ -1,0 +1,7 @@
+<opml version="2.0"><body>
+<outline text="Podcast" type="rss" xmlUrl="https://podcast.example/feed" />
+<outline text="Publication" type="rss" xmlUrl="https://publication.example/feed" />
+<outline text="Podcast again" xmlUrl="https://podcast.example/feed" />
+<outline text="Private" xmlUrl="https://private.example/feed?token=do-not-retain" />
+<outline text="No address" type="rss" />
+</body></opml>

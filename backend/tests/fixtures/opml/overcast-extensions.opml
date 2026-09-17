@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<opml version="1.0"><head><title>Overcast Podcast Subscriptions</title></head><body>
+<outline text="playlists"><outline type="podcast-playlist" title="All Episodes" smart="1" /></outline>
+<outline text="feeds">
+<outline type="rss" overcastId="123" text="&#x4EBA;&#x95F4;" xmlUrl="https://podcast.example/feed" subscribed="1">
+<outline type="podcast-episode" title="A previous episode" enclosureUrl="https://podcast.example/episode.mp3" played="1" />
+</outline>
+<outline type="rss" text="Another show" xmlUrl="https://another.example/feed" />
+</outline></body></opml>

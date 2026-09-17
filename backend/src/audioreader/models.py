@@ -454,3 +454,49 @@ class VoiceUndo(Base):
     __tablename__ = "voice_undo"
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     payload: Mapped[str] = mapped_column(Text)
+
+
+class SubscriptionImport(Base):
+    __tablename__ = "subscription_imports"
+    __table_args__ = (UniqueConstraint("user_id", "request_id"),)
+
+    id: Mapped[str] = mapped_column(primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # Non-null only while active; a database constraint serializes starts across replicas.
+    active_user: Mapped[str | None] = mapped_column(unique=True)
+    status: Mapped[str] = mapped_column(default="draft")
+    request_id: Mapped[str | None]
+    fingerprint: Mapped[str | None]
+    retry_of: Mapped[str | None]
+    duplicates: Mapped[int] = mapped_column(default=0)
+    folders: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SubscriptionImportItem(Base):
+    __tablename__ = "subscription_import_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("subscription_imports.id", ondelete="CASCADE"), index=True)
+    ordinal: Mapped[int]
+    title: Mapped[str]
+    host: Mapped[str]
+    url: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str]
+    message: Mapped[str | None]
+    selected: Mapped[bool] = mapped_column(default=False)
+    retryable: Mapped[bool] = mapped_column(default=False)
+    attempts: Mapped[int] = mapped_column(default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    feed_id: Mapped[int | None] = mapped_column(ForeignKey("feeds.id", ondelete="SET NULL"))
+
+
+class SubscriptionImportLease(Base):
+    """One paced import fetch across the deployment, independent of API replicas."""
+
+    __tablename__ = "subscription_import_lease"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str]
+    until: Mapped[datetime] = mapped_column(DateTime(timezone=True))

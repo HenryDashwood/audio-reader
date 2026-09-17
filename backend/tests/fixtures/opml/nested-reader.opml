@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0"><head><title>Reader subscriptions</title><ownerName>Ignored personal metadata</ownerName></head><body>
+<outline text="News"><outline text="World"><outline type="rss" text="World &amp; science" xmlUrl="https://news.example/rss?section=world&amp;format=xml" htmlUrl="https://news.example" /></outline></outline>
+<outline text="Essays"><outline type="rss" title="An essay publication" xmlUrl="https://essays.example/atom.xml" /></outline>
+</body></opml>

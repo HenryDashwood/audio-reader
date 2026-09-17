@@ -1,0 +1,5 @@
+<?xml version='1.0' encoding='UTF-8' standalone='no' ?>
+<opml version="2.0"><head><title>AntennaPod Subscriptions</title></head><body>
+<outline text=".NET Rocks!" title=".NET Rocks!" type="rss" xmlUrl="https://www.spreaker.com/show/5634793/episodes/feed" htmlUrl="https://www.spreaker.com/show/net-rocks_1" />
+<outline text="Adventures in Machine Learning" title="Adventures in Machine Learning" type="rss" xmlUrl="https://topenddevs.com/podcasts/adventures-in-machine-learning/rss" htmlUrl="https://topenddevs.com/podcasts/adventures-in-machine-learning" />
+</body></opml>

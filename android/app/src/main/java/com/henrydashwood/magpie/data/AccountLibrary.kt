@@ -24,7 +24,26 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     private val identityStore: AccountIdentityStore? = null, private val cache: LibraryCache? = null, private val progressQueue: PodcastProgressQueue? = null,
     conversationStore: com.henrydashwood.magpie.voice.ConversationStore? = null, private val articleQueue: ArticleProgressQueue? = null,
     telemetryStore: com.henrydashwood.magpie.telemetry.TelemetryStore? = null,
-    private val telemetryEnabled: () -> Boolean = { true }) : SourceRepository, SourceManagementRepository, SavedArticleRepository, NewsletterRepository {
+    private val telemetryEnabled: () -> Boolean = { true }) : SubscriptionImportRepository, SourceRepository, SourceManagementRepository, SavedArticleRepository, NewsletterRepository {
+    override val importSession: String? get() = state.value.owner?.let { "$it:$revision" }
+    override suspend fun currentImport(): ImportJob? {
+        val (credential, version) = credentials()
+        val result = checkNotNull(api as? SubscriptionImportApi).currentImport(credential)
+        check(version)
+        return result
+    }
+    override suspend fun previewImport(bytes: ByteArray): ImportJob {
+        val (credential, version) = credentials()
+        val result = checkNotNull(api as? SubscriptionImportApi).previewImport(credential, bytes)
+        check(version)
+        return result
+    }
+    override suspend fun mutateImport(id: String, action: String, requestId: String?, entries: Set<Int>?): ImportJob {
+        val (credential, version) = credentials()
+        val result = checkNotNull(api as? SubscriptionImportApi).mutateImport(credential, id, action, requestId, entries)
+        check(version)
+        return result
+    }
     private var token: String? = null
     private var revision = 0
     private var searchVersion = 0

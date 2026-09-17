@@ -111,7 +111,10 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit) {
                         else -> {
                             val local = if (state.query.isBlank() || SourceDiscovery.isAddress(state.query)) emptyList()
                                 else library.feeds.filter { it.title.contains(state.query.trim(), ignoreCase = true) }
-                            if (state.query.isBlank()) item { Text("Search for a podcast or publication, or paste a website or feed address.", Modifier.padding(16.dp)) }
+                            if (state.query.isBlank()) item {
+                                Text("Search for a podcast or publication, or paste a website or feed address.", Modifier.padding(16.dp))
+                                TextButton(onClick = { controller.close(); model.subscriptionImport.open() }, modifier = Modifier.testTag("import-subscriptions")) { Text("Import subscriptions") }
+                            }
                             if (SourceDiscovery.isAddress(state.query)) item { Text("Magpie will find the available feeds. You can preview one before subscribing.", Modifier.padding(16.dp)) }
                             if (local.isNotEmpty()) item { DiscoveryHeading("In your library") }
                             items(local, key = { "local:${it.id}" }) { feed ->

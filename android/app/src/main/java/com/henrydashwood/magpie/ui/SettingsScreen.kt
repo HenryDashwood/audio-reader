@@ -94,6 +94,10 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
         item { SettingsFootnote("Say ‘that’s all’ to finish. With TalkBack, tap Listen for each turn when announcements have finished.") }
         item { HorizontalDivider(); SettingsHeading("Assistant and Shortcuts") }
         item { SettingsAction("Home screen and Quick Settings", Icons.Rounded.AppShortcut, onShortcuts) }
+        if (library.live) {
+            item { HorizontalDivider(); SettingsHeading("Library") }
+            item { SettingsAction("Import subscriptions", Icons.Rounded.FileOpen, model.subscriptionImport::open) }
+        }
         item { HorizontalDivider(); SettingsHeading("Newsletters") }
         item { NewsletterAddressSection(model) }
         item { HorizontalDivider(); SettingsHeading("Privacy & Support") }

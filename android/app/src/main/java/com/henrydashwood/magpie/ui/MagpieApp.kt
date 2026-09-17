@@ -270,6 +270,13 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
             }
         }
     }
+    SubscriptionImportDialog(model) {
+        destination = Destination.Following
+        selectedSource = null
+        selectedItemId = null
+        query = ""
+        model.refreshLibrary()
+    }
     SourceManagementDialog(model)
     ReplaceSavedTextDialog(model)
     AskConversation(model)

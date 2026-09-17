@@ -13,9 +13,10 @@ from audioreader.auth import service as auth_service
 from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
 from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_feeds
+from audioreader.imports.service import run as run_imports
 from audioreader.newsletters.companions import attach_missing_companions
 from audioreader.newsletters.service import prune_newsletters, tell_left_senders
-from audioreader.routers import auth, commands, events, feeds, inbound, newsletters, saved
+from audioreader.routers import auth, commands, events, feeds, inbound, newsletters, saved, subscription_imports
 from audioreader.settings_types import LLMProvider
 
 logging.basicConfig(level=logging.INFO)
@@ -91,7 +92,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     poll_task = None
     if settings.poll_interval_seconds > 0:
         poll_task = asyncio.create_task(_poll_forever(settings.poll_interval_seconds))
+    import_task = asyncio.create_task(run_imports(SessionMaker))
     yield
+    import_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await import_task
     if poll_task is not None:
         poll_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -135,6 +140,7 @@ def create_app() -> FastAPI:
     from audioreader.routers import apple_browser
 
     app.include_router(apple_browser.router)
+    app.include_router(subscription_imports.router)
     app.include_router(auth.router)
     app.include_router(saved.router)
     app.include_router(feeds.router)
