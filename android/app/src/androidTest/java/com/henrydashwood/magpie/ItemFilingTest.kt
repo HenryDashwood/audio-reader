@@ -100,10 +100,12 @@ class ItemFilingTest {
         app.libraryOverride = null; app.voiceOutputOverride = null
         directory.deleteRecursively()
     }
+    private fun rowNode(title: String) = compose.onNode(hasText(title) and
+        SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsActions.OnLongClick))
     private fun actions(title: String) {
         val toolbar = compose.onAllNodesWithContentDescription("Actions for $title").fetchSemanticsNodes()
         if (toolbar.isNotEmpty()) compose.onNodeWithContentDescription("Actions for $title").performClick()
-        else compose.onNodeWithText(title).performTouchInput { longClick() }
+        else rowNode(title).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnLongClick)
     }
     private fun settled() { compose.waitUntil(15_000) { !model.itemFiling.state.value.busy }; assertNull(model.itemFiling.state.value.error) }
     private fun row(id: Int) = library.state.value.items.first { it.episodeId == id }
@@ -125,18 +127,18 @@ class ItemFilingTest {
         compose.onNodeWithText("Latest").performClick()
         for (title in listOf("A garden podcast", "A garden article")) {
             compose.onNodeWithContentDescription("Actions for $title").assertDoesNotExist()
-            compose.onNodeWithText(title).performTouchInput { swipeRight() }; settled()
+            rowNode(title).performTouchInput { swipeRight() }; settled()
             compose.onNodeWithText(title).assertDoesNotExist()
         }
         assertTrue(api.rows.all { it.dismissed && !it.completed })
         compose.onNodeWithText("Following").performClick(); compose.onNodeWithText("Garden notes").performClick()
         compose.waitUntil(10_000) { !model.libraryState.value.searching && model.libraryState.value.feedResults.size == 2 }
-        compose.onNodeWithText("A garden podcast").performTouchInput { swipeLeft() }; settled()
+        rowNode("A garden podcast").performTouchInput { swipeLeft() }; settled()
         assertFalse(row(1).dismissed); assertFalse(row(1).completed)
         // Publication rows have no leading dismissal swipe, as on iOS.
-        compose.onNodeWithText("A garden podcast").performTouchInput { swipeRight() }
+        rowNode("A garden podcast").performTouchInput { swipeRight() }
         assertEquals(listOf("dismiss", "dismiss", "restore"), api.calls.map { it.first })
-        val actions = compose.onNodeWithText("A garden podcast").fetchSemanticsNode()
+        val actions = rowNode("A garden podcast").fetchSemanticsNode()
             .config[androidx.compose.ui.semantics.SemanticsActions.CustomActions]
         compose.runOnUiThread { assertTrue(actions.first { it.label == "Mark as played" }.action()) }
         settled(); assertTrue(row(1).completed)
