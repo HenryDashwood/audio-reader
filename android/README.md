@@ -280,9 +280,11 @@ components and Android navigation conventions. Following and episode screens use
 plain lists; search opens from the toolbar; the reader uses system typography and
 toolbar actions. Do not add marketing headings, subtitles, sample badges, or a
 separate command-testing interface to those screens. Keep the sample disclosure
-in Settings. Article rows have no overflow buttons: swipe toward the end to
-save/remove, or toward the start in Saved to mark read/unread. Long-press menus
-and TalkBack custom actions expose the same operations without requiring swipes.
+in Settings. Article and episode rows have only a play button, with no overflow
+button. Match iOS filing gestures: swipe toward the end to dismiss in Latest and
+Saved, and toward the start to mark read/played or restore an item. Publication
+rows do not offer the leading dismissal swipe. Long-press menus and TalkBack
+custom actions expose filing and article saving without requiring swipes.
 Feed headers have a management menu beside the title, matching iOS. Signed-in
 Manage sources lists primary and additional sources, their host or newsletter
 type, and any update failures. It combines other followed publications (including
@@ -637,7 +639,8 @@ recovery, and process-death resume. Borrow a Samsung before broad release.
 
 Item menus on Latest, publication lists, search results and the reader offer
 read/unread or played/unplayed, individual dismissal, and restoration to Latest.
-They have visible buttons and accessibility actions as well as optional swipes.
+Rows use long-press menus and TalkBack actions alongside the iOS filing swipes;
+the reader retains its toolbar menu.
 Signed-in changes use the same durable typed requests as assistant actions,
 without AI consent. A lost reply can be retried or checked in Ask Magpie after
 reopening the app. Filing the active item stops its old progress; marking it

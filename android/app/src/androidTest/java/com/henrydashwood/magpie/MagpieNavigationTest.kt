@@ -6,6 +6,8 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.henrydashwood.magpie.data.SampleLibrary
+import org.junit.Before
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -14,6 +16,18 @@ import org.junit.runner.RunWith
 class MagpieNavigationTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     private val article = SampleLibrary().items.first { it.id == "walking" }
+    private lateinit var originalSaved: Set<String>
+    @Before fun seedSavedArticle() {
+        val store = com.henrydashwood.magpie.data.PreviewStore(compose.activity)
+        originalSaved = store.saved
+        val model = compose.runOnUiThread { androidx.lifecycle.ViewModelProvider(compose.activity)[MagpieModel::class.java] }
+        if (article.id !in model.saved.value) compose.runOnUiThread { model.toggleSaved(article) }
+        compose.waitUntil(5_000) { article.id in model.saved.value }
+    }
+    @After fun restoreSavedArticles() {
+        com.henrydashwood.magpie.data.PreviewStore(compose.activity).saved = originalSaved
+    }
+
 
     @Test fun sourceOpensArticleAndBackReturnsToSource() {
         compose.onNodeWithText("Field notes").performClick()
@@ -109,10 +123,14 @@ class MagpieNavigationTest {
         compose.onNodeWithText("Latest").performClick()
         compose.onNodeWithText(article.title).performTouchInput { longClick() }
         compose.onNodeWithText("Dismiss from Saved").performClick()
-        compose.onNodeWithText(article.title).performTouchInput { swipeRight() }
+        compose.onNodeWithContentDescription("Actions for ${article.title}").assertDoesNotExist()
+        compose.onNodeWithText(article.title).performTouchInput { longClick() }
+        compose.onNodeWithText("Save article").performClick()
         val row = compose.onNodeWithText(article.title).fetchSemanticsNode()
         org.junit.Assert.assertTrue(row.config[SemanticsActions.CustomActions].any { it.label == "Dismiss from Saved" })
         compose.onNodeWithText("Saved").performClick()
         compose.onNodeWithText(article.title).assertIsDisplayed()
+        compose.onNodeWithText(article.title).performTouchInput { swipeRight() }
+        compose.onNodeWithText(article.title).assertDoesNotExist()
     }
 }

@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -358,7 +359,7 @@ private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String
     val rest = if (started.isEmpty()) visible else visible.filterNot { row -> started.any { it.id == row.id } }
     fun LazyListScope.storyRows(rows: List<LibraryItem>) {
         items(rows, key = { it.id }) { item ->
-            if (model != null) LibraryStoryRow(model, item, { open(item) }, { play(item) })
+            if (model != null) LibraryStoryRow(model, item, { open(item) }, { play(item) }, allowsDismissal = source == null, savedList = savedOnly)
             else StoryRow(item, { open(item) }, { play(item) })
             if (savedOnly && live && model != null && item.kind == ContentKind.Article) SavedArticlePreparation(item, model)
         }
@@ -474,11 +475,8 @@ private fun StoryRow(item: LibraryItem, open: () -> Unit, play: (() -> Unit)? = 
                 onLongClickLabel = if (showActions != null) "Item actions" else null, onLongClick = showActions)
                 .semantics { customActions = actions.filter { it.enabled }.map { action -> CustomAccessibilityAction(action.label) { action.perform(); true } } },
         )
-        Column {
-            if (play != null) IconButton(onClick = play, modifier = Modifier.size(48.dp)) {
-                Icon(if (currentLabel == "Playing") Icons.Rounded.VolumeUp else Icons.Rounded.PlayCircleOutline, "Play ${item.title}")
-            }
-            if (showActions != null) IconButton(onClick = showActions, modifier = Modifier.size(48.dp)) { Icon(Icons.Rounded.MoreVert, "Actions for ${item.title}") }
+        if (play != null) IconButton(onClick = play, modifier = Modifier.size(48.dp)) {
+            Icon(if (currentLabel == "Playing") Icons.AutoMirrored.Rounded.VolumeUp else Icons.Rounded.PlayCircleOutline, "Play ${item.title}")
         }
     }
     HorizontalDivider(Modifier.padding(start = 88.dp))
@@ -506,7 +504,7 @@ private fun filingActions(model: MagpieModel, item: LibraryItem): List<StoryActi
 }
 
 @Composable
-private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> Unit, play: () -> Unit) {
+private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> Unit, play: () -> Unit, allowsDismissal: Boolean = false, savedList: Boolean = false) {
     val saved by model.saved.collectAsStateWithLifecycle()
     val actions = filingActions(model, item)
     val save = if (item.kind == ContentKind.Article) StoryAction(
@@ -519,7 +517,12 @@ private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> U
     val progress = remember(item, playback, finished) { model.listeningPresentation(item, playback) }
     val currentLabel = if (preparation.itemId == item.id && preparation.message != null) "Preparing"
         else if (playback.item?.id != item.id) null else if (playback.buffering) "Preparing" else if (playback.playing) "Playing" else "Paused"
-    ActionStoryRow(item, open, play, save, actions.first(), actions.drop(1), progress, currentLabel)
+    val dismissed by model.dismissedFromLatest.collectAsStateWithLifecycle()
+    val isDismissed = item.dismissed || item.id in dismissed
+    // Match iOS: leading dismisses on Latest/Saved; trailing completes or restores.
+    val leading = (if (savedList) save else actions.last()).takeIf { allowsDismissal && !isDismissed }
+    val trailing = if (isDismissed) actions.last() else actions.first()
+    ActionStoryRow(item, open, play, listOfNotNull(actions.first(), save) + actions.drop(1), leading, trailing, progress, currentLabel)
 }
 
 @Composable
@@ -551,24 +554,23 @@ private fun ItemFilingStatus(model: MagpieModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ActionStoryRow(item: LibraryItem, open: () -> Unit, play: () -> Unit,
-    saveAction: StoryAction?, finishAction: StoryAction?, extras: List<StoryAction>, progress: ListeningPresentation, currentLabel: String?) {
-    var expanded by remember { mutableStateOf(false) }
-    val actions = listOfNotNull(finishAction, saveAction) + extras
-    val currentSave by rememberUpdatedState(saveAction)
-    val currentFinish by rememberUpdatedState(finishAction)
+    actions: List<StoryAction>, leadingAction: StoryAction?, trailingAction: StoryAction?, progress: ListeningPresentation, currentLabel: String?) {
+    var expanded by remember(item.id) { mutableStateOf(false) }
+    val currentLeading by rememberUpdatedState(leadingAction)
+    val currentTrailing by rememberUpdatedState(trailingAction)
     val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { value ->
         when (value) {
-            SwipeToDismissBoxValue.StartToEnd -> currentSave?.takeIf { it.enabled }?.perform()
-            SwipeToDismissBoxValue.EndToStart -> currentFinish?.takeIf { it.enabled }?.perform()
+            SwipeToDismissBoxValue.StartToEnd -> currentLeading?.takeIf { it.enabled }?.perform()
+            SwipeToDismissBoxValue.EndToStart -> currentTrailing?.takeIf { it.enabled }?.perform()
             SwipeToDismissBoxValue.Settled -> Unit
         }
-        // Saving need not remove the row. Return it to rest after performing the action.
+        // Filing need not remove the row from this list. Return it to rest.
         false
     })
     Box {
-        SwipeToDismissBox(state = swipe, enableDismissFromStartToEnd = saveAction?.enabled == true, enableDismissFromEndToStart = finishAction?.enabled == true,
+        SwipeToDismissBox(state = swipe, enableDismissFromStartToEnd = leadingAction?.enabled == true, enableDismissFromEndToStart = trailingAction?.enabled == true,
             backgroundContent = {
-                val action = if (swipe.dismissDirection == SwipeToDismissBoxValue.StartToEnd) saveAction else finishAction
+                val action = if (swipe.dismissDirection == SwipeToDismissBoxValue.StartToEnd) leadingAction else trailingAction
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.secondaryContainer).padding(16.dp),
                     contentAlignment = if (swipe.dismissDirection == SwipeToDismissBoxValue.StartToEnd) Alignment.CenterStart else Alignment.CenterEnd) {
                     if (action != null) Row(Modifier.clearAndSetSemantics {}, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
