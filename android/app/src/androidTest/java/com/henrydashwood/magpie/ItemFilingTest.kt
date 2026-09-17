@@ -109,6 +109,8 @@ class ItemFilingTest {
         assertFalse(row(2).completed); assertTrue(row(2).dismissed)
         compose.onNodeWithText("A garden article").assertDoesNotExist()
         compose.onNodeWithText("Following").performClick(); compose.onNodeWithText("Garden notes").performClick()
+        // Wait for the publication fetch before opening its transient menu.
+        compose.waitUntil(10_000) { !model.libraryState.value.searching && model.libraryState.value.feedResults.isNotEmpty() }
         actions("A garden article"); compose.onNodeWithText("Restore to Latest").performClick(); settled()
         assertFalse(row(2).dismissed)
         compose.onNodeWithContentDescription("Back").performClick(); compose.onNodeWithText("Latest").performClick()

@@ -47,6 +47,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
@@ -79,6 +80,11 @@ class PlaybackService : MediaLibraryService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var rendering: Job? = null
     private var current: LibraryItem? = null
+    private var currentOwner: String? = null
+    private var restoreAllowed = false
+    private var restoreAttempt: Pair<Int, String?>? = null
+    private var restoring: Job? = null
+    private var pendingRestoration: Pair<String?, String>? = null
     private var rendered: RenderedArticle? = null
     private val library by lazy { (application as MagpieApplication).library }
     private val catalog by lazy { MediaLibraryCatalog(library, store) }
@@ -86,6 +92,7 @@ class PlaybackService : MediaLibraryService() {
     private var assistantJob: Job? = null
     private var assistantFuture: SettableFuture<MediaSession.MediaItemsWithStartPosition>? = null
     private var assistantController: MediaSession.ControllerInfo? = null
+    private var resumptionInteraction: MediaSession.ControllerInfo? = null
     private val cancelledPlayback = mutableMapOf<MediaSession.ControllerInfo, Any>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private class AutomationPlayback(val controller: MediaSession.ControllerInfo, val revision: Int, val controls: Int) {
@@ -169,7 +176,10 @@ class PlaybackService : MediaLibraryService() {
             private fun mayPlay() = cancelledPlayback.isEmpty() ||
                 session.controllerForCurrentRequest?.let { it !in cancelledPlayback } == true
             override fun play() { if (mayPlay()) { beginProgressIntent(); super.play() } }
+            override fun pause() { cancelAssistant(); resumptionInteraction = null; super.pause() }
+            override fun stop() { cancelAssistant(); resumptionInteraction = null; super.stop() }
             override fun setPlayWhenReady(playWhenReady: Boolean) {
+                if (!playWhenReady) { cancelAssistant(); resumptionInteraction = null }
                 if (!playWhenReady || mayPlay()) {
                     if (playWhenReady) beginProgressIntent()
                     super.setPlayWhenReady(playWhenReady)
@@ -185,6 +195,7 @@ class PlaybackService : MediaLibraryService() {
                 if (controller.uid == applicationInfo.uid) {
                     commands.add(SessionCommand(AUTOMATION_CONTROL, Bundle.EMPTY))
                     commands.add(SessionCommand(PLAY_ITEM, Bundle.EMPTY))
+                    commands.add(SessionCommand(RESTORE_PLAYER, Bundle.EMPTY))
                     commands.add(SessionCommand(CANCEL_PREPARATION, Bundle.EMPTY))
                     commands.add(SessionCommand(DISMISS_PLAYER, Bundle.EMPTY))
                     commands.add(SessionCommand(SET_SLEEP_TIMER, Bundle.EMPTY))
@@ -201,6 +212,13 @@ class PlaybackService : MediaLibraryService() {
             }
 
             override fun onPlayerInteractionFinished(session: MediaSession, controllerInfo: MediaSession.ControllerInfo, playerCommands: Player.Commands) {
+                // Media3 finishes the originating Play interaction before asynchronous
+                // resumption preparation completes. It must not cancel its own request.
+                // A subsequent Pause/Stop cancels immediately in the forwarding player.
+                if (controllerInfo == resumptionInteraction && playerCommands.contains(Player.COMMAND_PLAY_PAUSE)) {
+                    resumptionInteraction = null
+                    if (playerCommands.size() == 1) return
+                }
                 // Includes an explicit Pause while already paused, which emits no player event.
                 if (listOf(Player.COMMAND_PLAY_PAUSE, Player.COMMAND_STOP, Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
                     Player.COMMAND_SEEK_BACK, Player.COMMAND_SEEK_FORWARD, Player.COMMAND_SET_SPEED_AND_PITCH,
@@ -246,6 +264,10 @@ class PlaybackService : MediaLibraryService() {
                 mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<MediaSession.MediaItemsWithStartPosition> =
                 prepareAssistant(controller, mediaItems, startIndex, startPositionMs)
 
+            override fun onPlaybackResumption(session: MediaSession, controller: MediaSession.ControllerInfo,
+                isForPlayback: Boolean): ListenableFuture<MediaSession.MediaItemsWithStartPosition> =
+                resumePlayback(controller, isForPlayback)
+
             override fun onAddMediaItems(session: MediaSession, controller: MediaSession.ControllerInfo,
                 mediaItems: MutableList<MediaItem>): ListenableFuture<MutableList<MediaItem>> =
                 Futures.immediateFailedFuture(UnsupportedOperationException("Choose one Magpie item to play."))
@@ -286,6 +308,10 @@ class PlaybackService : MediaLibraryService() {
                     }
                     return Futures.immediateFuture(result)
                 }
+                if (command.customAction == RESTORE_PLAYER) {
+                    restoreAllowed = true; restoreIfReady()
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
                 PlaybackStatus.mutableControlVersion.value++
                 cancelAssistant()
                 invalidateVoice()
@@ -316,7 +342,7 @@ class PlaybackService : MediaLibraryService() {
             var observed = library.state.value.revision
             var previousFolders = emptySet<String>()
             library.state.collect { state ->
-                if (state.revision != observed) { observed = state.revision; automationSpeedUndo = null; uncertainProgress.clear(); dismissPlayer(); localPodcastPositions.clear(); filedArticleBookmarks.clear() }
+                if (state.revision != observed) { restoreAllowed = false; observed = state.revision; automationSpeedUndo = null; uncertainProgress.clear(); dismissPlayer(); localPodcastPositions.clear(); filedArticleBookmarks.clear() }
                 session.notifyChildrenChanged(MediaLibraryCatalog.ROOT, 3, null)
                 val folders = catalog.containerIds(state)
                 // Like Media3's default subscription, unknown fresh counts prompt a reload.
@@ -329,6 +355,7 @@ class PlaybackService : MediaLibraryService() {
                     dismissPlayer()
                     store.clearBookmark(playing.id)
                 }
+                restoreIfReady()
             }
         }
         scope.launch {
@@ -336,7 +363,97 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch { while (isActive) { publishReadingPosition(); delay(100) } }
         // A previous session is offered paused. Restoring never unexpectedly starts audio.
-        if (!library.state.value.live) store.lastItem?.let { id -> library.state.value.items.find { it.id == id && it.kind == ContentKind.Podcast }?.let { load(it, null, false) } }
+        // The app requests paused restoration after connecting. System metadata
+        // queries must not prepare audio or open the speech engine.
+    }
+
+    private fun cancelRestoration(forget: Boolean = false) {
+        restoring?.cancel(); restoring = null
+        if (forget) pendingRestoration?.let { (owner, id) ->
+            if (store.restoration(owner) == id) store.saveRestoration(owner, null)
+        }
+        pendingRestoration = null
+    }
+
+    private fun canRestore(item: LibraryItem) = !item.completed && item.captureError == null &&
+        (item.episodeId != null || item.id !in store.finished)
+
+    /** Recreate the paused player, without synthesizing an article just to show its title. */
+    private fun restoreIfReady() {
+        val state = library.state.value
+        if (!restoreAllowed || state.loading || state.live && state.owner == null || current != null ||
+            rendering?.isActive == true || assistantFuture != null || automationPlayback != null || voiceHold != null) return
+        val key = state.revision to state.owner
+        if (restoreAttempt == key) return
+        restoreAttempt = key
+        val id = store.restoration(state.owner) ?: return
+        val controls = PlaybackStatus.controlVersion.value
+        pendingRestoration = state.owner to id
+        restoring = scope.launch {
+            try {
+                val item = withTimeout(30_000) { library.shortcutItem(id) }
+                currentCoroutineContext().ensureActive()
+                if (library.state.value.revision != state.revision || library.state.value.owner != state.owner ||
+                    PlaybackStatus.controlVersion.value != controls || current != null || store.restoration(state.owner) != id) return@launch
+                if (!canRestore(item)) {
+                    store.saveRestoration(state.owner, null)
+                    if (store.lastItem == id) store.lastItem = null
+                    return@launch
+                }
+                if (item.kind == ContentKind.Podcast) load(item, null, false)
+                else {
+                    current = item; currentOwner = state.owner; playbackRevision = state.revision
+                    hasPlayed = false; progressPlaybackId = null; store.lastItem = item.id
+                    // Empty Media3 playback is intentional: Play invokes resumption,
+                    // which resolves current text and only then starts the offline voice.
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* A failed passive restore leaves the library usable. */ }
+            finally { if (pendingRestoration == (state.owner to id)) pendingRestoration = null }
+        }
+    }
+
+    private fun resumePlayback(controller: MediaSession.ControllerInfo, forPlayback: Boolean): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+        val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+        if (forPlayback) resumptionInteraction = controller
+        val initial = library.state.value
+        val controls = PlaybackStatus.controlVersion.value
+        var prepared: ListenableFuture<MediaSession.MediaItemsWithStartPosition>? = null
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                // System UI metadata inspection is cache-only and must not wait for a refresh.
+                val ready = if (forPlayback) withTimeout(30_000) {
+                    library.state.first { !it.loading && (!it.live || it.owner != null) }
+                } else library.state.value
+                check(!ready.live || ready.owner != null) { "Open Magpie to restore your account." }
+                if (initial.live != ready.live || initial.owner != null &&
+                    (initial.owner != ready.owner || initial.revision != ready.revision) ||
+                    controls != PlaybackStatus.controlVersion.value) throw CancellationException("Listening changed")
+                val id = store.restoration(ready.owner) ?: throw IllegalStateException("There is no listening item to resume.")
+                if (!forPlayback) {
+                    // Boot/System UI inspection must not fetch article text or prepare audio.
+                    val item = ready.items.firstOrNull { it.id == id && canRestore(it) }
+                        ?: throw IllegalStateException("Open Magpie to refresh your listening item.")
+                    future.set(MediaSession.MediaItemsWithStartPosition(listOf(MediaLibraryCatalog.media(item)), 0,
+                        if (item.kind == ContentKind.Podcast) item.remotePositionMs else 0))
+                } else {
+                    val request = MediaItem.Builder().setMediaId(id).build()
+                    val result = prepareAssistant(controller, listOf(request), 0, C.TIME_UNSET) {
+                        val item = library.shortcutItem(id)
+                        check(canRestore(item) && store.restoration(ready.owner) == id) { "That listening item is no longer available." }
+                        item
+                    }
+                    prepared = result
+                    future.setFuture(result)
+                }
+            } catch (_: CancellationException) { future.cancel(false) }
+            catch (failure: Exception) { future.setException(failure) }
+            finally { browserJobs[controller]?.remove(coroutineContext[Job]) }
+        }
+        browserJobs.getOrPut(controller) { mutableSetOf() }.add(job)
+        future.addListener({ if (future.isCancelled) { job.cancel(); prepared?.cancel(false) } }, mainExecutor)
+        job.start()
+        return future
     }
 
     private fun <T : Any> libraryResult(controller: MediaSession.ControllerInfo,
@@ -400,6 +517,7 @@ class PlaybackService : MediaLibraryService() {
             return withoutQueuedPlay(controller) {
                 Futures.immediateFailedFuture(IllegalArgumentException("Choose one Magpie item and a valid listening position."))
             }
+        cancelRestoration()
         PlaybackStatus.mutableControlVersion.value++
         val previousAssistant = assistantJob
         cancelAssistant()
@@ -469,6 +587,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun play(item: LibraryItem, newIntent: Boolean = true) {
+        cancelRestoration()
         cancelAssistant()
         feedback.close()
         // Clear an elapsed deadline before a new, explicit request to listen.
@@ -530,6 +649,8 @@ class PlaybackService : MediaLibraryService() {
         if (rendered !== audio) rendered?.close()
         rendered = audio
         current = item
+        currentOwner = library.state.value.owner
+        store.saveRestoration(currentOwner, item.id)
         playbackRevision = library.state.value.revision
         hasPlayed = false
         progressPlaybackId = null
@@ -629,6 +750,8 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun dismissPlayer() {
+        cancelRestoration(forget = true)
+        if (current != null) store.saveRestoration(currentOwner, null)
         cancelAssistant()
         invalidateVoice()
         // Keep each item's bookmark, but forget what to restore into the mini player.
@@ -670,6 +793,7 @@ class PlaybackService : MediaLibraryService() {
     private fun voiceCommand(action: String, args: Bundle): SessionResult {
         val token = args.getString("token") ?: return SessionResult(SessionError.ERROR_BAD_VALUE)
         if (action == BEGIN_VOICE) {
+            cancelRestoration()
             cancelAssistant()
             if (!token.matches(Regex("[a-zA-Z0-9-]{1,64}")) || args.getInt("revision", -1) != library.state.value.revision)
                 return SessionResult(SessionError.ERROR_BAD_VALUE)
@@ -755,6 +879,7 @@ class PlaybackService : MediaLibraryService() {
             }
             "file" -> {
                 val id = args.getString("id")
+                if (store.restoration(library.state.value.owner) == id) store.saveRestoration(library.state.value.owner, null)
                 uncertainProgress.remove(id)
                 val item = library.state.value.items.find { it.id == id }
                 if (item?.kind == ContentKind.Article) {
@@ -992,6 +1117,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        cancelRestoration()
         cancelAssistant()
         unregisterReceiver(noisyReceiver)
         invalidateVoice()
@@ -1013,6 +1139,7 @@ class PlaybackService : MediaLibraryService() {
         const val BEGIN_VOICE = "magpie.begin_voice"
         const val END_VOICE = "magpie.end_voice"
         const val VOICE_CONTROL = "magpie.voice_control"
+        const val RESTORE_PLAYER = "magpie.restore_player"
         const val PLAY_ITEM = "magpie.play_sample"
         const val DISMISS_PLAYER = "magpie.dismiss_player"
         const val CANCEL_PREPARATION = "magpie.cancel_preparation"

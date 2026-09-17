@@ -296,7 +296,7 @@ Add sources searches podcasts and library episodes, discovers feeds from website
 and previews content before subscribing.
 Settings links to Sign-in Methods for Apple and Google sign-in, connected provider status,
 real account sign-out and deletion. Home screen and Quick Settings actions are
-available; assistant library browsing and newsletters remain in progress. AI Data Sharing
+available alongside assistant library browsing and newsletter management. AI Data Sharing
 can be reviewed, granted, or withdrawn in Settings.
 
 ## Settings parity
@@ -304,7 +304,8 @@ can be reviewed, granted, or withdrawn in Settings.
 Playback speeds apply independently to podcasts and narrated articles; changing
 an inactive content type never changes current playback. Existing shared-speed
 preferences migrate lazily to both types. Changes from system media controls are
-saved to the active content type as well.
+saved to the active content type as well. Spoken replies and newsletter addresses
+use the article speed, read again for each reply.
 
 The voice picker and renderer share one policy: only installed, offline Google
 voices are offered. The automatic choice prefers an English UK voice. Explicit
@@ -357,8 +358,9 @@ positions have an account-scoped retry journal. Shared article bookmarks work in
 both native players, and structured assistant requests have durable recovery.
 New saved links and confirmed shared content have their own durable queue. A
 previously identified session can queue captures after an offline restart; a new
-session must identify its account first. Podcast downloading and Gemini integration
-remain future work. Backups and device transfers of preview preferences are disabled.
+session must identify its account first. Podcast downloading is not implemented.
+AppFunctions are implemented and tested through the Android platform; full Gemini
+acceptance needs Google preview access. See the [acceptance matrix](../docs/android-acceptance.md). Backups and device transfers of preview preferences are disabled.
 
 ## Home screen shortcuts and Quick Settings
 
@@ -459,9 +461,9 @@ cancel the original request without resuming old audio. Network cancellation
 closes the connection; no account credentials follow redirects.
 An uncertain podcast clock also stays off the server when the user switches to
 another item, until the corresponding result or a new item state is confirmed.
-Retry context remains in memory. Guarded podcast progress now persists its filing
-guards; reconciling them with recovered request receipts across process death
-remains part of checklist item 11.
+Request recovery and guarded podcast progress persist across restart. Recovered
+receipts reconcile their matching filing guards without replaying historical audio
+or overwriting a later listening choice.
 
 Assistant navigation can open Latest, Following, Saved, Now Playing, Shortcuts,
 an item, or a followed show. Returned actions are immutable and one-use; the user
@@ -566,9 +568,18 @@ resume remains at the chunk boundary. Podcast bookmarks use actual media millise
 to the backend's existing `position_seconds` field. Shared article progress uses
 the guarded text-bookmark contract documented in `docs/progress-sync.md`.
 
-On a fresh process, the last sample podcast is restored paused. A last-read article
-is offered in the UI and regenerated from its bookmark on explicit Play. Full
-system-initiated playback resumption after process death is future work.
+Opening the app restores the remembered account or sample item paused. Podcasts
+resolve current account metadata and position; articles show their title without
+fetching text or starting the speech engine until explicit Play. Dismissing the
+player disables automatic restoration while preserving explicit Continue listening.
+Completed/unavailable items and previous accounts cannot reappear.
+
+Media3 playback resumption and the media-button receiver let system Play resolve
+the remembered item when the service is recreated. Metadata-only system queries
+use the current cache without fetching text or preparing audio. New playback,
+Pause, account changes and caller cancellation invalidate pending work. Emulator
+service-recreation coverage is separate from physical-device process-death,
+lock-screen and Bluetooth acceptance; see the [acceptance matrix](../docs/android-acceptance.md).
 
 ## Offline account library
 
@@ -679,8 +690,11 @@ Debug builds default to the registered Google server client and staging backend.
 The local debug signing certificate is registered; other machines need their own
 fingerprint added. `MAGPIE_GOOGLE_SERVER_CLIENT_ID` and `MAGPIE_ACCOUNT_API_URL`
 Gradle properties override these defaults, including empty values to disable them.
-Release defaults remain blank until a release signing certificate is registered.
-The new backend must be deployed before either sign-in flow can complete. See [setup and acceptance checks](../docs/sign-in.md).
+Release builds default to production and require private signing inputs and an
+explicit certificate fingerprint before they can build. No release key or Google
+Play app has been created. See [release preparation](../docs/android-release.md)
+and [sign-in acceptance](../docs/sign-in.md); staging verification does not establish
+production or Play-distributed sign-in.
 Signing in replaces the sample catalogue with the account library. Samples and
 local capture inboxes are never attached automatically. Item/bookmark keys include
 the server and account identity, and late replies cannot repopulate a signed-out

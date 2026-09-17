@@ -1,3 +1,6 @@
+import java.security.KeyStore
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -5,6 +8,38 @@ plugins {
 }
 
 ksp { arg("appfunctions:aggregateAppFunctions", "true") }
+
+// Release credentials are supplied outside Git. These values never enter BuildConfig.
+val releaseKeys = listOf("MAGPIE_RELEASE_STORE_FILE", "MAGPIE_RELEASE_STORE_PASSWORD",
+    "MAGPIE_RELEASE_KEY_ALIAS", "MAGPIE_RELEASE_KEY_PASSWORD", "MAGPIE_RELEASE_OAUTH_SHA1")
+val releaseValues = releaseKeys.associateWith { providers.gradleProperty(it).orElse("").get() }
+val releaseServer = providers.gradleProperty("MAGPIE_ACCOUNT_API_URL")
+    .orElse("https://audio-reader-production.up.railway.app").get()
+val releaseGoogleClient = providers.gradleProperty("MAGPIE_GOOGLE_SERVER_CLIENT_ID")
+    .orElse("102154849961-o07dgdc8ltoescp4p3k9knl8rlm1l4m7.apps.googleusercontent.com").get()
+val validateReleaseSetup = tasks.register("validateReleaseSetup") {
+    group = "verification"
+    description = "Verify private release signing inputs and the declared OAuth certificate before building."
+    doLast {
+        val missing = releaseKeys.filter { releaseValues.getValue(it).isBlank() }
+        check(missing.isEmpty()) { "Release setup is incomplete: ${missing.joinToString()}. See docs/android-release.md." }
+        check(releaseServer.matches(Regex("https://[A-Za-z0-9.-]+(:[0-9]+)?/?"))) { "Supply an HTTPS release API origin." }
+        check(releaseGoogleClient.endsWith(".apps.googleusercontent.com")) { "Supply the registered Google server OAuth client ID." }
+        val keyFile = file(releaseValues.getValue("MAGPIE_RELEASE_STORE_FILE"))
+        check(keyFile.isFile) { "The release keystore file is unavailable. See docs/android-release.md." }
+        val store = KeyStore.getInstance(keyFile, releaseValues.getValue("MAGPIE_RELEASE_STORE_PASSWORD").toCharArray())
+        val alias = releaseValues.getValue("MAGPIE_RELEASE_KEY_ALIAS")
+        check(store.isKeyEntry(alias)) { "The release alias does not identify a signing key." }
+        check(store.getKey(alias, releaseValues.getValue("MAGPIE_RELEASE_KEY_PASSWORD").toCharArray()) != null) { "The signing key could not be opened." }
+        val fingerprint = MessageDigest.getInstance("SHA-1").digest(store.getCertificate(alias).encoded)
+            .joinToString("") { "%02X".format(it) }
+        val registered = releaseValues.getValue("MAGPIE_RELEASE_OAUTH_SHA1").replace(":", "").uppercase()
+        check(registered.matches(Regex("[A-F0-9]{40}")) && fingerprint == registered) {
+            "The signing certificate differs from MAGPIE_RELEASE_OAUTH_SHA1. Register this exact release certificate with Google first."
+        }
+    }
+}
+tasks.matching { it.name == "preReleaseBuild" }.configureEach { dependsOn(validateReleaseSetup) }
 
 android {
     namespace = "com.henrydashwood.magpie"
@@ -23,7 +58,24 @@ android {
         versionName = "0.1.0-prototype"
         testInstrumentationRunner = "com.henrydashwood.magpie.MagpieTestRunner"
     }
+    signingConfigs {
+        create("release") {
+            if (releaseKeys.all { releaseValues.getValue(it).isNotBlank() }) {
+                storeFile = file(releaseValues.getValue("MAGPIE_RELEASE_STORE_FILE"))
+                storePassword = releaseValues.getValue("MAGPIE_RELEASE_STORE_PASSWORD")
+                keyAlias = releaseValues.getValue("MAGPIE_RELEASE_KEY_ALIAS")
+                keyPassword = releaseValues.getValue("MAGPIE_RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
+        release {
+            require(releaseGoogleClient.matches(Regex("[A-Za-z0-9._-]*")))
+            require(releaseServer.isEmpty() || releaseServer.matches(Regex("https://[A-Za-z0-9.-]+(:[0-9]+)?/?")))
+            signingConfig = signingConfigs.getByName("release")
+            buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"$releaseGoogleClient\"")
+            buildConfigField("String", "ACCOUNT_API_URL", "\"$releaseServer\"")
+        }
         debug {
             applicationIdSuffix = ".dev"
             // Public IDs for the registered development build. Release remains

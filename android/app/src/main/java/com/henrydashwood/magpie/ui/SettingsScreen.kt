@@ -63,7 +63,7 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
         item { SettingsHeading("Playback Speed") }
         item { SpeedSetting("Podcasts", preferences.podcastSpeed) { model.setSpeed(ContentKind.Podcast, it) } }
         item { SpeedSetting("Articles", preferences.articleSpeed) { model.setSpeed(ContentKind.Article, it) } }
-        item { SettingsFootnote("Magpie remembers separate speeds for recorded podcasts and articles read by the system voice.") }
+        item { SettingsFootnote("Magpie remembers separate speeds for podcasts and articles. Article speed also applies to spoken replies and newsletter addresses.") }
         item { HorizontalDivider(); SettingsHeading("Voice") }
         item {
             ListItem(headlineContent = { Text("Voice") }, supportingContent = { Text(if (voices.loading) "Loading installed voices…" else selectedVoice) },
