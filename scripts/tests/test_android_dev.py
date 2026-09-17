@@ -146,3 +146,20 @@ def test_full_gate_ignores_test_filter_and_builds_instrumentation_apk(android_ru
         assert f"arg={task}\n" in calls
     assert "OneTest" not in calls
     assert "adb" not in calls
+
+
+@pytest.mark.parametrize(
+    ("target", "tasks"),
+    [
+        ("android-release-check", [":app:validateReleaseSetup"]),
+        ("android-release", [":app:assembleRelease", ":app:bundleRelease"]),
+    ],
+)
+def test_release_commands_build_without_installing_or_contacting_a_device(
+    android_runner, target, tasks
+):
+    result, calls = android_runner(target, DEVICES="pixel-physical device")
+    assert result.returncode == 0
+    assert "adb " not in calls
+    for task in tasks:
+        assert f"arg={task}\n" in calls

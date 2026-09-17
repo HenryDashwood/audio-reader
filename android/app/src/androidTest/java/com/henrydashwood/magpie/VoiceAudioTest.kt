@@ -63,7 +63,16 @@ class VoiceAudioTest {
             finally { engine.shutdown() }
         }
         assumeTrue("No installed English offline voice; spoken-audio acceptance skipped", hasVoice)
-        withTimeout(45_000) { AndroidReplySpeaker(compose.activity) { null }.speak("Magpie is ready. What would you like to listen to?") }
+        val store = com.henrydashwood.magpie.data.PreviewStore(compose.activity)
+        val kind = com.henrydashwood.magpie.data.ContentKind.Article
+        val previous = store.speed(kind)
+        try {
+            val speaker = AndroidReplySpeaker(compose.activity) { null }
+            store.saveSpeed(kind, 1.75f)
+            withTimeout(45_000) { speaker.speak("Magpie is ready. What would you like to listen to?") }
+            store.saveSpeed(kind, .75f)
+            withTimeout(45_000) { speaker.speak("Your new reading speed also applies to this reply.") }
+        } finally { store.saveSpeed(kind, previous) }
     }
 
     @Test fun missingSelectedVoiceNeverFallsBackToAnotherVoice() = runBlocking {

@@ -56,6 +56,14 @@ class PreviewStore(context: Context) {
     var lastItem: String?
         get() = preferences.getString("last_item", null)
         set(value) { preferences.edit { putString("last_item", value) } }
+    // A paused player is restored only for its original account. Dismissal clears
+    // this choice without erasing the separate explicit Continue action.
+    fun restoration(owner: String?): String? = preferences.getString("restore:${owner ?: "sample"}", null)?.takeIf { it.isNotBlank() }
+        ?: if (owner == null && !preferences.contains("restore:sample")) lastItem?.takeIf { !it.contains(":episode:") } else null
+    fun saveRestoration(owner: String?, id: String?) {
+        // Empty means explicitly dismissed, so a legacy last_item cannot revive it.
+        preferences.edit { putString("restore:${owner ?: "sample"}", id.orEmpty()) }
+    }
     // Explicit Continue is independent of whether the mini player was dismissed.
     fun continuation(owner: String?) = preferences.getString("continue:${owner ?: "sample"}", null)
     fun saveContinuation(owner: String?, id: String?) { preferences.edit { putString("continue:${owner ?: "sample"}", id) } }

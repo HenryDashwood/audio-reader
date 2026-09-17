@@ -103,3 +103,10 @@ app-store-screenshot:
 app-store-sync:
 	@test -n "$(VERSION)" || (echo "VERSION is required, for example: make app-store-sync VERSION=1.0" >&2; exit 2)
 	@uv run scripts/app_store_sync.py sync --version "$(VERSION)"
+
+.PHONY: android-release-check android-release
+android-release-check:
+	./scripts/android-dev.sh release-check
+
+android-release:
+	./scripts/android-dev.sh release

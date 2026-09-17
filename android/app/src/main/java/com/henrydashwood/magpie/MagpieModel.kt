@@ -204,6 +204,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                         override fun onEvents(player: Player, events: Player.Events) { updatePlayer() }
                     })
                 }
+                controller?.sendCustomCommand(SessionCommand(PlaybackService.RESTORE_PLAYER, Bundle.EMPTY), Bundle.EMPTY)
                 updatePlayer()
             } catch (_: Exception) { mutableNotice.value = "The player could not connect. Close and reopen Magpie to try again." }
         }, application.mainExecutor)

@@ -68,6 +68,8 @@ case "${1:-doctor}" in
         echo 'Android build toolchain is ready. A booted emulator is required for android-test and android-run.'
         ;;
     build) gradle assembleDebug ;;
+    release-check) gradle :app:validateReleaseSetup ;;
+    release) gradle :app:assembleRelease :app:bundleRelease ;;
     check) gradle assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug ;;
     unit-test)
         args=(testDebugUnitTest)
@@ -118,5 +120,5 @@ case "${1:-doctor}" in
         echo "$output"
         ;;
     cli) shift; android_cli "$@" ;;
-    *) fail 'Usage: scripts/android-dev.sh {doctor|build|check|unit-test|emulators|emulator|test|run|screenshot|layout|logs|cli ...}' ;;
+    *) fail 'Usage: scripts/android-dev.sh {doctor|build|check|release-check|release|unit-test|emulators|emulator|test|run|screenshot|layout|logs|cli ...}' ;;
 esac

@@ -39,7 +39,7 @@ class AndroidReplySpeaker(private val context: Context, private val selectedVoic
             val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
             check(tts.setAudioAttributes(attributes) == TextToSpeech.SUCCESS) { "The speaking voice could not start." }
-            check(tts.setSpeechRate(1f) == TextToSpeech.SUCCESS) { "The speaking voice could not start." }
+            check(tts.setSpeechRate(com.henrydashwood.magpie.data.PreviewStore(context).speed(com.henrydashwood.magpie.data.ContentKind.Article)) == TextToSpeech.SUCCESS) { "The speaking voice could not start." }
             tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) = Unit
                 override fun onDone(utteranceId: String?) = finish(utteranceId, null)

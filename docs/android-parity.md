@@ -91,6 +91,30 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   Unit and emulator checks cover privacy, restart, account changes and a controlled
   foreground freeze; physical-device crash and performance acceptance remain.
 
+## Follow-up parity and release acceptance
+
+- [x] **17. Paused player restoration.** Restore the remembered signed-in podcast or
+  article without starting audio. Resolve fresh podcast position, defer article
+  text/speech until Play, and respect dismissal, completion and account changes.
+- [x] **18. Spoken reply speed.** Ask Magpie replies and newsletter read-aloud follow
+  the article speed preference, including changes between replies.
+- [x] **19. System playback resumption implementation.** Media3 resumption and the
+  media-button receiver resolve the previous item when the service is recreated.
+  Pending work respects Pause and later playback/account choices. Physical process
+  death, Bluetooth and system-surface acceptance remain open below.
+- [x] **20. Release preparation.** Add a private signing preflight, release APK/AAB
+  build helpers and the production app label. The build refuses missing signing
+  inputs or a mismatched declared OAuth certificate. This does not register an
+  OAuth client or establish Play distribution readiness.
+- [ ] **Acceptance and release gates.** Follow [the acceptance matrix](android-acceptance.md)
+  and [release checklist](android-release.md). Phones/headphones and a Google Play
+  account are unavailable; Gemini integration also needs Google preview access.
+  Production promotion must follow the verified staging release workflow.
+
+The sections below are a chronological implementation record. Earlier descriptions
+of unfinished work are superseded by the checked list above and the current
+acceptance matrix; they are retained as verification history.
+
 ## First implementation
 
 Item 15 was implemented independently while the sign-in choice for item 1 was

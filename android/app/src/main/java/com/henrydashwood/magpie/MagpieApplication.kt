@@ -71,8 +71,11 @@ open class MagpieApplication : Application() {
             }
             scope.launch { com.henrydashwood.magpie.automation.AppFunctionAvailability.observe(this@MagpieApplication, repository) }
             scope.launch {
+                var observedToken: String? = null
                 combine(accounts.accessToken, accounts.state.map { it.libraryRevision }.distinctUntilChanged()) { token, revision -> token to revision }
                     .collectLatest { (token, revision) ->
+                        if (observedToken != token) repository.state.value.owner?.let { PreviewStore(this@MagpieApplication).saveRestoration(it, null) }
+                        observedToken = token
                         repository.changeSession(token)
                         if (token != null && revision > 0) repository.refresh()
                         if (token != null) try { repository.flushProgress(); repository.telemetry?.flush() }
