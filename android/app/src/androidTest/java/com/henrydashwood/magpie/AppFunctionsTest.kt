@@ -38,6 +38,9 @@ class AppFunctionsTest {
     private class Api : LibraryApi, LibraryActionApi, DiscoveryApi, VoiceApi {
         var allowed = true
         var grants = 0
+        var feedChoices = emptyList<SourceResult>()
+        var followedFeed: LibraryFeed? = null
+        var subscriptions = 0
         var voiceGate: CompletableDeferred<Unit>? = null
         var voiceFailure = false
         val voiceRequests = mutableListOf<VoiceRequest>()
@@ -45,7 +48,7 @@ class AppFunctionsTest {
         override suspend fun aiConsent(token: String) = allowed
         override suspend fun setAIConsent(token: String, granted: Boolean): Boolean { grants++; allowed = granted; return granted }
         override suspend fun directory(token: String, query: String) = emptyList<SourceResult>()
-        override suspend fun discover(token: String, url: String) = emptyList<SourceResult>()
+        override suspend fun discover(token: String, url: String) = feedChoices
         override suspend fun preview(token: String, url: String): RemotePreview = error("Not used")
         override suspend fun webSearch(token: String, query: String): SourceResult? = null
         override fun events(token: String, request: VoiceRequest) = flow {
@@ -123,7 +126,7 @@ class AppFunctionsTest {
         var texts = 0
         var cancelledQueries = 0
         override suspend fun userId(token: String) = "functions-$token"
-        override suspend fun feeds(token: String): List<LibraryFeed> { refreshGate?.await(); return listOf(LibraryFeed("10", "Test show", 3, false)) }
+        override suspend fun feeds(token: String): List<LibraryFeed> { refreshGate?.await(); return listOf(LibraryFeed("10", "Test show", 3, false)) + listOfNotNull(followedFeed) }
         override suspend fun latest(token: String) = listOf(short, done, unknown).map { row(token, it.id) }
             .filterNot { token to it.id in filed && (it.completed || it.dismissed) }
         override suspend fun saved(token: String) = listOfNotNull(article).map { row(token, it.id) }
@@ -141,7 +144,10 @@ class AppFunctionsTest {
         override suspend fun remove(token: String, episodeId: Int) { error("Read only") }
         override suspend fun played(token: String, episodeId: Int, played: Boolean) { error("Read only") }
         override suspend fun clearLatest(token: String) { error("Read only") }
-        override suspend fun subscribe(token: String, url: String): LibraryFeed = error("Read only")
+        override suspend fun subscribe(token: String, url: String): LibraryFeed {
+            subscriptions++
+            return LibraryFeed("20", "Chosen publication", 0, true, url).also { followedFeed = it }
+        }
         override suspend fun position(token: String, episodeId: Int, seconds: Double, completed: Boolean) {
             check(episodeId != 4) { "Rendered article seconds must never reach the podcast progress API" }
             positionGate?.let { waitingPositions++; it.await() }
@@ -228,6 +234,30 @@ class AppFunctionsTest {
     private fun requestData(text: String) = parameters(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST).setString("request", text).build()
     private suspend fun ask(text: String) = success(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST, requestData(text)).getAppFunctionData(key)!!
     private fun handoff(result: AppFunctionData) = result.getParcelable("openMagpie", android.app.PendingIntent::class.java)
+
+    @Test fun publicationFollowAsksBeforeChoosingAndReturnsAScopedShowWithoutAI() = runBlocking {
+        api.allowed = false
+        api.feedChoices = listOf(SourceResult("Audio", "https://publication.example/audio"), SourceResult("Articles", "https://publication.example/text"))
+        val id = MagpieAppFunctions.FUNCTION_ID_FOLLOW_PUBLICATION_URL
+        fun input(choice: String? = null) = parameters(id).setString("url", "https://publication.example").apply {
+            if (choice != null) setString("choiceId", choice)
+        }.build()
+        val offered = success(id, input()).getAppFunctionData(key)!!
+        assertNull(offered.getAppFunctionData("show")); assertEquals(0, api.subscriptions)
+        val choices = offered.getAppFunctionDataList("choices")!!
+        assertEquals(2, choices.size); assertEquals("Articles", choices.last().getString("title"))
+        assertTrue(execute(id, input("stale-choice")) is ExecuteAppFunctionResponse.Error)
+        assertEquals(0, api.subscriptions)
+        val result = success(id, input(choices.last().getString("id"))).getAppFunctionData(key)!!
+        assertTrue(result.getAppFunctionDataList("choices")!!.isEmpty())
+        val show = result.getAppFunctionData("show")!!
+        assertEquals("$owner:feed:20", show.getString("id")); assertTrue(show.getBoolean("articles"))
+        assertEquals("https://publication.example/text", api.followedFeed!!.url)
+        assertTrue(success(MagpieAppFunctions.FUNCTION_ID_LIST_SHOWS).getAppFunctionDataList(key)!!.any { it.getString("id") == show.getString("id") })
+        val repeated = success(id, input(choices.last().getString("id"))).getAppFunctionData(key)!!
+        assertTrue(repeated.getString("message")!!.contains("already follow")); assertEquals(1, api.subscriptions)
+        assertTrue(api.voiceRequests.isEmpty()); assertEquals(0, api.grants)
+    }
 
     @Test fun freeFormLocalPlaybackAndUndoUseNoAI() = runBlocking {
         api.allowed = false

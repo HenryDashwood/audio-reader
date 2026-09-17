@@ -44,8 +44,8 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   Launcher/pinned actions, Quick Settings, account-scoped Continue listening,
   trusted Ask microphone launches, media-client library browsing/search, structured
   lookup/status, playback controls, structured filing/Undo, destination actions, and
-  free-form requests are implemented. Following a publication URL remains; the
-  newsletter action also depends on item 9.
+  free-form requests and following a publication URL are implemented. The
+  newsletter action remains dependent on item 9.
 - [ ] **9. Newsletters.** Address presentation/sharing, sender approval/blocking, and signup.
 - [x] **10. AI consent controls.** The discovery flow discloses AI data sharing
   before granting permission. Settings reads, reviews, grants, and withdraws the
@@ -571,6 +571,27 @@ screenshot was inspected: the permission dialog is legible and its actions remai
 accessible on the small emulator. That screenshot run subsequently timed out
 waiting for the request after consent, so it does not replace the earlier passing
 functional consent check.
+
+## Following publication URLs through the assistant
+
+`followPublicationUrl` uses existing authenticated feed discovery and subscription
+APIs without AI. Multiple candidates return choices without writing; a chosen ID
+must still match fresh discovery for the same website, account and session. A
+single feed can be followed directly. The result uses the canonical feed returned
+by the server and updates Following and Latest. Existing subscriptions are
+recognised, including conflict recovery after another device subscribes or a
+successful reply is lost. Cancellation or account changes during discovery cannot
+start a subscription for a later account.
+
+Verification on 17 September 2026: `make android-check` passed all 155 JVM tests,
+built both debug APKs, and completed lint without errors or compiler warnings;
+the eight existing warnings and one hint remain. Five new repository regressions
+cover choices, canonical results, existing subscriptions, lost replies, stale
+choices, cancellation and account changes. The generated AppFunctions integration
+test passed on API 36.1, checking choice serialization, no premature subscription,
+invalid-choice rejection, the account-scoped result, repeat requests and no AI
+requests. Item 8 remains open for the newsletter action. Earlier voice timing
+failures remain pending as documented above.
 
 ## Shared limitations
 

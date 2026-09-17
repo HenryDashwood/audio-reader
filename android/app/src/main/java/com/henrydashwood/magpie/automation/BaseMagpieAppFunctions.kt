@@ -39,6 +39,22 @@ data class FollowedShow(
     /** Whether this publication supplies articles. */ val articles: Boolean,
 )
 
+/** One feed discovered at the requested website. */
+@AppFunctionSerializable(isDescribedByKDoc = true)
+data class PublicationFeedChoice(
+    /** Opaque choice ID; pass it unchanged with the same website URL. */ val id: String,
+    val title: String,
+    /** The feed address, to distinguish choices with identical titles. */ val url: String,
+)
+
+/** A confirmed subscription, or choices requiring the user's selection before anything is followed. */
+@AppFunctionSerializable(isDescribedByKDoc = true)
+data class PublicationFollowResult(
+    val message: String,
+    /** Non-null only when the subscription is confirmed. */ val show: FollowedShow?,
+    /** Ask the user to choose when non-empty, then repeat with that choice ID. */ val choices: List<PublicationFeedChoice>,
+)
+
 /** A snapshot of Magpie's service-owned player. */
 @AppFunctionSerializable(isDescribedByKDoc = true)
 data class ListeningStatus(
@@ -112,6 +128,24 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
     private fun item(value: LibraryItem) = ListeningItem(value.id, value.title, value.source,
         if (value.kind == ContentKind.Podcast) "podcast" else "article", value.completed, value.durationSeconds)
     private fun scopedShowId(state: LibraryState, feed: LibraryFeed) = "${state.owner}:feed:${feed.id}"
+
+    /**
+     * Finds and follows a podcast or publication feed at a website address, without AI.
+     * When several feeds are found, ask the user to choose from the returned choices; nothing is followed yet.
+     * @param url Website or feed address beginning with https or http.
+     * @param choiceId Unchanged ID chosen by the user from this function's choices, or omit to discover feeds.
+     */
+    @AppFunction(isEnabled = false, isDescribedByKDoc = true)
+    suspend fun followPublicationUrl(url: String, choiceId: String? = null): PublicationFollowResult = action {
+        val state = ready()
+        val result = library.followPublication(url, choiceId)
+        checkAccount(state)
+        val feed = result.feed
+        PublicationFollowResult(if (feed == null) "Which feed would you like to follow?"
+            else if (result.alreadyFollowed) "You already follow ${feed.title}." else "Following ${feed.title}.",
+            feed?.let { FollowedShow(scopedShowId(state, it), it.title, it.articles) },
+            result.choices.map { PublicationFeedChoice(it.id, it.title, it.url) })
+    }
 
     /**
      * Runs a written or dictated Magpie request. Playback commands stay on device and library Undo uses the account without AI.

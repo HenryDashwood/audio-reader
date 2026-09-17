@@ -213,7 +213,38 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     }
     suspend fun subscribe(url: String) = mutate { current ->
         val feed = api.subscribe(current, url);
-        { mutable.value = state.value.copy(feeds = (state.value.feeds.filterNot { it.id == feed.id } + feed).sortedBy { it.title.lowercase() }) }
+        { mutable.value = state.value.copy(feeds = (state.value.feeds.filterNot { it.id == feed.id } + feed).sortedBy { it.title.lowercase() }); feed }
+    }
+    /** Rediscover choices before writing; IDs bind the website, account and session. */
+    suspend fun followPublication(url: String, choiceId: String? = null): PublicationFollow {
+        val version = state.value.revision
+        val owner = checkNotNull(state.value.owner) { "Open Magpie and sign in first." }
+        val website = validateLink(url)
+        val choices = discoverSources(website).map { candidate ->
+            val feedUrl = validateLink(candidate.url)
+            PublicationChoice(digest("$owner:$version:$website:$feedUrl"), candidate.title, feedUrl)
+        }.distinctBy { it.url }
+        check(version)
+        require(choices.isNotEmpty()) { "I could not find a feed at that address." }
+        val chosen = if (choiceId != null) choices.firstOrNull { it.id == choiceId }
+            ?: throw IllegalArgumentException("That feed choice is no longer available. Discover the address again.")
+        else choices.singleOrNull() ?: return PublicationFollow(null, choices)
+        state.value.feeds.firstOrNull { it.url == chosen.url }?.let { return PublicationFollow(it, alreadyFollowed = true) }
+        val feed = try { subscribe(chosen.url) }
+        catch (failure: AccountFailure) {
+            if (failure.status != 409) throw failure
+            // The first reply may have been lost, or another device followed it.
+            // Preview resolves redirects to the canonical feed ID without writing.
+            val preview = previewSource(chosen.url)
+            check(version)
+            refresh(); check(version)
+            val existing = state.value.feeds.firstOrNull { it.id == preview.feed.id || it.url == chosen.url } ?: throw failure
+            return PublicationFollow(existing, alreadyFollowed = true)
+        }
+        check(version)
+        speedUndo = null
+        refresh(); check(version)
+        return PublicationFollow(feed)
     }
     private suspend fun <T> discovery(work: suspend (DiscoveryApi, String) -> T): T {
         val (current, version) = credentials()
@@ -371,9 +402,9 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         return state.value.items.first { it.id == item.id }
     }
     private fun requireItem(item: LibraryItem) { require(state.value.items.any { it.id == item.id }) { "This item belongs to a different library." } }
-    private suspend fun mutate(work: suspend (String) -> (() -> Unit)) {
+    private suspend fun <T> mutate(work: suspend (String) -> (() -> T)): T {
         val (current, version) = credentials()
-        writes.withLock {
+        return writes.withLock {
             check(version)
             val commit = work(current)
             check(version)

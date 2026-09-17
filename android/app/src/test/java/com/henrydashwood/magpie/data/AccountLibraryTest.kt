@@ -61,6 +61,11 @@ class AccountLibraryTest {
         var sourceWrites = 0
         var directoryFailure = false
         var subscriptions = 0
+        var discovered: List<SourceResult>? = null
+        var discoveryGate: CompletableDeferred<Unit>? = null
+        var canonicalUrl: String? = null
+        var loseSubscribeReply = false
+        val subscribed = mutableMapOf<String, List<LibraryFeed>>()
         var fail = false
         var gate: CompletableDeferred<Unit>? = null
         var oldSearch: CompletableDeferred<Unit>? = null
@@ -77,7 +82,7 @@ class AccountLibraryTest {
         override suspend fun feeds(token: String): List<LibraryFeed> {
             gate?.await()
             if (fail) throw IOException()
-            return if (unsubscribed) emptyList() else listOf(LibraryFeed("1", "Same title", 80, false, "https://one.example/feed"), LibraryFeed("2", "Same title", 0, true)).filterNot { grouped && it.id == "2" }
+            return if (unsubscribed) emptyList() else listOf(LibraryFeed("1", "Same title", 80, false, "https://one.example/feed"), LibraryFeed("2", "Same title", 0, true)).filterNot { grouped && it.id == "2" } + subscribed[token].orEmpty()
         }
         override suspend fun latest(token: String) = latestRows
         override suspend fun saved(token: String) = savedRows
@@ -111,12 +116,22 @@ class AccountLibraryTest {
         }
         override suspend fun played(token: String, episodeId: Int, played: Boolean) { if (fail) throw IOException(); filings++ }
         override suspend fun clearLatest(token: String) {}
-        override suspend fun subscribe(token: String, url: String): LibraryFeed { subscriptions++; return LibraryFeed("3", "New feed", 0, true, url) }
+        override suspend fun subscribe(token: String, url: String): LibraryFeed {
+            subscriptions++
+            if (subscribed[token].orEmpty().isNotEmpty()) throw com.henrydashwood.magpie.auth.AccountFailure(409, "Already subscribed")
+            val feed = LibraryFeed("3", "New feed", 0, true, canonicalUrl ?: url)
+            subscribed[token] = listOf(feed)
+            if (loseSubscribeReply) { loseSubscribeReply = false; throw IOException("Reply lost") }
+            return feed
+        }
         override suspend fun directory(token: String, query: String): List<SourceResult> {
             if (directoryFailure) throw IOException()
             return listOf(SourceResult("New feed", "https://new.example/feed"))
         }
-        override suspend fun discover(token: String, url: String) = listOf(SourceResult("New feed", url))
+        override suspend fun discover(token: String, url: String): List<SourceResult> {
+            discoveryGate?.await()
+            return discovered ?: listOf(SourceResult("New feed", url))
+        }
         override suspend fun preview(token: String, url: String) = RemotePreview(LibraryFeed("3", "New feed", 2, true, url),
             listOf(RemoteEpisode(99, "Preview article"), savedRows.first().copy(contentId = 100)), false)
         override suspend fun webSearch(token: String, query: String): SourceResult? = null
@@ -280,6 +295,58 @@ class AccountLibraryTest {
         assertTrue(library.state.value.feeds.any { it.id == "3" })
         library.changeSession("bob")
         assertTrue(runCatching { library.followSource(preview) }.isFailure); assertEquals(1, api.subscriptions)
+    }
+    @Test fun followingPublicationRequiresAChoiceAndReturnsTheCanonicalSubscription() = runTest {
+        val api = Api().apply {
+            discovered = listOf(SourceResult("Audio", "https://new.example/audio"), SourceResult("Text", "https://new.example/text"))
+            canonicalUrl = "https://canonical.example/feed"
+        }
+        val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val choice = library.followPublication("https://new.example")
+        assertNull(choice.feed); assertEquals(2, choice.choices.size); assertEquals(0, api.subscriptions)
+        val followed = library.followPublication("https://new.example", choice.choices.last().id)
+        assertEquals("3", followed.feed!!.id); assertEquals(api.canonicalUrl, followed.feed.url)
+        assertTrue(followed.choices.isEmpty()); assertFalse(followed.alreadyFollowed)
+        assertTrue(library.state.value.feeds.contains(followed.feed)); assertEquals(1, api.subscriptions)
+    }
+    @Test fun publicationChoicesRejectInvalidMissingChangedAndCrossAccountTargets() = runTest {
+        val api = Api().apply { discovered = listOf(SourceResult("One", "https://new.example/one"), SourceResult("Two", "https://new.example/two")) }
+        val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val choice = library.followPublication("https://new.example").choices.first()
+        assertTrue(runCatching { library.followPublication("file:///secret") }.isFailure)
+        assertTrue(runCatching { library.followPublication("https://other.example", choice.id) }.isFailure)
+        library.changeSession("bob")
+        assertTrue(runCatching { library.followPublication("https://new.example", choice.id) }.isFailure)
+        val current = library.followPublication("https://new.example").choices.first()
+        api.discovered = api.discovered!!.drop(1)
+        assertTrue(runCatching { library.followPublication("https://new.example", current.id) }.isFailure)
+        api.discovered = emptyList()
+        assertTrue(runCatching { library.followPublication("https://new.example") }.isFailure)
+        assertEquals(0, api.subscriptions)
+    }
+    @Test fun retryAfterLostSubscriptionReplyRecognizesTheCanonicalFeed() = runTest {
+        val api = Api().apply { canonicalUrl = "https://canonical.example/feed"; loseSubscribeReply = true }
+        val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        assertTrue(runCatching { library.followPublication("https://new.example/feed") }.isFailure)
+        val retry = library.followPublication("https://new.example/feed")
+        assertTrue(retry.alreadyFollowed); assertEquals(api.canonicalUrl, retry.feed!!.url)
+        assertEquals(1, api.subscribed["alice"]!!.size); assertEquals(2, api.subscriptions)
+    }
+    @Test fun followingAnExistingPublicationDoesNotWriteAgain() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val result = library.followPublication("https://one.example/feed")
+        assertEquals("1", result.feed!!.id); assertTrue(result.alreadyFollowed); assertEquals(0, api.subscriptions)
+    }
+    @Test fun accountChangesAndCancellationDuringDiscoveryCannotSubscribe() = runTest {
+        val api = Api().apply { discoveryGate = CompletableDeferred() }
+        val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val old = launch { library.followPublication("https://new.example/feed") }; runCurrent()
+        library.changeSession("bob"); api.discoveryGate!!.complete(Unit); old.join()
+        assertTrue(old.isCancelled); assertEquals(0, api.subscriptions)
+        api.discoveryGate = CompletableDeferred()
+        val cancelled = launch { library.followPublication("https://new.example/feed") }; runCurrent()
+        cancelled.cancel(); cancelled.join(); api.discoveryGate!!.complete(Unit)
+        assertEquals(0, api.subscriptions)
     }
     @Test fun directoryFailureKeepsLibrarySearchResultsAndReportsThePartialFailure() = runTest {
         val api = Api().apply { directoryFailure = true }; val library = AccountLibrary(api, "server"); library.changeSession("alice")

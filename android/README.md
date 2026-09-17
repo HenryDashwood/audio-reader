@@ -465,7 +465,15 @@ paused. Speed Undo is shared across the app and assistant, expires after ten
 minutes, and preserves later manual changes. These conversation receipts and
 handoffs do not survive process death; durable recovery remains in item 11.
 
-Subscription actions remain part of checklist item 8. Google describes AppFunctions/Gemini integration as an
+`followPublicationUrl` discovers website/feed addresses without AI. A single feed
+is followed directly; multiple feeds return named choices without subscribing.
+The assistant asks the user to choose and passes the unchanged choice ID with the
+original website. Choices are checked against fresh discovery and bound to the
+account and session. Results contain the canonical, account-scoped followed show;
+already-followed feeds and retries after a lost reply are recognised without
+creating another subscription. Newsletter-address actions remain with item 9.
+
+Google describes AppFunctions/Gemini integration as an
 experimental private preview; launcher/tile availability does not establish
 Gemini support or phone acceptance.
 
