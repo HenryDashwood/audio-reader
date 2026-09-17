@@ -222,8 +222,36 @@ class ArticleReaderTest {
             assertEquals(expected, view.readingMarker.rect!!.top.toDouble(), 30.0)
         }
         capture("article-marker-scrolled")
-        compose.onNodeWithTag("article-webview").performTouchInput { swipeDown() }
+        val beforeDrag = inspect(view, """({y: scrollY, height: innerHeight, total: document.documentElement.scrollHeight})""")
+        val nativeBefore = compose.runOnUiThread { view.scrollY }
+        // Pace real Android input for the WebView renderer. Compose's batched
+        // synthetic gesture resets its scroll on this emulator even with a long
+        // event duration; that does not represent a small, slow physical drag.
+        val start = compose.runOnUiThread {
+            val location = IntArray(2); view.getLocationOnScreen(location)
+            androidx.compose.ui.geometry.Offset(location[0] + view.width / 2f, location[1] + view.height / 2f)
+        }
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val down = android.os.SystemClock.uptimeMillis()
+        fun touch(action: Int, delta: Float) {
+            val event = android.view.MotionEvent.obtain(down, android.os.SystemClock.uptimeMillis(), action,
+                start.x, start.y + delta, 0)
+            try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+        }
+        touch(android.view.MotionEvent.ACTION_DOWN, 0f)
+        for (step in 1..10) { Thread.sleep(100); touch(android.view.MotionEvent.ACTION_MOVE, step * 8f) }
+        touch(android.view.MotionEvent.ACTION_UP, 80f)
         compose.onNode(hasContentDescription("Follow reading position") and hasAnyAncestor(hasTestTag("mini-player"))).assertIsDisplayed()
+        var lastY = compose.runOnUiThread { view.scrollY }
+        var stableSince = android.os.SystemClock.elapsedRealtime()
+        compose.waitUntil(5_000) {
+            val y = compose.runOnUiThread { view.scrollY }
+            if (y != lastY) { lastY = y; stableSince = android.os.SystemClock.elapsedRealtime() }
+            android.os.SystemClock.elapsedRealtime() - stableSince >= 300
+        }
+        val afterDrag = inspect(view, """({y: scrollY, height: innerHeight, total: document.documentElement.scrollHeight, focus: document.activeElement.tagName})""")
+        val attached = compose.runOnUiThread { view.isAttachedToWindow && view.ready }
+        assertTrue("The manual drag must leave room to observe automatic scrolling: native=$nativeBefore, page=$beforeDrag, after=$lastY/$afterDrag, attached=$attached", lastY > 0)
         compose.runOnIdle { position.value = position.value!!.copy(startUtf16 = 0, endUtf16 = 2) }
         compose.waitUntil(5_000) { compose.runOnUiThread { view.readingMarker.rect!!.top < 600 } }
         val stoppedAt = compose.runOnUiThread { view.scrollY }

@@ -5,6 +5,9 @@ import android.content.Intent
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import com.henrydashwood.magpie.shortcuts.MagpieShortcuts
+import com.henrydashwood.magpie.shortcuts.ShortcutRequest
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,7 +18,9 @@ import com.henrydashwood.magpie.ui.MagpieTheme
 class MainActivity : ComponentActivity() {
     private var appleReturn by mutableIntStateOf(0)
     private var savedReturn by mutableIntStateOf(0)
-    private fun handleReturn(intent: Intent?) {
+    private var shortcut by mutableStateOf<ShortcutRequest?>(null)
+    private fun handleReturn(intent: Intent?, acceptShortcut: Boolean = true) {
+        if (acceptShortcut) MagpieShortcuts.take(this, intent)?.let { shortcut = it }
         if (intent?.getBooleanExtra("open_signin", false) == true) { appleReturn++; intent.removeExtra("open_signin") }
         if (intent?.getBooleanExtra("open_saved", false) == true) { savedReturn++; intent.removeExtra("open_saved") }
         if (intent?.action == Intent.ACTION_VIEW && intent.data?.scheme == BuildConfig.APPLICATION_ID + ".auth" &&
@@ -29,7 +34,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        handleReturn(intent)
-        setContent { MagpieTheme { MagpieApp(viewModel(), appleReturn, savedReturn) } }
+        runCatching { MagpieShortcuts.publish(this) }
+        handleReturn(intent, acceptShortcut = savedInstanceState == null)
+        setContent { MagpieTheme { MagpieApp(viewModel(), appleReturn, savedReturn, shortcut) { shortcut = null } } }
     }
 }

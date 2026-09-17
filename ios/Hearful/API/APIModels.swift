@@ -65,6 +65,9 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
     /// This listener's saved playback position; nil when never played.
     /// Optional so payloads from before the field existed still decode.
     var positionSeconds: Double?
+    /// Comparison token for retry-safe podcast progress; absent on older servers.
+    var progressRevision: String? = nil
+    var articleBookmark: ArticleBookmark? = nil
     var completed: Bool?
     /// She asked for this one to go without hearing it. Kept apart from
     /// `completed` so a list never claims she listened to something she
@@ -87,6 +90,8 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
         case publishedAt = "published_at"
         case imageURL = "image_url"
         case positionSeconds = "position_seconds"
+        case progressRevision = "progress_revision"
+        case articleBookmark = "article_bookmark"
         case hasText = "has_text"
         case contentID = "content_id"
         case savedAt = "saved_at"
@@ -118,12 +123,14 @@ nonisolated struct EpisodeText: Codable, Equatable {
     /// be recovered, and payloads cached before this field existed have no
     /// key at all.
     var html: String?
+    var articleProgress: ArticleProgressState? = nil
 
     enum CodingKeys: String, CodingKey {
         case title, text, html
         case episodeID = "episode_id"
         case contentID = "content_id"
         case wordCount = "word_count"
+        case articleProgress = "article_progress"
     }
 }
 

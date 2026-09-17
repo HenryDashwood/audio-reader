@@ -31,9 +31,12 @@ import com.henrydashwood.magpie.playback.SpeechVoices
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(model: MagpieModel, onAccount: () -> Unit) {
+fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: () -> Unit) {
     val library by model.libraryState.collectAsStateWithLifecycle()
     val preferences by model.settings.collectAsStateWithLifecycle()
+    val conversation by model.conversationSettings.collectAsStateWithLifecycle()
+    val diagnostics by model.diagnosticsEnabled.collectAsStateWithLifecycle()
+    var showingWait by remember { mutableStateOf(false) }
     val voices by model.voices.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val context = LocalContext.current
@@ -43,12 +46,12 @@ fun SettingsScreen(model: MagpieModel, onAccount: () -> Unit) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> model.refreshVoices()
-                Lifecycle.Event.ON_PAUSE -> model.stopVoicePreview()
+                Lifecycle.Event.ON_PAUSE -> { model.stopVoicePreview(); model.newsletterSpeech.stop() }
                 else -> Unit
             }
         }
         lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer); model.closeVoiceSettings() }
+        onDispose { lifecycle.removeObserver(observer); model.closeVoiceSettings(); model.newsletterSpeech.stop() }
     }
     fun open(intent: Intent) {
         try { context.startActivity(intent); linkError = null }
@@ -84,21 +87,35 @@ fun SettingsScreen(model: MagpieModel, onAccount: () -> Unit) {
         item { SettingsAction("Refresh voices", Icons.Rounded.Refresh, model::refreshVoices) }
         item { SettingsFootnote("Choose from installed offline Google voices. Download more voices in Android’s text-to-speech settings. A voice change applies the next time you start an article.") }
         item { HorizontalDivider(); SettingsHeading("Conversation") }
-        item { SettingsFootnote("Voice conversations are not connected in this preview. Keep listening after replies and Wait for a reply will be available when conversation is connected.") }
+        item { ListItem(headlineContent = { Text("Keep listening after replies") }, supportingContent = { Text("Continue the conversation after Magpie answers.") },
+            trailingContent = { Switch(conversation.keepListening, { model.setConversationPreferences(conversation.copy(keepListening = it)) }, Modifier.semantics { contentDescription = "Keep listening after replies" }) }) }
+        item { ListItem(headlineContent = { Text("Wait for a reply") }, trailingContent = { Text("${conversation.followUpSeconds} seconds") },
+            modifier = Modifier.clickable { showingWait = true }.testTag("conversation-wait")) }
+        item { SettingsFootnote("Say ‘that’s all’ to finish. With TalkBack, tap Listen for each turn when announcements have finished.") }
         item { HorizontalDivider(); SettingsHeading("Assistant and Shortcuts") }
-        item { SettingsFootnote("Android assistant integration is not connected in this preview.") }
+        item { SettingsAction("Home screen and Quick Settings", Icons.Rounded.AppShortcut, onShortcuts) }
         item { HorizontalDivider(); SettingsHeading("Newsletters") }
-        item { SettingsFootnote("Newsletter address management is not available on Android yet.") }
+        item { NewsletterAddressSection(model) }
         item { HorizontalDivider(); SettingsHeading("Privacy & Support") }
+        item { ListItem(headlineContent = { Text("Share app diagnostics") },
+            supportingContent = { Text("Send voice-request outcomes and crash or freeze summaries. Never your words or audio.") },
+            trailingContent = { Switch(diagnostics, model::setDiagnosticsEnabled,
+                Modifier.semantics { contentDescription = "Share app diagnostics" }) }) }
         item { SettingsAction("Privacy Policy", Icons.AutoMirrored.Rounded.OpenInNew) { open(Intent(Intent.ACTION_VIEW, "https://audio-reader-production.up.railway.app/privacy".toUri())) } }
         item { SettingsAction("Email Support", Icons.Rounded.Email) { open(Intent(Intent.ACTION_SENDTO, "mailto:hcndashwood@gmail.com".toUri())) } }
         item { AISharingSettings(model) }
-        item { SettingsFootnote("Article narration and voice previews run on this device. Publication web search uses OpenAI only with your account permission.") }
+        item { SettingsFootnote("Speech recognition, narration, and spoken replies run on this device. Library voice requests and publication web search use OpenAI only with your account permission.") }
         item { HorizontalDivider(); SettingsHeading("Account") }
         item { SettingsAction("Sign-in Methods", Icons.Rounded.AccountCircle, onAccount) }
         if (linkError != null) item { SettingsFootnote(linkError!!, error = true) }
         item { SettingsFootnote(if (library.live) "Connected account library" else "Android preview · Sample library") }
     }
+    if (showingWait) AlertDialog(onDismissRequest = { showingWait = false }, title = { Text("Wait for a reply") },
+        text = { LazyColumn { items(com.henrydashwood.magpie.voice.ConversationPreferences.waitOptions) { seconds ->
+            VoiceChoice("$seconds seconds", "", conversation.followUpSeconds == seconds) {
+                model.setConversationPreferences(conversation.copy(followUpSeconds = seconds)); showingWait = false
+            }
+        } } }, confirmButton = { TextButton(onClick = { showingWait = false }) { Text("Close") } })
     if (showingVoices) ModalBottomSheet(onDismissRequest = { showingVoices = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Voice", Modifier.padding(vertical = 12.dp).semantics { heading() }, style = MaterialTheme.typography.titleLarge)

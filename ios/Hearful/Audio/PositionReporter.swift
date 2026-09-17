@@ -25,13 +25,9 @@ extension Notification.Name {
 
 /// Watches playback and tells the backend where she is in each episode.
 ///
-/// A separate observer rather than code inside the players, so they keep zero
-/// network dependencies. It observes the coordinator's mirrored state, so an
-/// article being read aloud reports its (estimated-seconds) position exactly
-/// like a streamed episode. Reports are fire-and-forget: losing one costs at
-/// most thirty seconds of position, which matters less than never blocking
-/// playback on the network. They are still sent in creation order: a final
-/// `completed` report must not be overtaken by an older pause or heartbeat.
+/// Modern article reports use a durable, source-bound text journal. Podcasts
+/// and older article servers retain ordered seconds reports: a final completed
+/// report must not be overtaken by an older pause or heartbeat.
 @MainActor
 final class PositionReporter {
     static let heartbeatInterval: TimeInterval = 30
@@ -40,6 +36,9 @@ final class PositionReporter {
 
     private let api: HearfulAPIProtocol
     private let player: PlaybackCoordinator
+    private let articleSync: ArticleProgressSync
+    private let sessionScope: String?
+    private let currentSessionScope: () -> String?
     private var cancellables: Set<AnyCancellable> = []
 
     private(set) var trackedEpisode: Episode?
@@ -60,10 +59,14 @@ final class PositionReporter {
 
     init(
         api: HearfulAPIProtocol = HearfulAPI(),
-        player: PlaybackCoordinator = .shared
+        player: PlaybackCoordinator = .shared,
+        sessionScope: @escaping () -> String? = { ShortcutScope.current }
     ) {
         self.api = api
         self.player = player
+        self.sessionScope = sessionScope()
+        currentSessionScope = sessionScope
+        articleSync = ArticleProgressSync(api: api, player: player.article)
 
         player.$currentEpisode
             .removeDuplicates { $0?.id == $1?.id && $0?.contentID == $1?.contentID }
@@ -155,10 +158,20 @@ final class PositionReporter {
     /// network in production.
     func waitForPendingReports() async {
         await reportQueueTail?.value
+        await articleSync.waitForPendingReports()
+    }
+
+    func invalidate() {
+        articleSync.invalidate()
+        reportQueueTail?.cancel()
+        cancellables.removeAll()
     }
 
     private func report(episode: Episode, seconds: TimeInterval) {
         guard !filedByHand.contains(episode.id) else { return }
+        // Shared text bookmarks are reported by their own source-bound journal.
+        // Never let a legacy seconds write clear that newer bookmark.
+        if player.article.progressContext?.episodeID == episode.id { return }
         lastReportAt = Date()
         let duration = player.duration
         let completed = duration > 0 && seconds / duration > 0.95
@@ -169,8 +182,11 @@ final class PositionReporter {
         NotificationCenter.default.post(name: .hearfulPositionReported, object: report)
         let api = self.api
         let precedingReport = reportQueueTail
+        let scope = sessionScope
+        let currentScope = currentSessionScope
         reportQueueTail = Task {
             await precedingReport?.value
+            guard !Task.isCancelled, currentScope() == scope else { return }
             try? await api.reportPosition(
                 episodeID: report.episodeID, seconds: report.seconds,
                 completed: report.completed, durationSeconds: report.durationSeconds, contentID: episode.contentID)

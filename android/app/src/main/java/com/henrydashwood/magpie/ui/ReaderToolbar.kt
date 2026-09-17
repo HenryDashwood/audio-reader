@@ -18,7 +18,7 @@ import com.henrydashwood.magpie.data.LibraryItem
 /** Shared by article and recorded-episode pages; browser actions accept only web URLs. */
 @Composable
 fun ReaderToolbarActions(item: LibraryItem, playing: Boolean, searching: Boolean, togglePlayback: () -> Unit,
-    toggleFind: () -> Unit, launchIntent: ((Intent) -> Unit)? = null) {
+    toggleFind: () -> Unit, launchIntent: ((Intent) -> Unit)? = null, onAsk: () -> Unit = {}) {
     val context = LocalContext.current
     var message by rememberSaveable(item.id) { mutableStateOf<String?>(null) }
     val original = remember(item.originalUrl) {
@@ -48,7 +48,7 @@ fun ReaderToolbarActions(item: LibraryItem, playing: Boolean, searching: Boolean
     IconButton(onClick = toggleFind) {
         Icon(if (searching) Icons.Rounded.Close else Icons.Rounded.Search, if (searching) "Close search" else "Find in this page")
     }
-    AskMagpieButton()
+    AskMagpieButton(onAsk)
     if (message != null) AlertDialog(onDismissRequest = { message = null }, title = { Text("Could not open") },
         text = { Text(message!!) }, confirmButton = { TextButton(onClick = { message = null }) { Text("Close") } })
 }

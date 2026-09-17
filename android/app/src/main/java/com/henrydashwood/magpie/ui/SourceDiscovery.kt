@@ -60,10 +60,25 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit) {
                         Column(Modifier.padding(16.dp)) {
                             Text(state.error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                             if (!state.following) TextButton(onClick = controller::retry, enabled = !state.loading) { Text("Try again") }
+                            if (SourceDiscovery.isAddress(state.query) && state.selected == null && !state.loading && !state.following)
+                                Button(onClick = controller::signUpByEmail) { Text("Sign up by email") }
                         }
                     }
                     val preview = state.preview
                     when {
+                        state.signup != null -> item {
+                            val signup = state.signup!!
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(if (signup.submitted) "Asked for the newsletter" else "Needs signing up by hand",
+                                    style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+                                Text(signup.spokenResponse, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                                signup.address?.let { address ->
+                                    Text(address)
+                                    NewsletterAddressActions(address) { model.libraryState.value.live && model.libraryState.value.revision == library.revision }
+                                }
+                                TextButton(onClick = controller::submit) { Text("Look for feeds again") }
+                            }
+                        }
                         state.selected != null -> if (preview != null) {
                             item {
                                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

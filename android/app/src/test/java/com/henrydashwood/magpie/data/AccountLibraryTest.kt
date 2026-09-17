@@ -1,5 +1,7 @@
 package com.henrydashwood.magpie.data
 
+import com.henrydashwood.magpie.voice.*
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -11,7 +13,271 @@ import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountLibraryTest {
-    private class Api : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi {
+    @Test fun cancelledRefreshKeepsExistingDataAndReleasesLoadingState() = runTest {
+        val api = Api()
+        val library = AccountLibrary(api, "https://voice.invalid")
+        library.changeSession("alice")
+        val before = library.state.value
+        api.gate = CompletableDeferred()
+        val refreshing = launch { library.refresh() }
+        runCurrent(); assertTrue(library.state.value.loading)
+        refreshing.cancel(); refreshing.join()
+        assertFalse(library.state.value.loading)
+        assertEquals(before.items, library.state.value.items)
+        api.gate!!.complete(Unit)
+        library.refresh()
+        assertFalse(library.state.value.loading)
+    }
+    @Test fun cancellingAnOldRefreshCannotClearTheNewAccountsLoadingState() = runTest {
+        val api = Api()
+        val library = AccountLibrary(api, "https://voice.invalid")
+        library.changeSession("alice")
+        api.gate = CompletableDeferred()
+        val refreshing = launch { library.refresh() }
+        runCurrent()
+        val changing = launch { library.changeSession("bob") }
+        runCurrent()
+        refreshing.cancel(); refreshing.join(); runCurrent()
+        assertTrue(library.state.value.loading)
+        assertTrue(library.state.value.items.isEmpty())
+        api.gate!!.complete(Unit); changing.join()
+        assertFalse(library.state.value.loading)
+    }
+    private class ProgressStore : PodcastProgressStore {
+        val rows = mutableMapOf<String, List<QueuedPodcastProgress>>()
+        override suspend fun read(owner: String) = rows[owner].orEmpty()
+        override suspend fun write(owner: String, entries: List<QueuedPodcastProgress>) { rows[owner] = entries }
+    }
+    private class ProgressApi(val base: Api) : LibraryApi by base, PodcastProgressApi {
+        var gate: CompletableDeferred<Unit>? = null
+        var fail = false
+        var reply: PodcastProgressReceipt? = null
+        override suspend fun podcastProgress(token: String, episodeId: Int, report: PodcastProgressReport): PodcastProgressReceipt {
+            gate?.await()
+            if (fail) throw IOException("Offline")
+            return reply ?: PodcastProgressReceipt(base.latestRows.single().copy(positionSeconds = report.seconds,
+                completed = report.completed, progressRevision = "b".repeat(64)), "b".repeat(64))
+        }
+    }
+    @Test fun queuedClockDoesNotOverwriteFreshRemoteStateOrAuthorizeItselfAgainstNewRevision() = runTest {
+        val api = ProgressApi(Api().apply { latestRows = latestRows.map { it.copy(progressRevision = "a".repeat(64)) } })
+        val queue = PodcastProgressQueue(ProgressStore())
+        val library = AccountLibrary(api, "https://progress.invalid", progressQueue = queue)
+        library.changeSession("alice")
+        val item = library.state.value.items.first { it.episodeId == 1 }
+        library.beginPodcastProgress(item, "play", 42.5); library.recordPodcastProgress(item, "play", 50.0, false)
+        api.base.latestRows = api.base.latestRows.map { it.copy(progressRevision = "c".repeat(64), completed = true) }
+        library.refresh()
+        library.recordPodcastProgress(item, "play", 60.0, false)
+        val fresh = library.state.value.items.first { it.episodeId == 1 }
+        assertTrue(fresh.completed); assertEquals("c".repeat(64), fresh.progressRevision)
+        assertEquals("a".repeat(64), queue.entries(library.state.value.owner!!).single().pending!!.expectedRevision)
+    }
+    @Test fun inflightAcknowledgementAdvancesRevisionWhilePreservingLaterLocalClock() = runTest {
+        val api = ProgressApi(Api().apply { latestRows = latestRows.map { it.copy(progressRevision = "a".repeat(64)) } })
+        val queue = PodcastProgressQueue(ProgressStore())
+        val library = AccountLibrary(api, "https://progress.invalid", progressQueue = queue)
+        library.changeSession("alice")
+        val item = library.state.value.items.first { it.episodeId == 1 }
+        library.beginPodcastProgress(item, "play", 42.5); library.recordPodcastProgress(item, "play", 50.0, false)
+        api.gate = CompletableDeferred()
+        val sending = launch { library.flushPodcastProgress() }; runCurrent()
+        library.recordPodcastProgress(item, "play", 60.0, false)
+        api.gate!!.complete(Unit); sending.join()
+        val fresh = library.state.value.items.first { it.episodeId == 1 }
+        assertEquals(60_000L, fresh.remotePositionMs); assertEquals("b".repeat(64), fresh.progressRevision)
+        assertEquals("b".repeat(64), queue.entries(library.state.value.owner!!).single().pending!!.expectedRevision)
+    }
+    @Test fun missingContentCacheDoesNotStrandAValidDurableReport() = runTest {
+        val base = Api().apply { latestRows = latestRows.map { it.copy(progressRevision = "a".repeat(64)) } }
+        val api = ProgressApi(base); val store = ProgressStore()
+        val first = AccountLibrary(api, "https://progress.invalid", progressQueue = PodcastProgressQueue(store))
+        first.changeSession("alice")
+        val item = first.state.value.items.first { it.episodeId == 1 }
+        first.beginPodcastProgress(item, "play", 42.5); first.recordPodcastProgress(item, "play", 65.0, false)
+        val noList = object : LibraryApi by api, PodcastProgressApi by api {
+            override suspend fun latest(token: String) = emptyList<RemoteEpisode>()
+        }
+        val recreated = AccountLibrary(noList, "https://progress.invalid", progressQueue = PodcastProgressQueue(store))
+        recreated.changeSession("alice")
+        assertFalse(recreated.state.value.items.any { it.episodeId == 1 })
+        recreated.flushPodcastProgress()
+        assertEquals(65_000L, recreated.state.value.items.first { it.episodeId == 1 }.remotePositionMs)
+        assertNull(store.read(recreated.state.value.owner!!).single().pending)
+    }
+    @Test fun offlineRecreationRestoresJournalClockAndLogoutClearsIt() = runTest {
+        val api = ProgressApi(Api().apply { latestRows = latestRows.map { it.copy(progressRevision = "a".repeat(64)) } })
+        val cache = MemoryCache(); val identity = Identity(); val store = ProgressStore()
+        val first = AccountLibrary(api, "https://progress.invalid", identityStore = identity, cache = cache, progressQueue = PodcastProgressQueue(store))
+        first.changeSession("alice")
+        val item = first.state.value.items.first { it.episodeId == 1 }
+        first.beginPodcastProgress(item, "play", 42.5); first.recordPodcastProgress(item, "play", 65.0, false)
+        api.base.fail = true
+        val second = AccountLibrary(api, "https://progress.invalid", identityStore = identity, cache = cache, progressQueue = PodcastProgressQueue(store))
+        second.changeSession("alice")
+        assertEquals(65_000L, second.state.value.items.first { it.episodeId == 1 }.remotePositionMs)
+        val owner = second.state.value.owner!!
+        second.changeSession(null)
+        assertTrue(store.read(owner).isEmpty())
+    }
+    private class MemoryCache : LibraryCache {
+        val rows = mutableMapOf<String, LibrarySnapshot>()
+        var readGate: CompletableDeferred<Unit>? = null
+        var saveGate: CompletableDeferred<Unit>? = null
+        var failSave = false
+        override suspend fun load(owner: String): LibrarySnapshot? { val value = rows[owner]; readGate?.await(); return value }
+        override suspend fun save(snapshot: LibrarySnapshot) {
+            saveGate?.await()
+            if (failSave) throw IOException("Disk full")
+            rows[snapshot.owner] = snapshot
+        }
+        override suspend fun clear(owner: String) { rows.remove(owner) }
+    }
+    private class Identity : AccountIdentityStore {
+        val owners = mutableMapOf<String, String>()
+        override fun owner(sessionKey: String) = owners[sessionKey]
+        override suspend fun remember(sessionKey: String, owner: String) { owners[sessionKey] = owner }
+    }
+    @Test fun cachedLibraryAndLoadedTextSurviveRecreationOfflineWithTheSameSession() = runTest {
+        val api = Api(); val cache = MemoryCache(); val identity = Identity()
+        val original = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        original.changeSession("alice")
+        original.search("1", "")
+        val article = original.content(original.state.value.savedIds.single())
+        val before = original.state.value
+        api.fail = true; api.userFailure = true; api.searchFailure = true
+        val recreated = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        recreated.changeSession("alice")
+        assertEquals(before.items, recreated.state.value.items)
+        assertEquals(before.feeds, recreated.state.value.feeds)
+        assertEquals(article, recreated.content(article.id))
+        assertEquals(1, api.texts)
+        assertNotNull(recreated.state.value.error)
+        recreated.search("1", "")
+        assertEquals(before.feedItems["1"], recreated.state.value.feedResults)
+        recreated.search(null, "Saved article")
+        assertEquals(listOf(article.id), recreated.state.value.searchResults)
+        assertEquals("Could not refresh. Showing items already on this device.", recreated.state.value.error)
+    }
+    @Test fun cacheNeverFallsBackToAnotherAccountAndSignOutRemovesTheOldSnapshot() = runTest {
+        val api = Api(); val cache = MemoryCache(); val identity = Identity()
+        val original = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        original.changeSession("alice")
+        val owner = original.state.value.owner!!
+        val alice = cache.rows[owner]!!
+        api.fail = true; api.userFailure = true
+        val other = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        other.changeSession("bob")
+        assertTrue(other.state.value.items.isEmpty())
+        assertNull(other.state.value.owner)
+        val otherServer = AccountLibrary(api, "https://other.invalid", identityStore = identity, cache = cache)
+        otherServer.changeSession("alice")
+        assertTrue(otherServer.state.value.items.isEmpty())
+        // Even a malformed/mis-keyed cache must not publish another owner's rows.
+        cache.rows[owner] = alice.copy(owner = "another-owner")
+        val corrupt = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        corrupt.changeSession("alice")
+        assertTrue(corrupt.state.value.items.isEmpty())
+        cache.rows[owner] = alice
+        original.changeSession(null)
+        assertFalse(cache.rows.containsKey(owner))
+        assertFalse(original.state.value.live)
+        assertTrue(original.state.value.items.none { it.id.startsWith(owner) })
+    }
+    @Test fun initialCacheRestoreCannotOverwriteAConcurrentRefresh() = runTest {
+        val api = Api(); val cache = MemoryCache(); val identity = Identity()
+        AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache).changeSession("alice")
+        cache.readGate = CompletableDeferred()
+        val library = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        val loading = launch { library.changeSession("alice") }; runCurrent()
+        api.latestRows = listOf(RemoteEpisode(90, "New from another device"))
+        val refresh = launch { library.refresh() }; runCurrent()
+        assertFalse(refresh.isCompleted)
+        cache.readGate!!.complete(Unit); loading.join(); refresh.join()
+        assertEquals("New from another device", library.state.value.items.single { it.id in library.state.value.latestIds }.title)
+        assertEquals(library.state.value.latestIds, cache.rows[library.state.value.owner]!!.latestIds)
+    }
+    @Test fun delayedCacheReadCannotRestoreAnAccountAfterSignOut() = runTest {
+        val api = Api(); val cache = MemoryCache(); val identity = Identity()
+        val original = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        original.changeSession("alice")
+        cache.readGate = CompletableDeferred()
+        val recreated = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        val loading = launch { recreated.changeSession("alice") }; runCurrent()
+        recreated.changeSession(null)
+        cache.readGate!!.complete(Unit); loading.join()
+        assertFalse(recreated.state.value.live)
+        assertTrue(cache.rows.isEmpty())
+    }
+    @Test fun cacheTracksConfirmedFilingAndContentReplacementWithoutRevivingOldText() = runTest {
+        val api = Api(); val cache = MemoryCache(); val identity = Identity()
+        val original = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        original.changeSession("alice")
+        val old = original.content(original.state.value.savedIds.single())
+        val replacement = original.prepareSaved(old, true, original.state.value.revision)
+        assertFalse(replacement.textLoaded)
+        original.played(replacement, true)
+        original.remove(replacement)
+        original.clearLatest()
+        api.fail = true
+        val recreated = AccountLibrary(api, "https://cache.invalid", identityStore = identity, cache = cache)
+        recreated.changeSession("alice")
+        assertTrue(recreated.state.value.latestIds.isEmpty())
+        assertTrue(recreated.state.value.savedIds.isEmpty())
+        val restored = recreated.state.value.items.first { it.id == old.id }
+        assertFalse(restored.textLoaded)
+        assertEquals(replacement.contentId, restored.contentId)
+        assertTrue(restored.completed)
+    }
+    @Test fun cacheFailureDoesNotRepeatOrFailAnAcceptedServerWrite() = runTest {
+        val api = Api(); val cache = MemoryCache()
+        val library = AccountLibrary(api, "https://cache.invalid", cache = cache)
+        library.changeSession("alice")
+        cache.failSave = true
+        val item = library.state.value.items.first()
+        library.played(item, true)
+        assertEquals(1, api.filings)
+        assertTrue(library.state.value.items.first { it.id == item.id }.completed)
+        assertEquals("Your library is up to date, but it could not be saved for offline use.", library.state.value.error)
+    }
+    @Test fun signOutWaitsForAnOlderCacheWriteThenRemovesIt() = runTest {
+        val api = Api(); val cache = MemoryCache()
+        val library = AccountLibrary(api, "https://cache.invalid", cache = cache)
+        library.changeSession("alice")
+        cache.saveGate = CompletableDeferred()
+        val writing = launch { library.played(library.state.value.items.first(), true) }; runCurrent()
+        val logout = launch { library.changeSession(null) }; runCurrent()
+        assertFalse(library.state.value.live)
+        cache.saveGate!!.complete(Unit); writing.join(); logout.join()
+        assertTrue(cache.rows.isEmpty())
+    }
+    private class Api : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, VoiceApi, NewsletterApi {
+        var newsletterGate: CompletableDeferred<Unit>? = null
+        val newsletterChanges = mutableListOf<Pair<String, Int>>()
+        val signupUrls = mutableListOf<String>()
+        override suspend fun newsletterAddress(token: String): NewsletterAddress {
+            newsletterGate?.await(); return NewsletterAddress("$token@magpie.example")
+        }
+        override suspend fun pendingNewsletters(token: String) = listOf(PendingNewsletter(30, "Morning", "editor@example.com", 2))
+        override suspend fun approveNewsletter(token: String, feedId: Int): LibraryFeed {
+            newsletterChanges += token to feedId; newsletterGate?.await()
+            val feed = LibraryFeed(feedId.toString(), "Morning", 2, true)
+            subscribed[token] = listOf(feed)
+            return feed
+        }
+        override suspend fun blockNewsletter(token: String, feedId: Int) { newsletterChanges += token to feedId }
+        override suspend fun signUpForNewsletter(token: String, url: String): NewsletterSignup {
+            signupUrls += url; newsletterGate?.await()
+            return NewsletterSignup("unsupported", "Sign up on the website.", "$token@magpie.example")
+        }
+        var voiceGate: CompletableDeferred<Unit>? = null
+        val voiceCancellations = mutableListOf<Pair<String, String>>()
+        override fun events(token: String, request: VoiceRequest) = flow {
+            emit(VoiceEvent.Delta("Working"))
+            voiceGate?.await()
+            emit(VoiceEvent.Result(VoiceResponse(VoiceAction.Unknown, "Done")))
+        }
+        override suspend fun cancel(token: String, requestId: String) { voiceCancellations += token to requestId }
         var textGate: CompletableDeferred<Unit>? = null
         var userFailure = false
         var grouped = false
@@ -21,9 +287,16 @@ class AccountLibraryTest {
         var sourceWrites = 0
         var directoryFailure = false
         var subscriptions = 0
+        var discovered: List<SourceResult>? = null
+        var discoveryGate: CompletableDeferred<Unit>? = null
+        var canonicalUrl: String? = null
+        var loseSubscribeReply = false
+        val subscribed = mutableMapOf<String, List<LibraryFeed>>()
         var fail = false
         var gate: CompletableDeferred<Unit>? = null
+        var searchFailure = false
         var oldSearch: CompletableDeferred<Unit>? = null
+        var episodeGate: CompletableDeferred<Unit>? = null
         var contentId = 7
         var requestedContent: Int? = null
         var saves = 0
@@ -36,12 +309,18 @@ class AccountLibraryTest {
         override suspend fun feeds(token: String): List<LibraryFeed> {
             gate?.await()
             if (fail) throw IOException()
-            return if (unsubscribed) emptyList() else listOf(LibraryFeed("1", "Same title", 80, false, "https://one.example/feed"), LibraryFeed("2", "Same title", 0, true)).filterNot { grouped && it.id == "2" }
+            return if (unsubscribed) emptyList() else listOf(LibraryFeed("1", "Same title", 80, false, "https://one.example/feed"), LibraryFeed("2", "Same title", 0, true)).filterNot { grouped && it.id == "2" } + subscribed[token].orEmpty()
         }
         override suspend fun latest(token: String) = latestRows
         override suspend fun saved(token: String) = savedRows
-        override suspend fun episodes(token: String, feedId: String, query: String) = latestRows
+        override suspend fun episodes(token: String, feedId: String, query: String): List<RemoteEpisode> { if (searchFailure) throw IOException(); return latestRows }
+        override suspend fun episode(token: String, episodeId: Int): RemoteEpisode {
+            val snapshot = (latestRows + savedRows).first { it.id == episodeId }
+            episodeGate?.await()
+            return snapshot
+        }
         override suspend fun search(token: String, query: String): List<RemoteEpisode> {
+            if (searchFailure) throw IOException()
             if (query == "old") oldSearch?.await()
             return listOf(RemoteEpisode(if (query == "old") 10 else 11, query))
         }
@@ -65,12 +344,22 @@ class AccountLibraryTest {
         }
         override suspend fun played(token: String, episodeId: Int, played: Boolean) { if (fail) throw IOException(); filings++ }
         override suspend fun clearLatest(token: String) {}
-        override suspend fun subscribe(token: String, url: String): LibraryFeed { subscriptions++; return LibraryFeed("3", "New feed", 0, true, url) }
+        override suspend fun subscribe(token: String, url: String): LibraryFeed {
+            subscriptions++
+            if (subscribed[token].orEmpty().isNotEmpty()) throw com.henrydashwood.magpie.auth.AccountFailure(409, "Already subscribed")
+            val feed = LibraryFeed("3", "New feed", 0, true, canonicalUrl ?: url)
+            subscribed[token] = listOf(feed)
+            if (loseSubscribeReply) { loseSubscribeReply = false; throw IOException("Reply lost") }
+            return feed
+        }
         override suspend fun directory(token: String, query: String): List<SourceResult> {
             if (directoryFailure) throw IOException()
             return listOf(SourceResult("New feed", "https://new.example/feed"))
         }
-        override suspend fun discover(token: String, url: String) = listOf(SourceResult("New feed", url))
+        override suspend fun discover(token: String, url: String): List<SourceResult> {
+            discoveryGate?.await()
+            return discovered ?: listOf(SourceResult("New feed", url))
+        }
         override suspend fun preview(token: String, url: String) = RemotePreview(LibraryFeed("3", "New feed", 2, true, url),
             listOf(RemoteEpisode(99, "Preview article"), savedRows.first().copy(contentId = 100)), false)
         override suspend fun webSearch(token: String, query: String): SourceResult? = null
@@ -235,6 +524,88 @@ class AccountLibraryTest {
         library.changeSession("bob")
         assertTrue(runCatching { library.followSource(preview) }.isFailure); assertEquals(1, api.subscriptions)
     }
+    @Test fun followingPublicationRequiresAChoiceAndReturnsTheCanonicalSubscription() = runTest {
+        val api = Api().apply {
+            discovered = listOf(SourceResult("Audio", "https://new.example/audio"), SourceResult("Text", "https://new.example/text"))
+            canonicalUrl = "https://canonical.example/feed"
+        }
+        val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val choice = library.followPublication("https://new.example")
+        assertNull(choice.feed); assertEquals(2, choice.choices.size); assertEquals(0, api.subscriptions)
+        val followed = library.followPublication("https://new.example", choice.choices.last().id)
+        assertEquals("3", followed.feed!!.id); assertEquals(api.canonicalUrl, followed.feed.url)
+        assertTrue(followed.choices.isEmpty()); assertFalse(followed.alreadyFollowed)
+        assertTrue(library.state.value.feeds.contains(followed.feed)); assertEquals(1, api.subscriptions)
+    }
+    @Test fun publicationChoicesRejectInvalidMissingChangedAndCrossAccountTargets() = runTest {
+        val api = Api().apply { discovered = listOf(SourceResult("One", "https://new.example/one"), SourceResult("Two", "https://new.example/two")) }
+        val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val choice = library.followPublication("https://new.example").choices.first()
+        assertTrue(runCatching { library.followPublication("file:///secret") }.isFailure)
+        assertTrue(runCatching { library.followPublication("https://other.example", choice.id) }.isFailure)
+        library.changeSession("bob")
+        assertTrue(runCatching { library.followPublication("https://new.example", choice.id) }.isFailure)
+        val current = library.followPublication("https://new.example").choices.first()
+        api.discovered = api.discovered!!.drop(1)
+        assertTrue(runCatching { library.followPublication("https://new.example", current.id) }.isFailure)
+        api.discovered = emptyList()
+        assertTrue(runCatching { library.followPublication("https://new.example") }.isFailure)
+        assertEquals(0, api.subscriptions)
+    }
+    @Test fun retryAfterLostSubscriptionReplyRecognizesTheCanonicalFeed() = runTest {
+        val api = Api().apply { canonicalUrl = "https://canonical.example/feed"; loseSubscribeReply = true }
+        val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        assertTrue(runCatching { library.followPublication("https://new.example/feed") }.isFailure)
+        val retry = library.followPublication("https://new.example/feed")
+        assertTrue(retry.alreadyFollowed); assertEquals(api.canonicalUrl, retry.feed!!.url)
+        assertEquals(1, api.subscribed["alice"]!!.size); assertEquals(2, api.subscriptions)
+    }
+    @Test fun followingAnExistingPublicationDoesNotWriteAgain() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val result = library.followPublication("https://one.example/feed")
+        assertEquals("1", result.feed!!.id); assertTrue(result.alreadyFollowed); assertEquals(0, api.subscriptions)
+    }
+    @Test fun accountChangesAndCancellationDuringDiscoveryCannotSubscribe() = runTest {
+        val api = Api().apply { discoveryGate = CompletableDeferred() }
+        val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val old = launch { library.followPublication("https://new.example/feed") }; runCurrent()
+        library.changeSession("bob"); api.discoveryGate!!.complete(Unit); old.join()
+        assertTrue(old.isCancelled); assertEquals(0, api.subscriptions)
+        api.discoveryGate = CompletableDeferred()
+        val cancelled = launch { library.followPublication("https://new.example/feed") }; runCurrent()
+        cancelled.cancel(); cancelled.join(); api.discoveryGate!!.complete(Unit)
+        assertEquals(0, api.subscriptions)
+    }
+    @Test fun newsletterRowsBelongToTheirSessionAndApprovalRefreshesFollowing() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val row = library.pendingNewsletters().single()
+        assertEquals(library.state.value.revision, row.sessionRevision)
+        library.approveNewsletter(row)
+        assertTrue(library.state.value.feeds.any { it.id == "30" })
+        library.changeSession("bob")
+        assertTrue(runCatching { library.blockNewsletter(row) }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertEquals(listOf("alice" to 30), api.newsletterChanges)
+    }
+    @Test fun lateNewsletterApprovalCannotPublishIntoTheNextAccount() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val row = library.pendingNewsletters().single(); api.newsletterGate = CompletableDeferred()
+        val old = launch { library.approveNewsletter(row) }; runCurrent()
+        val switching = launch { library.changeSession("bob") }; runCurrent()
+        api.newsletterGate!!.complete(Unit); old.join(); switching.join()
+        assertTrue(old.isCancelled); assertTrue(library.state.value.feeds.none { it.id == "30" })
+        assertEquals(listOf("alice" to 30), api.newsletterChanges)
+    }
+    @Test fun addressAndSignupResponsesCannotSurviveAnAccountChange() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        assertTrue(runCatching { library.signUpForNewsletter("file:///private") }.isFailure)
+        assertTrue(api.signupUrls.isEmpty())
+        api.newsletterGate = CompletableDeferred()
+        val address = launch { library.newsletterAddress(); fail("Old address escaped") }
+        val signup = launch { library.signUpForNewsletter("https://publisher.example"); fail("Old signup escaped") }
+        runCurrent(); library.changeSession("bob"); api.newsletterGate!!.complete(Unit)
+        address.join(); signup.join()
+        assertTrue(address.isCancelled); assertTrue(signup.isCancelled)
+    }
     @Test fun directoryFailureKeepsLibrarySearchResultsAndReportsThePartialFailure() = runTest {
         val api = Api().apply { directoryFailure = true }; val library = AccountLibrary(api, "server"); library.changeSession("alice")
         val results = library.findSources("new")
@@ -282,4 +653,70 @@ class AccountLibraryTest {
         api.oldSearch!!.complete(Unit); search.join()
         assertTrue(library.state.value.searchResults.isEmpty())
     }
+    @Test fun voiceRepliesAreRejectedAfterAccountChangeAndCancellationKeepsOriginalAccount() = runTest {
+        val api = Api().apply { voiceGate = CompletableDeferred() }
+        val library = AccountLibrary(api, "https://voice.invalid")
+        library.changeSession("alice")
+        val request = VoiceRequest("Do something")
+        val operation = library.voiceOperation(request, library.state.value.revision)
+        val deltas = mutableListOf<String>()
+        var failure: Throwable? = null
+        val job = launch { failure = runCatching { operation.response(deltas::add) }.exceptionOrNull() }
+        runCurrent(); assertEquals(listOf("Working"), deltas)
+        library.changeSession("bob")
+        api.voiceGate!!.complete(Unit); job.join()
+        assertTrue(failure is kotlinx.coroutines.CancellationException)
+        operation.cancel()
+        assertEquals(listOf("alice" to request.requestId), api.voiceCancellations)
+        assertTrue(runCatching { operation.response() }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+    }
+    @Test fun confirmedVoiceEpisodeCanEnterThePlayerCacheWithoutInventingSavedOrLatestMembership() = runTest {
+        val library = AccountLibrary(Api(), "https://voice.invalid")
+        library.changeSession("alice")
+        val revision = library.state.value.revision
+        val before = library.state.value
+        val row = RemoteEpisode(99, "Requested episode", audioUrl = "https://example.com/audio.mp3")
+        val item = library.acceptVoiceEpisode(row, revision)
+        assertEquals(99, item.episodeId)
+        assertEquals(before.savedIds, library.state.value.savedIds)
+        assertEquals(before.latestIds, library.state.value.latestIds)
+        library.changeSession("bob")
+        assertTrue(runCatching { library.acceptVoiceEpisode(row, revision) }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertFalse(library.state.value.items.any { it.episodeId == 99 })
+    }
+
+    @Test fun anOlderRefreshCannotOverwriteAConfirmedVoiceFiling() = runTest {
+        val api = Api()
+        val library = AccountLibrary(api, "https://voice.invalid")
+        library.changeSession("alice")
+        val filed = api.latestRows.first().copy(completed = true)
+        api.gate = CompletableDeferred()
+        val oldRefresh = launch { library.refresh() }
+        runCurrent() // Latest has returned the old row; the feeds request is still pending.
+        api.latestRows = emptyList()
+        val adoption = launch { library.acceptVoiceEpisode(filed, library.state.value.revision) }
+        runCurrent()
+        api.gate!!.complete(Unit)
+        oldRefresh.join(); adoption.join()
+        library.refresh()
+        assertTrue(library.state.value.items.first { it.episodeId == filed.id }.completed)
+        assertTrue(library.state.value.latestIds.isEmpty())
+    }
+
+    @Test fun anOlderItemLookupCannotOverwriteAConfirmedFiling() = runTest {
+        val api = Api()
+        val library = AccountLibrary(api, "https://media.invalid")
+        library.changeSession("alice")
+        val item = library.state.value.items.first { it.episodeId == 1 }
+        val filed = api.latestRows.first().copy(completed = true)
+        api.episodeGate = CompletableDeferred()
+        val lookup = launch { library.shortcutItem(item.id) }
+        runCurrent() // The lookup captured an old, unplayed row and is still pending.
+        val receipt = launch { library.acceptVoiceEpisode(filed, library.state.value.revision) }
+        runCurrent()
+        api.episodeGate!!.complete(Unit)
+        lookup.join(); receipt.join()
+        assertTrue(library.state.value.items.first { it.id == item.id }.completed)
+    }
+
 }

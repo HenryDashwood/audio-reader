@@ -201,15 +201,38 @@ class IncomingSharingTest {
         scenario!!.onActivity { activity ->
             val view = findWebView(activity.window.decorView)!!
             assertFalse(view.settings.allowFileAccess); assertFalse(view.settings.allowContentAccess)
-            view.stopLoading(); view.loadDataWithBaseURL("https://capture-fixture.invalid/article", html, "text/html", "UTF-8", "https://capture-fixture.invalid/article")
+            // Serve a normal document navigation. loadDataWithBaseURL can leave
+            // newer WebViews waiting on the previous invalid-host navigation.
+            val client = view.webViewClient
+            view.stopLoading()
+            view.webViewClient = object : android.webkit.WebViewClient() {
+                override fun shouldInterceptRequest(view: WebView, request: android.webkit.WebResourceRequest): android.webkit.WebResourceResponse? =
+                    if (request.url.toString() == "https://capture-fixture.invalid/article")
+                        android.webkit.WebResourceResponse("text/html", "UTF-8", html.byteInputStream())
+                    else client.shouldInterceptRequest(view, request)
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) = client.onPageStarted(view, url, favicon)
+                override fun onPageFinished(view: WebView, url: String) = client.onPageFinished(view, url)
+                override fun onReceivedError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError) =
+                    client.onReceivedError(view, request, error)
+                override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest) = client.shouldOverrideUrlLoading(view, request)
+            }
+            view.loadUrl("https://capture-fixture.invalid/article")
         }
         // WebView loading is asynchronous; wait until the enabled action is exposed.
         try {
-            compose.waitUntil(15_000) { runCatching { compose.onNodeWithText("Preview article").assertIsEnabled() }.isSuccess }
-        } catch (failure: Exception) { throw AssertionError(compose.onRoot().printToString(), failure) }
+            compose.waitUntil(15_000) { compose.onAllNodes(hasText("Preview article") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
+        } catch (failure: ComposeTimeoutException) {
+            screenshot("capture-browser-failure")
+            throw AssertionError(compose.onRoot().printToString(), failure)
+        }
         screenshot("capture-browser")
         compose.onNodeWithText("Preview article").performClick()
-        compose.waitUntil(15_000) { !model.state.value.browser }
+        try {
+            compose.waitUntil(15_000) { !model.state.value.browser }
+        } catch (failure: ComposeTimeoutException) {
+            screenshot("capture-extraction-failure")
+            throw AssertionError(compose.onRoot().printToString(), failure)
+        }
         compose.onNodeWithText("Save article").assertExists()
         screenshot("captured-article-preview")
         val article = model.state.value.article!!

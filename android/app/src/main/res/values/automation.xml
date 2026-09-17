@@ -1,0 +1,4 @@
+<resources>
+    <bool name="app_functions_supported">false</bool>
+    <string name="app_functions_description">Find podcasts and articles in your Magpie library and control your listening.</string>
+</resources>

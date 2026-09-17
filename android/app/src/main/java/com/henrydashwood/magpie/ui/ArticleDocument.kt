@@ -2,6 +2,7 @@ package com.henrydashwood.magpie.ui
 
 import com.henrydashwood.magpie.BuildConfig
 import com.henrydashwood.magpie.data.LibraryItem
+import com.henrydashwood.magpie.data.publicationDate
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Entities
@@ -137,6 +138,7 @@ object ArticleDocument {
     fun page(item: LibraryItem, body: String, fontSize: Float, ink: String, background: String,
         quiet: String, rule: String, link: String, dark: Boolean): String {
         val nonce = UUID.randomUUID().toString()
+        val date = publicationDate(item.publishedAt)?.let { " · <time>${escape(it)}</time>" }.orEmpty()
         return """
             <!doctype html><html><head><meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -165,7 +167,7 @@ object ArticleDocument {
             table { border-collapse: collapse; } th, td { border: 1px solid $rule; padding: .4em .6em; text-align: start; }
             a { color: $link; } hr { border: 0; border-top: 1px solid $rule; margin: 2em 0; }
             </style></head><body><div class="page">
-            <header><h1>${escape(item.title)}</h1><p class="byline">${escape(item.source)}</p></header>
+            <header><h1>${escape(item.title)}</h1><p class="byline">${escape(item.source)}$date</p></header>
             <main>$body</main></div></body></html>
         """.trimIndent()
     }

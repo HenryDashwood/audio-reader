@@ -17,6 +17,8 @@ import kotlinx.coroutines.withContext
 import com.henrydashwood.magpie.playback.VoiceCatalog
 import kotlinx.coroutines.Job
 import com.henrydashwood.magpie.data.LibraryItem
+import com.henrydashwood.magpie.data.ItemFiling
+import com.henrydashwood.magpie.data.ItemFilingAction
 import com.henrydashwood.magpie.data.PreviewStore
 import com.henrydashwood.magpie.playback.PlaybackService
 import com.henrydashwood.magpie.playback.PlaybackStatus
@@ -26,6 +28,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import com.henrydashwood.magpie.voice.*
+import com.henrydashwood.magpie.shortcuts.*
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.TimeoutCancellationException
 
 data class PlayerState(
     val item: LibraryItem? = null,
@@ -79,6 +89,17 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     val finished = mutableFinished.asStateFlow()
     private val mutablePlayer = MutableStateFlow(PlayerState(item = library.find { it.id == store.lastItem }, speed = store.speed(library.find { it.id == store.lastItem }?.kind ?: ContentKind.Podcast)))
     val player = mutablePlayer.asStateFlow()
+    fun listeningPresentation(item: LibraryItem, playback: PlayerState = player.value): com.henrydashwood.magpie.data.ListeningPresentation {
+        val current = playback.item?.id == item.id && playback.durationMs > 0
+        val live = libraryState.value.live
+        val offset = PlaybackStatus.readingPosition.value?.takeIf { current && it.itemId == item.id && it.contentVersion == item.contentVersion }?.startUtf16
+            ?: if (live) item.articleBookmark?.offsetUtf16 ?: 0 else store.bookmark(item.id)?.takeIf { it.contentVersion == item.contentVersion }?.offsetUtf16 ?: 0
+        return com.henrydashwood.magpie.data.listeningPresentation(item,
+            positionMs = if (current) playback.positionMs else if (live) item.remotePositionMs else store.position(item.id),
+            durationMs = if (current && item.kind == ContentKind.Podcast) playback.durationMs else (item.durationSeconds?.toLong() ?: 0) * 1_000,
+            completed = if (current && playback.positionMs > 0) false else item.id in finished.value,
+            articleOffset = offset)
+    }
     private fun readSettings() = ListeningSettings(store.speed(ContentKind.Podcast), store.speed(ContentKind.Article), store.voiceId)
     private val mutableSettings = MutableStateFlow(readSettings())
     val settings = mutableSettings.asStateFlow()
@@ -89,6 +110,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     val sleepTimer = PlaybackStatus.sleepTimer
     private val mutableNotice = MutableStateFlow<String?>(null)
     val notice = mutableNotice.asStateFlow()
+    val newsletters = com.henrydashwood.magpie.data.Newsletters(viewModelScope, repository) { mutableNotice.value = it }
     val sourceManager = com.henrydashwood.magpie.data.SourceManager(viewModelScope, repository) { mutableNotice.value = it }
     val savedPreparation = com.henrydashwood.magpie.data.SavedPreparation(viewModelScope, repository,
         (application as MagpieApplication).articleInbox, { mutableNotice.value = it }, { before, after ->
@@ -96,14 +118,63 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         })
     private var controller: MediaController? = null
     private val connection = MediaController.Builder(application, SessionToken(application, ComponentName(application, PlaybackService::class.java))).buildAsync()
+    val speechInput by lazy { (getApplication<Application>() as MagpieApplication).voiceInput() }
+    private val mutableConversationSettings = MutableStateFlow(store.conversation)
+    val diagnosticsEnabled get() = (getApplication<Application>() as MagpieApplication).diagnosticsEnabled
+    fun setDiagnosticsEnabled(enabled: Boolean) = (getApplication<Application>() as MagpieApplication).setDiagnosticsEnabled(enabled)
+    val conversationSettings = mutableConversationSettings.asStateFlow()
+    fun setConversationPreferences(value: ConversationPreferences) { store.conversation = value; mutableConversationSettings.value = value }
+    val voice by lazy {
+        VoiceSession(viewModelScope, PlaybackVoiceHost(repository, store, { player.value.item }, {
+            contentJob?.cancel(); voiceCatalog.stop(); voiceRefresh?.cancel()
+        }, ::voiceCommand), speechInput,
+            (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, { store.conversation }, repository.voiceConversation, com.henrydashwood.magpie.telemetry.LibraryVoiceTelemetry(repository))
+    }
+    val newsletterSpeech by lazy {
+        com.henrydashwood.magpie.voice.SpokenInformation(viewModelScope,
+            PlaybackVoiceHost(repository, store, { player.value.item }, { voiceCatalog.stop(); voiceRefresh?.cancel(); contentJob?.cancel() }, ::voiceCommand),
+            (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, repository.voiceConversation) {
+                mutableNotice.value = it
+            }
+    }
+    val itemFiling by lazy {
+        ItemFiling(viewModelScope, repository,
+            PlaybackVoiceHost(repository, store, { player.value.item }, {
+                voiceCatalog.stop(); voiceRefresh?.cancel(); contentJob?.cancel()
+            }, ::voiceCommand, resetRestoredBookmark = true)) { mutableNotice.value = it }
+    }
+    fun readNewsletterAddress(spell: Boolean) {
+        val state = newsletters.state.value
+        val address = state.address ?: return
+        if (!libraryState.value.live || state.revision != libraryState.value.revision) return
+        newsletterSpeech.speak(if (spell) "Your newsletter address is spelled ${address.spelledOut}" else "Your newsletter address is ${address.spoken}")
+    }
+    private suspend fun voiceCommand(action: String, args: Bundle): Bundle {
+        val media = controller?.takeIf { it.isConnected } ?: throw VoiceFailure("The player is still connecting. Please try again.")
+        val result = withTimeout(if (args.getString("action") == "drain") 30_000 else 5_000) {
+            suspendCancellableCoroutine<androidx.media3.session.SessionResult> { continuation ->
+                val future = media.sendCustomCommand(SessionCommand(action, Bundle.EMPTY), args)
+                future.addListener({
+                    if (continuation.isActive) try { continuation.resume(future.get()) }
+                    catch (failure: Exception) { continuation.resumeWithException(failure) }
+                }, getApplication<Application>().mainExecutor)
+            }
+        }
+        if (result.resultCode < 0) throw VoiceFailure("Playback changed or is not ready for that request. Please try again.")
+        updatePlayer()
+        return result.extras
+    }
 
     init {
         viewModelScope.launch {
             var revision = -1
             repository.state.collect { snapshot ->
+                voice.activate()
                 if (revision != snapshot.revision) {
                     revision = snapshot.revision
                     discovery.reset()
+                    newsletters.reset(snapshot.revision)
+                    newsletterSpeech.stop(resume = false)
                     sourceManager.reset()
                     contentJob?.cancel()
                     mutableItemLoading.value = null
@@ -111,6 +182,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                     mutableLinkCapture.value = LinkCaptureState()
                     mutableSourceCapture.value = LinkCaptureState()
                     mutableNotice.value = null
+                    itemFiling.reset()
                     mutableClearingLatest.value = false
                     mutableClearLatestError.value = null
                     mutableImportingLinks.value = false
@@ -136,6 +208,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
             } catch (_: Exception) { mutableNotice.value = "The player could not connect. Close and reopen Magpie to try again." }
         }, application.mainExecutor)
         viewModelScope.launch { while (isActive) { delay(500); updatePlayer() } }
+        viewModelScope.launch { PlaybackStatus.voiceToken.collect { voice.playbackChanged(it); newsletterSpeech.playbackChanged(it) } }
     }
 
     private fun updatePlayer() {
@@ -154,11 +227,96 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun refreshLibrary() { if (libraryState.value.live) viewModelScope.launch { repository.refresh(); savedPreparation.sync() } }
+    fun refreshLibrary() { if (libraryState.value.live) { newsletters.loadPending(); viewModelScope.launch { repository.refresh(); savedPreparation.sync() } } }
+    private var shortcutJob: kotlinx.coroutines.Job? = null
+    private var shortcutVersion = 0
+    private val mutableShortcutWorking = MutableStateFlow<String?>(null)
+    val shortcutWorking = mutableShortcutWorking.asStateFlow()
+    private val mutableShortcutNavigation = MutableStateFlow<ShortcutRequest?>(null)
+    val shortcutNavigation = mutableShortcutNavigation.asStateFlow()
+    fun consumeShortcutNavigation() { mutableShortcutNavigation.value = null }
+    fun cancelShortcut() { shortcutVersion++; shortcutJob?.cancel(); shortcutJob = null; mutableShortcutWorking.value = null }
+    fun runShortcut(request: ShortcutRequest) {
+        cancelShortcut()
+        val version = shortcutVersion
+        val controls = PlaybackStatus.controlVersion.value
+        val initial = libraryState.value
+        mutableNotice.value = null
+        mutableShortcutWorking.value = request.action.label
+        shortcutJob = viewModelScope.launch {
+            try {
+                withTimeout(30_000) {
+                    fun checkScope() {
+                        check(libraryState.value.revision == initial.revision && libraryState.value.live == initial.live) { "Your account changed. Open the shortcut again." }
+                        check(request.owner == null || request.owner == (libraryState.value.owner ?: if (!libraryState.value.live) "sample" else null)) { "This shortcut belongs to another account. Sign in to that account or create a new shortcut." }
+                    }
+                    // A delayed assistant handoff must be validated before it can
+                    // close a conversation, change a screen, or prepare content.
+                    if (request.owner != null) libraryState.first { !it.loading }
+                    checkScope()
+                    if (request.action == ShortcutAction.RunRequest) {
+                        val context = repository.voiceConversation
+                        check(!context.executing) { "Magpie is already handling a request. Let it finish, then continue in Ask Magpie." }
+                        val state = libraryState.value
+                        val pending = repository.voiceHandoffs.consume(checkNotNull(request.handoffId),
+                            "${state.revision}:${state.owner}:${state.live}", context.generation(), context.pending?.requestId)
+                        contentJob?.cancel()
+                        mutableShortcutNavigation.value = request
+                        voice.continueRequest(pending)
+                        return@withTimeout
+                    }
+                    contentJob?.cancel()
+                    if (request.action in setOf(ShortcutAction.Ask, ShortcutAction.Saved, ShortcutAction.Following, ShortcutAction.OpenLatest, ShortcutAction.Shortcuts, ShortcutAction.Player)) {
+                        voice.close(resume = false)
+                        mutableShortcutNavigation.value = request
+                        if (request.action == ShortcutAction.Ask) voice.open(null, listenOnOpen = request.listenOnOpen)
+                        return@withTimeout
+                    }
+                    val snapshot = libraryState.first { !it.loading }
+                    fun checkAccount() {
+                        checkScope()
+                        check(PlaybackStatus.controlVersion.value == controls) { "Playback changed. Open the shortcut again when you are ready." }
+                    }
+                    checkAccount()
+                    check(!snapshot.live || snapshot.owner != null) { "Your library could not load. Open Magpie and try again." }
+                    if (request.action == ShortcutAction.OpenFeed) {
+                        check(snapshot.feeds.any { it.id == request.feedId }) { "That show is no longer followed. Find it again." }
+                        voice.close(resume = false)
+                        mutableShortcutNavigation.value = request
+                        return@withTimeout
+                    }
+                    player.first { it.connected }
+                    checkAccount()
+                    val item = when (request.action) {
+                        ShortcutAction.Continue -> player.value.item ?: (store.continuation(snapshot.owner) ?: store.lastItem)?.let { repository.shortcutItem(it) }
+                            ?: throw IllegalStateException("There is nothing to continue yet. Choose Play latest or open an item first.")
+                        ShortcutAction.ReadItem, ShortcutAction.PlayItem -> repository.shortcutItem(checkNotNull(request.itemId))
+                        ShortcutAction.Latest, ShortcutAction.PlayFeed -> repository.shortcutItems(request.feedId).firstOrNull {
+                            !it.completed && !it.dismissed && it.captureError == null && (snapshot.live || it.id !in finished.value && it.id !in dismissedFromLatest.value)
+                        } ?: throw IllegalStateException("There is nothing new to listen to here.")
+                        else -> return@withTimeout
+                    }
+                    checkAccount()
+                    val loaded = if (item.textLoaded) item else repository.content(item.id)
+                    checkAccount()
+                    voice.close(resume = false)
+                    mutableShortcutNavigation.value = request.copy(itemId = loaded.id)
+                    if (request.action != ShortcutAction.ReadItem) playReady(loaded)
+                }
+            } catch (_: TimeoutCancellationException) {
+                mutableNotice.value = "That shortcut took too long. Open Magpie and try again."
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (failure: Exception) {
+                mutableNotice.value = failure.message ?: "That shortcut could not finish. Please try again."
+            } finally { if (version == shortcutVersion) mutableShortcutWorking.value = null }
+        }
+    }
+    fun ask(viewedEpisodeId: Int? = null) { cancelShortcut(); voice.open(viewedEpisodeId) }
     suspend fun searchLibrary(feedId: String?, query: String) {
         if (libraryState.value.live && libraryState.value.owner != null) repository.search(feedId, query)
     }
     fun openItem(item: LibraryItem, play: Boolean = false) {
+        if (play) { cancelShortcut(); voice.close(resume = false) }
         contentJob?.cancel()
         mutableItemError.value = null
         if (!libraryState.value.live || item.textLoaded) { if (play) playReady(item); return }
@@ -192,6 +350,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         if (player.value.playing) controller?.pause() else player.value.item?.let(::play)
     }
     fun pause() {
+        cancelShortcut()
         if (preparation.value.message != null) cancelPreparation()
         controller?.pause()
     }
@@ -229,6 +388,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         controller?.sendCustomCommand(SessionCommand(PlaybackService.CANCEL_PREPARATION, Bundle.EMPTY), Bundle.EMPTY)
     }
     fun dismissPlayer() {
+        cancelShortcut()
         voiceCatalog.stop()
         val media = controller
         if (media == null || !media.isConnected) {
@@ -398,14 +558,34 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleFinished(item: LibraryItem) {
-        if (libraryState.value.live) { libraryAction { repository.played(item, item.id !in finished.value) }; return }
-        val next = if (item.id in finished.value) finished.value - item.id else finished.value + item.id
-        store.finished = next
-        mutableFinished.value = next
-        mutableNotice.value = if (item.id in next) "Marked as read: ${item.title}" else "Marked as unread: ${item.title}"
+        fileItem(item, if (item.id in finished.value) ItemFilingAction.Restore else ItemFilingAction.Finish)
+    }
+    fun fileItem(item: LibraryItem, action: ItemFilingAction) {
+        if (libraryState.value.live) { itemFiling.file(item, action); return }
+        val revision = libraryState.value.revision
+        libraryAction {
+            fun checkSample() {
+                if (libraryState.value.live || libraryState.value.revision != revision) throw CancellationException("Account changed")
+            }
+            checkSample()
+            if (player.value.item?.id == item.id) voiceCommand(PlaybackService.DISMISS_PLAYER, Bundle.EMPTY)
+            checkSample()
+            withContext(Dispatchers.IO) { store.fileSample(item.id, action) }
+            checkSample()
+            mutableFinished.value = store.finished
+            mutableDismissedFromLatest.value = store.dismissedFromLatest
+            mutableNotice.value = when (action) {
+                ItemFilingAction.Finish -> if (item.kind == ContentKind.Article) "Marked as read" else "Marked as played"
+                ItemFilingAction.Restore -> "Restored"
+                ItemFilingAction.Dismiss -> "Dismissed from Latest"
+            } + ": ${item.title}"
+        }
     }
 
     override fun onCleared() {
+        itemFiling.reset()
+        newsletterSpeech.stop(resume = false)
+        voice.close(resume = false)
         closeVoiceSettings()
         MediaController.releaseFuture(connection)
     }

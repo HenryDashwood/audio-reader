@@ -95,7 +95,7 @@ struct PlayerDismissalTests {
         // something she has just heard to the end as unplayed.
         let (coordinator, synthesizer, api) = makeCoordinator()
         // Held for the length of the test: it works purely by observing.
-        let reporter = PositionReporter(api: api, player: coordinator)
+        let reporter = PositionReporter(api: api, player: coordinator, sessionScope: { nil })
         // Make an older incomplete update finish slowly. Without the reporter's
         // ordering guarantee it would arrive after the completion update and
         // put the episode back into an unfinished state.

@@ -47,6 +47,7 @@ class MagpieNavigationTest {
         compose.onNodeWithContentDescription("Search").performClick()
         compose.onNodeWithText("Search this show").performTextInput("blackbird")
         compose.onNodeWithContentDescription("Close search").performClick()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasContentDescription("Manage Field notes"))
         compose.onNodeWithContentDescription("Manage Field notes").assertIsDisplayed()
     }
 
@@ -73,7 +74,7 @@ class MagpieNavigationTest {
             if (tab != "Following") compose.onNodeWithText(tab).performClick()
             compose.onAllNodesWithContentDescription("Ask Magpie").assertCountEquals(1)
             compose.onNodeWithContentDescription("Ask Magpie").performClick()
-            compose.onNodeWithText("No microphone audio is being recorded.", substring = true).assertIsDisplayed()
+            compose.onNodeWithText("Type a request").assertIsDisplayed()
             if (tab == "Settings") compose.activityRule.scenario.recreate()
             compose.onNodeWithText("Close").performClick()
         }
@@ -85,6 +86,7 @@ class MagpieNavigationTest {
         compose.onNodeWithText("Close").performClick()
         compose.onNodeWithText("Search this show").assertTextContains("pleasure")
         compose.onNodeWithContentDescription("Close search").performClick()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasContentDescription("Manage Field notes"))
         compose.onNodeWithContentDescription("Manage Field notes").assertIsDisplayed()
     }
 

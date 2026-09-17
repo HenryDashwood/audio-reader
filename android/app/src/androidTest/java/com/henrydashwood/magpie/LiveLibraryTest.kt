@@ -35,14 +35,16 @@ class LiveLibraryTest {
             if (failing) throw java.io.IOException()
             return listOf(LibraryFeed("10", "Account publication", 12, false), LibraryFeed("20", "Empty publication", 0, true))
         }
-        override suspend fun latest(token: String) = listOf(podcast)
-        override suspend fun saved(token: String) = listOf(article)
+        override suspend fun latest(token: String): List<RemoteEpisode> { if (failing) throw java.io.IOException(); return listOf(podcast) }
+        override suspend fun saved(token: String): List<RemoteEpisode> { if (failing) throw java.io.IOException(); return listOf(article) }
         override suspend fun episodes(token: String, feedId: String, query: String): List<RemoteEpisode> {
+            if (failing) throw java.io.IOException()
             requestedFeed = feedId
             return if (feedId == "20") emptyList() else listOf(podcast)
         }
         override suspend fun search(token: String, query: String) = listOf(podcast)
         override suspend fun text(token: String, episodeId: Int, contentId: Int?): RemoteText {
+            if (failing) throw java.io.IOException()
             requestedContent = contentId
             return RemoteText(episodeId, 77, "Account article full text.", "<p>Account article full text.</p>", 4)
         }
@@ -112,6 +114,62 @@ class LiveLibraryTest {
         runBlocking(Dispatchers.Main) { repository.changeSession(null) }
         compose.waitUntil(10_000) { model.player.value.item == null && !model.player.value.playing }
     }
+    @Test fun diskCachedLibraryAndArticleOpenAfterRepositoryRecreationWithoutNetwork() {
+        val directory = java.io.File(app.noBackupFilesDir, "offline-test-${java.util.UUID.randomUUID()}")
+        val identityName = "offline-identity-${java.util.UUID.randomUUID()}"
+        val identity = ArticleInboxStore(app, identityName)
+        try {
+            val online = AccountLibrary(api, "https://test.invalid", identityStore = identity, cache = FileLibraryCache(directory))
+            runBlocking(Dispatchers.Main) {
+                online.changeSession("test-session")
+                online.content(online.state.value.savedIds.single())
+            }
+            // New repository and disk-store instances have no in-memory article/list cache.
+            api.failing = true
+            repository = AccountLibrary(api, "https://test.invalid", identityStore = ArticleInboxStore(app, identityName), cache = FileLibraryCache(directory))
+            runBlocking(Dispatchers.Main) { repository.changeSession("test-session") }
+            app.libraryOverride = repository
+            launch()
+            compose.onNodeWithText("Account publication").assertIsDisplayed()
+            compose.onNodeWithText("Could not connect to Magpie. Check your connection and try again.").assertIsDisplayed()
+            compose.onNodeWithText("Field notes").assertDoesNotExist()
+            compose.onNodeWithText("Saved").performClick()
+            compose.onNodeWithText("A saved account article").assertIsDisplayed().performClick()
+            compose.onNodeWithTag("article-webview").assertExists()
+            assertEquals("Account article full text.", repository.state.value.items.single { it.episodeId == 2 }.text)
+            fun browser(view: android.view.View): com.henrydashwood.magpie.ui.ArticleWebView? {
+                if (view is com.henrydashwood.magpie.ui.ArticleWebView) return view
+                if (view is android.view.ViewGroup) for (index in 0 until view.childCount) browser(view.getChildAt(index))?.let { return it }
+                return null
+            }
+            val rendered = java.util.concurrent.atomic.AtomicReference<String?>()
+            val painted = java.util.concurrent.atomic.AtomicBoolean()
+            var ready = false
+            compose.waitUntil(10_000) {
+                scenario!!.onActivity { activity -> ready = browser(activity.window.decorView)?.ready == true }
+                ready
+            }
+            scenario!!.onActivity { activity ->
+                val view = checkNotNull(browser(activity.window.decorView))
+                view.evaluateJavascript("document.body.innerText") { rendered.set(it) }
+                view.postVisualStateCallback(1, object : android.webkit.WebView.VisualStateCallback() {
+                    override fun onComplete(requestId: Long) { painted.set(true) }
+                })
+            }
+            compose.waitUntil(10_000) { rendered.get() != null && painted.get() }
+            assertTrue(rendered.get()!!.contains("Account article full text."))
+            val instrument = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            compose.waitForIdle()
+            val bitmap = checkNotNull(instrument.uiAutomation.takeScreenshot())
+            val output = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let { java.io.File(it) } ?: directory
+            output.mkdirs()
+            java.io.File(output, "offline-restored-reader.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            runBlocking(Dispatchers.Main) { repository.changeSession(null) }
+            compose.onNodeWithTag("article-webview").assertDoesNotExist()
+            assertTrue(directory.listFiles().orEmpty().isEmpty())
+        } finally { directory.deleteRecursively(); app.deleteSharedPreferences(identityName) }
+    }
+
     @Test fun wireDecodingHandlesNullsSavedVersionsAndUntrustedAudioUrls() {
         val row = HttpLibraryApi.decodeEpisode(JSONObject("""{"id":9,"title":"Saved","description":null,"feed_title":null,
             "audio_url":null,"duration_seconds":null,"position_seconds":null,"word_count":null,"content_id":88,"has_text":true}"""))

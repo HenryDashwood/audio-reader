@@ -599,6 +599,68 @@ struct AuthAndPositionTests {
         #expect(body["authorization_code"] == nil)
     }
 
+    @Test func articleProgressRetainsExactTextCoordinatesAndAcknowledgesAnOlderWrite() async throws {
+        let version = String(repeating: "a", count: 64)
+        let accepted = String(repeating: "b", count: 64)
+        let current = String(repeating: "c", count: 64)
+        let json = """
+            {"accepted_revision":"\(accepted)","episode":{"id":104,"title":"Article","has_text":true,
+            "article_bookmark":{"text_version":"\(version)","offset_utf16":19}},
+            "progress":{"text_version":"\(version)","revision":"\(current)","content_id":8,
+            "bookmark":{"text_version":"\(version)","offset_utf16":19}}}
+            """
+        let transport = FakeTransport(json: json)
+        let report = ArticleProgressReport(requestID: "original", expectedRevision: accepted,
+            textVersion: version, contentID: 8, offsetUTF16: 9, completed: false)
+        let receipt = try await withToken("tok") {
+            try await makeClient(transport).reportArticleProgress(episodeID: 104, report: report)
+        }
+        #expect(receipt.changedSinceAcceptance)
+        #expect(receipt.episode.articleBookmark?.offsetUTF16 == 19)
+        let request = try #require(transport.lastRequest)
+        #expect(request.httpMethod == "PUT")
+        #expect(request.url?.path == "/episodes/104/article-progress")
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer tok")
+        let sent = try JSONDecoder().decode(ArticleProgressReport.self, from: #require(request.httpBody))
+        #expect(sent == report)
+        let body = try JSONSerialization.jsonObject(with: #require(request.httpBody)) as? [String: Any]
+        #expect(body?["position_seconds"] == nil)
+        #expect(body?["offset_utf16"] as? Int == 9)
+    }
+
+    @Test func articleTextFromOlderServersAndCachesDoesNotClaimBookmarkSupport() throws {
+        let old = try JSONDecoder().decode(EpisodeText.self, from: Data(#"{"episode_id":104,"title":"Old","text":"Text"}"#.utf8))
+        #expect(old.articleProgress == nil)
+        let version = String(repeating: "a", count: 64)
+        let json = """
+            {"episode_id":104,"title":"Reading","text":"First 🌱 café", "article_progress":{
+            "text_version":"\(version)","revision":"\(version)","bookmark":{"text_version":"\(version)","offset_utf16":9}}}
+            """
+        let article = try JSONDecoder().decode(EpisodeText.self, from: Data(json.utf8))
+        #expect(article.articleProgress?.isValid == true)
+        #expect(article.articleProgress?.bookmark?.offsetUTF16 == 9)
+        #expect(try JSONDecoder().decode(EpisodeText.self, from: JSONEncoder().encode(article)) == article)
+    }
+
+    @Test func invalidArticleProgressNeverBecomesAnAcknowledgement() async throws {
+        let version = String(repeating: "a", count: 64)
+        let json = """
+            {"accepted_revision":"bad","episode":{"id":105,"title":"Wrong item"},
+            "progress":{"text_version":"\(version)","revision":"\(version)"}}
+            """
+        let transport = FakeTransport(json: json)
+        let report = ArticleProgressReport(requestID: "original", expectedRevision: version,
+            textVersion: version, contentID: nil, offsetUTF16: 9, completed: false)
+        await #expect(throws: APIError.self) {
+            try await makeClient(transport).reportArticleProgress(episodeID: 104, report: report)
+        }
+        let unused = FakeTransport(json: json)
+        await #expect(throws: APIError.self) {
+            try await makeClient(unused).reportArticleProgress(episodeID: -1, report: report)
+        }
+        #expect(unused.lastRequest == nil)
+    }
+
     @Test func reportPositionSendsAPut() async throws {
         let transport = FakeTransport(status: 204, json: "")
         try await withToken("tok") {
@@ -644,10 +706,11 @@ struct AuthAndPositionTests {
         let json = """
             {"id":104,"title":"t","description":null,"audio_url":"https://x/y.mp3",
              "duration_seconds":2700,"published_at":null,"link":null,
-             "position_seconds":125.5,"completed":false}
+             "position_seconds":125.5,"completed":false,"progress_revision":"revision-one"}
             """
         let episode = try await makeClient(FakeTransport(json: json)).episode(id: 104)
         #expect(episode.positionSeconds == 125.5)
+        #expect(episode.progressRevision == "revision-one")
         #expect(episode.completed == false)
     }
 
@@ -659,6 +722,7 @@ struct AuthAndPositionTests {
             """
         let episode = try await makeClient(FakeTransport(json: json)).episode(id: 104)
         #expect(episode.positionSeconds == nil)
+        #expect(episode.progressRevision == nil)
         #expect(episode.imageURL == nil)
     }
 

@@ -7,6 +7,8 @@ data class SourceResult(val title: String, val url: String, val publisher: Strin
 data class RemotePreview(val feed: LibraryFeed, val episodes: List<RemoteEpisode>, val subscribed: Boolean)
 data class SourcePreview(val feed: LibraryFeed, val itemIds: List<String>, val subscribed: Boolean, val sessionRevision: Int = 0)
 data class SourceMatches(val sources: List<SourceResult>, val itemIds: List<String>, val error: String? = null)
+data class PublicationChoice(val id: String, val title: String, val url: String)
+data class PublicationFollow(val feed: LibraryFeed?, val choices: List<PublicationChoice> = emptyList(), val alreadyFollowed: Boolean = false)
 
 interface DiscoveryApi {
     suspend fun directory(token: String, query: String): List<SourceResult>

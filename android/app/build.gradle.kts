@@ -1,7 +1,10 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.google.devtools.ksp")
 }
+
+ksp { arg("appfunctions:aggregateAppFunctions", "true") }
 
 android {
     namespace = "com.henrydashwood.magpie"
@@ -56,8 +59,14 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
     implementation("androidx.media3:media3-exoplayer:1.11.0")
     implementation("androidx.media3:media3-session:1.11.0")
+    implementation("androidx.appfunctions:appfunctions:1.0.0-alpha11")
+    ksp("androidx.appfunctions:appfunctions-compiler:1.0.0-alpha11")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("org.jsoup:jsoup:1.23.2")
+    // Coil 3.3 uses Kotlin 2.2, matching the project compiler.
+    implementation("io.coil-kt.coil3:coil-compose:3.3.0")
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.3.0")
+    androidTestImplementation("io.coil-kt.coil3:coil-test:3.3.0")
     implementation("androidx.browser:browser:1.10.0")
     implementation("androidx.credentials:credentials:1.6.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
@@ -66,6 +75,8 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
+    // Older transitive Espresso versions reflect on InputManager APIs removed in API 36.1.
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

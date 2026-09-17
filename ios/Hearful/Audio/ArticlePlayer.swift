@@ -10,6 +10,26 @@ nonisolated struct ArticleSpokenLocation: Equatable, Sendable {
     let rangeInArticle: NSRange
 }
 
+/// An immutable source identity and a text coordinate, retained when the reading
+/// marker disappears. Events carry their own outgoing item rather than inspecting
+/// whichever item the coordinator has selected by the time a report runs.
+nonisolated struct ArticlePlaybackContext: Equatable, Sendable {
+    let episodeID: Int
+    let playbackID: UUID
+    let progress: ArticleProgressState
+    var offsetUTF16: Int
+    var completed = false
+    var hasPlayed = false
+    var sample: ArticleProgressSample {
+        ArticleProgressSample(textVersion: progress.textVersion, contentID: progress.contentID,
+            offsetUTF16: offsetUTF16, completed: completed)
+    }
+}
+nonisolated enum ArticlePlaybackEvent: Sendable {
+    case prepared(ArticlePlaybackContext)
+    case sample(ArticlePlaybackContext, flush: Bool)
+}
+
 /// Reads articles aloud with the on-device voice, presenting itself to the
 /// rest of the app exactly like audio playback: an (estimated) timeline in
 /// seconds, so the scrubber, skip buttons, saved positions and lock screen
@@ -41,6 +61,14 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// Exact text position for the on-screen reading marker. Nil before an
     /// article has started, and whenever article speech is no longer active.
     @Published private(set) var spokenLocation: ArticleSpokenLocation?
+
+    private(set) var progressContext: ArticlePlaybackContext?
+    let progressEvents = PassthroughSubject<ArticlePlaybackEvent, Never>()
+    let bookmarkJournal: ArticleProgressJournal
+    let progressScope: () -> String?
+    var progressDrain: (() async -> Void)?
+    private var sourceUTF16: [UInt16] = []
+    @Published var progressError: String?
 
     private var synthesizer: SpeechSynthesizing
     private let makeSynthesizer: @MainActor () -> SpeechSynthesizing
@@ -75,11 +103,15 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         cache: OfflineCache = .shared,
         synthesizer: SpeechSynthesizing? = nil,
         defaults: UserDefaults = .standard,
+        bookmarkJournal: ArticleProgressJournal = .shared,
+        progressScope: @escaping () -> String? = { ShortcutScope.current },
         makeSynthesizer: @escaping @MainActor () -> SpeechSynthesizing = SpeechSynthesizers.make,
         activateAudioSession: @escaping @MainActor () throws -> Void = AudioSession.configureForPlayback
     ) {
         self.api = api
         self.cache = cache
+        self.bookmarkJournal = bookmarkJournal
+        self.progressScope = progressScope
         let synthesizer = synthesizer ?? makeSynthesizer()
         self.synthesizer = synthesizer
         self.makeSynthesizer = makeSynthesizer
@@ -112,12 +144,13 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     }
 
     func play(_ episode: Episode) {
+        var selected = episode
         if episode.id == currentEpisode?.id, episode.contentID == currentEpisode?.contentID, script != nil {
-            wantsPlayback = true
-            speakCurrentChunk()
-            return
+            // Older servers still resume locally when offline. A modern text
+            // bookmark replaces this fallback after the explicit refresh.
+            selected.positionSeconds = currentTime
         }
-        load(episode, andPlay: true)
+        load(selected, andPlay: true)
     }
 
     func pause() {
@@ -127,6 +160,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             synthesizer.pauseSpeaking(at: .word)
         }
         isPlaying = false
+        publishProgress(flush: true)
     }
 
     /// A call or an alarm has taken the audio.
@@ -139,6 +173,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         needsInterruptionRecovery = true
         cancelSpeech(clearingLocation: false)
         isPlaying = false
+        publishProgress(flush: true)
     }
 
     /// A refused audio-session activation is retriable by the coordinator.
@@ -151,6 +186,8 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             guard activateSessionForSpeech() else { return }
             synthesizer.continueSpeaking()
             isPlaying = true
+            progressContext?.hasPlayed = true
+            publishProgress(flush: false)
         } else if script != nil {
             speakCurrentChunk()
         } else {
@@ -185,6 +222,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             cancelSpeech()
             publishChunkStart(index, in: script)
         }
+        publishProgress(flush: true)
     }
 
     /// Restarts the current chunk at the new speaking rate — a small rewind,
@@ -218,6 +256,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     /// Called when audio playback takes over: stop making sound, keep state.
     func deactivate() {
+        publishProgress(flush: true)
         wantsPlayback = false
         cancelSpeech()
         isPlaying = false
@@ -231,6 +270,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         loadTask = nil
         deactivate()
         currentEpisode = nil
+        progressContext = nil
+        sourceUTF16 = []
+        progressError = nil
         loadingError = nil
         script = nil
         chunkIndex = 0
@@ -245,6 +287,8 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         deactivate()
         wantsPlayback = andPlay
         currentEpisode = episode
+        progressContext = nil
+        sourceUTF16 = []
         loadingError = nil
         script = nil
         chunkIndex = 0
@@ -256,6 +300,8 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         PlaybackRestore.remember(episodeID: episode.id)
 
         loadTask = Task { [weak self, api, cache] in
+            if andPlay { await self?.progressDrain?() }
+            guard !Task.isCancelled else { return }
             // ArticleView has already saved this exact payload after showing
             // it. Reading must use the same copy first: asking the server for
             // text we can see makes a brief outage turn a readable article
@@ -270,7 +316,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
                 episode.link != nil
                 && (saved?.text.count ?? Self.likelyTeaserCharacterLimit)
                     < Self.likelyTeaserCharacterLimit
-            if let saved, !saved.text.isEmpty, !savedMayBeFeedTeaser {
+            if !andPlay, let saved, !saved.text.isEmpty, !savedMayBeFeedTeaser {
                 guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id else {
                     return
                 }
@@ -279,14 +325,19 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             }
 
             do {
-                let article = try await api.articleText(episodeID: episode.id, contentID: episode.contentID)
+                let selection = andPlay && saved?.articleProgress != nil
+                    ? try await api.episode(id: episode.id) : episode
+                try Task.checkCancellation()
+                let article = try await api.articleText(episodeID: episode.id, contentID: selection.contentID)
                 guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id else {
                     return
                 }
-                if let expected = episode.contentID, article.contentID != expected {
+                if let expected = selection.contentID, article.contentID != expected {
                     throw APIError(underlying: "The server returned a different article version")
                 }
-                cache.save(article, for: key)
+                let selectedKey: OfflineCache.Key = article.contentID.map { .articleVersion(episodeID: episode.id, contentID: $0) } ?? .articleText(episodeID: episode.id)
+                cache.save(article, for: selectedKey)
+                self.currentEpisode = selection
                 self.textLoaded(article)
             } catch {
                 guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id else {
@@ -316,7 +367,30 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             currentEpisode?.completed = false
         }
         currentEpisode?.contentID = article.contentID
-        scriptLoaded(ArticleScript(text: article.text))
+        sourceUTF16 = Array(article.text.utf16)
+        let loaded = ArticleScript(text: article.text)
+        if let progress = article.articleProgress {
+            guard progress.isValid, progress.textVersion == ArticleScript.textVersion(article.text),
+                progress.contentID == article.contentID,
+                progress.bookmark.map({ ArticleScript.isScalarBoundary($0.offsetUTF16, in: article.text) }) ?? true,
+                let episode = currentEpisode
+            else { loadFailed(with: APIError(underlying: "Invalid article bookmark")); return }
+            var offset = episode.completed == true ? 0 : progress.bookmark?.offsetUTF16 ?? 0
+            if let owner = progressScope() {
+                do {
+                    if let local = try bookmarkJournal.resume(owner: owner, episodeID: episode.id, progress: progress) {
+                        offset = local.completed ? 0 : local.offsetUTF16
+                    }
+                } catch { progressError = "Your saved listening progress could not be read." }
+            }
+            guard ArticleScript.isScalarBoundary(offset, in: article.text) else {
+                loadFailed(with: APIError(underlying: "Invalid saved article bookmark")); return
+            }
+            currentTime = loaded.index(atUTF16: offset).map { loaded.chunks[$0].start } ?? 0
+            progressContext = ArticlePlaybackContext(episodeID: episode.id, playbackID: UUID(), progress: progress, offsetUTF16: offset)
+            progressEvents.send(.prepared(progressContext!))
+        }
+        scriptLoaded(loaded)
     }
 
     private func scriptLoaded(_ loaded: ArticleScript) {
@@ -383,7 +457,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         utterance.postUtteranceDelay = 0.15
         currentUtterance = ObjectIdentifier(utterance)
         synthesizer.speak(utterance)
+        progressContext?.hasPlayed = true
         isPlaying = true
+        publishProgress(flush: false)
     }
 
     private func activateSessionForSpeech() -> Bool {
@@ -432,6 +508,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             // The end of the article. Position lands on the full duration so
             // the position reporter records it as completed.
             wantsPlayback = false
+            progressContext?.offsetUTF16 = sourceUTF16.count
+            progressContext?.completed = true
+            publishProgress(flush: true)
             isPlaying = false
             currentTime = duration
             chunkIndex = 0
@@ -458,6 +537,10 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             rangeInArticle: NSRange(
                 location: chunk.textRange.location + location,
                 length: length))
+        if ArticleScript.isScalarBoundary(chunk.textRange.location + location, inUTF16: sourceUTF16) {
+            progressContext?.offsetUTF16 = chunk.textRange.location + location
+            publishProgress(flush: false)
+        }
         let fraction = Double(location) / Double(max(utteranceLength, 1))
         currentTime = chunk.start + chunk.duration * min(fraction, 1)
     }
@@ -465,8 +548,36 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// A seek and a chunk transition have a meaningful position before the
     /// voice begins its next word. Publishing the zero-width start keeps the
     /// marker from lingering on the old line during that short gap.
+    func cachedArticleProgress(episodeID: Int, contentID: Int?) -> ArticleProgressState? {
+        let key: OfflineCache.Key = contentID.map { .articleVersion(episodeID: episodeID, contentID: $0) } ?? .articleText(episodeID: episodeID)
+        return cache.load(EpisodeText.self, for: key)?.articleProgress
+    }
+
+    func acceptArticleProgress(_ receipt: ArticleProgressReceipt, replacing observed: ArticleProgressState?, playbackID: UUID?) {
+        let key: OfflineCache.Key = receipt.progress.contentID.map {
+            .articleVersion(episodeID: receipt.episode.id, contentID: $0)
+        } ?? .articleText(episodeID: receipt.episode.id)
+        if var text = cache.load(EpisodeText.self, for: key), text.articleProgress == observed,
+            ArticleScript.textVersion(text.text) == receipt.progress.textVersion, text.contentID == receipt.progress.contentID {
+            text.articleProgress = receipt.progress
+            cache.save(text, for: key)
+        }
+        if currentEpisode?.id == receipt.episode.id, progressContext?.playbackID == playbackID,
+            currentEpisode?.contentID == receipt.episode.contentID {
+            currentEpisode?.articleBookmark = receipt.progress.bookmark
+            currentEpisode?.completed = receipt.episode.completed
+            currentEpisode?.dismissed = receipt.episode.dismissed
+        }
+    }
+
+    private func publishProgress(flush: Bool) {
+        guard let context = progressContext, context.hasPlayed else { return }
+        progressEvents.send(.sample(context, flush: flush))
+    }
+
     private func publishChunkStart(_ index: Int, in script: ArticleScript) {
         guard let episode = currentEpisode, script.chunks.indices.contains(index) else { return }
+        progressContext?.offsetUTF16 = script.chunks[index].textRange.location
         spokenLocation = ArticleSpokenLocation(
             episodeID: episode.id,
             rangeInArticle: NSRange(location: script.chunks[index].textRange.location, length: 0))

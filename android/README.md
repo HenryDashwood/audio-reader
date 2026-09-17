@@ -120,10 +120,18 @@ for JVM tests it accepts Gradle's `--tests` pattern. Omit it for the full suite.
 `android-check` ignores `TEST` and always includes all JVM tests. Instrumented
 tests change preview state/preferences; run them on development emulators.
 The build gate compiles the instrumentation APK even when no emulator is present.
+Espresso is explicitly pinned to 3.7.0: older versions pulled in by Compose
+reflect on `InputManager.getInstance`, which is absent on the API 36.1 emulator.
+The [AndroidX Test release notes](https://developer.android.com/jetpack/androidx/releases/test#espresso-3.7.0)
+document the fix to use the system service instead.
 
 Reports are under `android/app/build/reports/`: `tests/testDebugUnitTest/`,
 `androidTests/connected/debug/`, and `lint-results-debug.html`. Raw test XML is
 under `android/app/build/test-results/` and `outputs/androidTest-results/`.
+Check the XML test counts as well as the build result: a crashed emulator system
+process can leave zero executed tests even when Gradle reports success. If Android
+is globally unresponsive, close the development emulator and cold-start the same
+AVD without wiping its data; verify the installed CLI help for the startup options.
 CI retains these reports even when a check fails. The debug APK is
 `android/app/build/outputs/apk/debug/app-debug.apk`.
 
@@ -151,7 +159,7 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
 - Following, Latest, Saved, source detail, local library search, and a rich article reader.
 - Article/episode toolbars with playback, original-page opening, Android sharing,
   find, and an Ask Magpie entry point. Original-page opening requires a web URL;
-  samples share their text. Ask explains that conversation is not yet connected.
+  samples share their text. Ask opens a conversation with microphone and typed input.
 - The same Ask Magpie control is available on Following, Latest, Saved, Settings,
   and feed pages, including during search. Browser links use Material's Open in new icon.
 - Light/dark themes, scalable text, labelled controls, heading semantics, and
@@ -196,7 +204,7 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   stops/clears session media, and forgets the last item so the bar stays dismissed
   after recreation/relaunch. Explicit Play brings it back from the saved position.
 - A bundled original sample recording, a mini player and full player, seek,
-  pause/resume, and playback speed from 0.75× to 2×.
+  pause/resume, and playback speed from 0.5× to 3×.
 - A sleep timer beside playback speed, with the iOS choices of 5, 10, 15, 30,
   45, and 60 minutes, a rounded-up countdown, replacement, and cancellation.
   The playback service owns its monotonic deadline, so closing the player or
@@ -204,7 +212,7 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   pauses do not extend the timer. Expiry pauses audio, preserves the bookmark,
   cancels pending narration, and plays a quiet completion tone only if audio was
   playing. Timers clear when the service/process ends and are not restored after
-  a restart. Voice timer commands await Android's voice integration.
+  a restart. Ask Magpie can also set and cancel the timer.
 - Media3 playback owned by a `MediaSessionService`, with system media controls,
   audio focus, unplug-to-pause, and playback independent of the activity.
 - Google offline TTS rendered into short WAV chunks and assembled into **one**
@@ -287,8 +295,8 @@ Signed-out samples retain the account-required explanation and fixed catalogue.
 Add sources searches podcasts and library episodes, discovers feeds from websites,
 and previews content before subscribing.
 Settings links to Sign-in Methods for Apple and Google sign-in, connected provider status,
-real account sign-out and deletion. Conversation, assistant, and newsletters
-retain explicit unavailable states until their integrations exist. AI Data Sharing
+real account sign-out and deletion. Home screen and Quick Settings actions are
+available; assistant library browsing and newsletters remain in progress. AI Data Sharing
 can be reviewed, granted, or withdrawn in Settings.
 
 ## Settings parity
@@ -306,9 +314,33 @@ article start, including regeneration of cached narration from its text bookmark
 Voice previews use transient audio focus and stop when Settings leaves the
 foreground. Voice downloads return to a refreshed catalogue.
 
-Conversation timing, Android assistant integration, and newsletter addresses
-still require their corresponding Android integrations. The Settings sections make those boundaries visible. Siri itself
-is iOS-only. Privacy/support links use the same destinations as the Swift client.
+Conversation settings persist Keep listening after replies and a 10, 15, 20, or
+30-second follow-up wait. With TalkBack, each turn requires an explicit Listen tap
+so spoken announcements cannot enter an automatically opened microphone.
+Assistant browsing and automation depend on compatible Android system services,
+as described below. Siri itself is iOS-only. Privacy/support links use the same destinations
+as the Swift client.
+
+## Newsletters
+
+Settings shows the signed-in account's newsletter address, with copy/share actions
+and offline read-aloud or letter-by-letter spelling. Speaking pauses the shared
+player and resumes it only after speech ends; independent playback controls or an
+account change cancel speech without restarting audio. Leaving Settings stops the
+readout. Address speech never starts the microphone or requires AI permission.
+
+Pending senders appear in Following and Latest. Follow adds their messages to the
+library; Block asks for confirmation before deleting their messages and dropping
+future emails. Requests are serialized and scoped to the current account session.
+Late refreshes cannot restore an approved sender, and failed writes keep the row
+available for retry. Account changes clear the address, sender list and signup
+result; old rows cannot act on the next account.
+
+When website feed discovery fails, Sign up by email explicitly asks the site to
+send its newsletter to the Magpie address. The result distinguishes a submitted
+request from a signup that needs finishing by hand, with address copy/share for
+the latter. Signup uses the existing backend's sixty-second allowance and needs
+no AI consent. No website signup is submitted just by searching for feeds.
 
 ## Deliberate prototype boundaries
 
@@ -320,30 +352,259 @@ The service stops and clears account playback when the session changes.
 
 The sample repository and sample capture inboxes remain separate while signed out.
 There is no automatic upload of sample content, preview progress, or sample URLs.
-Account metadata/text currently lives in memory: a fresh launch needs a connection,
-and there is no durable queue for offline account edits or progress uploads.
+Account metadata/text now has a private durable cache, and guarded podcast
+positions have an account-scoped retry journal. Shared article bookmarks work in
+both native players, and structured assistant requests have durable recovery.
 New saved links and confirmed shared content have their own durable queue. A
 previously identified session can queue captures after an offline restart; a new
-session must identify its account first. Podcast downloading, Gemini integration,
-and microphone recording remain future
-work. Backups and device transfers of preview preferences are disabled.
+session must identify its account first. Podcast downloading and Gemini integration
+remain future work. Backups and device transfers of preview preferences are disabled.
 
-Article rendering currently completes before playback starts, with a 30,000
-character guard and a timeout per chunk. Only the current rendered article is
-retained; rendering files are private disposable cache data. This establishes
-an audio baseline, not the final latency strategy. Measure time to first audio,
-chunk transitions, and battery on the Pixel before choosing incremental rendering.
+## Home screen shortcuts and Quick Settings
+
+After opening Magpie, hold its app icon for Ask Magpie, Continue listening, Play
+latest, and Saved articles. Settings → Home screen and Quick Settings can pin
+these actions or a particular library item/show. Reading pins open the reader;
+listening pins resolve and play that item; show pins choose the latest unfinished,
+undismissed item. The launcher asks for confirmation before pinning when supported.
+Targeted shortcuts contain only scoped identifiers, never credentials or article
+text. They require the account that created them and cannot silently switch to
+another account or the sample library. Account lookups use the existing episode
+endpoint and do not replace the search currently displayed in Magpie.
+
+Continue listening preserves the loaded player's current clock, or resolves the
+last item stored under the current account. Closing the mini player preserves this
+explicit continuation choice; completion clears it. Podcast media positions and
+article text bookmarks remain separate. A pending shortcut has a bounded wait and
+Cancel control. Changed accounts, explicit media controls, sleep expiry, and audio
+disconnection prevent a late response from starting playback. Recreating an
+activity does not replay its original shortcut intent.
+
+Ask Magpie and Continue listening also have Quick Settings tiles. Android 13+
+can show the native Add tile prompt from Settings; Android 12 users can add them
+with Quick Settings → Edit. Tiles request device unlock before opening the app.
+The Ask launcher shortcut, home-screen pin, and tile start listening once Magpie
+is in the foreground and unlocked. Android microphone permission is still required;
+denial leaves typed input available. TalkBack keeps the explicit Listen tap.
+An installation-specific random proof, stored privately and excluded from backup,
+is published only to the Android shortcut host and permission-protected tile.
+Ordinary exported intents cannot authorize recording, even if they request it.
+The launch is consumed once; backgrounding, recreation, closing, typing another
+request, and account changes invalidate pending permission replies. Returning to
+the app never reopens the microphone automatically. Missing offline recognition
+still produces the existing capability explanation without a network fallback.
+Android 14+ uses the PendingIntent tile launch API; Android 12–13 use the guarded
+legacy overload because the replacement is unavailable there.
+
+Trusted Android media clients can browse Latest, Saved, and followed shows, search
+the account library, and prepare or play an item through Magpie's playback service.
+Both Media3 browsers and legacy platform browsers are supported. Browsing exposes
+metadata and scoped IDs, without loading article text or exposing playback URIs.
+Search does not replace the search displayed in Magpie. Folder IDs are invalidated
+when accounts change; unrelated apps without Android media access are rejected.
+
+Preparation resolves the account item and its bookmark, and renders article audio
+on device when necessary. It stays paused until the client sends Play. Search can
+select a named episode or the latest unfinished item from a followed show; an empty
+playback search selects Latest. Controls from another media client, cancellation,
+account changes, sleep expiry, and audio disconnection invalidate pending preparations.
+Cancelled or failed preparation also suppresses the requester's queued Play,
+preserving the previous item's paused position until a fresh explicit Play.
+Podcast clocks and article text bookmarks remain separate. Arbitrary URIs and
+multi-item queues are unsupported.
+
+On Android 16 devices with a compatible AppFunctions metadata indexer, Magpie
+also publishes structured AppFunctions for
+listing followed shows, finding library items, and checking listening status.
+Discovery follows account sign-in state; every invocation also checks the account
+independently. Searches support show, unheard, duration, and result-count filters
+against up to 100 candidates. Unknown durations are excluded only when a duration
+ceiling is requested. Results contain scoped IDs and metadata, without article
+text, credentials, or playback URLs. Account changes discard pending results;
+caller cancellation stops the pending lookup. Status reads the existing service
+player without starting playback. Devices below API 36 keep the service disabled.
+Platform integration is verified on the API 36.1 emulator. The original API 36
+image does not register the current schema; these actions are unavailable there.
+Run `AppFunctionsTest` on an API 36.1 or newer emulator; it explicitly skips older
+images. This is separate from the app's Android 12 minimum. The KSP compiler
+generates the permission-protected service and schema from the
+annotated Kotlin functions; generated files are not committed.
+
+Structured playback actions can pause, skip, seek, set/undo speed, set/cancel a
+sleep timer, play an item, continue listening, and play Latest or a followed show.
+They use the same playback service and confirm its actual state. Play waits for
+both active audio and foreground-service ownership; Android background-start
+denial returns a one-use action to open Magpie for the selected, account-scoped
+item. A pending start is cancelled by caller disconnection, account changes, or
+independent controls. Stale item/show IDs are rejected before interrupting audio.
+Local controls do not wait for unrelated library refreshes. Speed undo expires
+after ten minutes and preserves later changes. Sleep durations round up to whole
+minutes; podcast and article speed preferences stay separate. Rendered article
+positions use guarded shared text bookmarks when supported, with local bookmarks for older servers.
+
+Structured filing marks an explicit or current item played/read, dismissed, or
+restored through the existing account action API. Library Undo reverses the last
+reversible filing or subscription action; speed Undo remains a separate local
+action. These typed requests do not use AI or require AI consent. The shared
+account coordinator rejects overlapping changes, retains original request IDs
+after uncertain failures, and keeps confirmed receipts until local reconciliation
+finishes. Retrying a current-item request retains its original target even if
+playback has changed. Pending requests and receipts clear on account changes.
+After checking a stopped or unconfirmed request, a caller can explicitly request
+a new change; normal retries never silently repeat a potentially completed action.
+The player drains older podcast progress before a server mutation, applies filing
+and restored text bookmarks through the same voice playback coordination, and
+leaves uncertain results paused. Independent controls and caller cancellation
+cancel the original request without resuming old audio. Network cancellation
+closes the connection; no account credentials follow redirects.
+An uncertain podcast clock also stays off the server when the user switches to
+another item, until the corresponding result or a new item state is confirmed.
+Retry context remains in memory. Guarded podcast progress now persists its filing
+guards; reconciling them with recovered request receipts across process death
+remains part of checklist item 11.
+
+Assistant navigation can open Latest, Following, Saved, Now Playing, Shortcuts,
+an item, or a followed show. Returned actions are immutable and one-use; the user
+opens them to navigate without starting audio or microphone capture. Generic
+screens remain available before sign-in. Account-bound actions are checked again
+when opened and when the screen consumes the route. Removed shows are rejected,
+and opening an item or show preserves ongoing playback.
+
+Free-form assistant requests use the same account conversation as Ask Magpie.
+Whole playback, speed, sleep, and speed-Undo commands run on device, including
+before sign-in. Library Undo uses the typed action API without AI consent. Other
+library requests require sign-in and the account's existing AI permission. The
+adapter returns questions for the assistant to ask, and subsequent answers share
+conversation history with the app. It confirms actual service playback before
+announcing a start; Android background-start denial returns an action to open the
+selected item instead.
+
+Missing permission, a twenty-second request deadline, or an unconfirmed result
+returns a one-use action to continue the original text in Ask Magpie without
+starting the microphone. The intent contains an opaque capability, with the text
+stored privately in memory for up to ten minutes. Recovery retains the original
+request ID and confirmed receipt; checking a confirmed result does not repeat the
+server mutation. Concurrent library requests cannot take over each other's conversation. Explicit
+player controls remain available to interrupt a pending request. Caller cancellation, account changes, and independent player
+controls stop pending work using its original account and leave uncertain audio
+paused. Speed Undo is shared across the app and assistant, expires after ten
+minutes, and preserves later manual changes. Free-form requests and their receipts
+now survive process death; the one-use navigation handoffs remain in memory. After
+a restart, open Ask Magpie to review unfinished requests. Structured filing/Undo
+requests use the same journal and recovery controls, preserving their original
+route, item and request ID. They can be checked or dismissed without AI consent.
+An interrupted current-item action retains its original item when playback changes;
+starting a new change keeps the older request available for review.
+
+`followPublicationUrl` discovers website/feed addresses without AI. A single feed
+is followed directly; multiple feeds return named choices without subscribing.
+The assistant asks the user to choose and passes the unchanged choice ID with the
+original website. Choices are checked against fresh discovery and bound to the
+account and session. Results contain the canonical, account-scoped followed show;
+already-followed feeds and retries after a lost reply are recognised without
+creating another subscription. `getNewsletterAddress` returns the current signed-in
+account's address without AI permission; it does not send a signup request.
+
+Google describes AppFunctions/Gemini integration as an
+experimental private preview; launcher/tile availability does not establish
+Gemini support or phone acceptance.
+
+## Ask Magpie
+
+Listen (or an Ask shortcut) asks for microphone permission and uses Android's on-device recognition
+service, with an English (United Kingdom) model. Capability checks distinguish
+missing, downloadable, and pending models; downloads require an explicit action.
+There is no network recognition fallback. Recognition, spoken replies, and article
+narration remain on device. Audio recordings are not retained. Typed requests are
+available when the microphone or offline model is unavailable.
+
+Local playback, speed, undo-speed, sleep-timer, and end-conversation commands work
+without an account or AI permission. Free-form library requests use the existing account
+AI consent and command-stream contracts; explicit library Undo uses the typed
+action route without AI. Partials are captions; only final
+recognition text becomes a command. Live conversation history stays in memory and
+clears across accounts. Unfinished free-form requests retain their original text,
+ID, target, recent context and any confirmed receipt in private storage excluded
+from backup. They are saved before dispatch and before local reconciliation.
+
+Ask Magpie lists each unfinished request after a restart. Check this request uses
+the original ID/body; an already-saved receipt needs no repeated command. Recovery
+refreshes current library state rather than applying an old filing receipt over
+newer changes, and reports historical playback results without restarting audio or
+changing speed. A confirmed Dismiss request cancels unfinished server work, refreshes
+the library, releases its progress guard, and removes that recovery record; it does
+not undo completed changes. Cancellation, storage or connection failures retain
+the record. Dismissal works without AI consent. Signing out clears the account's
+journal. Loading recovery does not start the microphone or send a command.
+
+The playback service pauses audio for a conversation and owns its resume decision.
+Spoken replies finish before new playback or follow-up capture. Closing or
+backgrounding the screen stops speech and recognition. Account changes, explicit
+media controls, sleep expiry, and a disconnected audio route invalidate the old
+resume decision. An uncertain remote result leaves playback paused until the
+user checks the original request or explicitly resumes. Server filing receipts
+never resend mutations or report an old
+clock over a newly completed episode. The final compound playback choice starts
+only after the other confirmed effects have been applied.
+
+Article narration prepares the resume passage first, then synthesizes passages
+as Media3 needs them. Long articles no longer have the 30,000-character guard.
+The whole article remains one media item, including for assistant and system
+controls. Its duration initially includes estimates for unprepared passages;
+measured audio durations replace those estimates without changing text bookmarks.
+The private disposable cache keeps at most six completed passages unless a file
+is still being read, plus the passage currently being prepared. Seeking can
+regenerate an evicted passage. Cancellation, replacement and account changes
+close the voice and discard its temporary audio. A later synthesis failure stops
+playback without marking the article finished. Each passage has a voice timeout.
+Measure audible transitions, startup latency and battery on the Pixel separately.
 
 Article bookmarks contain the immutable content version and a **UTF-16 offset**
 into the exact input text. For now, resume repeats the start of the current chunk.
 The visual reading marker uses word timings when the voice supplies them; durable
 resume remains at the chunk boundary. Podcast bookmarks use actual media milliseconds. Article positions are **never** written
-to the backend's existing `position_seconds` field. A future cross-platform API
-change must preserve the frozen released Swift clients.
+to the backend's existing `position_seconds` field. Shared article progress uses
+the guarded text-bookmark contract documented in `docs/progress-sync.md`.
 
 On a fresh process, the last sample podcast is restored paused. A last-read article
 is offered in the UI and regenerated from its bookmark on explicit Play. Full
 system-initiated playback resumption after process death is future work.
+
+## Offline account library
+
+Following, Latest, Saved, opened feed lists and fetched article text/HTML are saved
+in app-private storage outside disposable caches and excluded from backup. A known
+session restores only its server-bound account snapshot before refreshing. Failed
+refreshes retain the restored content with a retry message; feed browsing and
+search retain previously known matching items. Search while offline covers only
+items this device has already seen. Podcast audio still needs a connection.
+
+Saved article content IDs and text versions survive restart. Confirmed filing,
+removal, replacement and source changes update the snapshot; replacing text cannot
+revive the previous copy after restart. Signing out clears that account's snapshot
+and immediately replaces its UI with samples. Late reads/writes cannot publish
+another account's content. Corrupt or incompatible snapshots are discarded; a disk
+write failure warns about offline availability without retrying a server mutation.
+Storage uses serialized [AtomicFile](https://developer.android.com/reference/android/util/AtomicFile)
+replacement and performs file I/O away from the UI thread.
+
+Podcast progress uses an account-scoped durable journal when the server supplies
+a comparison token. Playback saves locally every three seconds and on pause or
+completion, retains exact requests after lost replies, and uploads later samples
+only after acknowledgement. Startup and periodic retries run while the app process
+is alive. Newer server filing/progress blocks the old playback session instead of
+being overwritten. Sign-out clears the journal. Voice filing guards are persisted
+before a server change; unresolved guards survive restart. See
+[the progress protocol](../docs/progress-sync.md).
+
+Article playback now uses the shared UTF-16 bookmark contract when advertised by
+the server. Explicit Play refreshes the selected text and remote bookmark, falling
+back to the matching cached snapshot offline. Durable exact requests survive
+restart; newer filing or changed text blocks the old playback session. Completion
+uses the same guarded report, and voice filing holds and sign-out cover both
+article and podcast journals. Locally rendered article seconds never use the
+media-position API. The Swift player consumes the same text coordinate, independently
+of voice speed or estimated playback duration.
 
 ## Verification and next device checks
 
@@ -363,9 +624,25 @@ Bluetooth routing, TalkBack speech arbitration, battery use, or long screen-off
 sessions. On the Pixel, verify those first, then an incoming call, interruption
 recovery, and process-death resume. Borrow a Samsung before broad release.
 
-The next functional work includes persistent offline account caching, durable
-progress synchronisation, and
-microphone/confirmation/TalkBack coordination.
+Item menus on Latest, publication lists, search results and the reader offer
+read/unread or played/unplayed, individual dismissal, and restoration to Latest.
+They have visible buttons and accessibility actions as well as optional swipes.
+Signed-in changes use the same durable typed requests as assistant actions,
+without AI consent. A lost reply can be retried or checked in Ask Magpie after
+reopening the app. Filing the active item stops its old progress; marking it
+unread/unplayed resets its bookmark, while Undo retains the previous bookmark.
+Sample changes stay local and are saved before being acknowledged.
+
+Latest groups unfinished listening items under Continue listening without
+duplicating rows. Library rows show live playback state, podcast time remaining,
+text-based article progress and finished status. Publication dates appear in lists
+and the reader; publisher artwork appears in lists, publication headers, both
+players and system media metadata. Optional metadata survives account caches and
+request recovery, with placeholders for missing or unavailable images.
+
+All sixteen functional areas in [the parity checklist](../docs/android-parity.md)
+are implemented. Physical microphone, confirmation, TalkBack, Bluetooth and
+long-session audio acceptance remain separate from emulator verification.
 Keep AppFunctions an optional adapter over the same action layer.
 
 Following has a leading Add sources action. While signed in, typing searches the
@@ -445,3 +722,32 @@ foreground preparation; resuming an already-open app also checks its queue; clos
 activity recreation, disk persistence, offline failure/retry, account changes,
 queue replacement races, real WebView extraction, invalid content identity,
 and 200% text/dark appearance. These use isolated accounts and page fixtures.
+
+## Reliability diagnostics
+
+Settings → Privacy & Support → Share app diagnostics controls voice-attempt and
+crash/freeze summaries. It defaults to enabled; turning it off immediately stops
+new reports and clears pending diagnostics without affecting the library or
+playback. Signed-out sample sessions never report.
+
+Spoken requests record coarse outcomes, capture/response timing, local transport
+or sleep actions, and whether TalkBack was active. The request and its summary
+share a trace ID when a backend command was sent. No transcript, audio, article
+content, exception message or raw stack enters a diagnostic payload. Android
+recognition does not expose an initial audio-buffer time, so that field is omitted.
+
+Reports use the existing authenticated `/events/voice` and `/events/diagnostic`
+contracts. A private queue outside Android backups retains at most 50 reports per
+account for 30 days, retries after connectivity returns, and clears on sign-out
+or opt-out. Session checks prevent delayed requests from using a different
+account's credentials. Recent acknowledgements prevent a recovered crash from
+being queued twice after a restart.
+
+Android system process-exit records supply Java/native crash and fatal ANR
+summaries on the next launch. A random process marker connects them to a private
+account/session record; the OS never receives the account ID or token. Only a
+matching account and credential can submit the previous exit. A separate check
+records foreground main-thread freezes lasting at least five seconds, after the
+thread responds again; background, screen-off and debugger sessions are excluded.
+These are best-effort summaries: they do not collect stack traces or replace
+physical-device performance and crash acceptance.

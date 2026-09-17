@@ -24,6 +24,22 @@ class ArticleChunksTest {
         assertEquals(0L, resumeAt(secondVoice, bookmark, "v2"))
     }
 
+    @Test fun sharedIosCoordinateSelectsTheSameUnicodePassageWithDifferentVoiceDurations() {
+        // Shared with iOS ArticleProgressJournalTests. No text normalization.
+        val text = "Café 🌱 in the garden.\n\nAnother 🦉 passage beside the river.\n\nThe final paragraph."
+        val version = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        assertEquals("8dbce6391279ec2806c0340ed5f585cdce28dcea1e0da494679c84d18dfc9a88", version)
+        val chunks = articleNarrationChunks(text)
+        val firstVoice = chunks.mapIndexed { index, chunk -> TimedChunk(chunk, index * 1000L, (index + 1) * 1000L) }
+        val slowerVoice = chunks.mapIndexed { index, chunk -> TimedChunk(chunk, index * 4000L, (index + 1) * 4000L) }
+        val bookmark = ArticleBookmark(version, 32)
+        assertEquals(1000L, resumeAt(firstVoice, bookmark, version))
+        assertEquals(4000L, resumeAt(slowerVoice, bookmark, version))
+        assertEquals(24, bookmarkAt(slowerVoice, 4000, version)!!.offsetUtf16)
+        assertTrue(chunks[1].text.startsWith("Another 🦉"))
+    }
+
     @Test fun emptyAndWhitespaceArticlesHaveNoTimeline() {
         assertTrue(articleChunks(" \n\n ").isEmpty())
         assertNull(bookmarkAt(emptyList(), 1000, "v1"))

@@ -314,6 +314,8 @@ async def store_capture(session, user, episode, saved, title, html, text, source
             # Existing feed capture used its exact historical text above. A browser
             # capture with different text cannot inherit seconds from the feed copy.
             if previous_text != text:
+                position.article_text_version = None
+                position.article_offset_utf16 = None
                 position.position_seconds = 0
                 position.completed = False
             position.content_id = content.id

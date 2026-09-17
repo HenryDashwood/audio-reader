@@ -92,7 +92,7 @@ struct PositionReporterTests {
         let coordinator = PlaybackCoordinator(
             audio: AudioPlayer(),
             article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer()))
-        return (PositionReporter(api: api, player: coordinator), api)
+        return (PositionReporter(api: api, player: coordinator, sessionScope: { nil }), api)
     }
 
     @Test func pausingReportsThePosition() async {
@@ -105,6 +105,24 @@ struct PositionReporterTests {
         await settle()
 
         #expect(api.reports.last == .init(episodeID: 104, seconds: 1.0, completed: false))
+    }
+
+    @Test func queuedReportsDoNotBorrowANewSessionsCredentials() async {
+        for initial: String? in [nil, "first-account"] {
+            var scope = initial
+            let api = RecordingAPI()
+            let coordinator = PlaybackCoordinator(audio: AudioPlayer(),
+                article: ArticlePlayer(api: api, synthesizer: SilentSynthesizer(), progressScope: { nil }))
+            let reporter = PositionReporter(api: api, player: coordinator, sessionScope: { scope })
+            reporter.episodeChanged(to: episode(id: 908_001))
+            reporter.playingChanged(true)
+            reporter.timeTicked(to: 42)
+            reporter.flush()
+            scope = "new-account"
+            await reporter.waitForPendingReports()
+            #expect(api.reports.isEmpty)
+            reporter.invalidate()
+        }
     }
 
     @Test func everyReportIsBroadcastForTheLists() {

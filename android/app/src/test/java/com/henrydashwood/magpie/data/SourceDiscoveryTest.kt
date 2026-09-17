@@ -11,7 +11,17 @@ import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SourceDiscoveryTest {
-    private class Repository : SourceRepository {
+    private class Repository : SourceRepository, NewsletterRepository {
+        var signupCalls = 0
+        var signupGate: CompletableDeferred<Unit>? = null
+        var signup = NewsletterSignup("unsupported", "Use your address on the website.", "quiet-heron@magpie.example")
+        override suspend fun newsletterAddress() = NewsletterAddress("quiet-heron@magpie.example")
+        override suspend fun pendingNewsletters() = emptyList<PendingNewsletter>()
+        override suspend fun approveNewsletter(item: PendingNewsletter) {}
+        override suspend fun blockNewsletter(item: PendingNewsletter) {}
+        override suspend fun signUpForNewsletter(url: String): NewsletterSignup {
+            signupCalls++; withContext(NonCancellable) { signupGate?.await() }; return signup
+        }
         val source = SourceResult("A publication", "https://example.com/feed")
         var queries = mutableListOf<String>()
         var previewed = mutableListOf<String>()
@@ -54,6 +64,24 @@ class SourceDiscoveryTest {
         assertEquals("https://example.com", repo.discovered)
         assertEquals(2, model.state.value.candidates!!.size)
         assertTrue(repo.previewed.isEmpty()); assertEquals(0, repo.followed)
+    }
+    @Test fun newsletterSignupIsExplicitAndPreservesManualFallbackWithoutAI() = runTest {
+        val repo = Repository().apply { candidates = emptyList() }
+        val model = SourceDiscovery(backgroundScope, repo); model.open(); model.edit("publisher.example"); model.submit(); runCurrent()
+        assertEquals(0, repo.signupCalls); assertNotNull(model.state.value.error)
+        model.signUpByEmail(); runCurrent()
+        assertEquals(repo.signup, model.state.value.signup); assertFalse(model.state.value.signup!!.submitted)
+        assertEquals(0, repo.grants); assertEquals(0, repo.webRequests)
+        model.submit(); runCurrent(); assertNull(model.state.value.signup)
+        repo.signup = repo.signup.copy(status = "submitted")
+        model.signUpByEmail(); runCurrent(); assertTrue(model.state.value.signup!!.submitted)
+    }
+    @Test fun accountResetDiscardsALateNewsletterSignupReply() = runTest {
+        val repo = Repository().apply { signupGate = CompletableDeferred() }
+        val model = SourceDiscovery(backgroundScope, repo); model.open(); model.edit("publisher.example")
+        model.signUpByEmail(); runCurrent(); assertTrue(model.state.value.following)
+        model.reset(); repo.signupGate!!.complete(Unit); runCurrent()
+        assertEquals(DiscoveryState(), model.state.value)
     }
     @Test fun onlyTheChosenFeedIsPreviewedAndFollowingRequiresAnExplicitSuccessfulWrite() = runTest {
         val repo = Repository(); val model = SourceDiscovery(backgroundScope, repo); model.open()

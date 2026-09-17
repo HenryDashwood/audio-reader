@@ -3,6 +3,7 @@ import Foundation
 // The API layer is deliberately nonisolated: it holds no mutable state and is
 // called from App Intents and background tasks as well as the UI.
 nonisolated protocol HearfulAPIProtocol: Sendable {
+    func reportArticleProgress(episodeID: Int, report: ArticleProgressReport) async throws -> ArticleProgressReceipt
     func articleText(episodeID: Int, contentID: Int?) async throws -> EpisodeText
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?, contentID: Int?) async throws
 
@@ -90,6 +91,9 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
 }
 
 extension HearfulAPIProtocol {
+    func reportArticleProgress(episodeID: Int, report: ArticleProgressReport) async throws -> ArticleProgressReceipt {
+        throw APIError(underlying: "Article bookmark sync is unavailable.")
+    }
     func login(googleIdentityToken: String) async throws -> AuthResponse {
         throw APIError(underlying: "Google sign-in is unavailable.")
     }
@@ -709,6 +713,22 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
             PositionUpdate(
                 contentID: contentID, positionSeconds: seconds, completed: completed, durationSeconds: durationSeconds))
         try await perform(request)
+    }
+
+    func reportArticleProgress(episodeID: Int, report: ArticleProgressReport) async throws -> ArticleProgressReceipt {
+        guard episodeID > 0, report.isValid else {
+            throw APIError(underlying: "The article bookmark is invalid.")
+        }
+        var request = URLRequest(url: baseURL.appendingPathComponent("episodes/\(episodeID)/article-progress"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(report)
+        let receipt: ArticleProgressReceipt = try await send(request)
+        guard receipt.episode.id == episodeID, receipt.episode.audioURL == nil,
+            receipt.progress.isValid, isProgressToken(receipt.acceptedRevision) else {
+            throw APIError(underlying: "The article progress reply could not be confirmed.")
+        }
+        return receipt
     }
 
     func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {

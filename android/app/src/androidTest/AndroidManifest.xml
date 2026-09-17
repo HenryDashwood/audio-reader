@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Runs under the test APK's separate UID to check the exported library boundary. -->
+        <activity android:name="com.henrydashwood.magpie.UntrustedMediaBrowserActivity"
+            android:exported="true" android:launchMode="singleTask" />
+    </application>
+</manifest>

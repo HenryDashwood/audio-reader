@@ -2,11 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <!-- Article images and video players are loaded over HTTPS; voice processing remains offline. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <queries>
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
     </queries>
     <application
         android:name=".MagpieApplication"
@@ -39,7 +41,25 @@
                 <data android:mimeType="text/html" />
             </intent-filter>
         </activity>
-        <!-- Media controls need an exported service; onGetSession rejects untrusted callers. -->
+        <service android:name=".shortcuts.AskMagpieTile" android:exported="true"
+            android:label="Ask Magpie" android:icon="@drawable/ic_shortcut_mic"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".shortcuts.ContinueListeningTile" android:exported="true"
+            android:label="Continue listening" android:icon="@drawable/ic_shortcut_play"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <property android:name="android.app.appfunctions.app_metadata" android:resource="@xml/app_metadata" />
+        <service android:name=".automation.MagpieAppFunctions" android:exported="true"
+            android:enabled="@bool/app_functions_supported" android:permission="android.permission.BIND_APP_FUNCTION_SERVICE"
+            tools:targetApi="36">
+            <property android:name="android.app.appfunctions.schema" android:value="app_functions_schema.xsd" />
+            <property android:name="android.app.appfunctions.v2" android:value="magpie_app_functions.xml" />
+            <intent-filter><action android:name="android.app.appfunctions.AppFunctionService" /></intent-filter>
+        </service>
+        <!-- Media controls need an exported service; session connection checks the real caller. -->
         <service
             android:name=".playback.PlaybackService"
             android:exported="true"
@@ -47,6 +67,8 @@
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="androidx.media3.session.MediaLibraryService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
     </application>
