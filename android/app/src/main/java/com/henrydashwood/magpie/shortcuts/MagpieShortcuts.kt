@@ -15,10 +15,11 @@ enum class ShortcutAction(val label: String) {
     Ask("Ask Magpie"), Continue("Continue listening"), Latest("Play latest"), Saved("Saved articles"),
     Following("Following"), OpenLatest("Latest"), OpenFeed("Open show"), Player("Now playing"), Shortcuts("Shortcuts"), ReadItem("Open item"),
     PlayItem("Play item"), PlayFeed("Play a show's latest"),
+    RunRequest("Continue Magpie request"),
 }
 data class ShortcutRequest(val action: ShortcutAction, val owner: String? = null,
     val itemId: String? = null, val feedId: String? = null, val delivery: String = UUID.randomUUID().toString(),
-    val listenOnOpen: Boolean = false)
+    val listenOnOpen: Boolean = false, val handoffId: String? = null)
 
 /** Ordinary external intents navigate only; microphone launches require our private installation proof. */
 object MagpieShortcuts {
@@ -29,12 +30,14 @@ object MagpieShortcuts {
     private const val FEED = "shortcut_feed"
     private const val MICROPHONE = "shortcut_microphone"
     private const val PROOF = "microphone_proof"
+    private const val HANDOFF = "request_handoff"
     val basics = listOf(ShortcutAction.Ask, ShortcutAction.Continue, ShortcutAction.Latest, ShortcutAction.Saved)
     fun intent(context: Context, request: ShortcutRequest) = Intent(context, MainActivity::class.java).apply {
         action = ACTION
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         putExtra(CHOICE, request.action.name); putExtra(OWNER, request.owner)
         putExtra(ITEM, request.itemId); putExtra(FEED, request.feedId)
+        putExtra(HANDOFF, request.handoffId)
     }
     // Only publish this capability to Android's shortcut host or the permission-protected tile.
     // Shared preferences are private and excluded from both backup and device transfer.
@@ -56,19 +59,21 @@ object MagpieShortcuts {
             val owner = intent.getStringExtra(OWNER)
             val item = intent.getStringExtra(ITEM)
             val feed = intent.getStringExtra(FEED)
+            val handoff = intent.getStringExtra(HANDOFF)
             if (owner != null && owner != "sample" && !owner.matches(Regex("[a-f0-9]{64}"))) return@runCatching null
             if (item != null && (item.isBlank() || item.length > 160)) return@runCatching null
             if (feed != null && (feed.isBlank() || feed.length > 256)) return@runCatching null
             if (action in setOf(ShortcutAction.ReadItem, ShortcutAction.PlayItem) && (owner == null || item == null)) return@runCatching null
             if (action in setOf(ShortcutAction.PlayFeed, ShortcutAction.OpenFeed) && (owner == null || feed == null)) return@runCatching null
+            if (action == ShortcutAction.RunRequest && (owner == null || handoff?.matches(Regex("[a-zA-Z0-9-]{1,64}")) != true)) return@runCatching null
             val supplied = intent.getStringExtra(MICROPHONE)
             val expected = if (action == ShortcutAction.Ask && supplied?.length == 64) microphoneProof(context, create = false) else null
             val listen = expected != null && MessageDigest.isEqual(expected.toByteArray(), supplied!!.toByteArray())
-            ShortcutRequest(action, owner, item, feed, listenOnOpen = listen)
+            ShortcutRequest(action, owner, item, feed, listenOnOpen = listen, handoffId = handoff)
         }.getOrNull()
         // A recreation or task relaunch must never repeat an already-delivered Play.
         intent.action = Intent.ACTION_MAIN
-        listOf(CHOICE, OWNER, ITEM, FEED, MICROPHONE).forEach(intent::removeExtra)
+        listOf(CHOICE, OWNER, ITEM, FEED, MICROPHONE, HANDOFF).forEach(intent::removeExtra)
         return result
     }
     fun icon(action: ShortcutAction) = when (action) {

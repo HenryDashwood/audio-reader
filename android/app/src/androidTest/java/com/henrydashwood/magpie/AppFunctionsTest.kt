@@ -9,6 +9,8 @@ import com.henrydashwood.magpie.automation.*
 import com.henrydashwood.magpie.data.*
 import com.henrydashwood.magpie.playback.PlaybackService
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.flow
+import com.henrydashwood.magpie.voice.*
 import org.junit.*
 import org.junit.Assert.*
 
@@ -21,6 +23,8 @@ class AppFunctionsTest {
     private lateinit var api: Api
     private lateinit var manager: AppFunctionManager
     private var scenario: ActivityScenario<MainActivity>? = null
+    private lateinit var model: MagpieModel
+    private lateinit var launchIntent: Intent
     private var availability: Job? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var metadata: List<androidx.appfunctions.metadata.AppFunctionMetadata>
@@ -31,7 +35,32 @@ class AppFunctionsTest {
     private val owner get() = checkNotNull(library.state.value.owner)
     private fun itemId(number: Int) = "$owner:episode:$number"
     private val key = ExecuteAppFunctionResponse.Success.PROPERTY_RETURN_VALUE
-    private class Api : LibraryApi, LibraryActionApi {
+    private class Api : LibraryApi, LibraryActionApi, DiscoveryApi, VoiceApi {
+        var allowed = true
+        var grants = 0
+        var voiceGate: CompletableDeferred<Unit>? = null
+        var voiceFailure = false
+        val voiceRequests = mutableListOf<VoiceRequest>()
+        var voiceResponse = VoiceResponse(VoiceAction.Unknown, "Which show?", expectsReply = true)
+        override suspend fun aiConsent(token: String) = allowed
+        override suspend fun setAIConsent(token: String, granted: Boolean): Boolean { grants++; allowed = granted; return granted }
+        override suspend fun directory(token: String, query: String) = emptyList<SourceResult>()
+        override suspend fun discover(token: String, url: String) = emptyList<SourceResult>()
+        override suspend fun preview(token: String, url: String): RemotePreview = error("Not used")
+        override suspend fun webSearch(token: String, query: String): SourceResult? = null
+        override fun events(token: String, request: VoiceRequest) = flow {
+            voiceRequests += request
+            voiceGate?.await()
+            if (voiceFailure) throw java.io.IOException("Reply lost")
+            voiceResponse.effects.forEach { effect ->
+                effect.episode?.takeIf { effect.action in setOf(VoiceAction.Played, VoiceAction.Dismiss, VoiceAction.Restore) }?.let {
+                    filed[token to it.id] = it; positions[token to it.id] = it.positionSeconds
+                }
+            }
+            emit(VoiceEvent.Result(voiceResponse))
+        }
+        override suspend fun cancel(token: String, requestId: String) { cancellations += token to requestId }
+
         val short = RemoteEpisode(1, "Short podcast", source = "Test show", audioUrl = "asset:///welcome.wav", durationSeconds = 120, positionSeconds = 12.0)
         val done = short.copy(id = 2, title = "Finished podcast", completed = true, durationSeconds = 60)
         val unknown = short.copy(id = 3, title = "Unknown length", durationSeconds = null)
@@ -129,7 +158,9 @@ class AppFunctionsTest {
         ContentKind.entries.forEach { originalRates[it] = PreviewStore(app).speed(it) }
         api = Api(); library = AccountLibrary(api, "https://functions-fixture.invalid")
         withContext(Dispatchers.Main) { library.changeSession("one"); app.libraryOverride = library }
+        app.voiceOutputOverride = VoiceOutput { }
         scenario = ActivityScenario.launch(MainActivity::class.java)
+        scenario!!.onActivity { model = androidx.lifecycle.ViewModelProvider(it)[MagpieModel::class.java]; launchIntent = Intent(it.intent) }
         manager = checkNotNull(AppFunctionManager.getInstance(app))
         // Wait for PackageManager/AppSearch indexing after installing the APK.
         withTimeout(60_000) {
@@ -147,7 +178,7 @@ class AppFunctionsTest {
     @After fun finish() = runBlocking {
         if (!::api.isInitialized) return@runBlocking
         api.refreshGate?.complete(Unit); api.gate?.complete(Unit); api.episodeGate?.complete(Unit)
-        api.filingGate?.complete(Unit); api.positionGate?.complete(Unit)
+        api.filingGate?.complete(Unit); api.positionGate?.complete(Unit); api.voiceGate?.complete(Unit)
         availability?.cancelAndJoin(); scope.cancel()
         if (::observer.isInitialized && withContext(Dispatchers.Main) { observer.isConnected }) {
             // Await service confirmation before releasing: a queued Pause followed
@@ -158,9 +189,10 @@ class AppFunctionsTest {
             waitFor { observer.currentMediaItem == null }
             withContext(Dispatchers.Main) { observer.release() }
         }
+        scenario?.onActivity { model.voice.close(false); it.intent = launchIntent }
         scenario?.close()
         stopPlayer()
-        withContext(Dispatchers.Main) { originalRates.forEach { (kind, rate) -> PreviewStore(app).saveSpeed(kind, rate) }; app.libraryOverride = null }
+        withContext(Dispatchers.Main) { originalRates.forEach { (kind, rate) -> PreviewStore(app).saveSpeed(kind, rate) }; app.libraryOverride = null; app.voiceOutputOverride = null }
     }
     @Suppress("DEPRECATION") // Inspect only this app's service lifecycle in an isolated emulator test.
     private suspend fun stopPlayer() {
@@ -192,6 +224,186 @@ class AppFunctionsTest {
         val result = execute(id, data)
         assertTrue(result.toString(), result is ExecuteAppFunctionResponse.Success)
         return (result as ExecuteAppFunctionResponse.Success).returnValue
+    }
+    private fun requestData(text: String) = parameters(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST).setString("request", text).build()
+    private suspend fun ask(text: String) = success(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST, requestData(text)).getAppFunctionData(key)!!
+    private fun handoff(result: AppFunctionData) = result.getParcelable("openMagpie", android.app.PendingIntent::class.java)
+
+    @Test fun freeFormLocalPlaybackAndUndoUseNoAI() = runBlocking {
+        api.allowed = false
+        play()
+        ask("play at 1.5 times")
+        assertEquals(1.5f, withContext(Dispatchers.Main) { observer.playbackParameters.speed }, .001f)
+        ask("undo")
+        assertEquals(originalRates[ContentKind.Podcast]!!, withContext(Dispatchers.Main) { observer.playbackParameters.speed }, .001f)
+        ask("set sleep timer for five minutes")
+        assertNotNull(com.henrydashwood.magpie.playback.PlaybackStatus.sleepTimer.value.deadlineMs)
+        ask("cancel sleep timer")
+        ask("pause")
+        assertFalse(withContext(Dispatchers.Main) { observer.isPlaying })
+        assertTrue(api.voiceRequests.isEmpty()); assertEquals(0, api.grants)
+        assertNull(handoff(ask("continue")))
+        assertTrue(withContext(Dispatchers.Main) { observer.isPlaying })
+        success(MagpieAppFunctions.FUNCTION_ID_FILE_LISTENING_ITEM, filing("played", itemId(1)))
+        val undone = ask("undo")
+        assertEquals(itemId(1), undone.getAppFunctionData("item")!!.getString("id"))
+        assertFalse(library.state.value.items.first { it.episodeId == 1 }.completed)
+        assertTrue(api.voiceRequests.isEmpty()); assertEquals(0, api.grants)
+    }
+    @Test fun freeFormLocalCommandsRemainAvailableWithoutAnAccount() = runBlocking {
+        withContext(Dispatchers.Main) { library.changeSession(null) }
+        waitFor { !library.state.value.loading }
+        val sample = library.state.value.items.first { it.kind == ContentKind.Podcast }
+        withContext(Dispatchers.Main) { model.play(sample) }
+        waitFor { observer.isPlaying }
+        assertNull(handoff(ask("pause")))
+        assertFalse(withContext(Dispatchers.Main) { observer.isPlaying })
+        ask("continue")
+        assertTrue(withContext(Dispatchers.Main) { observer.isPlaying })
+        val denied = execute(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST, requestData("Find the news"))
+        assertTrue(denied.toString(), denied is ExecuteAppFunctionResponse.Error && denied.error is AppFunctionPermissionRequiredException)
+        assertTrue(api.voiceRequests.isEmpty())
+    }
+    @Test fun freeFormConsentHandoffKeepsTheTextAndNeverStartsTheMicrophone() = runBlocking {
+        api.allowed = false
+        val result = ask("Find a history podcast")
+        assertTrue(api.voiceRequests.isEmpty()); assertEquals(0, api.grants)
+        val open = checkNotNull(handoff(result))
+        open.send()
+        waitFor { model.voice.state.value.phase == VoicePhase.Consent }
+        assertEquals("Find a history podcast", model.voice.state.value.heard)
+        assertNull(model.voice.state.value.launchListening)
+        delay(500)
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        val output = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+            ?.let { java.io.File(it) } ?: java.io.File(app.filesDir, "screenshots")
+        output.mkdirs()
+        java.io.File(output, "assistant-request-consent.png").outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        assertTrue(api.voiceRequests.isEmpty()); assertEquals(0, api.grants)
+        withContext(Dispatchers.Main) { model.voice.allowAI() }
+        waitFor { api.voiceRequests.isNotEmpty() && !model.voice.state.value.busy }
+        assertEquals("Find a history podcast", api.voiceRequests.single().transcript)
+        assertEquals(1, api.grants)
+        assertTrue(runCatching { open.send() }.exceptionOrNull() is android.app.PendingIntent.CanceledException)
+    }
+    @Test fun freeFormClarificationSharesHistoryWithAskMagpie() = runBlocking {
+        val question = ask("Play a podcast")
+        assertTrue(question.getBoolean("expectsReply")); assertEquals("Which show?", question.getString("message"))
+        withContext(Dispatchers.Main) { model.ask(); model.voice.submit("The history show") }
+        waitFor { api.voiceRequests.size == 2 && !model.voice.state.value.busy }
+        assertEquals(listOf("Play a podcast", "Which show?"), api.voiceRequests.last().turns.map { it.text })
+    }
+    @Test fun freeFormCompoundPlaybackWaitsForActualServiceAudio() = runBlocking {
+        api.voiceResponse = VoiceResponse(VoiceAction.Play, "Playing the short podcast.", actions = listOf(
+            VoiceResponse(VoiceAction.Play, "Playing.", api.short), VoiceResponse(VoiceAction.Speed, "Faster.", speed = 1.5f)))
+        val result = ask("Play the short podcast faster")
+        assertNull(handoff(result))
+        assertTrue(withContext(Dispatchers.Main) { observer.isPlaying })
+        assertEquals(1.5f, withContext(Dispatchers.Main) { observer.playbackParameters.speed }, .001f)
+        assertEquals(itemId(1), result.getAppFunctionData("item")!!.getString("id"))
+        assertNull(library.voiceConversation.pending)
+    }
+    @Test fun freeFormFailureHandoffRecoversTheOriginalRequest() = runBlocking {
+        api.voiceFailure = true
+        val result = ask("File the short podcast")
+        val original = api.voiceRequests.single()
+        assertNotNull(library.voiceConversation.pending)
+        assertTrue(api.cancellations.isEmpty())
+        api.voiceFailure = false
+        checkNotNull(handoff(result)).send()
+        waitFor { api.voiceRequests.size == 2 && !model.voice.state.value.busy }
+        assertEquals(original.requestId, api.voiceRequests.last().requestId)
+        assertEquals(original.transcript, api.voiceRequests.last().transcript)
+        assertNull(library.voiceConversation.pending)
+    }
+    @Test fun freeFormCancelledReconciliationUsesCachedReceiptOnRetry() = runBlocking {
+        api.voiceResponse = VoiceResponse(VoiceAction.Played, "Filed.", api.short.copy(completed = true, positionSeconds = 0.0))
+        api.refreshGate = CompletableDeferred()
+        val pending = async { execute(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST, requestData("File the short podcast")) }
+        waitFor { library.voiceConversation.receipt != null }
+        pending.cancelAndJoin()
+        waitFor { !library.voiceConversation.executing }
+        assertFalse("A cancelled refresh must release its loading state", library.state.value.loading)
+        api.refreshGate!!.complete(Unit); api.refreshGate = null
+        ask("try again")
+        assertEquals(1, api.voiceRequests.size)
+        assertNull(library.voiceConversation.pending)
+        assertTrue(library.state.value.items.first { it.episodeId == 1 }.completed)
+    }
+    @Test fun freeFormCallerCancellationCancelsOnlyTheOriginalAccountRequest() = runBlocking {
+        api.voiceGate = CompletableDeferred()
+        val pending = async { execute(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST, requestData("Find the news")) }
+        waitFor { api.voiceRequests.isNotEmpty() }
+        pending.cancelAndJoin()
+        waitFor { api.cancellations.isNotEmpty() && !library.voiceConversation.executing }
+        assertEquals("one" to api.voiceRequests.single().requestId, api.cancellations.single())
+        assertFalse(withContext(Dispatchers.Main) { observer.isPlaying })
+    }
+    @Test fun freeFormSpeedUndoAcrossInterfacesStaysLocal() = runBlocking {
+        api.allowed = false
+        withContext(Dispatchers.Main) { PreviewStore(app).saveSpeed(ContentKind.Podcast, 1f) }
+        play()
+        ask("pause")
+        ask("play at 1.5 times")
+        ask("play at 1.5 times")
+        assertEquals(1.5f, PreviewStore(app).speed(ContentKind.Podcast), .001f)
+        withContext(Dispatchers.Main) { model.ask(); model.voice.submit("undo") }
+        waitFor { !model.voice.state.value.busy }
+        assertEquals(1f, PreviewStore(app).speed(ContentKind.Podcast), .001f)
+        withContext(Dispatchers.Main) { model.voice.submit("play at 1.75 times") }
+        waitFor { !model.voice.state.value.busy }
+        ask("undo")
+        assertEquals(1f, PreviewStore(app).speed(ContentKind.Podcast), .001f)
+        ask("play at 1.5 times")
+        withContext(Dispatchers.Main) { model.setSpeed(ContentKind.Podcast, 1.75f) }
+        waitFor { PreviewStore(app).speed(ContentKind.Podcast) == 1.75f }
+        withContext(Dispatchers.Main) { model.voice.submit("undo") }
+        waitFor { !model.voice.state.value.busy }
+        assertEquals(1.75f, PreviewStore(app).speed(ContentKind.Podcast), .001f)
+        assertTrue(model.voice.state.value.turns.last().text.contains("left it as it is"))
+        assertTrue(api.voiceRequests.isEmpty()); assertEquals(0, api.grants)
+    }
+    @Test fun freeFormTimeoutKeepsTheRequestAvailableWithoutCancellingItsServerReceipt() = runBlocking {
+        api.voiceGate = CompletableDeferred()
+        val result = ask("Find the news")
+        assertNotNull(handoff(result)); assertNotNull(library.voiceConversation.pending)
+        assertTrue(api.cancellations.isEmpty()); assertFalse(library.voiceConversation.executing)
+        assertNull(com.henrydashwood.magpie.playback.PlaybackStatus.voiceToken.value)
+        api.voiceGate!!.complete(Unit)
+        ask("try again")
+        assertEquals(2, api.voiceRequests.size)
+        assertEquals(api.voiceRequests.first().requestId, api.voiceRequests.last().requestId)
+        assertNull(library.voiceConversation.pending)
+    }
+    @Test fun freeFormAccountChangeAndIndependentPauseCancelTheOriginalOperation() = runBlocking {
+        play(); api.voiceGate = CompletableDeferred()
+        val pending = async { execute(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST, requestData("Find the news")) }
+        waitFor { api.voiceRequests.size == 1 }
+        ask("pause")
+        val result = pending.await()
+        assertTrue(result.toString(), result is ExecuteAppFunctionResponse.Error && result.error is AppFunctionCancelledException)
+        assertEquals("one" to api.voiceRequests.first().requestId, api.cancellations.single())
+        assertFalse(withContext(Dispatchers.Main) { observer.isPlaying })
+        val next = async { execute(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST, requestData("Find another show")) }
+        waitFor { api.voiceRequests.size == 2 }
+        withContext(Dispatchers.Main) { library.changeSession("two") }
+        val changed = next.await()
+        assertTrue(changed.toString(), changed is ExecuteAppFunctionResponse.Error && changed.error is AppFunctionCancelledException)
+        assertEquals("one" to api.voiceRequests.last().requestId, api.cancellations.last())
+        assertNull(library.voiceConversation.pending); assertTrue(library.voiceConversation.turns.isEmpty())
+    }
+    @Test fun freeFormRequestsCannotTakeOverAnActiveForegroundConversation() = runBlocking {
+        api.voiceGate = CompletableDeferred()
+        withContext(Dispatchers.Main) { model.ask(); model.voice.submit("Find the news") }
+        waitFor { api.voiceRequests.isNotEmpty() }
+        val held = com.henrydashwood.magpie.playback.PlaybackStatus.voiceToken.value
+        val result = execute(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST, requestData("Find another show"))
+        assertTrue(result.toString(), result is ExecuteAppFunctionResponse.Error)
+        assertEquals(held, com.henrydashwood.magpie.playback.PlaybackStatus.voiceToken.value)
+        assertEquals(1, api.voiceRequests.size)
+        withContext(Dispatchers.Main) { model.voice.close(false) }
+        waitFor { !library.voiceConversation.executing }
     }
     @Test fun listAndFindUseScopedIdsAndPreserveTheDisplayedSearch() = runBlocking {
         withContext(Dispatchers.Main) { library.search(null, "existing") }
@@ -258,7 +470,7 @@ class AppFunctionsTest {
         assertEquals(3, success(MagpieAppFunctions.FUNCTION_ID_FIND_ITEMS).getAppFunctionDataList(key)!!.size)
     }
     @Test fun discoveryDisablesAfterSignOutAndEnablesAfterSignIn() = runBlocking {
-        val names = AppFunctionAvailability.functionIds.filter { it != MagpieAppFunctions.FUNCTION_ID_OPEN_MAGPIE_DESTINATION }
+        val names = AppFunctionAvailability.functionIds.filter { it !in AppFunctionAvailability.localFunctionIds }
             .map { androidx.appfunctions.metadata.AppFunctionName(app.packageName, it) }
         withContext(Dispatchers.Main) { library.changeSession(null) }
         withTimeout(5_000) { while (manager.getAppFunctionStates(names).any { it.isEnabled }) delay(20) }

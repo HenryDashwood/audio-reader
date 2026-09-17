@@ -83,7 +83,7 @@ class VoiceSessionTest {
         val original = host.requests.single()
         session.close(); runCurrent(); assertTrue(host.applied.isEmpty()); assertTrue(session.state.value.recoverable)
         blocked = false; session.open(99); session.retry(); runCurrent()
-        assertSame(original, host.requests.last()); assertEquals(1, host.applied.size)
+        assertSame(original, host.requests.single()); assertEquals(1, host.applied.size)
         assertFalse(session.state.value.recoverable); assertFalse(input.active)
     }
 

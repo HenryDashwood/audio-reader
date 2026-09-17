@@ -43,8 +43,9 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
 - [ ] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
   Launcher/pinned actions, Quick Settings, account-scoped Continue listening,
   trusted Ask microphone launches, media-client library browsing/search, structured
-  lookup/status, playback controls, structured filing/Undo, and destination actions
-  are implemented. Free-form requests and subscriptions remain; the newsletter action also depends on item 9.
+  lookup/status, playback controls, structured filing/Undo, destination actions, and
+  free-form requests are implemented. Following a publication URL remains; the
+  newsletter action also depends on item 9.
 - [ ] **9. Newsletters.** Address presentation/sharing, sender approval/blocking, and signup.
 - [x] **10. AI consent controls.** The discovery flow discloses AI data sharing
   before granting permission. Settings reads, reviews, grants, and withdraws the
@@ -523,6 +524,53 @@ implemented and verified. Future assistant adapters
 must preserve the trusted microphone launch boundary and Android permission step.
 Newsletter shortcut support also depends on item 9. Platform-specific release
 and physical-assistant acceptance remain separate from emulator verification.
+
+## Free-form assistant requests
+
+The next adapter milestone exposes `runMagpieRequest` through the generated
+AppFunctions service. It shares account-scoped conversation history, pending
+request IDs, confirmed receipts, and an execution lease with Ask Magpie. Local
+playback controls and speed Undo stay on device; library Undo uses the existing
+typed action API. Free-form library requests use existing AI consent and command
+contracts. Follow-up questions return `expectsReply` so the assistant can pass the
+user's answer with the same conversation history.
+
+Consent and recovery actions retain the original text privately and open Ask
+Magpie without microphone capture. Intents carry an opaque, account-scoped,
+one-use capability with a ten-minute lifetime; a new library request invalidates older
+continuations. A twenty-second deadline preserves the original server request for
+recovery. Confirmed receipts survive interrupted local reconciliation, avoiding a
+second network mutation. Caller cancellation, account changes, and independent
+controls cancel the original operation. Actual foreground service playback is
+confirmed before returning success; Android background-start restrictions use the
+existing item handoff. Shared speed Undo preserves later manual changes.
+
+Conversation state, receipts, and handoffs remain in memory. Process-death
+recovery belongs to item 11. Item 8 remains open for following a publication URL
+and the newsletter dependency in item 9.
+
+Verification on 17 September 2026: `make android-check` passed 150 JVM tests and
+built both APKs with no compiler warnings or lint errors; eight existing lint
+warnings and one hint remain. The full 47-case assistant run passed 46 cases and
+exposed a cancelled library refresh leaving `loading` set. The fix preserves the
+existing data, releases loading only for the same account, and has two JVM
+regressions. Six focused emulator checks then passed: receipt recovery without a
+second network mutation, speed Undo shared across interfaces (including later
+manual changes), deadline recovery with the original request ID, account-change
+and independent-control cancellation, actual consent handoff, and local playback
+plus library Undo without AI. Together these runs cover all 50 assistant cases.
+The in-app voice regression run passed eight of sixteen cases; the remaining
+cases hit request/speech/capture deadlines or Compose idling limits. An isolated
+filing rerun also timed out before dispatching its API request. A controlled
+comparison using published commit `feaa35f` and the same test diagnostics failed
+with Compose idling too. The Mac was under heavy load and the emulator logged
+large frame delays. These results do not establish a new regression, but also do
+not clear the changed voice flow: those checks remain pending in a responsive
+environment. The explicit assistant-Pause recheck passed. The consent handoff
+screenshot was inspected: the permission dialog is legible and its actions remain
+accessible on the small emulator. That screenshot run subsequently timed out
+waiting for the request after consent, so it does not replace the earlier passing
+functional consent check.
 
 ## Shared limitations
 

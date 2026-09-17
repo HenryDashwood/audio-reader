@@ -23,6 +23,7 @@ interface VoiceHost {
     suspend fun local(command: LocalCommand, token: String): LocalVoiceResult?
     suspend fun consent(): Boolean
     suspend fun allowAI()
+    suspend fun prepareRequest(request: VoiceRequest, token: String) {}
     fun operation(request: VoiceRequest, revision: Int): VoiceOperation
     suspend fun reconcile(response: VoiceResponse, token: String, revision: Int) {}
     suspend fun apply(response: VoiceResponse, token: String, revision: Int): Boolean
@@ -76,6 +77,10 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         start(null, autoFollowUp, accessible)
     }
     fun submit(text: String) { if (text.isNotBlank()) start(text.trim(), autoFollowUp = false) }
+    fun continueRequest(request: VoiceHandoffs.Request) {
+        open(null)
+        if (request.recovering) retry() else submit(request.transcript)
+    }
     fun retry() = start("try again", autoFollowUp = false)
     fun allowAI() { deferredTranscript?.let { start(it, autoFollowUp = false, allowConsent = true) } }
     fun declineAI() {
@@ -122,6 +127,7 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                 if (id != version || !host.valid(active.token, account.revision)) throw CancellationException("Conversation interrupted")
             }
             try {
+                check(conversation.acquire(active.token)) { "Magpie is already handling a request. Let it finish and try again." }
                 host.begin(active.token, account.revision); active.acquired = true; checkTurn()
                 if (allowConsent) { host.allowAI(); checkTurn(); deferredTranscript = null }
                 var supplied = text
@@ -160,20 +166,24 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                         val recovering = heard.lowercase().trimEnd('.', '?', '!') in setOf("try again", "did that work", "what happened", "check that request")
                         val request = conversation.request(heard, viewedId, account.playingEpisodeId, country = account.country, recover = recovering)
                         publish()
-                        val operation = host.operation(request, account.revision)
-                        active.operation = operation
                         active.safeToResume = false
-                        val response = operation.response { delta -> checkTurn(); mutable.update { it.copy(reply = it.reply + delta) } }
+                        host.prepareRequest(request, active.token); checkTurn()
+                        val response = conversation.receipt ?: run {
+                            val operation = host.operation(request, account.revision)
+                            active.operation = operation
+                            operation.response { delta -> checkTurn(); mutable.update { it.copy(reply = it.reply + delta) } }
+                                .also { conversation.confirmed(request, accountKey, it) }
+                        }
                         active.operation = null; checkTurn()
                         // These effects already happened on the server, even if confirmation is cancelled.
                         host.reconcile(response, active.token, account.revision); checkTurn()
                         active.safeToResume = true
                         say(response.spokenResponse, ::checkTurn)
                         val playing = host.apply(response, active.token, account.revision)
-                        checkTurn()
                         conversation.applied(request, conversation.owner, response.effects.map {
                             "${it.action.wire}: ${it.spokenResponse}" + (it.episode?.let { row -> " [episode_id=${row.id}]" } ?: "")
                         })
+                        checkTurn()
                         publish(); expectsReply = response.expectsReply
                         if (playing) { mutable.update { it.copy(visible = false) }; break }
                     }
@@ -188,7 +198,8 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                 if (id == version) mutable.update { it.copy(error = failure.message ?: "That request could not finish. Please try again.") }
             } finally {
                 if (turn === active) turn = null
-                withContext(NonCancellable) { withTimeoutOrNull(5_000) { runCatching { host.end(active.token, active.resume && active.safeToResume) } } }
+                if (active.acquired) withContext(NonCancellable) { withTimeoutOrNull(5_000) { runCatching { host.end(active.token, active.resume && active.safeToResume) } } }
+                conversation.release(active.token)
                 if (id == version) {
                     publish()
                     mutable.update { it.copy(phase = if (it.phase == VoicePhase.Consent) VoicePhase.Consent else VoicePhase.Idle, heard = if (it.phase == VoicePhase.Consent) it.heard else "") }

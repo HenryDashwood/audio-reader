@@ -27,6 +27,11 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     private val writes = Mutex()
     private val mutable = MutableStateFlow(if (initiallySignedIn) LibraryState(live = true, loading = true) else preview())
     val state = mutable.asStateFlow()
+    val voiceConversation = com.henrydashwood.magpie.voice.Conversation()
+    val voiceHandoffs = com.henrydashwood.magpie.voice.VoiceHandoffs()
+    data class SpeedUndo(val owner: String?, val revision: Int, val kind: ContentKind,
+        val before: Float, val after: Float, val expiresAt: Long)
+    var speedUndo: SpeedUndo? = null
     val actions = LibraryActionExecution { state.value.takeIf { it.live && it.owner != null }?.let { "${it.revision}:${it.owner}" } }
 
     fun libraryAction(action: String, episodeId: Int?, requestId: String, sessionRevision: Int): com.henrydashwood.magpie.voice.VoiceOperation {
@@ -54,6 +59,9 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         token = value
         revision++
         actions.invalidate()
+        voiceConversation.activate(null)
+        voiceHandoffs.clear()
+        speedUndo = null
         searchVersion++
         mutable.value = if (value == null) preview() else LibraryState(live = true, revision = revision, loading = true,
             owner = identityStore?.owner(digest(server + ":" + value)))
@@ -85,7 +93,11 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
                 val saved = result.third.map { it.item(next) }
                 mutable.value = next.copy(items = merge(next.items, latest + saved), latestIds = latest.map { it.id },
                     savedIds = saved.map { it.id }, loading = false)
-            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (cancelled: CancellationException) {
+                // A cancelled reconciliation must not leave future assistant
+                // requests waiting forever for a refresh that no longer exists.
+                if (state.value.revision == version) mutable.value = state.value.copy(loading = false)
+                throw cancelled
             } catch (failure: Exception) {
                 check(version)
                 mutable.value = state.value.copy(loading = false, error = message(failure))

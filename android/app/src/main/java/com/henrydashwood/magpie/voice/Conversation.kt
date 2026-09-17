@@ -30,6 +30,16 @@ class Conversation(private val nowMillis: () -> Long = { System.nanoTime() / 1_0
         private set
     var pending: VoiceRequest? = null
         private set
+    var receipt: VoiceResponse? = null
+        private set
+    private var execution: String? = null
+    val executing: Boolean get() = execution != null
+    fun acquire(id: String): Boolean {
+        if (execution != null) return false
+        execution = id
+        return true
+    }
+    fun release(id: String) { if (execution == id) execution = null }
     var recentActions: List<String> = emptyList()
         private set
     private var lastSpoke: Long? = null
@@ -37,7 +47,7 @@ class Conversation(private val nowMillis: () -> Long = { System.nanoTime() / 1_0
     fun activate(owner: String?) {
         if (this.owner == owner) return
         this.owner = owner; revision++
-        clear(); pending = null; recentActions = emptyList()
+        clear(); pending = null; receipt = null; execution = null; recentActions = emptyList()
     }
     fun clear() { turns = emptyList(); lastSpoke = null }
     fun forgetIfStale() {
@@ -60,13 +70,16 @@ class Conversation(private val nowMillis: () -> Long = { System.nanoTime() / 1_0
             nowPlayingEpisodeId = playingEpisodeId, country = country,
             turns = turns.takeLast(8), recentActions = recentActions)
         userSaid(request.transcript)
-        pending = request
+        revision++; pending = request; receipt = null
         return request
+    }
+    fun confirmed(request: VoiceRequest, account: String?, response: VoiceResponse) {
+        if (owner == account && pending?.requestId == request.requestId) receipt = response
     }
     /** Keep a receipt until its client-side effects have succeeded, including after cancellation. */
     fun applied(request: VoiceRequest, account: String?, actions: List<String>) {
         if (owner != account || pending?.requestId != request.requestId) return
-        pending = null
+        pending = null; receipt = null
         recentActions = (recentActions + actions).takeLast(8)
     }
     fun generation() = revision

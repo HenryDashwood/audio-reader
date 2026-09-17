@@ -141,7 +141,14 @@ class VoiceConversationTest {
         compose.onNodeWithText("Type a request").performTextInput(text)
         compose.onNodeWithText("Send").performClick()
     }
-    private fun idle() { compose.waitUntil(10_000) { !model.voice.state.value.busy } }
+    private fun idle() {
+        try { compose.waitUntil(10_000) { !model.voice.state.value.busy } }
+        catch (failure: ComposeTimeoutException) {
+            throw AssertionError("Voice did not settle: voice=${model.voice.state.value}, player=${model.player.value}, " +
+                "requests=${api.requests.size}, filed=${api.filed}, spoken=${output.said}, " +
+                "held=${PlaybackStatus.voiceToken.value}, loading=${library.state.value.loading}", failure)
+        }
+    }
 
     @Test fun confirmationFinishesBeforeNewPlaybackAndInterruptedReplyCanRecover() {
         play(); output.gate = CompletableDeferred(); api.response = VoiceResponse(VoiceAction.Play, "Playing the second podcast.", api.second)
@@ -322,7 +329,11 @@ class VoiceConversationTest {
             assertEquals(0, result.resultCode)
             compose.onNodeWithContentDescription("Ask Magpie").performClick(); compose.onNodeWithText("Listen").performClick()
             compose.waitUntil(5_000) { input.active }
-            compose.waitUntil(12_000) { !PlaybackStatus.sleepTimer.value.running && !input.active && !model.voice.state.value.visible }
+            try { compose.waitUntil(12_000) { !PlaybackStatus.sleepTimer.value.running && !input.active && !model.voice.state.value.visible } }
+            catch (failure: ComposeTimeoutException) {
+                throw AssertionError("Sleep interruption: timer=${PlaybackStatus.sleepTimer.value}, input=${input.active}, " +
+                    "voice=${model.voice.state.value}, held=${PlaybackStatus.voiceToken.value}", failure)
+            }
             assertFalse(model.player.value.playing); assertNull(PlaybackStatus.voiceToken.value)
         } finally { compose.runOnUiThread { controller.release() } }
     }

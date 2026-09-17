@@ -8,9 +8,8 @@ import kotlinx.coroutines.CancellationException
 
 class PlaybackVoiceHost(private val library: AccountLibrary, private val store: PreviewStore,
     private val playing: () -> LibraryItem?, private val prepare: () -> Unit,
-    private val send: suspend (String, Bundle) -> Bundle) : VoiceHost {
-    private data class UndoSpeed(val revision: Int, val kind: ContentKind, val before: Float, val applied: Float)
-    private var undo: UndoSpeed? = null
+    private val send: suspend (String, Bundle) -> Bundle,
+    private val startPlayback: (suspend (LibraryItem) -> Unit)? = null) : VoiceHost {
     private var interruptedKind: ContentKind? = null
     private var requestId: String? = null
     private fun playbackKind() = playing()?.kind ?: interruptedKind ?: ContentKind.Podcast
@@ -33,28 +32,32 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
         this.requestId = requestId
         control(token, "drain") { putString("request_id", requestId) }
     }
+    override suspend fun prepareRequest(request: VoiceRequest, token: String) = drain(token, request.requestId)
     private suspend fun speed(token: String, rate: Float, kind: ContentKind = playbackKind()): String {
-        val result = control(token, "speed") { putFloat("rate", rate); putString("kind", kind.name) }
-        undo = UndoSpeed(library.state.value.revision, kind, result.getFloat("previous_rate"), rate)
+        control(token, "speed") { putFloat("rate", rate); putString("kind", kind.name) }
         return "${rate.toString().removeSuffix(".0")} times speed."
     }
     override suspend fun local(command: LocalCommand, token: String): LocalVoiceResult? {
-        if (command !is LocalCommand.Speed && command !is LocalCommand.AdjustSpeed && command != LocalCommand.Undo) undo = null
         return when (command) {
             LocalCommand.Pause -> { control(token, "pause"); LocalVoiceResult(end = true) }
             LocalCommand.Resume -> { control(token, "resume"); LocalVoiceResult(end = true) }
             is LocalCommand.Seek -> { control(token, "seek") { putLong("delta_ms", (command.seconds * 1000).toLong()) }; LocalVoiceResult(end = true) }
             is LocalCommand.Speed -> LocalVoiceResult(speed(token, command.rate))
-            is LocalCommand.AdjustSpeed -> LocalVoiceResult(speed(token, (store.speed(playbackKind()) + command.delta).coerceIn(.5f, 2f)))
+            is LocalCommand.AdjustSpeed -> LocalVoiceResult(speed(token, (store.speed(playbackKind()) + command.delta).coerceIn(.5f, 3f)))
             is LocalCommand.Sleep -> {
                 control(token, "sleep") { putLong(PlaybackService.SLEEP_DURATION_MS, command.minutes * 60_000L) }
                 LocalVoiceResult("I will stop in ${command.minutes} ${if (command.minutes == 1) "minute" else "minutes"}.")
             }
             LocalCommand.CancelSleep -> { control(token, "cancel_sleep"); LocalVoiceResult("Sleep timer off.") }
             LocalCommand.Undo -> {
-                val previous = undo?.takeIf { it.revision == library.state.value.revision && store.speed(it.kind) == it.applied }
+                val previous = library.speedUndo?.takeIf { it.revision == library.state.value.revision &&
+                    it.owner == library.state.value.owner && android.os.SystemClock.elapsedRealtime() < it.expiresAt }
+                if (previous != null && store.speed(previous.kind) != previous.after) {
+                    library.speedUndo = null
+                    return LocalVoiceResult("Playback speed has changed since then. I left it as it is.")
+                }
                 if (previous == null) null else {
-                    speed(token, previous.before, previous.kind); undo = null; LocalVoiceResult("Playback speed restored.")
+                    speed(token, previous.before, previous.kind); library.speedUndo = null; LocalVoiceResult("Playback speed restored.")
                 }
             }
             LocalCommand.EndConversation -> null
@@ -63,16 +66,8 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
     override suspend fun consent() = library.aiConsent()
     override suspend fun allowAI() { if (!library.setAIConsent(true)) throw VoiceFailure("Your choice could not be saved. Please try again.") }
     override fun operation(request: VoiceRequest, revision: Int): VoiceOperation {
-        undo = null
-        val operation = library.voiceOperation(request, revision)
-        val token = PlaybackStatus.voiceToken.value ?: throw CancellationException("Playback changed")
-        return object : VoiceOperation {
-            override suspend fun response(onDelta: (String) -> Unit): VoiceResponse {
-                drain(token, request.requestId)
-                return operation.response(onDelta)
-            }
-            override suspend fun cancel() = operation.cancel()
-        }
+        library.speedUndo = null
+        return library.voiceOperation(request, revision)
     }
     override suspend fun reconcile(response: VoiceResponse, token: String, revision: Int) {
         var refresh = false
@@ -109,8 +104,11 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
         }
         toPlay?.let { selected ->
             val adopted = library.acceptVoiceEpisode(selected, revision)
-            val item = if (adopted.textLoaded) adopted else library.content(adopted.id)
-            control(token, "play") { putString("id", item.id) }
+            if (startPlayback != null) startPlayback.invoke(adopted)
+            else {
+                val item = if (adopted.textLoaded) adopted else library.content(adopted.id)
+                control(token, "play") { putString("id", item.id) }
+            }
         }
         return toPlay != null
     }

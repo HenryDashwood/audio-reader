@@ -4,6 +4,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ConversationTest {
+    @Test fun confirmedReceiptsSurviveRecoveryButCannotLeakToNewRequestsOrAccounts() {
+        val context = Conversation().apply { activate("alice") }
+        val request = context.request("File this")
+        val receipt = VoiceResponse(VoiceAction.Unknown, "Done")
+        context.confirmed(request, "alice", receipt)
+        assertSame(request, context.request("try again", recover = true))
+        assertSame(receipt, context.receipt)
+        val next = context.request("A new request")
+        assertNull(context.receipt)
+        context.confirmed(request, "alice", receipt)
+        assertNull(context.receipt)
+        context.activate("bob")
+        context.confirmed(next, "alice", receipt)
+        assertNull(context.receipt)
+    }
+    @Test fun executionLeaseRejectsOverlapAndOldCleanupCannotReleaseTheNewAccount() {
+        val context = Conversation().apply { activate("alice") }
+        assertTrue(context.acquire("first")); assertFalse(context.acquire("second"))
+        context.release("second"); assertTrue(context.executing)
+        context.activate("bob"); assertFalse(context.executing)
+        assertTrue(context.acquire("new")); context.release("first"); assertTrue(context.executing)
+        context.release("new"); assertFalse(context.executing)
+    }
     @Test fun requestsSendHistoryWithoutDuplicatingTheirOwnTranscript() {
         val context = Conversation().apply { activate("server:alice") }
         val first = context.request("Play history", playingEpisodeId = 10, viewedEpisodeId = 20, country = "GB")

@@ -15,6 +15,8 @@ import com.henrydashwood.magpie.data.*
 import com.henrydashwood.magpie.playback.PlaybackService
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
+import com.henrydashwood.magpie.voice.*
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -71,6 +73,17 @@ data class MagpieDestination(
     val openMagpie: PendingIntent,
 )
 
+/** Result of a written or dictated request. A handoff preserves the original request; do not submit it again. */
+@AppFunctionSerializable(isDescribedByKDoc = true)
+data class MagpieRequestResult(
+    val message: String,
+    /** Ask this question to the user and call runMagpieRequest with their answer when true. */
+    val expectsReply: Boolean,
+    val item: ListeningItem?,
+    /** Ask the user to open this one-use action to review consent or finish the same request. */
+    val openMagpie: PendingIntent?,
+)
+
 @RequiresApi(36)
 @AppFunctionServiceEntryPoint(serviceName = "MagpieAppFunctions", appFunctionXmlFileName = "magpie_app_functions")
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -99,6 +112,169 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
     private fun item(value: LibraryItem) = ListeningItem(value.id, value.title, value.source,
         if (value.kind == ContentKind.Podcast) "podcast" else "article", value.completed, value.durationSeconds)
     private fun scopedShowId(state: LibraryState, feed: LibraryFeed) = "${state.owner}:feed:${feed.id}"
+
+    /**
+     * Runs a written or dictated Magpie request. Playback commands stay on device and library Undo uses the account without AI.
+     * Other library requests require sign-in and existing AI consent.
+     * Ask a returned question and pass the user's answer here when expectsReply is true. If openMagpie is returned, ask the user to open it;
+     * it continues the original request. Never automatically resubmit an uncertain library change.
+     * @param request The user's own request or clarification, from one to 2000 characters.
+     */
+    @AppFunction(isEnabled = true, isDescribedByKDoc = true)
+    suspend fun runMagpieRequest(request: String): MagpieRequestResult = action(timeoutMs = 150_000) {
+        val text = request.trim()
+        require(text.isNotEmpty() && text.length <= 2_000) { "Please ask in a shorter sentence." }
+        val command = LocalCommand.match(text)
+        val state = if (command == null) ready() else library.state.value
+        val account = "${state.revision}:${state.owner}:${state.live}"
+        val context = library.voiceConversation
+        context.activate(account)
+        val token = java.util.UUID.randomUUID().toString()
+        // Explicit player controls remain available while a library request is
+        // waiting. The service invalidates that request's hold before applying
+        // the control; a second library request must never steal the lease.
+        val acquiredExecution = context.acquire(token)
+        check(acquiredExecution || command != null && command !in setOf(LocalCommand.Undo, LocalCommand.EndConversation)) {
+            "Magpie is already handling a request. Let it finish and try again."
+        }
+        fun handoff(message: String, recovery: Boolean = false): MagpieRequestResult {
+            checkAccount(state)
+            val pending = context.pending.takeIf { recovery }
+            val nonce = library.voiceHandoffs.create(account, context.generation(), pending?.transcript ?: text, pending?.requestId)
+            val open = destination(com.henrydashwood.magpie.shortcuts.ShortcutRequest(
+                com.henrydashwood.magpie.shortcuts.ShortcutAction.RunRequest, owner = state.owner ?: "sample", handoffId = nonce), "Continue Magpie request")
+            return MagpieRequestResult(message, false, null, open.openMagpie)
+        }
+        try {
+            if (command != null) {
+                val result = localRequest(command, state)
+                context.userSaid(text); context.appSaid(result.message)
+                return@action result
+            }
+            val allowed = try { withTimeoutOrNull(20_000) { library.aiConsent() } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
+            checkAccount(state)
+            if (allowed != true) return@action handoff(if (allowed == false)
+                "Open Magpie to review AI data sharing and continue your request." else "Open Magpie to continue your request.")
+            val media = connect()
+            var acquired = false
+            var safeToResume = true
+            var operation: VoiceOperation? = null
+            var preserveRequest = false
+            var interrupted: Job? = null
+            var started: ListeningStart? = null
+            var requestCreated = false
+            suspend fun send(name: String, args: Bundle): Bundle {
+                checkAccount(state)
+                val result = awaitResult(media.sendCustomCommand(SessionCommand(name, Bundle.EMPTY), args))
+                checkAccount(state)
+                if (result.resultCode != SessionResult.RESULT_SUCCESS) throw CancellationException("Listening changed")
+                return result.extras
+            }
+            lateinit var host: PlaybackVoiceHost
+            fun checkHold() {
+                checkAccount(state)
+                if (!host.valid(token, state.revision)) throw CancellationException("Listening changed")
+            }
+            host = PlaybackVoiceHost(library, PreviewStore(this),
+                { library.state.value.items.firstOrNull { it.id == media.currentMediaItem?.mediaId } }, {}, ::send,
+                startPlayback = { selected ->
+                    checkHold()
+                    val controls = com.henrydashwood.magpie.playback.PlaybackStatus.controlVersion.value
+                    interrupted?.cancel(); interrupted = null
+                    host.end(token, false); acquired = false
+                    started = startInAccount(state, "play_item", Bundle().apply {
+                        putString("item_id", selected.id); putInt("expected_controls", controls)
+                    }, media)
+                })
+            try {
+                host.begin(token, state.revision); acquired = true; checkHold()
+                coroutineScope {
+                    val caller = currentCoroutineContext().job
+                    interrupted = launch {
+                        combine(library.state, com.henrydashwood.magpie.playback.PlaybackStatus.voiceToken) { current, held ->
+                            current.revision != state.revision || current.owner != state.owner || held != token
+                        }.first { it }
+                        caller.cancel(CancellationException("Listening changed"))
+                    }
+                    try {
+                        val recovering = text.lowercase(java.util.Locale.ROOT).trimEnd('.', '?', '!') in
+                            setOf("try again", "did that work", "what happened", "check that request")
+                        val voiceRequest = context.request(text, playingEpisodeId = host.account().playingEpisodeId,
+                            country = host.account().country, recover = recovering)
+                        requestCreated = true
+                        safeToResume = false
+                        val response = withTimeoutOrNull(20_000) {
+                            host.prepareRequest(voiceRequest, token); checkHold()
+                            context.receipt ?: host.operation(voiceRequest, state.revision).also { operation = it }.response()
+                                .also { context.confirmed(voiceRequest, account, it) }
+                        }
+                        if (response == null) {
+                            preserveRequest = true
+                            return@coroutineScope handoff("The result is not confirmed yet. Open Magpie to check the same request.", recovery = true)
+                        }
+                        operation = null
+                        checkHold(); host.reconcile(response, token, state.revision); checkHold()
+                        safeToResume = true
+                        host.apply(response, token, state.revision)
+                        checkAccount(state)
+                        context.applied(voiceRequest, account, response.effects.map {
+                            "${it.action.wire}: ${it.spokenResponse}" + (it.episode?.let { row -> " [episode_id=${row.id}]" } ?: "")
+                        })
+                        val playback = started
+                        val message = if (playback?.openMagpie != null) "Open Magpie to finish starting playback." else response.spokenResponse
+                        context.appSaid(message)
+                        MagpieRequestResult(message, response.expectsReply, playback?.status?.item ?: response.episode?.let { row ->
+                            library.state.value.items.firstOrNull { it.episodeId == row.id }?.let(::item)
+                        }, playback?.openMagpie)
+                    } finally { interrupted?.cancel() }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled
+            } catch (_: Exception) {
+                preserveRequest = true
+                handoff("That request could not finish. Open Magpie to check the same request.", recovery = requestCreated)
+            } finally {
+                withContext(NonCancellable) {
+                    if (!preserveRequest) withTimeoutOrNull(5_000) { operation?.let { runCatching { it.cancel() } } }
+                    if (acquired) withTimeoutOrNull(5_000) { runCatching { host.end(token, safeToResume) } }
+                }
+                media.release()
+            }
+        } finally { context.release(token) }
+    }
+
+    private suspend fun localRequest(command: LocalCommand, state: LibraryState): MagpieRequestResult {
+        if (command == LocalCommand.EndConversation) {
+            library.voiceConversation.clear()
+            return MagpieRequestResult("Conversation ended.", false, null, null)
+        }
+        if (command == LocalCommand.Resume) {
+            val result = startInAccount(state, "continue")
+            return MagpieRequestResult(if (result.openMagpie != null) "Open Magpie to continue listening." else "Listening resumed.", false, result.status.item, result.openMagpie)
+        }
+        if (command == LocalCommand.Undo && library.speedUndo?.let {
+            it.owner == state.owner && it.revision == state.revision && android.os.SystemClock.elapsedRealtime() < it.expiresAt
+        } != true) {
+            val result = changeLibrary("undo", null, false)
+            return MagpieRequestResult(result.message, false, result.item, null)
+        }
+        val (name, value, message) = when (command) {
+            LocalCommand.Pause -> Triple("pause", null, "Listening paused.")
+            is LocalCommand.Seek -> Triple("skip", command.seconds, "Listening position updated.")
+            is LocalCommand.Speed -> Triple("speed", command.rate.toDouble(), "Playback speed updated.")
+            is LocalCommand.AdjustSpeed -> {
+                val current = status(request(state, "status", Bundle())).speed
+                Triple("speed", (current + command.delta).coerceIn(.5, 3.0), "Playback speed updated.")
+            }
+            is LocalCommand.Sleep -> Triple("sleep", command.minutes.toDouble(), "Sleep timer set for ${command.minutes} minutes.")
+            LocalCommand.CancelSleep -> Triple("cancel_sleep", null, "Sleep timer off.")
+            LocalCommand.Undo -> Triple("undo_speed", null, "Playback speed restored.")
+            else -> error("Unsupported local command")
+        }
+        val result = status(request(state, name, Bundle().apply { value?.let { putDouble("value", it) } }))
+        return MagpieRequestResult(message, false, result.item, null)
+    }
 
     /**
      * Returns an action to open a Magpie screen without starting playback or the microphone.
@@ -334,6 +510,7 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
                 putString("action", "status"); putString("owner", state.owner); putInt("revision", state.revision)
             }).getString("item_id") ?: throw AppFunctionInvalidArgumentException("Choose an item, or start listening first.")
             val response = library.actions.run(action, id?.let(::episodeId), useCurrent = suppliedId == null && action != "undo", startNewChange = startNewChange, before = { requestId ->
+                library.speedUndo = null
                 host.begin(token, state.revision); acquired = true
                 host.drain(token, requestId)
                 checkHold()
@@ -377,24 +554,28 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
 
     private suspend fun start(name: String, arguments: Bundle = Bundle()): ListeningStart = action(timeoutMs = 150_000) {
         val state = ready()
-        val snapshot = request(state, name, arguments)
+        startInAccount(state, name, arguments)
+    }
+
+    private suspend fun startInAccount(state: LibraryState, name: String, arguments: Bundle = Bundle(), media: MediaController? = null): ListeningStart {
+        val snapshot = request(state, name, arguments, media)
         val status = status(snapshot)
         val open = if (snapshot.getBoolean("foreground_required")) {
             val id = checkNotNull(snapshot.getString("item_id"))
             val intent = com.henrydashwood.magpie.shortcuts.MagpieShortcuts.intent(this,
                 com.henrydashwood.magpie.shortcuts.ShortcutRequest(com.henrydashwood.magpie.shortcuts.ShortcutAction.PlayItem,
-                    owner = state.owner, itemId = id))
+                    owner = state.owner ?: "sample", itemId = id))
                 .setData(android.net.Uri.Builder().scheme("magpie-automation").authority("play").appendPath(java.util.UUID.randomUUID().toString()).build())
             PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT)
         } else null
-        ListeningStart(status, open)
+        return ListeningStart(status, open)
     }
 
-    private suspend fun request(state: LibraryState, action: String, arguments: Bundle): Bundle {
-        val media = connect()
+    private suspend fun request(state: LibraryState, action: String, arguments: Bundle, controller: MediaController? = null): Bundle {
+        val media = controller ?: connect()
         try {
             checkAccount(state)
-            arguments.putString("action", action); arguments.putString("owner", state.owner); arguments.putInt("revision", state.revision)
+            arguments.putString("action", action); arguments.putString("owner", state.owner ?: "sample"); arguments.putInt("revision", state.revision)
             val result = awaitResult(media.sendCustomCommand(SessionCommand(PlaybackService.AUTOMATION_CONTROL, Bundle.EMPTY), arguments))
             checkAccount(state)
             val message = result.extras.getString("error") ?: "The listening request could not be completed."
@@ -405,7 +586,7 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
                 SessionError.ERROR_BAD_VALUE -> throw AppFunctionInvalidArgumentException(message)
                 else -> throw AppFunctionAppUnknownException(message)
             }
-        } finally { media.release() }
+        } finally { if (controller == null) media.release() }
     }
 
     private fun status(snapshot: Bundle) = ListeningStatus(

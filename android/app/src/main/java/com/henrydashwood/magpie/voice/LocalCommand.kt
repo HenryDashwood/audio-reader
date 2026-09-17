@@ -20,7 +20,7 @@ sealed interface LocalCommand {
             val dialogue = transcript.lowercase(Locale.ROOT).replace('’', '\'')
                 .trim().trim { !it.isLetterOrDigit() }
             if (dialogue in endings) return EndConversation
-            if (dialogue in setOf("undo that", "undo last action")) return Undo
+            if (dialogue in setOf("undo", "undo that", "undo last action")) return Undo
             sleep(transcript)?.let { return it }
             val phrase = transcript.lowercase(Locale.ROOT)
                 .replace(Regex("(?<![0-9])\\.|\\.(?![0-9])"), " ")

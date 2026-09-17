@@ -27,7 +27,7 @@ object AppFunctionAvailability {
             for (attempt in 0..3) {
                 try {
                     for (id in functionIds) manager.setAppFunctionEnabled(id,
-                        if (enabled || id == MagpieAppFunctions.FUNCTION_ID_OPEN_MAGPIE_DESTINATION) AppFunctionManager.APP_FUNCTION_STATE_ENABLED else AppFunctionManager.APP_FUNCTION_STATE_DISABLED)
+                        if (enabled || id in localFunctionIds) AppFunctionManager.APP_FUNCTION_STATE_ENABLED else AppFunctionManager.APP_FUNCTION_STATE_DISABLED)
                     break
                 } catch (cancelled: CancellationException) { throw cancelled
                 } catch (_: Exception) {
@@ -39,7 +39,11 @@ object AppFunctionAvailability {
     }
 
     @get:RequiresApi(36)
+    val localFunctionIds get() = setOf(MagpieAppFunctions.FUNCTION_ID_OPEN_MAGPIE_DESTINATION, MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST)
+
+    @get:RequiresApi(36)
     val functionIds get() = listOf(
+        MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST,
         MagpieAppFunctions.FUNCTION_ID_LIST_SHOWS,
         MagpieAppFunctions.FUNCTION_ID_FIND_ITEMS,
         MagpieAppFunctions.FUNCTION_ID_GET_LISTENING_STATUS,

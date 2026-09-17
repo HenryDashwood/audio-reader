@@ -94,10 +94,10 @@ class PlaybackService : MediaLibraryService() {
         var applied = false
         var foregroundDenied = false
     }
-    private data class AutomationSpeedUndo(val owner: String, val revision: Int, val kind: ContentKind,
-        val before: Float, val after: Float, val expiresAt: Long)
     private var automationPlayback: AutomationPlayback? = null
-    private var automationSpeedUndo: AutomationSpeedUndo? = null
+    private var automationSpeedUndo: com.henrydashwood.magpie.data.AccountLibrary.SpeedUndo?
+        get() = library.speedUndo
+        set(value) { library.speedUndo = value }
     private var playbackRevision = -1
     private var lastReportedAt = 0L
     private val localPodcastPositions = mutableMapOf<String, Long>()
@@ -635,6 +635,8 @@ class PlaybackService : MediaLibraryService() {
                 val rate = args.getFloat("rate")
                 if (!rate.isFinite() || rate !in .5f..3f) return SessionResult(SessionError.ERROR_BAD_VALUE)
                 result.putFloat("previous_rate", store.speed(kind)); result.putString("kind", kind.name)
+                if (store.speed(kind) != rate) automationSpeedUndo = com.henrydashwood.magpie.data.AccountLibrary.SpeedUndo(library.state.value.owner,
+                    library.state.value.revision, kind, store.speed(kind), rate, SystemClock.elapsedRealtime() + 600_000)
                 store.saveSpeed(kind, rate)
                 if (current?.kind == kind) player.setPlaybackSpeed(rate)
             }
@@ -684,14 +686,17 @@ class PlaybackService : MediaLibraryService() {
     private fun automationCommand(controller: MediaSession.ControllerInfo, args: Bundle): ListenableFuture<SessionResult> {
         fun result(code: Int, message: String) = Futures.immediateFuture(SessionResult(code, Bundle().apply { putString("error", message) }))
         val state = library.state.value
-        if (!state.live || state.owner == null || args.getString("owner") != state.owner || args.getInt("revision", -1) != state.revision)
+        if (args.getString("owner") != (state.owner ?: "sample") || args.getInt("revision", -1) != state.revision)
             return result(SessionError.ERROR_PERMISSION_DENIED, "The account changed. Open Magpie and try again.")
+        if (args.containsKey("expected_controls") && args.getInt("expected_controls") != PlaybackStatus.controlVersion.value)
+            return result(SessionError.ERROR_INVALID_STATE, "Playback changed. Ask again when you are ready.")
         val action = args.getString("action")
         if (action == "status") return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS, automationSnapshot()))
         if (action == "play_item") {
             val id = args.getString("item_id").orEmpty()
             val prefix = "${state.owner}:episode:"
-            if (!id.startsWith(prefix) || id.removePrefix(prefix).toIntOrNull()?.let { it > 0 } != true)
+            if (if (state.live) !id.startsWith(prefix) || id.removePrefix(prefix).toIntOrNull()?.let { it > 0 } != true
+                else state.items.none { it.id == id })
                 return result(SessionError.ERROR_BAD_VALUE, "That item belongs to another account. Find it again.")
         }
         if (action == "latest" && args.getString("show_id")?.let { id -> state.feeds.none { "${state.owner}:feed:${it.id}" == id } } == true)
@@ -733,7 +738,7 @@ class PlaybackService : MediaLibraryService() {
             "speed" -> {
                 val kind = checkNotNull(current).kind
                 val rate = value.toFloat()
-                automationSpeedUndo = AutomationSpeedUndo(state.owner, state.revision, kind, store.speed(kind), rate, SystemClock.elapsedRealtime() + 600_000)
+                if (store.speed(kind) != rate) automationSpeedUndo = com.henrydashwood.magpie.data.AccountLibrary.SpeedUndo(state.owner, state.revision, kind, store.speed(kind), rate, SystemClock.elapsedRealtime() + 600_000)
                 store.saveSpeed(kind, rate); player.setPlaybackSpeed(rate)
             }
             "undo_speed" -> {

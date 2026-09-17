@@ -313,9 +313,10 @@ foreground. Voice downloads return to a refreshed catalogue.
 Conversation settings persist Keep listening after replies and a 10, 15, 20, or
 30-second follow-up wait. With TalkBack, each turn requires an explicit Listen tap
 so spoken announcements cannot enter an automatically opened microphone.
-Assistant library browsing, structured automation, and newsletter addresses still
-require their corresponding integrations. The Settings sections make those boundaries visible. Siri itself
-is iOS-only. Privacy/support links use the same destinations as the Swift client.
+Assistant browsing and automation depend on compatible Android system services,
+as described below. Newsletter address management remains an upcoming checklist
+item. Siri itself is iOS-only. Privacy/support links use the same destinations
+as the Swift client.
 
 ## Deliberate prototype boundaries
 
@@ -443,8 +444,28 @@ screens remain available before sign-in. Account-bound actions are checked again
 when opened and when the screen consumes the route. Removed shows are rejected,
 and opening an item or show preserves ongoing playback.
 
-Free-form requests and subscriptions
-remain part of checklist item 8. Google describes AppFunctions/Gemini integration as an
+Free-form assistant requests use the same account conversation as Ask Magpie.
+Whole playback, speed, sleep, and speed-Undo commands run on device, including
+before sign-in. Library Undo uses the typed action API without AI consent. Other
+library requests require sign-in and the account's existing AI permission. The
+adapter returns questions for the assistant to ask, and subsequent answers share
+conversation history with the app. It confirms actual service playback before
+announcing a start; Android background-start denial returns an action to open the
+selected item instead.
+
+Missing permission, a twenty-second request deadline, or an unconfirmed result
+returns a one-use action to continue the original text in Ask Magpie without
+starting the microphone. The intent contains an opaque capability, with the text
+stored privately in memory for up to ten minutes. Recovery retains the original
+request ID and confirmed receipt; checking a confirmed result does not repeat the
+server mutation. Concurrent library requests cannot take over each other's conversation. Explicit
+player controls remain available to interrupt a pending request. Caller cancellation, account changes, and independent player
+controls stop pending work using its original account and leave uncertain audio
+paused. Speed Undo is shared across the app and assistant, expires after ten
+minutes, and preserves later manual changes. These conversation receipts and
+handoffs do not survive process death; durable recovery remains in item 11.
+
+Subscription actions remain part of checklist item 8. Google describes AppFunctions/Gemini integration as an
 experimental private preview; launcher/tile availability does not establish
 Gemini support or phone acceptance.
 

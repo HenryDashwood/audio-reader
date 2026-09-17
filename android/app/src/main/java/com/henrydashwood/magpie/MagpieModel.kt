@@ -112,7 +112,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         VoiceSession(viewModelScope, PlaybackVoiceHost(repository, store, { player.value.item }, {
             contentJob?.cancel(); voiceCatalog.stop(); voiceRefresh?.cancel()
         }, ::voiceCommand), speechInput,
-            (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, { store.conversation })
+            (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, { store.conversation }, repository.voiceConversation)
     }
     private suspend fun voiceCommand(action: String, args: Bundle): Bundle {
         val media = controller?.takeIf { it.isConnected } ?: throw VoiceFailure("The player is still connecting. Please try again.")
@@ -216,6 +216,17 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                     // close a conversation, change a screen, or prepare content.
                     if (request.owner != null) libraryState.first { !it.loading }
                     checkScope()
+                    if (request.action == ShortcutAction.RunRequest) {
+                        val context = repository.voiceConversation
+                        check(!context.executing) { "Magpie is already handling a request. Let it finish, then continue in Ask Magpie." }
+                        val state = libraryState.value
+                        val pending = repository.voiceHandoffs.consume(checkNotNull(request.handoffId),
+                            "${state.revision}:${state.owner}:${state.live}", context.generation(), context.pending?.requestId)
+                        contentJob?.cancel()
+                        mutableShortcutNavigation.value = request
+                        voice.continueRequest(pending)
+                        return@withTimeout
+                    }
                     contentJob?.cancel()
                     if (request.action in setOf(ShortcutAction.Ask, ShortcutAction.Saved, ShortcutAction.Following, ShortcutAction.OpenLatest, ShortcutAction.Shortcuts, ShortcutAction.Player)) {
                         voice.close(resume = false)

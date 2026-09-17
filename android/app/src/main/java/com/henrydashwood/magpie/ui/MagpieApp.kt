@@ -137,7 +137,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                 ShortcutAction.OpenFeed -> { destination = Destination.Following; selectedSource = request.feedId }
                 ShortcutAction.Shortcuts -> showingShortcuts = true
                 ShortcutAction.ReadItem -> selectedItemId = request.itemId
-                ShortcutAction.Ask -> Unit
+                ShortcutAction.Ask, ShortcutAction.RunRequest -> Unit
                 else -> showingPlayer = playback.item != null
             }
             model.consumeShortcutNavigation()

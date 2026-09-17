@@ -13,6 +13,36 @@ import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountLibraryTest {
+    @Test fun cancelledRefreshKeepsExistingDataAndReleasesLoadingState() = runTest {
+        val api = Api()
+        val library = AccountLibrary(api, "https://voice.invalid")
+        library.changeSession("alice")
+        val before = library.state.value
+        api.gate = CompletableDeferred()
+        val refreshing = launch { library.refresh() }
+        runCurrent(); assertTrue(library.state.value.loading)
+        refreshing.cancel(); refreshing.join()
+        assertFalse(library.state.value.loading)
+        assertEquals(before.items, library.state.value.items)
+        api.gate!!.complete(Unit)
+        library.refresh()
+        assertFalse(library.state.value.loading)
+    }
+    @Test fun cancellingAnOldRefreshCannotClearTheNewAccountsLoadingState() = runTest {
+        val api = Api()
+        val library = AccountLibrary(api, "https://voice.invalid")
+        library.changeSession("alice")
+        api.gate = CompletableDeferred()
+        val refreshing = launch { library.refresh() }
+        runCurrent()
+        val changing = launch { library.changeSession("bob") }
+        runCurrent()
+        refreshing.cancel(); refreshing.join(); runCurrent()
+        assertTrue(library.state.value.loading)
+        assertTrue(library.state.value.items.isEmpty())
+        api.gate!!.complete(Unit); changing.join()
+        assertFalse(library.state.value.loading)
+    }
     private class Api : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, VoiceApi {
         var voiceGate: CompletableDeferred<Unit>? = null
         val voiceCancellations = mutableListOf<Pair<String, String>>()
