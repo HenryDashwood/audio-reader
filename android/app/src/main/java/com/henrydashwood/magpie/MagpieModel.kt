@@ -97,6 +97,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     val sleepTimer = PlaybackStatus.sleepTimer
     private val mutableNotice = MutableStateFlow<String?>(null)
     val notice = mutableNotice.asStateFlow()
+    val newsletters = com.henrydashwood.magpie.data.Newsletters(viewModelScope, repository) { mutableNotice.value = it }
     val sourceManager = com.henrydashwood.magpie.data.SourceManager(viewModelScope, repository) { mutableNotice.value = it }
     val savedPreparation = com.henrydashwood.magpie.data.SavedPreparation(viewModelScope, repository,
         (application as MagpieApplication).articleInbox, { mutableNotice.value = it }, { before, after ->
@@ -113,6 +114,19 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
             contentJob?.cancel(); voiceCatalog.stop(); voiceRefresh?.cancel()
         }, ::voiceCommand), speechInput,
             (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, { store.conversation }, repository.voiceConversation)
+    }
+    val newsletterSpeech by lazy {
+        com.henrydashwood.magpie.voice.SpokenInformation(viewModelScope,
+            PlaybackVoiceHost(repository, store, { player.value.item }, { voiceCatalog.stop(); voiceRefresh?.cancel(); contentJob?.cancel() }, ::voiceCommand),
+            (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, repository.voiceConversation) {
+                mutableNotice.value = it
+            }
+    }
+    fun readNewsletterAddress(spell: Boolean) {
+        val state = newsletters.state.value
+        val address = state.address ?: return
+        if (!libraryState.value.live || state.revision != libraryState.value.revision) return
+        newsletterSpeech.speak(if (spell) "Your newsletter address is spelled ${address.spelledOut}" else "Your newsletter address is ${address.spoken}")
     }
     private suspend fun voiceCommand(action: String, args: Bundle): Bundle {
         val media = controller?.takeIf { it.isConnected } ?: throw VoiceFailure("The player is still connecting. Please try again.")
@@ -138,6 +152,8 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                 if (revision != snapshot.revision) {
                     revision = snapshot.revision
                     discovery.reset()
+                    newsletters.reset(snapshot.revision)
+                    newsletterSpeech.stop(resume = false)
                     sourceManager.reset()
                     contentJob?.cancel()
                     mutableItemLoading.value = null
@@ -170,7 +186,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
             } catch (_: Exception) { mutableNotice.value = "The player could not connect. Close and reopen Magpie to try again." }
         }, application.mainExecutor)
         viewModelScope.launch { while (isActive) { delay(500); updatePlayer() } }
-        viewModelScope.launch { PlaybackStatus.voiceToken.collect { voice.playbackChanged(it) } }
+        viewModelScope.launch { PlaybackStatus.voiceToken.collect { voice.playbackChanged(it); newsletterSpeech.playbackChanged(it) } }
     }
 
     private fun updatePlayer() {
@@ -189,7 +205,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun refreshLibrary() { if (libraryState.value.live) viewModelScope.launch { repository.refresh(); savedPreparation.sync() } }
+    fun refreshLibrary() { if (libraryState.value.live) { newsletters.loadPending(); viewModelScope.launch { repository.refresh(); savedPreparation.sync() } } }
     private var shortcutJob: kotlinx.coroutines.Job? = null
     private var shortcutVersion = 0
     private val mutableShortcutWorking = MutableStateFlow<String?>(null)
@@ -528,6 +544,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        newsletterSpeech.stop(resume = false)
         voice.close(resume = false)
         closeVoiceSettings()
         MediaController.releaseFuture(connection)

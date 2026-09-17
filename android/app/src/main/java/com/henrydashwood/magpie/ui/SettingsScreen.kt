@@ -45,12 +45,12 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> model.refreshVoices()
-                Lifecycle.Event.ON_PAUSE -> model.stopVoicePreview()
+                Lifecycle.Event.ON_PAUSE -> { model.stopVoicePreview(); model.newsletterSpeech.stop() }
                 else -> Unit
             }
         }
         lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer); model.closeVoiceSettings() }
+        onDispose { lifecycle.removeObserver(observer); model.closeVoiceSettings(); model.newsletterSpeech.stop() }
     }
     fun open(intent: Intent) {
         try { context.startActivity(intent); linkError = null }
@@ -94,7 +94,7 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
         item { HorizontalDivider(); SettingsHeading("Assistant and Shortcuts") }
         item { SettingsAction("Home screen and Quick Settings", Icons.Rounded.AppShortcut, onShortcuts) }
         item { HorizontalDivider(); SettingsHeading("Newsletters") }
-        item { SettingsFootnote("Newsletter address management is not available on Android yet.") }
+        item { NewsletterAddressSection(model) }
         item { HorizontalDivider(); SettingsHeading("Privacy & Support") }
         item { SettingsAction("Privacy Policy", Icons.AutoMirrored.Rounded.OpenInNew) { open(Intent(Intent.ACTION_VIEW, "https://audio-reader-production.up.railway.app/privacy".toUri())) } }
         item { SettingsAction("Email Support", Icons.Rounded.Email) { open(Intent(Intent.ACTION_SENDTO, "mailto:hcndashwood@gmail.com".toUri())) } }

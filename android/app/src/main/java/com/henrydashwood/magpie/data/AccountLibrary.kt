@@ -20,7 +20,7 @@ data class LibraryState(val live: Boolean = false, val revision: Int = 0, val ca
 /** Main-dispatcher state. Every result is bound to the initiating session revision.
  * Account data is kept in memory; a failed load never falls back to sample data. */
 class AccountLibrary(private val api: LibraryApi, private val server: String, initiallySignedIn: Boolean = false,
-    private val identityStore: AccountIdentityStore? = null) : SourceRepository, SourceManagementRepository, SavedArticleRepository {
+    private val identityStore: AccountIdentityStore? = null) : SourceRepository, SourceManagementRepository, SavedArticleRepository, NewsletterRepository {
     private var token: String? = null
     private var revision = 0
     private var searchVersion = 0
@@ -252,6 +252,37 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         check(version)
         return result
     }
+    private suspend fun <T> newsletter(work: suspend (NewsletterApi, String) -> T): T {
+        val (current, version) = credentials()
+        val result = work(checkNotNull(api as? NewsletterApi) { "Newsletters are unavailable." }, current)
+        check(version)
+        return result
+    }
+    override suspend fun newsletterAddress() = newsletter { source, current -> source.newsletterAddress(current) }
+    override suspend fun pendingNewsletters(): List<PendingNewsletter> {
+        val version = revision
+        return newsletter { source, current -> source.pendingNewsletters(current) }.map { it.copy(sessionRevision = version) }
+    }
+    override suspend fun approveNewsletter(item: PendingNewsletter) {
+        check(item.sessionRevision)
+        require(item.id > 0)
+        mutate { current ->
+            val feed = checkNotNull(api as? NewsletterApi).approveNewsletter(current, item.id);
+            { mutable.value = state.value.copy(feeds = (state.value.feeds.filterNot { it.id == feed.id } + feed).sortedBy { it.title.lowercase() }) }
+        }
+        check(item.sessionRevision)
+        refresh()
+        check(item.sessionRevision)
+    }
+    override suspend fun blockNewsletter(item: PendingNewsletter) {
+        check(item.sessionRevision)
+        require(item.id > 0)
+        mutate { current ->
+            checkNotNull(api as? NewsletterApi).blockNewsletter(current, item.id);
+            { }
+        }
+    }
+    override suspend fun signUpForNewsletter(url: String) = newsletter { source, current -> source.signUpForNewsletter(current, validateLink(url)) }
     private suspend fun acceptEpisodes(rows: List<RemoteEpisode>): List<String> {
         val (current, version) = credentials()
         val owner = state.value.owner ?: digest(server + ":" + api.userId(current))

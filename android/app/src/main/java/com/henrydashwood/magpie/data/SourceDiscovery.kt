@@ -13,7 +13,7 @@ data class DiscoveryState(val showing: Boolean = false, val query: String = "", 
     val sources: List<SourceResult> = emptyList(), val itemIds: List<String> = emptyList(),
     val candidates: List<SourceResult>? = null, val selected: SourceResult? = null,
     val preview: SourcePreview? = null, val web: SourceResult? = null, val webMessage: String? = null,
-    val askingConsent: Boolean = false)
+    val askingConsent: Boolean = false, val signup: NewsletterSignup? = null)
 
 /** UI requests and replies belong to both a query generation and the repository session. */
 class SourceDiscovery(private val scope: CoroutineScope, private val repository: SourceRepository) {
@@ -42,7 +42,7 @@ class SourceDiscovery(private val scope: CoroutineScope, private val repository:
         }
     }
     private fun findFeeds() = request {
-        mutable.value = state.value.copy(loading = true, error = null, candidates = null)
+        mutable.value = state.value.copy(loading = true, error = null, candidates = null, signup = null)
         val results = repository.discoverSources(address(state.value.query))
         update { it.copy(candidates = results, searched = true,
             error = if (results.isEmpty()) "Magpie reached that site, but it did not advertise a readable feed." else null) }
@@ -63,6 +63,16 @@ class SourceDiscovery(private val scope: CoroutineScope, private val repository:
     fun retry() {
         val selected = state.value.selected
         if (selected != null) select(selected) else submit()
+    }
+    fun signUpByEmail() {
+        if (state.value.following || state.value.loading || !isAddress(state.value.query)) return
+        val newsletters = repository as? NewsletterRepository ?: return
+        val url = runCatching { address(state.value.query) }.getOrNull() ?: return
+        request {
+            update { it.copy(following = true, error = null, signup = null) }
+            val result = newsletters.signUpForNewsletter(url)
+            update { it.copy(signup = result, candidates = null, selected = null, preview = null) }
+        }
     }
     fun follow() {
         val preview = state.value.preview ?: return

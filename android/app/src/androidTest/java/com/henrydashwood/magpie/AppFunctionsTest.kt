@@ -35,7 +35,12 @@ class AppFunctionsTest {
     private val owner get() = checkNotNull(library.state.value.owner)
     private fun itemId(number: Int) = "$owner:episode:$number"
     private val key = ExecuteAppFunctionResponse.Success.PROPERTY_RETURN_VALUE
-    private class Api : LibraryApi, LibraryActionApi, DiscoveryApi, VoiceApi {
+    private class Api : LibraryApi, LibraryActionApi, DiscoveryApi, VoiceApi, NewsletterApi {
+        override suspend fun newsletterAddress(token: String) = NewsletterAddress("quiet-$token@magpie.example")
+        override suspend fun pendingNewsletters(token: String) = emptyList<PendingNewsletter>()
+        override suspend fun approveNewsletter(token: String, feedId: Int): LibraryFeed = error("Not used")
+        override suspend fun blockNewsletter(token: String, feedId: Int) = error("Not used")
+        override suspend fun signUpForNewsletter(token: String, url: String): NewsletterSignup = error("Not used")
         var allowed = true
         var grants = 0
         var feedChoices = emptyList<SourceResult>()
@@ -234,6 +239,20 @@ class AppFunctionsTest {
     private fun requestData(text: String) = parameters(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST).setString("request", text).build()
     private suspend fun ask(text: String) = success(MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST, requestData(text)).getAppFunctionData(key)!!
     private fun handoff(result: AppFunctionData) = result.getParcelable("openMagpie", android.app.PendingIntent::class.java)
+
+    @Test fun newsletterAddressUsesTheCurrentAccountWithoutAIOrLibraryRefresh() = runBlocking {
+        api.allowed = false
+        api.refreshGate = CompletableDeferred()
+        val refreshing = scope.launch { library.refresh() }
+        waitFor { library.state.value.loading }
+        assertEquals("quiet-one@magpie.example", success(MagpieAppFunctions.FUNCTION_ID_GET_NEWSLETTER_ADDRESS).getString(key))
+        api.refreshGate!!.complete(Unit); refreshing.join()
+        withContext(Dispatchers.Main) { library.changeSession("two") }
+        assertEquals("quiet-two@magpie.example", success(MagpieAppFunctions.FUNCTION_ID_GET_NEWSLETTER_ADDRESS).getString(key))
+        assertEquals(0, api.grants); assertTrue(api.voiceRequests.isEmpty())
+        withContext(Dispatchers.Main) { library.changeSession(null) }
+        assertTrue(execute(MagpieAppFunctions.FUNCTION_ID_GET_NEWSLETTER_ADDRESS) is ExecuteAppFunctionResponse.Error)
+    }
 
     @Test fun publicationFollowAsksBeforeChoosingAndReturnsAScopedShowWithoutAI() = runBlocking {
         api.allowed = false

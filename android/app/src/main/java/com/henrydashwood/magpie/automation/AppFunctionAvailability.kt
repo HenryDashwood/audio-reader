@@ -43,6 +43,7 @@ object AppFunctionAvailability {
 
     @get:RequiresApi(36)
     val functionIds get() = listOf(
+        MagpieAppFunctions.FUNCTION_ID_GET_NEWSLETTER_ADDRESS,
         MagpieAppFunctions.FUNCTION_ID_FOLLOW_PUBLICATION_URL,
         MagpieAppFunctions.FUNCTION_ID_RUN_MAGPIE_REQUEST,
         MagpieAppFunctions.FUNCTION_ID_LIST_SHOWS,

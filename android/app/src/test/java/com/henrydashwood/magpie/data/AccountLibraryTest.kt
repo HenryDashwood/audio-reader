@@ -43,7 +43,25 @@ class AccountLibraryTest {
         api.gate!!.complete(Unit); changing.join()
         assertFalse(library.state.value.loading)
     }
-    private class Api : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, VoiceApi {
+    private class Api : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, VoiceApi, NewsletterApi {
+        var newsletterGate: CompletableDeferred<Unit>? = null
+        val newsletterChanges = mutableListOf<Pair<String, Int>>()
+        val signupUrls = mutableListOf<String>()
+        override suspend fun newsletterAddress(token: String): NewsletterAddress {
+            newsletterGate?.await(); return NewsletterAddress("$token@magpie.example")
+        }
+        override suspend fun pendingNewsletters(token: String) = listOf(PendingNewsletter(30, "Morning", "editor@example.com", 2))
+        override suspend fun approveNewsletter(token: String, feedId: Int): LibraryFeed {
+            newsletterChanges += token to feedId; newsletterGate?.await()
+            val feed = LibraryFeed(feedId.toString(), "Morning", 2, true)
+            subscribed[token] = listOf(feed)
+            return feed
+        }
+        override suspend fun blockNewsletter(token: String, feedId: Int) { newsletterChanges += token to feedId }
+        override suspend fun signUpForNewsletter(token: String, url: String): NewsletterSignup {
+            signupUrls += url; newsletterGate?.await()
+            return NewsletterSignup("unsupported", "Sign up on the website.", "$token@magpie.example")
+        }
         var voiceGate: CompletableDeferred<Unit>? = null
         val voiceCancellations = mutableListOf<Pair<String, String>>()
         override fun events(token: String, request: VoiceRequest) = flow {
@@ -347,6 +365,36 @@ class AccountLibraryTest {
         val cancelled = launch { library.followPublication("https://new.example/feed") }; runCurrent()
         cancelled.cancel(); cancelled.join(); api.discoveryGate!!.complete(Unit)
         assertEquals(0, api.subscriptions)
+    }
+    @Test fun newsletterRowsBelongToTheirSessionAndApprovalRefreshesFollowing() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val row = library.pendingNewsletters().single()
+        assertEquals(library.state.value.revision, row.sessionRevision)
+        library.approveNewsletter(row)
+        assertTrue(library.state.value.feeds.any { it.id == "30" })
+        library.changeSession("bob")
+        assertTrue(runCatching { library.blockNewsletter(row) }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        assertEquals(listOf("alice" to 30), api.newsletterChanges)
+    }
+    @Test fun lateNewsletterApprovalCannotPublishIntoTheNextAccount() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        val row = library.pendingNewsletters().single(); api.newsletterGate = CompletableDeferred()
+        val old = launch { library.approveNewsletter(row) }; runCurrent()
+        val switching = launch { library.changeSession("bob") }; runCurrent()
+        api.newsletterGate!!.complete(Unit); old.join(); switching.join()
+        assertTrue(old.isCancelled); assertTrue(library.state.value.feeds.none { it.id == "30" })
+        assertEquals(listOf("alice" to 30), api.newsletterChanges)
+    }
+    @Test fun addressAndSignupResponsesCannotSurviveAnAccountChange() = runTest {
+        val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
+        assertTrue(runCatching { library.signUpForNewsletter("file:///private") }.isFailure)
+        assertTrue(api.signupUrls.isEmpty())
+        api.newsletterGate = CompletableDeferred()
+        val address = launch { library.newsletterAddress(); fail("Old address escaped") }
+        val signup = launch { library.signUpForNewsletter("https://publisher.example"); fail("Old signup escaped") }
+        runCurrent(); library.changeSession("bob"); api.newsletterGate!!.complete(Unit)
+        address.join(); signup.join()
+        assertTrue(address.isCancelled); assertTrue(signup.isCancelled)
     }
     @Test fun directoryFailureKeepsLibrarySearchResultsAndReportsThePartialFailure() = runTest {
         val api = Api().apply { directoryFailure = true }; val library = AccountLibrary(api, "server"); library.changeSession("alice")

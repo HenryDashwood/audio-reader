@@ -128,6 +128,10 @@ document the fix to use the system service instead.
 Reports are under `android/app/build/reports/`: `tests/testDebugUnitTest/`,
 `androidTests/connected/debug/`, and `lint-results-debug.html`. Raw test XML is
 under `android/app/build/test-results/` and `outputs/androidTest-results/`.
+Check the XML test counts as well as the build result: a crashed emulator system
+process can leave zero executed tests even when Gradle reports success. If Android
+is globally unresponsive, close the development emulator and cold-start the same
+AVD without wiping its data; verify the installed CLI help for the startup options.
 CI retains these reports even when a check fails. The debug APK is
 `android/app/build/outputs/apk/debug/app-debug.apk`.
 
@@ -314,9 +318,29 @@ Conversation settings persist Keep listening after replies and a 10, 15, 20, or
 30-second follow-up wait. With TalkBack, each turn requires an explicit Listen tap
 so spoken announcements cannot enter an automatically opened microphone.
 Assistant browsing and automation depend on compatible Android system services,
-as described below. Newsletter address management remains an upcoming checklist
-item. Siri itself is iOS-only. Privacy/support links use the same destinations
+as described below. Siri itself is iOS-only. Privacy/support links use the same destinations
 as the Swift client.
+
+## Newsletters
+
+Settings shows the signed-in account's newsletter address, with copy/share actions
+and offline read-aloud or letter-by-letter spelling. Speaking pauses the shared
+player and resumes it only after speech ends; independent playback controls or an
+account change cancel speech without restarting audio. Leaving Settings stops the
+readout. Address speech never starts the microphone or requires AI permission.
+
+Pending senders appear in Following and Latest. Follow adds their messages to the
+library; Block asks for confirmation before deleting their messages and dropping
+future emails. Requests are serialized and scoped to the current account session.
+Late refreshes cannot restore an approved sender, and failed writes keep the row
+available for retry. Account changes clear the address, sender list and signup
+result; old rows cannot act on the next account.
+
+When website feed discovery fails, Sign up by email explicitly asks the site to
+send its newsletter to the Magpie address. The result distinguishes a submitted
+request from a signup that needs finishing by hand, with address copy/share for
+the latter. Signup uses the existing backend's sixty-second allowance and needs
+no AI consent. No website signup is submitted just by searching for feeds.
 
 ## Deliberate prototype boundaries
 
@@ -471,7 +495,8 @@ The assistant asks the user to choose and passes the unchanged choice ID with th
 original website. Choices are checked against fresh discovery and bound to the
 account and session. Results contain the canonical, account-scoped followed show;
 already-followed feeds and retries after a lost reply are recognised without
-creating another subscription. Newsletter-address actions remain with item 9.
+creating another subscription. `getNewsletterAddress` returns the current signed-in
+account's address without AI permission; it does not send a signup request.
 
 Google describes AppFunctions/Gemini integration as an
 experimental private preview; launcher/tile availability does not establish

@@ -40,7 +40,8 @@ interface LibraryApi {
 }
 
 /** Uses the existing Swift/backend wire contract. Authorization never follows redirects. */
-class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (String) -> Unit = {}) : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi,
+class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (String) -> Unit = {},
+    private val connect: (java.net.URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }) : LibraryApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, NewsletterApi,
     com.henrydashwood.magpie.voice.VoiceApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized),
     LibraryActionApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized) {
     override suspend fun userId(token: String) = obj(token, "me").getString("id")
@@ -110,17 +111,35 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
         request(token, path, if (change == SourceChange.Combine) "PUT" else "DELETE")
     }
     private suspend fun list(token: String, path: String) = array(token, path).objects().map(::decodeEpisode)
+    override suspend fun newsletterAddress(token: String) = NewsletterAddress(obj(token, "newsletters/address").getString("address"))
+    override suspend fun pendingNewsletters(token: String) = array(token, "newsletters/pending").objects().map { row ->
+        PendingNewsletter(row.getInt("id"), row.getString("title"), row.getString("sender_address"),
+            row.getInt("message_count"), row.optionalString("latest_title"), row.optionalString("latest_at"))
+    }
+    override suspend fun approveNewsletter(token: String, feedId: Int): LibraryFeed {
+        require(feedId > 0)
+        return decodeFeed(obj(token, "newsletters/$feedId/approve", "POST"))
+    }
+    override suspend fun blockNewsletter(token: String, feedId: Int) {
+        require(feedId > 0)
+        request(token, "newsletters/$feedId/block", "POST")
+    }
+    override suspend fun signUpForNewsletter(token: String, url: String): NewsletterSignup {
+        val row = JSONObject(request(token, "newsletters/signups", "POST", JSONObject().put("url", validateLink(url)), 60_000))
+        return NewsletterSignup(row.getString("status"), row.getString("spoken_response"), row.optionalString("address"),
+            row.optionalString("publication"), row.optionalString("platform"), row.optionalString("reason"))
+    }
     private suspend fun array(token: String, path: String) = JSONArray(request(token, path))
     private suspend fun obj(token: String, path: String, method: String = "GET", body: JSONObject? = null) = JSONObject(request(token, path, method, body))
-    private suspend fun request(token: String, path: String, method: String = "GET", body: JSONObject? = null): String = withContext(Dispatchers.IO) {
+    private suspend fun request(token: String, path: String, method: String = "GET", body: JSONObject? = null, timeout: Int = 30_000): String = withContext(Dispatchers.IO) {
         val base = URI(baseUrl)
         require(base.scheme == "https" && base.host != null && base.userInfo == null)
-        val connection = URI(baseUrl.trimEnd('/') + "/" + path).toURL().openConnection() as HttpURLConnection
+        val connection = connect(URI(baseUrl.trimEnd('/') + "/" + path).toURL())
         try {
             connection.requestMethod = method
             connection.instanceFollowRedirects = false
             connection.connectTimeout = 15_000
-            connection.readTimeout = 30_000
+            connection.readTimeout = timeout
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("Authorization", "Bearer $token")
             if (body != null) {

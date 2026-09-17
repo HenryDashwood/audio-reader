@@ -129,6 +129,15 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
         if (value.kind == ContentKind.Podcast) "podcast" else "article", value.completed, value.durationSeconds)
     private fun scopedShowId(state: LibraryState, feed: LibraryFeed) = "${state.owner}:feed:${feed.id}"
 
+    /** Returns the signed-in account's newsletter address for receiving newsletters in Magpie. Requires no AI permission. */
+    @AppFunction(isEnabled = false, isDescribedByKDoc = true)
+    suspend fun getNewsletterAddress(): String = action {
+        val state = ready(waitForLibrary = false)
+        val address = library.newsletterAddress()
+        checkAccount(state)
+        address.address
+    }
+
     /**
      * Finds and follows a podcast or publication feed at a website address, without AI.
      * When several feeds are found, ask the user to choose from the returned choices; nothing is followed yet.

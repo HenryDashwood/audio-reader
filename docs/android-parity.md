@@ -40,13 +40,17 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   typed input, local and account commands, explicit AI consent, follow-up timing,
   interruption recovery, and service-owned playback coordination. Emulator coverage
   includes actual offline speech output; phone microphone/TalkBack acceptance remains.
-- [ ] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
+- [x] **8. Assistant and shortcuts.** Android equivalents of the iOS hands-free actions.
   Launcher/pinned actions, Quick Settings, account-scoped Continue listening,
   trusted Ask microphone launches, media-client library browsing/search, structured
   lookup/status, playback controls, structured filing/Undo, destination actions, and
-  free-form requests and following a publication URL are implemented. The
-  newsletter action remains dependent on item 9.
-- [ ] **9. Newsletters.** Address presentation/sharing, sender approval/blocking, and signup.
+  free-form requests, following a publication URL, and the newsletter-address action
+  are implemented. All 52 assistant integration checks pass on the emulator;
+  real-assistant and phone acceptance remain separate.
+- [x] **9. Newsletters.** Address presentation/sharing/read-aloud, sender approval/blocking,
+  explicit signup and the newsletter-address assistant action are implemented.
+  Protocol, account isolation, sharing, UI and speech-coordination checks pass;
+  large-text/dark-mode and signup screens were visually inspected.
 - [x] **10. AI consent controls.** The discovery flow discloses AI data sharing
   before granting permission. Settings reads, reviews, grants, and withdraws the
   same backend account permission used by iOS. Declining never runs an AI search.
@@ -565,8 +569,9 @@ filing rerun also timed out before dispatching its API request. A controlled
 comparison using published commit `feaa35f` and the same test diagnostics failed
 with Compose idling too. The Mac was under heavy load and the emulator logged
 large frame delays. These results do not establish a new regression, but also do
-not clear the changed voice flow: those checks remain pending in a responsive
-environment. The explicit assistant-Pause recheck passed. The consent handoff
+not by themselves clear the changed voice flow. After a full emulator-process
+cold start during newsletter verification, all sixteen voice regressions passed
+with their original deadlines (see below). The explicit assistant-Pause recheck passed. The consent handoff
 screenshot was inspected: the permission dialog is legible and its actions remain
 accessible on the small emulator. That screenshot run subsequently timed out
 waiting for the request after consent, so it does not replace the earlier passing
@@ -590,8 +595,44 @@ cover choices, canonical results, existing subscriptions, lost replies, stale
 choices, cancellation and account changes. The generated AppFunctions integration
 test passed on API 36.1, checking choice serialization, no premature subscription,
 invalid-choice rejection, the account-scoped result, repeat requests and no AI
-requests. Item 8 remains open for the newsletter action. Earlier voice timing
-failures remain pending as documented above.
+requests. The newsletter action was subsequently completed with item 9 below.
+The earlier voice timing failures were cleared by a full sixteen-case rerun
+after a cold start, as recorded below.
+
+## Newsletters
+
+Android now uses the existing newsletter API for the account address, pending
+senders, approval/blocking and explicit website signup. Settings offers accessible
+word-by-word and spelled addresses, copying with visible/haptic feedback, sharing,
+and offline speech coordinated with the playback service. Speech has no microphone
+path, shares conversation ownership, and respects independent controls and account
+changes. Pending senders appear in Following and Latest; blocking requires a
+confirmation explaining deletion and future filtering. Discovery offers email
+signup after failure and preserves the backend's submitted/manual outcome.
+
+Addresses, sender rows, mutations and signup replies are scoped to the account
+session. Late pending-list replies cannot restore an approved or blocked row;
+failed writes remain available for retry. `getNewsletterAddress` uses the same
+account endpoint without AI or a signup side effect. No backend or Swift contracts
+changed.
+
+`make android-check` passed 168 JVM tests and built both debug APKs without compiler
+warnings or lint errors; eight existing lint warnings and one hint remain. Tests
+cover address pronunciation, stale account replies,
+serialized sender changes, lost refresh races, explicit signup, manual/submitted
+results and speech ownership/cancellation. The first emulator protocol attempt
+ran zero tests because Android’s system process crashed before instrumentation
+started; Gradle nevertheless returned success. This is an environment failure,
+not passing coverage. A full cold start then restored normal execution: all three
+newsletter protocol tests, all five UI journeys (including the Android sharing
+chooser without selecting a recipient), all 52 assistant integration tests and all
+sixteen voice regressions passed with no skips. This includes the previously
+timing-sensitive consent handoff and voice cases using their original deadlines.
+The newsletter assistant test also verifies that it works while library refresh
+is blocked and AI permission is absent. Final large-text/dark-mode address and
+sender screens and the manual-signup result were visually inspected. Items 8 and
+9 are complete within this implementation and emulator scope; physical speech,
+TalkBack and real-assistant acceptance remain release checks.
 
 ## Shared limitations
 

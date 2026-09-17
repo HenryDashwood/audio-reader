@@ -35,6 +35,7 @@ import com.henrydashwood.magpie.data.playbackRates
 import com.henrydashwood.magpie.data.ContentKind
 import com.henrydashwood.magpie.data.LibraryItem
 import com.henrydashwood.magpie.data.LibraryFeed
+import com.henrydashwood.magpie.data.NewsletterState
 import kotlinx.coroutines.delay
 import com.henrydashwood.magpie.playback.Preparation
 import com.henrydashwood.magpie.playback.SleepTimerState
@@ -54,8 +55,11 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
         // A separate share task may have queued content while this screen was stopped.
         model.savedPreparation.sync()
+        if (model.libraryState.value.live) model.newsletters.loadPending()
     }
     val snapshot by model.libraryState.collectAsStateWithLifecycle()
+    val newsletterState by model.newsletters.state.collectAsStateWithLifecycle()
+    val pendingNewsletterState = newsletterState.takeIf { snapshot.live && it.revision == snapshot.revision }
     val loadingItem by model.itemLoading.collectAsStateWithLifecycle()
     val itemError by model.itemError.collectAsStateWithLifecycle()
     var reloadVersion by remember { mutableIntStateOf(0) }
@@ -101,6 +105,9 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
         if (snapshot.live && snapshot.catalogRevision > 0 && selectedSource != null && selectedFeed == null) selectedSource = null
     }
     LaunchedEffect(destination, snapshot.owner) { if (destination == Destination.Saved) model.savedPreparation.sync() }
+    LaunchedEffect(destination, snapshot.revision, newsletterState.revision, snapshot.live) {
+        if (snapshot.live && snapshot.revision == newsletterState.revision && destination in setOf(Destination.Following, Destination.Latest)) model.newsletters.loadPending()
+    }
     val snackbar = remember { SnackbarHostState() }
     val followControl = remember { ArticleFollowControl() }
     LaunchedEffect(savedReturn) {
@@ -242,8 +249,8 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                 selectedItem != null -> ArticleReader(selectedItem, query, followControl)
                 selectedSource != null -> ItemList(if (snapshot.live) snapshot.feedResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.source == selectedSource }, saved, if (snapshot.live) "" else query, ::openItem, model::play, model::toggleSaved, source = selectedFeed?.title ?: selectedSource, live = snapshot.live,
                     feedSources = selectedFeed?.sources.orEmpty(), feed = selectedFeed, model = model, loading = snapshot.loading || snapshot.searching || snapshot.error != null)
-                destination == Destination.Following -> Following(snapshot.feeds, if (snapshot.live) snapshot.searchResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library, query, { selectedSource = it }, ::openItem, pendingSources, model::removePendingSource, snapshot.live, snapshot.loading || snapshot.searching || snapshot.error != null)
-                destination == Destination.Latest -> ItemList(latestItems, saved, "", ::openItem, model::play, model::toggleSaved, emptyTitle = "You're caught up", loading = snapshot.loading || snapshot.error != null)
+                destination == Destination.Following -> Following(snapshot.feeds, if (snapshot.live) snapshot.searchResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library, query, { selectedSource = it }, ::openItem, pendingSources, model::removePendingSource, snapshot.live, snapshot.loading || snapshot.searching || snapshot.error != null, model, pendingNewsletterState)
+                destination == Destination.Latest -> ItemList(latestItems, saved, "", ::openItem, model::play, model::toggleSaved, emptyTitle = "You're caught up", loading = snapshot.loading || snapshot.error != null, model = model, newsletters = pendingNewsletterState)
                 destination == Destination.Saved -> key(savedListVersion) {
                     ItemList(if (snapshot.live) snapshot.savedIds.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.id in saved && it.kind == ContentKind.Article }, saved, query, ::openItem, model::play, model::toggleSaved, savedOnly = true, finished = finished, finish = model::toggleFinished,
                         pendingLinks = pendingLinks, removePendingLink = model::removePendingLink, live = snapshot.live, model = model, loading = snapshot.loading || snapshot.error != null)
@@ -299,11 +306,12 @@ private fun AppNavigation(selected: Destination, select: (Destination) -> Unit) 
 }
 
 @Composable
-private fun Following(feeds: List<LibraryFeed>, items: List<LibraryItem>, query: String, openSource: (String) -> Unit, openItem: (LibraryItem) -> Unit, pendingSources: List<String>, removeSource: (String) -> Unit, live: Boolean = false, loading: Boolean = false) {
+private fun Following(feeds: List<LibraryFeed>, items: List<LibraryItem>, query: String, openSource: (String) -> Unit, openItem: (LibraryItem) -> Unit, pendingSources: List<String>, removeSource: (String) -> Unit, live: Boolean = false, loading: Boolean = false, model: MagpieModel? = null, newsletters: NewsletterState? = null) {
     val visiblePendingSources = pendingSources.filter { it.contains(query, ignoreCase = true) }
     val sources = feeds.filter { it.title.contains(query, ignoreCase = true) }
     val results = if (query.isBlank()) emptyList() else if (live) items else items.filter { "${it.title} ${it.source}".contains(query, ignoreCase = true) }
     LazyColumn(Modifier.fillMaxSize().testTag("following-list")) {
+        if (model != null && newsletters != null && query.isBlank()) pendingNewsletters(model, newsletters)
         if (query.isNotBlank() && sources.isNotEmpty()) item { ListSection("In your library") }
         if (visiblePendingSources.isNotEmpty()) item { ListSection("Pending sources") }
         items(visiblePendingSources, key = { "pending-source:$it" }) { url ->
@@ -327,13 +335,14 @@ private fun Following(feeds: List<LibraryFeed>, items: List<LibraryItem>, query:
 }
 
 @Composable
-private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String, open: (LibraryItem) -> Unit, play: (LibraryItem) -> Unit, save: (LibraryItem) -> Unit, source: String? = null, savedOnly: Boolean = false, finished: Set<String> = emptySet(), finish: (LibraryItem) -> Unit = {}, pendingLinks: List<String> = emptyList(), removePendingLink: (String) -> Unit = {}, emptyTitle: String = "Nothing here yet", live: Boolean = false, feedSources: List<String> = emptyList(), loading: Boolean = false, feed: LibraryFeed? = null, model: MagpieModel? = null) {
+private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String, open: (LibraryItem) -> Unit, play: (LibraryItem) -> Unit, save: (LibraryItem) -> Unit, source: String? = null, savedOnly: Boolean = false, finished: Set<String> = emptySet(), finish: (LibraryItem) -> Unit = {}, pendingLinks: List<String> = emptyList(), removePendingLink: (String) -> Unit = {}, emptyTitle: String = "Nothing here yet", live: Boolean = false, feedSources: List<String> = emptyList(), loading: Boolean = false, feed: LibraryFeed? = null, model: MagpieModel? = null, newsletters: NewsletterState? = null) {
     var showingFinished by rememberSaveable { mutableStateOf(false) }
     val preparation = if (savedOnly && live) model?.savedPreparation?.state?.collectAsStateWithLifecycle()?.value else null
     val pending = if (!showingFinished) preparation?.pending.orEmpty().filter { it.url.contains(query, ignoreCase = true) } else emptyList()
     val visible = items.filter { (!savedOnly || (it.id in finished) == showingFinished) && "${it.title} ${it.source}".contains(query, ignoreCase = true) }
     val visibleLinks = if (savedOnly && !showingFinished) pendingLinks.filter { it.contains(query, ignoreCase = true) } else emptyList()
     LazyColumn(Modifier.fillMaxSize().testTag("story-list")) {
+        if (model != null && newsletters != null) pendingNewsletters(model, newsletters)
         if (savedOnly) item {
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 listOf("To read", "Finished").forEachIndexed { index, title ->
