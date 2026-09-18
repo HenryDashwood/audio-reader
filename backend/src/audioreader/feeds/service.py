@@ -78,11 +78,15 @@ async def _backfill_site_artwork(feed: Feed) -> bool:
 async def _feed_for_url(session: AsyncSession, url: str) -> Feed | None:
     # Only shared feeds. A newsletter feed's URL is a private identifier, and
     # naming it must not let anyone else subscribe to her mail.
-    feed = await session.scalar(select(Feed).where(Feed.url == url, Feed.source == FEED_SOURCE_RSS))
+    feed = await session.scalar(
+        select(Feed).where(Feed.url == url, Feed.source == FEED_SOURCE_RSS, Feed.owner_user_id.is_(None))
+    )
     if feed is not None:
         return feed
     return await session.scalar(
-        select(Feed).join(FeedAlias).where(FeedAlias.url == url, Feed.source == FEED_SOURCE_RSS)
+        select(Feed)
+        .join(FeedAlias)
+        .where(FeedAlias.url == url, Feed.source == FEED_SOURCE_RSS, Feed.owner_user_id.is_(None))
     )
 
 
@@ -144,6 +148,8 @@ async def follow_prepared_feed(session: AsyncSession, feed: Feed, user: User) ->
     Existing subscriptions keep their Latest cursor and grouping. Ingestion is
     completed before the new cursor is read; old catalogue entries stay off Latest.
     """
+    if feed.owner_user_id not in {None, user.id}:
+        raise ValueError("This feed belongs to another account")
     if await is_subscribed(session, feed.id, user):
         return False
     from audioreader.newsletters.companions import newsletter_for

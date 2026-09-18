@@ -141,6 +141,7 @@ struct SettingsView: View {
 
                 Section("Library") {
                     NavigationLink("Import subscriptions") { SubscriptionImportView() }
+                    NavigationLink("Export subscriptions") { SubscriptionExportView() }
                 }
 
                 NewsletterAddressSection()

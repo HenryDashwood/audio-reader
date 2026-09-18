@@ -228,7 +228,7 @@ async def _extract_from_page(url: str) -> str | None:
         raw, _ = await fetch_public_bytes(url, max_bytes=MAX_ARTICLE_BYTES)
         html = raw.decode("utf-8", errors="replace")
     except FeedFetchError as exc:
-        logger.warning("could not fetch article page %s: %s", url, exc)
+        logger.warning("could not fetch article page (%s)", type(exc).__name__)
         return None
 
     # favor_recall keeps whole paragraphs at the cost of the odd caption —

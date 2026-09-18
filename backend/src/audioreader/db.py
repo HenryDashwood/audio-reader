@@ -4,7 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from audioreader.config import settings
 
-engine = create_async_engine(settings.database_url)
+# Feed URLs may contain bearer credentials; never include bound values in SQL errors.
+engine = create_async_engine(settings.database_url, hide_parameters=True)
 SessionMaker = async_sessionmaker(engine, expire_on_commit=False)
 
 

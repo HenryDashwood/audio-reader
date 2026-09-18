@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -293,6 +293,26 @@ async def preview(body: FeedCreate, session: Session, user: CurrentUser) -> Feed
         feed=to_feed_read(feed, episode_count=episode_count, audio_count=audio_count),
         episodes=await episodes_read(session, user, episodes),
         subscribed=await service.is_subscribed(session, feed.id, user),
+    )
+
+
+@router.get("/export", response_class=Response, dependencies=[Depends(check_feed_operation_limit)])
+async def export_subscriptions(session: Session, user: CurrentUser):
+    from audioreader.imports.export import subscriptions_opml
+
+    data = await subscriptions_opml(session, user)
+    if data is None:
+        raise HTTPException(
+            status_code=409, detail={"spoken_response": "There are no podcast or RSS subscriptions to export yet."}
+        )
+    return Response(
+        data,
+        media_type="text/x-opml",
+        headers={
+            "Content-Disposition": 'attachment; filename="Magpie-subscriptions.opml"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

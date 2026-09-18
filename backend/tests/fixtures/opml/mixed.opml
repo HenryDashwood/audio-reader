@@ -2,6 +2,6 @@
 <outline text="Podcast" type="rss" xmlUrl="https://podcast.example/feed" />
 <outline text="Publication" type="rss" xmlUrl="https://publication.example/feed" />
 <outline text="Podcast again" xmlUrl="https://podcast.example/feed" />
-<outline text="Private" xmlUrl="https://private.example/feed?token=do-not-retain" />
+<outline text="Private" xmlUrl="http://127.0.0.1/do-not-retain" />
 <outline text="No address" type="rss" />
 </body></opml>

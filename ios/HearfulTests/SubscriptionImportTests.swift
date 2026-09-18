@@ -35,14 +35,11 @@ private actor ImportAPI: SubscriptionImportAPI {
 
 @Suite("Subscription import") @MainActor
 struct SubscriptionImportTests {
-    @Test func previewSelectsOnlyEligibleRowsAndRequiresPublicConfirmation() async {
+    @Test func previewSelectsOnlyEligibleRowsAndStartsWithoutConfirmation() async {
         let api = ImportAPI()
         let model = SubscriptionImportModel(api: api)
         await model.load()
         #expect(model.selected == [7])
-        await model.start()
-        #expect(await api.starts.isEmpty)
-        model.publicFeeds = true
         await model.start()
         #expect(await api.starts.count == 1)
     }
@@ -51,7 +48,6 @@ struct SubscriptionImportTests {
         let api = ImportAPI()
         let model = SubscriptionImportModel(api: api)
         await model.load()
-        model.publicFeeds = true
         await model.start()
         #expect(model.uncertainStart)
         #expect(model.error != nil)
@@ -117,7 +113,7 @@ struct SubscriptionImportTests {
         let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
         #expect(json["request_id"] as? String == "stable")
         #expect(json["entry_ids"] as? [Int] == [7])
-        #expect(json["public_feeds_confirmed"] as? Bool == true)
+        #expect(json["public_feeds_confirmed"] == nil)
     }
 
     @Test func fileReaderRejectsEmptyAndOversizedFilesAndReadsUnicode() async throws {

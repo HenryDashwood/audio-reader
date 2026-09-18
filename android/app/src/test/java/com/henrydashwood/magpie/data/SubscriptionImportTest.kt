@@ -28,18 +28,17 @@ class SubscriptionImportTest {
             return draft().copy(status = if (action == "stop") "stopped" else "queued")
         }
     }
-    @Test fun reviewSelectsOnlyEligibleRowsAndRequiresConfirmation() = runTest {
+    @Test fun reviewSelectsOnlyEligibleRowsAndStartsWithoutConfirmation() = runTest {
         val repo = Repository(); val model = SubscriptionImportController(this, repo)
         model.open(); runCurrent()
         assertEquals(setOf(7), model.state.value.selected)
-        model.start(); runCurrent(); assertTrue(repo.calls.isEmpty())
-        model.publicFeeds(true); model.start(); runCurrent()
+        model.start(); runCurrent()
         assertEquals(setOf(7), repo.calls.single().third)
         assertTrue(model.state.value.job!!.active)
     }
     @Test fun lostResponseRetainsSameRequestAndFreezesSelection() = runTest {
         val repo = Repository().apply { failStart = true }; val model = SubscriptionImportController(this, repo)
-        model.open(); runCurrent(); model.publicFeeds(true); model.start(); runCurrent()
+        model.open(); runCurrent(); model.start(); runCurrent()
         assertTrue(model.state.value.uncertain)
         model.select(8, true); model.chooseAnother()
         assertEquals(setOf(7), model.state.value.selected)

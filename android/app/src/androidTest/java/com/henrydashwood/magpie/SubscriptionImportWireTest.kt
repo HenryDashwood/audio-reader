@@ -37,11 +37,23 @@ class SubscriptionImportWireTest {
         val json = JSONObject(calls.last().body.toString("UTF-8"))
         assertEquals("stable", json.getString("request_id"))
         assertEquals(7, json.getJSONArray("entry_ids").getInt(0))
-        assertTrue(json.getBoolean("public_feeds_confirmed"))
+        assertFalse(json.has("public_feeds_confirmed"))
         api.mutateImport("session", "review", "stop", null, null)
         api.mutateImport("session", "review", "retry", "retry-stable", null)
         assertEquals(listOf("/subscription-imports/current", "/subscription-imports/preview", "/subscription-imports/review/start", "/subscription-imports/review/stop", "/subscription-imports/review/retry"), calls.map { it.url.path })
         assertTrue(calls.all { it.closed && !it.instanceFollowRedirects && it.getRequestProperty("Authorization") == "Bearer session" })
+    }
+    @Test fun exportPreservesXMLAndUsesTheSignedInAccount() = runBlocking {
+        val xml = "<opml><body><outline text=\"Café &amp; 科学\" xmlUrl=\"https://example.org/feed?token=private\"/></body></opml>"
+        lateinit var connection: Connection
+        val api = HttpLibraryApi("https://export.invalid", connect = { Connection(it, xml).also { connection = it } })
+        assertEquals(xml, api.exportSubscriptions("owner"))
+        assertEquals("/feeds/export", connection.url.path)
+        assertEquals("GET", connection.requestMethod)
+        assertFalse(connection.useCaches)
+        assertEquals("text/x-opml", connection.getRequestProperty("Accept"))
+        assertEquals("Bearer owner", connection.getRequestProperty("Authorization"))
+        assertTrue(connection.closed)
     }
     @Test fun oldServersGiveUsefulErrorWithoutFollowingRedirects() = runBlocking {
         val api = HttpLibraryApi("https://import.invalid", connect = { Connection(it, "{}", 404) })

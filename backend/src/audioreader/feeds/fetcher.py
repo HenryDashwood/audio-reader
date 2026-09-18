@@ -6,7 +6,10 @@ proxy for localhost, cloud metadata, or the hosting provider's private network.
 """
 
 import asyncio
+import contextlib
+import contextvars
 import ipaddress
+import logging
 import socket
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -15,6 +18,7 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+import logfire
 
 # Podcast feeds routinely include the full HTML description for hundreds of
 # episodes. Latent Space's ordinary Substack feed is already about 13 MiB once
@@ -204,7 +208,40 @@ async def fetch_public_bytes(
     return result.content, result.final_url
 
 
-async def _fetch_public_resource(
+_sensitive_request = contextvars.ContextVar("sensitive_feed_request", default=False)
+
+
+class _ResourceLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not _sensitive_request.get()
+
+
+# HTTPX's INFO log includes the entire URL, including path-based credentials.
+logging.getLogger("httpx").addFilter(_ResourceLogFilter())
+logging.getLogger("httpcore").addFilter(_ResourceLogFilter())
+
+
+@contextlib.contextmanager
+def private_request():
+    for name in list(logging.Logger.manager.loggerDict):
+        if name.startswith("httpcore."):
+            logger = logging.getLogger(name)
+            if not any(isinstance(f, _ResourceLogFilter) for f in logger.filters):
+                logger.addFilter(_ResourceLogFilter())
+    token = _sensitive_request.set(True)
+    try:
+        with logfire.suppress_instrumentation():
+            yield
+    finally:
+        _sensitive_request.reset(token)
+
+
+async def _fetch_public_resource(*args, **kwargs) -> FeedFetchResult:
+    with private_request():
+        return await _fetch_resource(*args, **kwargs)
+
+
+async def _fetch_resource(
     url: str,
     *,
     max_bytes: int,
@@ -232,7 +269,13 @@ async def _fetch_public_resource(
                             raise FeedFetchError("the server returned an empty redirect")
                         if redirect_count == MAX_REDIRECTS:
                             raise FeedFetchError("the address redirected too many times")
-                        current = urljoin(str(response.url), location)
+                        target = urljoin(str(response.url), location)
+                        # Credentials belong to the initial HTTPS origin only.
+                        if urlsplit(target).netloc != urlsplit(current).netloc or urlsplit(target).scheme != "https":
+                            request_headers = {
+                                k: v for k, v in (request_headers or {}).items() if k.lower() != "authorization"
+                            }
+                        current = target
                         redirect_count += 1
                         retry_count = 0
                         continue
@@ -294,8 +337,8 @@ async def _fetch_public_resource(
                     )
     except FeedFetchError:
         raise
-    except httpx.HTTPError as exc:
-        raise FeedFetchError(f"could not fetch the address: {exc}") from exc
+    except httpx.HTTPError:
+        raise FeedFetchError("could not fetch the address") from None
 
     raise FeedFetchError("the address could not be fetched")
 

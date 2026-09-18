@@ -36,6 +36,8 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
     val preferences by model.settings.collectAsStateWithLifecycle()
     val conversation by model.conversationSettings.collectAsStateWithLifecycle()
     val diagnostics by model.diagnosticsEnabled.collectAsStateWithLifecycle()
+    var showingExport by rememberSaveable { mutableStateOf(false) }
+    SubscriptionExportDialog(model, showingExport) { showingExport = false }
     var showingWait by remember { mutableStateOf(false) }
     val voices by model.voices.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -97,6 +99,7 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
         if (library.live) {
             item { HorizontalDivider(); SettingsHeading("Library") }
             item { SettingsAction("Import subscriptions", Icons.Rounded.FileOpen, model.subscriptionImport::open) }
+            item { SettingsAction("Export subscriptions", Icons.Rounded.FileUpload) { showingExport = true } }
         }
         item { HorizontalDivider(); SettingsHeading("Newsletters") }
         item { NewsletterAddressSection(model) }

@@ -13,8 +13,10 @@ Tests never fetch these feed URLs. All parser tests run offline.
   not a current export captured from Overcast.
 - `nested-reader.opml`: generated RSS-reader folders, Atom URL, entity escaping,
   optional attributes, and personal metadata that must not be imported.
-- `mixed.opml`: generated podcasts/articles, duplicate, rejected private link,
+- `mixed.opml`: generated podcasts/articles, duplicate, rejected local-network link,
   and missing address.
+- `personal-feeds.opml`: generated query credentials, opaque path, plain unlisted
+  feed and HTTPS Basic authentication. All credentials are fictional.
 - Tests also generate large/deep documents, UTF-16/BOM variants, malformed XML,
   DTD/entity payloads, extension attributes, and boundaries in memory.
 

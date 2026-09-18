@@ -66,7 +66,7 @@ nonisolated struct SubscriptionImportClient: SubscriptionImportAPI {
         return try await request("preview", raw: data)
     }
     func start(id: String, entries: [Int], requestID: String) async throws -> SubscriptionImportJob {
-        try await request("\(id)/start", body: ["entry_ids": entries, "request_id": requestID, "public_feeds_confirmed": true])
+        try await request("\(id)/start", body: ["entry_ids": entries, "request_id": requestID])
     }
     func stop(id: String) async throws -> SubscriptionImportJob { try await request("\(id)/stop") }
     func retry(id: String, requestID: String) async throws -> SubscriptionImportJob {

@@ -103,7 +103,12 @@ async def poll_feed(session: AsyncSession, feed: Feed, *, only_if_stale: bool = 
     ):
         await session.commit()
         return 0
-    fetched = await fetch_feed_update(feed.url, etag=feed.etag, last_modified=feed.last_modified)
+    if feed.private_fetch_url:
+        from audioreader.feeds.private import fetch_personal_feed
+
+        fetched = await fetch_personal_feed(feed.private_fetch_url, etag=feed.etag, last_modified=feed.last_modified)
+    else:
+        fetched = await fetch_feed_update(feed.url, etag=feed.etag, last_modified=feed.last_modified)
     if fetched.not_modified:
         # A 304 is a successful poll: the publisher confirmed that the stored
         # episodes are current, so a previous transient failure must clear.
@@ -114,7 +119,8 @@ async def poll_feed(session: AsyncSession, feed: Feed, *, only_if_stale: bool = 
         feed.last_error = None
         feed.throttled_until = None
         if (
-            feed.image_url is None
+            feed.owner_user_id is None
+            and feed.image_url is None
             and feed.site_image_url is None
             and site_artwork_is_due(feed.site_artwork_checked_at)
         ):
@@ -127,14 +133,18 @@ async def poll_feed(session: AsyncSession, feed: Feed, *, only_if_stale: bool = 
         raise FeedFetchError("the server returned no content")
     parsed = parse_feed(fetched.content)
     site_changed = parsed.site_url != feed.site_url
-    if parsed.image_url is None and (
-        site_changed or (feed.site_image_url is None and site_artwork_is_due(feed.site_artwork_checked_at))
+    if (
+        feed.owner_user_id is None
+        and parsed.image_url is None
+        and (site_changed or (feed.site_image_url is None and site_artwork_is_due(feed.site_artwork_checked_at)))
     ):
         parsed = await supplement_feed_artwork(parsed, fetched.final_url)
     known_guids = set(await session.scalars(select(Episode.guid).where(Episode.feed_id == feed.id)))
     from audioreader.saved import reconcile
 
-    episodes = await reconcile(session, new_episodes(parsed, known_guids))
+    episodes = new_episodes(parsed, known_guids)
+    if feed.owner_user_id is None:
+        episodes = await reconcile(session, episodes)
     for episode in episodes:
         episode.feed_id = feed.id
     session.add_all(episodes)

@@ -16,7 +16,7 @@ def test_fixture(name, count):
     assert all(entry.status == "ready" for entry in result.entries[:2])
 
 
-def test_mixed_deduplicates_and_does_not_retain_credentials():
+def test_mixed_deduplicates_and_does_not_retain_unsafe_urls():
     result = opml.parse((FIXTURES / "mixed.opml").read_bytes())
     assert result.duplicates == 1
     assert [row.url for row in result.entries[2:]] == [None, None]
@@ -62,13 +62,11 @@ def test_rejects_invalid_whole_document(raw):
     "url",
     [
         "file:///etc/passwd",
-        "https://user:pass@example.org/feed",
+        "http://user:pass@example.org/feed",
         "http://127.0.0.1/",
         "http://[::1]/",
         "https://localhost/feed",
         "https://example.org:999/feed",
-        "https://example.org/?access_token=secret",
-        "https://example.org/?api_key=secret",
         "https://example.org/with space",
         "javascript:alert(1)",
     ],

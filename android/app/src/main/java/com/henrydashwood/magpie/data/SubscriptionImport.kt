@@ -45,7 +45,7 @@ interface SubscriptionImportRepository {
     suspend fun mutateImport(id: String, action: String, requestId: String?, entries: Set<Int>?): ImportJob
 }
 data class ImportState(val showing: Boolean = false, val busy: Boolean = false, val job: ImportJob? = null,
-    val selected: Set<Int> = emptySet(), val publicFeeds: Boolean = false, val error: String? = null, val uncertain: Boolean = false)
+    val selected: Set<Int> = emptySet(), val error: String? = null, val uncertain: Boolean = false)
 
 /** UI work is scoped to the initiating account/session; accepted work lives on the server. */
 class SubscriptionImportController(private val scope: CoroutineScope, private val repository: SubscriptionImportRepository) {
@@ -67,11 +67,10 @@ class SubscriptionImportController(private val scope: CoroutineScope, private va
     fun selectAll() { if (state.value.busy || state.value.uncertain) return
         mutable.value = state.value.copy(selected = if (state.value.selected.isEmpty()) state.value.job?.items.orEmpty()
             .filter { it.status == "ready" }.map { it.id }.toSet() else emptySet()) }
-    fun publicFeeds(value: Boolean) { if (!state.value.busy && !state.value.uncertain) mutable.value = state.value.copy(publicFeeds = value) }
     fun start() {
         val state = state.value
         val job = state.job ?: return
-        if (state.busy || !job.draft || !state.publicFeeds || state.selected.isEmpty()) return
+        if (state.busy || !job.draft || state.selected.isEmpty()) return
         val pending = pendingStart ?: Triple(job.id, UUID.randomUUID().toString(), state.selected).also { pendingStart = it }
         mutable.value = state.copy(uncertain = true)
         perform { repository.mutateImport(pending.first, "start", pending.second, pending.third) }
@@ -96,7 +95,7 @@ class SubscriptionImportController(private val scope: CoroutineScope, private va
                 if (changed) pendingRetry = null
                 mutable.value = state.value.copy(job = result, busy = false,
                     selected = if (changed) result?.items.orEmpty().filter { it.status == "ready" }.map { it.id }.toSet() else state.value.selected,
-                    publicFeeds = if (changed) false else state.value.publicFeeds, uncertain = pendingStart != null)
+                    uncertain = pendingStart != null)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 if (ticket == generation && session == repository.importSession)

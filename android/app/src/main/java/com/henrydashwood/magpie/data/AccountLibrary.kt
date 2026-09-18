@@ -25,6 +25,12 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     conversationStore: com.henrydashwood.magpie.voice.ConversationStore? = null, private val articleQueue: ArticleProgressQueue? = null,
     telemetryStore: com.henrydashwood.magpie.telemetry.TelemetryStore? = null,
     private val telemetryEnabled: () -> Boolean = { true }) : SubscriptionImportRepository, SourceRepository, SourceManagementRepository, SavedArticleRepository, NewsletterRepository {
+    suspend fun exportSubscriptions(): String {
+        val (credential, version) = credentials()
+        val result = checkNotNull(api as? SubscriptionExportApi).exportSubscriptions(credential)
+        check(version)
+        return result
+    }
     override val importSession: String? get() = state.value.owner?.let { "$it:$revision" }
     override suspend fun currentImport(): ImportJob? {
         val (credential, version) = credentials()

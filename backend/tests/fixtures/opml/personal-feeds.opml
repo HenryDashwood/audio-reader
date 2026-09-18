@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0"><head><title>Synthetic privacy cases — no real credentials</title></head><body>
+<outline text="Query credential" xmlUrl="https://publisher.example/feed?subscriber=synthetic-secret"/>
+<outline text="Opaque path" xmlUrl="https://publisher.example/0123456789abcdef0123456789abcdef/rss"/>
+<outline text="Ordinary unlisted feed" xmlUrl="https://publisher.example/supporters.xml"/>
+<outline text="HTTPS Basic authentication" xmlUrl="https://reader:synthetic-password@publisher.example/feed"/>
+</body></opml>

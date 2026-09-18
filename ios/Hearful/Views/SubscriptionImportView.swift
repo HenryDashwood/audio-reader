@@ -7,7 +7,6 @@ final class SubscriptionImportModel: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var error: String?
     @Published var selected: Set<Int> = []
-    @Published var publicFeeds = false
     private let api: any SubscriptionImportAPI
     private let validSession: () -> Bool
     private var generation = 0
@@ -23,7 +22,6 @@ final class SubscriptionImportModel: ObservableObject {
         generation += 1
         job = nil
         selected = []
-        publicFeeds = false
         pendingStart = nil
         pendingRetry = nil
         busy = false
@@ -35,7 +33,6 @@ final class SubscriptionImportModel: ObservableObject {
         job = value
         if changed {
             selected = Set(value?.items.filter { $0.status == "ready" }.map(\.id) ?? [])
-            publicFeeds = false
         }
         if value == nil || changed || value?.draft == false { pendingStart = nil }
         if (value?.added ?? 0) > previousAdded {
@@ -64,7 +61,7 @@ final class SubscriptionImportModel: ObservableObject {
         await perform { try await api.preview(data) }
     }
     func start() async {
-        guard let job, job.draft, publicFeeds, !selected.isEmpty else { return }
+        guard let job, job.draft, !selected.isEmpty else { return }
         if pendingStart == nil { pendingStart = (job.id, selected.sorted(), UUID().uuidString) }
         guard let pendingStart else { return }
         await perform { try await api.start(id: pendingStart.id, entries: pendingStart.entries, requestID: pendingStart.request) }
@@ -80,7 +77,7 @@ final class SubscriptionImportModel: ObservableObject {
         await perform { try await api.retry(id: attempt.id, requestID: attempt.request) }
         if self.job?.id != attempt.id { pendingRetry = nil }
     }
-    func chooseAnother() { guard !busy, pendingStart == nil else { return }; job = nil; selected = []; publicFeeds = false }
+    func chooseAnother() { guard !busy, pendingStart == nil else { return }; job = nil; selected = [] }
     func fileError() { error = "This file couldn't be opened. Choose an OPML file smaller than 5 MiB." }
 }
 
@@ -122,7 +119,6 @@ struct SubscriptionImportView: View {
                 Section {
                     DisclosureGroup("How to export from your app") {
                         Text("In your podcast or RSS reader app, look for Export subscriptions or Export OPML. Save the file to Files, then choose it here.")
-                        Text("Pocket Casts: Profile → Settings → Import & Export OPML → Save file.")
                         Link("Pocket Casts instructions", destination: URL(string: "https://support.pocketcasts.com/knowledge-base/opml-export/")!)
                         Link("Feedly instructions", destination: URL(string: "https://docs.feedly.com/article/52-how-can-i-export-my-sources-and-feeds-through-opml")!)
                         Link("Readwise Reader instructions", destination: URL(string: "https://docs.readwise.io/reader/docs/faqs/exporting")!)
@@ -202,13 +198,11 @@ struct SubscriptionImportView: View {
             }
         }
         Section {
-            Toggle("The selected feeds are public", isOn: $model.publicFeeds)
-                .disabled(model.busy || model.uncertainStart)
-            Text("Leave out private or paid feed links. This importer adds publicly available feeds only.")
+            Text("Personalised feeds stay private to your account. If we can’t confirm a feed is public, we import it privately.")
                 .font(.footnote).foregroundStyle(.secondary)
             Button(model.uncertainStart ? "Retry import request" : "Import \(model.selected.count) \(model.selected.count == 1 ? "subscription" : "subscriptions")") {
                 Task { await model.start() }
-            }.disabled(model.busy || model.selected.isEmpty || !model.publicFeeds)
+            }.disabled(model.busy || model.selected.isEmpty)
             Button("Choose another file") { model.chooseAnother(); choosingFile = true }
                 .disabled(model.busy || model.uncertainStart)
         } footer: {

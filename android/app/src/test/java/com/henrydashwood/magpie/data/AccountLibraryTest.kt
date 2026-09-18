@@ -13,6 +13,28 @@ import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountLibraryTest {
+    @Test fun exportUsesCapturedCredentialsAndDiscardsLateAccountResults() = runTest {
+        val gate = CompletableDeferred<String>()
+        val tokens = mutableListOf<String>()
+        val base = Api()
+        val api = object : LibraryApi by base, SubscriptionExportApi {
+            override suspend fun exportSubscriptions(token: String): String {
+                tokens += token
+                return gate.await()
+            }
+        }
+        val library = AccountLibrary(api, "https://export.invalid")
+        library.changeSession("alice")
+        var exported: String? = null
+        val exporting = launch { exported = library.exportSubscriptions() }
+        runCurrent()
+        library.changeSession("bob")
+        gate.complete("<opml/>")
+        exporting.join()
+        assertEquals(listOf("alice"), tokens)
+        assertNull(exported)
+        assertTrue(exporting.isCancelled)
+    }
     @Test fun cancelledRefreshKeepsExistingDataAndReleasesLoadingState() = runTest {
         val api = Api()
         val library = AccountLibrary(api, "https://voice.invalid")

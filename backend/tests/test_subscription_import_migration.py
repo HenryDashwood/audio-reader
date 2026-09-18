@@ -46,3 +46,24 @@ def test_import_migration_and_account_cascade():
             assert "subscription_imports" not in inspect(connection).get_table_names()
             assert connection.execute(text("SELECT feed_id FROM subscriptions")).scalar_one() == 42
     engine.dispose()
+
+
+def test_private_feed_migration_preserves_shared_urls():
+    path = Path(__file__).parents[1] / "alembic/versions/e91bc428a713_private_rss_fetch_url.py"
+    spec = importlib.util.spec_from_file_location("private_rss_migration", path)
+    assert spec and spec.loader
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE feeds (id INTEGER PRIMARY KEY, url TEXT UNIQUE)"))
+        connection.execute(text("INSERT INTO feeds VALUES (42, 'https://example.org/feed')"))
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            assert connection.execute(text("SELECT url,private_fetch_url FROM feeds")).one() == (
+                "https://example.org/feed",
+                None,
+            )
+            migration.downgrade()
+            assert connection.execute(text("SELECT url FROM feeds")).scalar_one() == "https://example.org/feed"
+    engine.dispose()

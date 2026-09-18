@@ -97,11 +97,8 @@ fun SubscriptionImportDialog(model: MagpieModel, onFollowing: () -> Unit) {
                                 trailingContent = { if (row.status == "ready") Checkbox(row.id in state.selected, { controller.select(row.id, it) },
                                     enabled = !state.busy && !state.uncertain, modifier = Modifier.semantics { contentDescription = "Import ${row.title}" }) })
                         }
-                        item { ListItem(headlineContent = { Text("The selected feeds are public") },
-                            supportingContent = { Text("Leave out private or paid feed links. This importer adds publicly available feeds only.") },
-                            trailingContent = { Switch(state.publicFeeds, controller::publicFeeds, enabled = !state.busy && !state.uncertain,
-                                modifier = Modifier.semantics { contentDescription = "The selected feeds are public" }) }) }
-                        item { Button(onClick = controller::start, enabled = !state.busy && state.publicFeeds && state.selected.isNotEmpty()) {
+                        item { Text("Personalised feeds stay private to your account. If we can’t confirm a feed is public, we import it privately.") }
+                        item { Button(onClick = controller::start, enabled = !state.busy && state.selected.isNotEmpty()) {
                             Text(if (state.uncertain) "Retry import request" else "Import ${state.selected.size} ${if (state.selected.size == 1) "subscription" else "subscriptions"}") } }
                         item { Text("New episodes and articles will appear in Latest. Older items stay available on each subscription’s page.") }
                         if (job.duplicates > 0) item { Text("${job.duplicates} ${if (job.duplicates == 1) "duplicate entry was" else "duplicate entries were"} skipped.") }

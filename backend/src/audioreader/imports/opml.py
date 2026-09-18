@@ -2,7 +2,7 @@
 
 import ipaddress
 from dataclasses import dataclass
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import urlsplit
 from xml.parsers import expat
 
 MAX_BYTES = 5 * 1024 * 1024
@@ -32,22 +32,15 @@ class Preview:
 
 
 def public_url(value: str) -> tuple[str, str]:
-    """Reject clearly unsuitable URLs; public availability still requires review.
-
-    Opaque private paths cannot be recognised reliably. The caller must require
-    an explicit public-feed declaration, rather than treating this as proof.
-    """
+    """Validate network destinations, not whether feed contents are public."""
     if len(value) > 4_096 or any(ord(c) < 33 for c in value) or "\\" in value:
         raise ValueError("The feed address is invalid.")
     parts = urlsplit(value)
     host = parts.hostname
     if parts.scheme not in {"http", "https"} or not host or parts.port not in {None, 80, 443}:
         raise ValueError("Use a public HTTP or HTTPS feed address.")
-    if parts.username is not None or parts.password is not None:
-        raise ValueError("Private feeds requiring credentials aren't supported by import yet.")
-    keys = {key.lower().replace("-", "_") for key, _ in parse_qsl(parts.query, keep_blank_values=True)}
-    if any(any(word in key for word in ("token", "password", "secret", "auth", "api_key")) for key in keys):
-        raise ValueError("This may be a private feed. Private feed import isn't supported yet.")
+    if (parts.username is not None or parts.password is not None) and parts.scheme != "https":
+        raise ValueError("Feeds containing a password require HTTPS.")
     if host.lower() == "localhost" or host.lower().endswith((".localhost", ".local")):
         raise ValueError("Local network feeds aren't supported.")
     try:

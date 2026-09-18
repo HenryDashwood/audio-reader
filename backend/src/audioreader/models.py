@@ -49,13 +49,16 @@ class Feed(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     url: Mapped[str] = mapped_column(unique=True)
+    # Private RSS rows have an opaque `url` identity. Only this account-owned
+    # field is fetched; it must never become a shared alias or discovery key.
+    private_fetch_url: Mapped[str | None] = mapped_column(Text)
     title: Mapped[str]
     #: Where items come from. "rss" feeds are fetched from `url` by the
-    #: poller and shared by everyone who follows them. "email" feeds are one
+    #: poller (from private_fetch_url for account-owned RSS). "email" feeds are one
     #: listener's newsletter, delivered to her inbound address; `url` is then
     #: only an identifier, never fetched, and the feed is hers alone.
     source: Mapped[str] = mapped_column(default=FEED_SOURCE_RSS, server_default=FEED_SOURCE_RSS)
-    #: Set for email feeds: whose inbox this newsletter arrived in. Nobody
+    #: Set for email and private RSS feeds. Nobody
     #: else can see, subscribe to, or search it.
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     #: Email feeds only. A sender's first message makes a "pending" feed that

@@ -12,6 +12,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.henrydashwood.magpie.data.*
+import com.henrydashwood.magpie.auth.AccountFailure
 import com.henrydashwood.magpie.playback.PlaybackService
 import com.henrydashwood.magpie.ui.MagpieApp
 import com.henrydashwood.magpie.ui.MagpieTheme
@@ -28,7 +29,9 @@ class SubscriptionImportUiTest {
     private lateinit var api: Api
     private lateinit var library: AccountLibrary
     private var scenario: ActivityScenario<MainActivity>? = null
-    private class Api : LibraryApi, SubscriptionImportApi {
+    private class Api : LibraryApi, SubscriptionImportApi, SubscriptionExportApi {
+        var exportXML: String? = null
+        override suspend fun exportSubscriptions(token: String): String = exportXML ?: throw AccountFailure(409, "There are no podcast or RSS subscriptions to export yet.")
         var mutations = 0
         var job: ImportJob? = null
         val review = ImportJob("review", "draft", 1, true, 0, 0, 0, 0, 0, 0,
@@ -68,6 +71,15 @@ class SubscriptionImportUiTest {
         compose.onNodeWithContentDescription("Add sources").performClick()
         compose.onNodeWithText("Import subscriptions").performClick()
     }
+    private fun capture(name: String) {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        automation.waitForIdle(500, 5_000)
+        val bitmap = checkNotNull(automation.takeScreenshot())
+        val supplied = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+        val directory = (supplied?.let(::File) ?: File(app.filesDir, "screenshots")).apply { mkdirs() }
+        File(directory, name).outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+    }
     @Test fun entryPointExplainsFileImportWithoutSubscribing() {
         open()
         compose.onNodeWithTag("choose-opml").assertIsDisplayed()
@@ -75,11 +87,35 @@ class SubscriptionImportUiTest {
         compose.onNodeWithText("This imports subscriptions. Reading and listening history aren’t included.").assertIsDisplayed()
         assertEquals(0, api.mutations)
     }
-    @Test fun reviewRequiresExplicitConfirmationAndCanStopAfterReopening() {
+    @Test fun pendingExportSurvivesRecreationButNotAnAccountChange() {
+        api.exportXML = "<opml><body>private</body></opml>"
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNodeWithTag("settings-list").performScrollToNode(hasText("Export subscriptions"))
+        compose.onNodeWithText("Export subscriptions").performClick()
+        lateinit var model: MagpieModel
+        scenario!!.onActivity { model = ViewModelProvider(it)[MagpieModel::class.java] }
+        runBlocking(Dispatchers.Main) { model.exportSubscriptions() }
+        scenario!!.recreate()
+        scenario!!.onActivity { model = ViewModelProvider(it)[MagpieModel::class.java] }
+        assertEquals(api.exportXML, model.pendingSubscriptionExport.value?.xml)
+        runBlocking(Dispatchers.Main) { library.changeSession("other-token") }
+        compose.waitUntil(10_000) { model.pendingSubscriptionExport.value == null }
+    }
+    @Test fun settingsOffersExportAndShowsAnEmptyLibraryError() {
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNodeWithTag("settings-list").performScrollToNode(hasText("Export subscriptions"))
+        compose.onNodeWithText("Export subscriptions").assertIsDisplayed()
+        capture("subscription-export-settings.png")
+        compose.onNodeWithText("Export subscriptions").performClick()
+        compose.onNodeWithText("Export OPML file").assertIsEnabled().performClick()
+        compose.onNodeWithText("There are no podcast or RSS subscriptions to export yet.").assertIsDisplayed()
+        assertEquals(0, api.mutations)
+        capture("subscription-export-empty.png")
+    }
+    @Test fun reviewStartsWithoutConfirmationAndCanStopAfterReopening() {
         api.job = api.review
         open()
-        compose.onNodeWithText("Import 1 subscription").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithContentDescription("The selected feeds are public").performScrollTo().performClick()
+        compose.onNodeWithText("Import 1 subscription").performScrollTo().assertIsEnabled()
         compose.onNodeWithText("Import 1 subscription").performScrollTo().performClick()
         compose.onNodeWithText("You can leave this screen. Magpie will keep importing.").assertIsDisplayed()
         compose.onNodeWithText("Done").performClick()
@@ -100,9 +136,9 @@ class SubscriptionImportUiTest {
             }
         }
         open()
-        compose.onNodeWithText("Import 1 subscription").performScrollTo().assertIsNotEnabled()
-        compose.onNodeWithContentDescription("The selected feeds are public").performScrollTo().performClick()
         compose.onNodeWithText("Import 1 subscription").performScrollTo().assertIsEnabled()
+        // Compose idleness does not include the platform dialog fade.
+        InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(500, 5_000)
         val bitmap = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
         val supplied = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
         val directory = (supplied?.let(::File) ?: File(app.filesDir, "screenshots")).apply { mkdirs() }

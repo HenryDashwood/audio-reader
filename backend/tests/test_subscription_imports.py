@@ -61,7 +61,7 @@ def maker(session):
 
 @pytest.fixture
 def fake_feeds(monkeypatch):
-    async def prepare(session, url):
+    async def prepare(session, url, *_):
         feed = await session.scalar(select(Feed).where(Feed.url == url))
         if feed is None:
             feed = Feed(url=url, title="Imported feed")
@@ -71,7 +71,7 @@ def fake_feeds(monkeypatch):
             await session.commit()
         return feed
 
-    monkeypatch.setattr(feeds, "ensure_feed", prepare)
+    monkeypatch.setattr(service, "ensure_import_feed", prepare)
     return prepare
 
 
@@ -87,12 +87,12 @@ async def test_preview_has_no_side_effects_and_start_is_idempotent(client, sessi
     assert (await start(client, job, ids=[job["items"][0]["id"]])).status_code == 409
 
 
-async def test_requires_public_review_and_valid_selection(client):
+async def test_requires_valid_selection_but_no_public_declaration(client):
     job = await preview(client)
     url = f"/subscription-imports/{job['id']}/start"
-    assert (await client.post(url, json={"request_id": "x", "entry_ids": [job["items"][0]["id"]]})).status_code == 422
     assert (await start(client, job, ids=[job["items"][-1]["id"]])).status_code == 422
     assert (await start(client, job, ids=[999999])).status_code == 422
+    assert (await client.post(url, json={"request_id": "x", "entry_ids": [job["items"][0]["id"]]})).status_code == 202
 
 
 async def test_worker_keeps_receipt_atomic_and_latest_clean(client, session, user, maker, fake_feeds):
@@ -119,12 +119,12 @@ async def test_stop_before_or_during_fetch(client, session, maker, fake_feeds, m
     await start(client, job)
     began, resume = asyncio.Event(), asyncio.Event()
 
-    async def paused(session, url):
+    async def paused(session, url, *_):
         began.set()
         await resume.wait()
         return await fake_feeds(session, url)
 
-    monkeypatch.setattr(feeds, "ensure_feed", paused)
+    monkeypatch.setattr(service, "ensure_import_feed", paused)
     task = asyncio.create_task(service.process_one(maker))
     await asyncio.wait_for(began.wait(), 2)
     stopped = await client.post(f"/subscription-imports/{job['id']}/stop")
@@ -152,14 +152,14 @@ async def test_lost_lease_cannot_commit(client, session, maker, fake_feeds, monk
     job = await preview(client)
     await start(client, job)
 
-    async def superseded(db, url):
+    async def superseded(db, url, *_):
         feed = await fake_feeds(db, url)
         async with maker() as another:
             await another.execute(update(Lease).values(token="new-owner"))
             await another.commit()
         return feed
 
-    monkeypatch.setattr(feeds, "ensure_feed", superseded)
+    monkeypatch.setattr(service, "ensure_import_feed", superseded)
     assert not await service.process_one(maker)
     assert await session.scalar(select(func.count()).select_from(Subscription)) == 0
 
@@ -168,12 +168,12 @@ async def test_failures_are_independent_retry_only_failures(client, session, mak
     job = await preview(client)
     await start(client, job)
 
-    async def sometimes(db, url):
+    async def sometimes(db, url, *_):
         if "publication" in url:
             raise FeedFetchError("private text must not be exposed")
         return await fake_feeds(db, url)
 
-    monkeypatch.setattr(feeds, "ensure_feed", sometimes)
+    monkeypatch.setattr(service, "ensure_import_feed", sometimes)
     for _ in range(4):
         await ready(session)
         assert await service.process_one(maker)
@@ -186,7 +186,7 @@ async def test_failures_are_independent_retry_only_failures(client, session, mak
     assert (
         await client.post(f"/subscription-imports/{job['id']}/retry", json={"request_id": "retry-1"})
     ).json() == retried.json()
-    monkeypatch.setattr(feeds, "ensure_feed", fake_feeds)
+    monkeypatch.setattr(service, "ensure_import_feed", fake_feeds)
     await ready(session)
     assert await service.process_one(maker)
     assert await session.scalar(select(func.count()).select_from(Subscription)) == 2
@@ -254,7 +254,7 @@ async def test_publisher_delay_is_honoured(client, session, maker, monkeypatch):
     async def throttled(*_):
         raise FeedRateLimitedError("wait", retry_after_seconds=3600)
 
-    monkeypatch.setattr(feeds, "ensure_feed", throttled)
+    monkeypatch.setattr(service, "ensure_import_feed", throttled)
     assert await service.process_one(maker)
     assert not await service.process_one(maker)
     row = await session.get(Lease, 1)
@@ -274,7 +274,8 @@ async def test_real_feed_pipeline_redirects_and_mixed_sources(
         content=podcast_xml, content_type="application/rss+xml"
     )
     respx_mock.get("https://publication.example/feed").respond(content=article_xml, content_type="application/rss+xml")
-    respx_mock.get("https://notesonprogress.example.com/").respond(404)
+    respx_mock.get("https://podcast.example/").respond(404)
+    respx_mock.get("https://publication.example/").respond(404)
     job = (await client.post("/subscription-imports/preview", content=raw)).json()
     assert not respx_mock.calls
     await start(client, job)
@@ -282,8 +283,8 @@ async def test_real_feed_pipeline_redirects_and_mixed_sources(
         await ready(session)
         assert await service.process_one(maker)
     result = (await client.get(f"/subscription-imports/{job['id']}")).json()
-    assert (result["added"], result["already_following"], result["failed"]) == (2, 1, 0)
-    assert await session.scalar(select(func.count()).select_from(Subscription)) == 2
+    assert (result["added"], result["already_following"], result["failed"]) == (3, 0, 0)
+    assert await session.scalar(select(func.count()).select_from(Subscription)) == 3
     assert sum(feed["is_article_feed"] for feed in (await client.get("/feeds")).json()) == 1
 
 
@@ -313,7 +314,7 @@ async def test_unbounded_publisher_hint_cannot_break_worker(client, session, mak
     async def throttled(*_):
         raise FeedRateLimitedError("wait", retry_after_seconds=delay)
 
-    monkeypatch.setattr(feeds, "ensure_feed", throttled)
+    monkeypatch.setattr(service, "ensure_import_feed", throttled)
     assert await service.process_one(maker)
     result = (await client.get(f"/subscription-imports/{job['id']}")).json()
     assert result["failed"] == 1

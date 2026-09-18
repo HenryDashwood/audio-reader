@@ -52,6 +52,16 @@ data class LinkCaptureState(val showing: Boolean = false, val url: String = "", 
 
 class MagpieModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as MagpieApplication).library
+    private val mutableSubscriptionExport = MutableStateFlow<com.henrydashwood.magpie.data.SubscriptionExportFile?>(null)
+    val pendingSubscriptionExport = mutableSubscriptionExport.asStateFlow()
+    suspend fun exportSubscriptions() {
+        val owner = repository.state.value.let { it.owner to it.revision }
+        val xml = repository.exportSubscriptions()
+        if (owner == repository.state.value.let { it.owner to it.revision }) {
+            mutableSubscriptionExport.value = com.henrydashwood.magpie.data.SubscriptionExportFile(owner, xml)
+        }
+    }
+    fun clearSubscriptionExport() { mutableSubscriptionExport.value = null }
     val subscriptionImport = com.henrydashwood.magpie.data.SubscriptionImportController(viewModelScope, repository)
     val discovery = com.henrydashwood.magpie.data.SourceDiscovery(viewModelScope, repository)
     suspend fun aiConsent() = repository.aiConsent()
@@ -173,6 +183,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                 voice.activate()
                 if (revision != snapshot.revision) {
                     revision = snapshot.revision
+                    clearSubscriptionExport()
                     discovery.reset()
                     newsletters.reset(snapshot.revision)
                     newsletterSpeech.stop(resume = false)

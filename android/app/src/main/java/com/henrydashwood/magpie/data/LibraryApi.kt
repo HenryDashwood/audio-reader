@@ -43,9 +43,11 @@ interface LibraryApi {
 
 /** Uses the existing Swift/backend wire contract. Authorization never follows redirects. */
 class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (String) -> Unit = {},
-    private val connect: (java.net.URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }) : com.henrydashwood.magpie.telemetry.TelemetryApi, LibraryApi, SubscriptionImportApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, NewsletterApi, PodcastProgressApi, ArticleProgressApi,
+    private val connect: (java.net.URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }) : com.henrydashwood.magpie.telemetry.TelemetryApi, LibraryApi, SubscriptionImportApi, SubscriptionExportApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, NewsletterApi, PodcastProgressApi, ArticleProgressApi,
     com.henrydashwood.magpie.voice.VoiceApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized),
     LibraryActionApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized) {
+    override suspend fun exportSubscriptions(token: String): String =
+        request(token, "feeds/export", accept = "text/x-opml")
     override suspend fun currentImport(token: String): ImportJob? {
         val result = request(token, "subscription-imports/current")
         return if (result.trim() == "null") null else ImportJob.decode(JSONObject(result))
@@ -58,7 +60,7 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
         require(id.matches(Regex("[a-zA-Z0-9-]+")) && action in setOf("start", "stop", "retry"))
         val body = JSONObject()
         requestId?.let { body.put("request_id", it) }
-        entries?.let { body.put("entry_ids", JSONArray(it.sorted())).put("public_feeds_confirmed", true) }
+        entries?.let { body.put("entry_ids", JSONArray(it.sorted())) }
         return ImportJob.decode(JSONObject(request(token, "subscription-imports/$id/$action", "POST", body)))
     }
     override suspend fun reportTelemetry(token: String, event: com.henrydashwood.magpie.telemetry.TelemetryEvent) {
@@ -179,16 +181,17 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
     }
     private suspend fun array(token: String, path: String) = JSONArray(request(token, path))
     private suspend fun obj(token: String, path: String, method: String = "GET", body: JSONObject? = null) = JSONObject(request(token, path, method, body))
-    private suspend fun request(token: String, path: String, method: String = "GET", body: JSONObject? = null, timeout: Int = 30_000, traceparent: String? = null, raw: ByteArray? = null): String = withContext(Dispatchers.IO) {
+    private suspend fun request(token: String, path: String, method: String = "GET", body: JSONObject? = null, timeout: Int = 30_000, traceparent: String? = null, raw: ByteArray? = null, accept: String = "application/json"): String = withContext(Dispatchers.IO) {
         val base = URI(baseUrl)
         require(base.scheme == "https" && base.host != null && base.userInfo == null)
         val connection = connect(URI(baseUrl.trimEnd('/') + "/" + path).toURL())
         try {
+            if (path == "feeds/export") connection.useCaches = false
             connection.requestMethod = method
             connection.instanceFollowRedirects = false
             connection.connectTimeout = 15_000
             connection.readTimeout = timeout
-            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Accept", accept)
             connection.setRequestProperty("Authorization", "Bearer $token")
             traceparent?.let { connection.setRequestProperty("traceparent", it) }
             if (body != null || raw != null) {
@@ -213,7 +216,7 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
             if (status !in 200..299) {
                 if (status == 401) withContext(Dispatchers.Main) { unauthorized(token) }
                 val message = runCatching { JSONObject(result).optJSONObject("detail")?.optionalString("spoken_response") }.getOrNull()
-                throw AccountFailure(status, message ?: if (status == 401) "Please sign in again to load your library." else if (status == 404 && path.startsWith("subscription-imports")) "Subscription import is unavailable on this server, or this import has expired." else "Your library could not be updated. Please try again.")
+                throw AccountFailure(status, message ?: if (status == 401) "Please sign in again to load your library." else if (status == 404 && path == "feeds/export") "Subscription export is unavailable on this server." else if (status == 404 && path.startsWith("subscription-imports")) "Subscription import is unavailable on this server, or this import has expired." else "Your library could not be updated. Please try again.")
             }
             result
         } finally { connection.disconnect() }

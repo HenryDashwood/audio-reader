@@ -20,6 +20,7 @@ from audioreader.feeds import service as feeds
 from audioreader.feeds.discovery import FeedDiscoveryError
 from audioreader.feeds.fetcher import FeedFetchError, FeedRateLimitedError
 from audioreader.feeds.parser import FeedParseError
+from audioreader.feeds.private import ensure_import_feed
 from audioreader.imports.opml import Preview
 from audioreader.models import (
     Feed,
@@ -76,6 +77,7 @@ class JobRead(BaseModel):
 class Start(BaseModel):
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_-]+$")
     entry_ids: list[int] = Field(min_length=1, max_length=2_000)
+    # Accepted for released clients; classification is always server-controlled.
     public_feeds_confirmed: bool = False
 
 
@@ -150,6 +152,12 @@ async def preview(session: AsyncSession, user: User, parsed: Preview) -> Job:
             .where(Subscription.user_id == user.id)
         )
     )
+    private_urls = await session.scalars(
+        select(Feed.private_fetch_url)
+        .join(Subscription, Subscription.feed_id == Feed.id)
+        .where(Subscription.user_id == user.id, Feed.owner_user_id == user.id)
+    )
+    urls.update(url for url in private_urls if url is not None)
     for ordinal, entry in enumerate(parsed.entries):
         session.add(
             Item(
@@ -167,8 +175,6 @@ async def preview(session: AsyncSession, user: User, parsed: Preview) -> Job:
 
 
 async def start(session: AsyncSession, user: User, job: Job, body: Start) -> Job:
-    if not body.public_feeds_confirmed:
-        raise problem("Confirm that the selected feeds are public. Paid or private feeds aren't supported yet.", 422)
     chosen = set(body.entry_ids)
     fingerprint = hashlib.sha256(json.dumps(sorted(chosen)).encode()).hexdigest()
     if job.status != "draft":
@@ -323,7 +329,10 @@ async def process_one(maker: async_sessionmaker[AsyncSession]) -> bool:
                 if url is None:
                     raise ValueError("missing URL")
                 async with asyncio.timeout(60):
-                    feed = await feeds.ensure_feed(session, url)
+                    job = await session.get(Job, job_id)
+                    if job is None:
+                        return False
+                    feed = await ensure_import_feed(session, url, job.user_id)
                     feed_id = feed.id
             except FeedRateLimitedError as exc:
                 error, retryable = "The publisher asked us to wait. Try again later.", True
@@ -388,7 +397,11 @@ async def process_one(maker: async_sessionmaker[AsyncSession]) -> bool:
                     if not await feeds.is_subscribed(session, feed.id, user):
                         raise
                 row.status = "added" if added else "already_following"
-                row.feed_id, row.message, row.retryable = feed.id, None, False
+                row.feed_id, row.message, row.retryable = (
+                    feed.id,
+                    ("Imported privately" if feed.owner_user_id else None),
+                    False,
+                )
             await session.flush()
             pending = await session.scalar(
                 select(Item.id).where(Item.job_id == job_id, Item.status.in_(PENDING)).limit(1)
