@@ -72,6 +72,102 @@ The helpers select only emulators and preserve app data during ordinary installs
 Set `ANDROID_SERIAL=emulator-5554` when more than one is running. The instrumented
 suite modifies preview preferences as part of its tests; use a development AVD.
 
+## Zed setup
+
+Open the repository root in Zed so the shared [settings](.zed/settings.json) and
+[tasks](.zed/tasks.json) apply. Keep fonts, themes, keybindings, AI providers,
+credentials, and MCP connections in user settings; none are installed or changed
+by this configuration.
+
+### Languages
+
+- **Python:** support is built in. Run `uv sync --frozen` from `backend/`, then
+  select `backend/.venv/bin/python` in Zed's Python toolchain selector (enter the
+  full local path if it is not discovered). The shared settings enable only ty
+  and Ruff, with Ruff formatting and import organization on save. Ruff discovers
+  `backend/pyproject.toml` for backend files; root-level `scripts/` are outside
+  that configuration's directory and use Ruff's normal discovery rules. The
+  selected environment also supplies dependencies for repository-script tests.
+  Terminal virtual-environment activation is configured separately and does not
+  replace selecting the language-server toolchain.
+- **Swift:** install the **Swift** extension via `zed: extensions`, run
+  `make ios-doctor`, and follow the `xcode-build-server` / `make ios-index` steps
+  below. Restart the language server after generating its build settings.
+  Swift format-on-save is deliberately disabled. Keep Xcode for previews,
+  Instruments, signing, and device debugging.
+- **Kotlin:** install the **Kotlin** extension for editing and navigation. Use
+  Android Studio with `android/` open for Compose previews, Gradle integration,
+  and Android debugging; see the [Android guide](android/README.md).
+
+Markdown preserves trailing spaces and is not formatted on save. Disposable
+Python and Gradle caches are excluded from Zed scans, while inherited exclusions
+are preserved. Build output remains gitignored rather than explicitly excluded,
+so logs and screenshots can still be opened for inspection. `compatibility/`
+remains visible and must not be reformatted or updated to accommodate changes.
+
+### Tasks and focused tests
+
+Use `task: spawn` to choose a Backend, iOS, or Android task, and `task: rerun`
+to repeat it. Tasks run the existing Make targets from the repository root,
+save **all edited buffers** first, and leave output visible on success or failure.
+Full-suite tasks explicitly clear `TEST` so an inherited filter cannot silently
+reduce coverage. Bind task actions in your personal keymap if desired.
+
+For a focused run, select a test task in the picker, press Tab to edit its
+command, and replace `TEST=` with a filter, for example:
+
+```bash
+make ios-test TEST=VoiceControllerTests
+make android-unit-test TEST='*ClassName'
+```
+
+These edited commands are session-local; use the unmodified full-suite task
+before merging. `allow_concurrent_runs` prevents duplicate instances of the
+same task, not different tasks: run builds/tests sharing a platform's output
+directory one at a time, including those started by an agent or another IDE.
+
+The local backend task starts Docker's database, runs migrations, and leaves a
+reload server running. Stop the server with Ctrl-C; the database container stays
+running. Android install/test tasks require a development emulator; instrumented
+tests modify preview preferences. Set `ANDROID_SERIAL` when multiple emulators
+are running. Release, production, and physical-device tasks are intentionally
+not included.
+
+### Optional Xcode tools for the agent
+
+Zed does not use `.cursor/mcp.json` as its native MCP settings. In **Settings →
+AI → MCP Servers**, add these as local servers in **user** settings if wanted:
+
+| Server | Command | Arguments | Environment |
+| --- | --- | --- | --- |
+| Apple Xcode tools | `xcrun` | `mcpbridge` | No additional variables |
+| XcodeBuildMCP | `xcodebuildmcp` | `mcp` | `XCODEBUILDMCP_SENTRY_DISABLED=true` |
+
+XcodeBuildMCP must already be installed and discoverable on Zed's PATH; otherwise
+select the local executable's absolute path. Apple's bridge needs Xcode open
+with `ios/Hearful.xcodeproj` and **Xcode Tools** enabled as described below.
+Confirm the servers report active and their tools appear in the agent's tool
+list. These integrations can execute local actions; retain approval prompts and
+explicit consent for device installs, releases, and production changes. Continue
+using the repository Make targets as the canonical verification gates.
+
+### Verify and troubleshoot
+
+1. Open a backend Python file and confirm dependency imports resolve and ty/Ruff
+   appear in `dev: open language server logs`. Check the selected interpreter
+   and server binary paths if editor diagnostics differ from `make backend-check`.
+2. Open a Swift file and try go-to-definition on an app type. If indexing is
+   stale, rerun `make ios-index`, then `editor: restart language server`.
+3. Run a doctor or check task from `task: spawn` and confirm its working directory
+   is this checkout. Run full checks before merging; editor diagnostics alone
+   are not a substitute.
+
+Use `zed: open log` for startup failures. See Zed's documentation for
+[Python](https://zed.dev/docs/languages/python),
+[Swift](https://zed.dev/docs/languages/swift),
+[tasks](https://zed.dev/docs/tasks), and
+[MCP](https://zed.dev/docs/ai/mcp).
+
 ## iOS development
 
 Requires Xcode with the iOS simulator runtime
@@ -80,7 +176,7 @@ Requires Xcode with the iOS simulator runtime
 ```bash
 make ios-doctor       # verify Xcode and choose a compatible simulator
 make ios-build        # compile on the oldest installed iOS 26+ runtime
-make ios-index        # refresh Cursor's local SourceKit-LSP build settings
+make ios-index        # refresh local SourceKit-LSP build settings
 make ios-test         # run the full Swift test suite there
 make ios-test TEST=VoiceControllerTests # run one suite while iterating
 make ios-test-latest  # also check the newest installed runtime
@@ -129,7 +225,7 @@ XcodeBuildMCP. Apple's bridge also requires Xcode to be running with the
 Hearful project open and **Xcode > Settings > Intelligence > Model Context
 Protocol > Xcode Tools** enabled for external agents.
 
-For complete Swift completion and navigation in Cursor, install
+For Swift completion and navigation in Zed or Cursor, install
 `xcode-build-server` once with Homebrew, then refresh its machine-local compile
 settings after project or build-setting changes:
 
@@ -139,8 +235,8 @@ make ios-index
 ```
 
 The generated `buildServer.json`, `.compile`, and raw indexing build log are
-ignored. Reload Cursor after the first generation so SourceKit-LSP picks up the
-build server.
+ignored. Restart the editor's Swift language server (or reload the editor) after
+the first generation so SourceKit-LSP picks up the build server.
 
 Debug builds talk to `http://localhost:8000` by default, which the simulator
 can reach but a physical device cannot. Start the local database and backend

@@ -1,0 +1,45 @@
+{
+  "languages": {
+    "Python": {
+      "language_servers": ["ty", "ruff"],
+      "formatter": { "language_server": { "name": "ruff" } },
+      "format_on_save": "on",
+      "code_actions_on_format": {
+        "source.organizeImports.ruff": true
+      },
+      "tab_size": 4,
+      "hard_tabs": false,
+      "preferred_line_length": 119
+    },
+    "Swift": {
+      "tab_size": 4,
+      "hard_tabs": false,
+      "preferred_line_length": 119,
+      "format_on_save": "off"
+    },
+    "Markdown": {
+      "tab_size": 2,
+      "hard_tabs": false,
+      "preferred_line_length": 119,
+      "soft_wrap": "bounded",
+      "format_on_save": "off",
+      "remove_trailing_whitespace_on_save": false
+    }
+  },
+  "terminal": {
+    "detect_venv": {
+      "on": {
+        "directories": ["backend/.venv", ".venv"],
+        "activate_script": "default"
+      }
+    }
+  },
+  "file_scan_exclusions": [
+    "...",
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "**/.ruff_cache",
+    "**/.gradle",
+    "**/.kotlin"
+  ]
+}
