@@ -24,8 +24,8 @@ class VoiceAttemptTest {
         attempt.sent("request-uuid"); attempt.outcome = VoiceOutcome.Played; attempt.finish()
         val commandTrace = telemetryTrace("request-uuid")
         assertEquals(commandTrace.split('-')[1], event!!.traceparent!!.split('-')[1])
-        assertNotEquals(commandTrace, event!!.traceparent)
-        assertEquals(true, event!!.fields["command_sent"])
+        assertNotEquals(commandTrace, event.traceparent)
+        assertEquals(true, event.fields["command_sent"])
     }
     @Test fun failedDiagnosticSinkCannotBreakTheVoiceAction() {
         val attempt = VoiceAttempt(false, 0, true, "0.1", "1", { throw java.io.IOException("Storage unavailable") })

@@ -16,6 +16,12 @@ Create a phone in Device Manager using an ARM64 Google Play image on Apple Silic
 (x86_64 on an Intel host). Android 12 / API 31 is the minimum supported version;
 the initial local emulator uses Android 16 / API 36. Google Play images do not
 necessarily contain downloaded offline voices.
+Use an **API 36.1 or newer** image for the full instrumentation suite: assistant
+integration tests need its AppFunctions metadata indexer, which API 36 lacks.
+
+The built-in Kotlin compiler and Compose compiler plugin are both pinned to
+**2.4.20**, matching the Kotlin 2.4 libraries used by Coil **3.6.2**. Keep those
+compiler versions aligned when upgrading image-loading dependencies.
 
 From the repository root:
 
@@ -120,6 +126,9 @@ for JVM tests it accepts Gradle's `--tests` pattern. Omit it for the full suite.
 `android-check` ignores `TEST` and always includes all JVM tests. Instrumented
 tests change preview state/preferences; run them on development emulators.
 The build gate compiles the instrumentation APK even when no emulator is present.
+Compose tests use the [v2 test APIs](https://developer.android.com/develop/ui/compose/testing/migrate-v2).
+These queue composition coroutines; use `waitForIdle()` or `runOnIdle` before
+asserting on asynchronous UI changes.
 Espresso is explicitly pinned to 3.7.0: older versions pulled in by Compose
 reflect on `InputManager.getInstance`, which is absent on the API 36.1 emulator.
 The [AndroidX Test release notes](https://developer.android.com/jetpack/androidx/releases/test#espresso-3.7.0)
@@ -132,6 +141,9 @@ Check the XML test counts as well as the build result: a crashed emulator system
 process can leave zero executed tests even when Gradle reports success. If Android
 is globally unresponsive, close the development emulator and cold-start the same
 AVD without wiping its data; verify the installed CLI help for the startup options.
+The same recovery applies when instrumentation reports `UiAutomationService ...
+already registered!` after restoring a snapshot. Use
+`./scripts/android-dev.sh cli emulator start --cold AVD_NAME` after stopping it.
 CI retains these reports even when a check fails. The debug APK is
 `android/app/build/outputs/apk/debug/app-debug.apk`.
 

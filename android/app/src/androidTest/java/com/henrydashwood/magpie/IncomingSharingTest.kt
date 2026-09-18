@@ -10,7 +10,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -237,7 +237,7 @@ class IncomingSharingTest {
         screenshot("captured-article-preview")
         val article = model.state.value.article!!
         assertEquals("article", article.contentFormat); assertTrue(article.html!!.contains("quiet walk"))
-        assertFalse(article.html!!.contains("HIDDEN SECRET")); assertTrue(api.captures.isEmpty())
+        assertFalse(article.html.contains("HIDDEN SECRET")); assertTrue(api.captures.isEmpty())
         assertTrue(runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.isEmpty())
         val forged = JSONObject().put("url", "https://different.invalid").put("html", "<p>wrong</p>")
         assertTrue(runCatching { decodeCapture(JSONObject.quote(forged.toString()), article.url) }.isFailure)

@@ -55,7 +55,7 @@ private fun AddressCaptureDialog(capture: com.henrydashwood.magpie.LinkCaptureSt
                     placeholder = { Text(placeholder) }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
                     enabled = !capture.saving, isError = capture.error != null)
-                if (capture.error != null) Text(capture.error!!, color = MaterialTheme.colorScheme.error,
+                if (capture.error != null) Text(capture.error, color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                 Text(explanation)
             }

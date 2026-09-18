@@ -1,7 +1,7 @@
 package com.henrydashwood.magpie
 
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
 import com.henrydashwood.magpie.data.LinkInbox
 import java.util.UUID

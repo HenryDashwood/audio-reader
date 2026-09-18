@@ -1,7 +1,6 @@
 from xml.etree import ElementTree
 
 import pytest
-
 from sqlalchemy import func, select
 
 from audioreader.imports import opml

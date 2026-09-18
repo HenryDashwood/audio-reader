@@ -1,5 +1,6 @@
 package com.henrydashwood.magpie.auth
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -39,6 +40,8 @@ class EncryptedAccountTokenStore(context: Context, private val server: String, p
             cipher.doFinal(bytes.copyOfRange(12, bytes.size)).toString(Charsets.UTF_8).takeIf { it.isNotBlank() }
         } catch (_: Exception) { clear(); null }
     }
+    // KTX edit(commit = true) discards the result; account changes must detect failed writes.
+    @SuppressLint("UseKtx")
     override fun write(token: String) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
@@ -46,5 +49,6 @@ class EncryptedAccountTokenStore(context: Context, private val server: String, p
         val encoded = Base64.encodeToString(cipher.iv + cipher.doFinal(token.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
         check(preferences.edit().putString("session", encoded).commit()) { "Session could not be saved" }
     }
+    @SuppressLint("UseKtx") // Sign-out must detect a failure to remove the persisted session.
     override fun clear() { check(preferences.edit().remove("session").commit()) { "Session could not be removed" } }
 }

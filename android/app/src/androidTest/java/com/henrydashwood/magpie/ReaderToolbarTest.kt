@@ -5,7 +5,7 @@ import android.content.Intent
 import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.core.content.IntentCompat
 import com.henrydashwood.magpie.data.ContentKind
 import com.henrydashwood.magpie.data.SampleLibrary

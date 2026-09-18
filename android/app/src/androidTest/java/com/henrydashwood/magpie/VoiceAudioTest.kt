@@ -6,7 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import com.henrydashwood.magpie.playback.SpeechVoices
 import com.henrydashwood.magpie.voice.*
 import kotlinx.coroutines.Dispatchers

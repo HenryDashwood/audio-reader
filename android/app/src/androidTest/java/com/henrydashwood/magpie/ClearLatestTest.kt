@@ -2,7 +2,7 @@ package com.henrydashwood.magpie
 
 import android.content.Context
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.core.content.edit
 import androidx.lifecycle.ViewModelProvider
 import com.henrydashwood.magpie.data.PreviewStore

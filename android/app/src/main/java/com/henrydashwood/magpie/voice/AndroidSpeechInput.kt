@@ -76,7 +76,6 @@ class AndroidSpeechInput(private val context: Context, val locale: Locale = Loca
             }
             withTimeoutOrNull(300_000) { result.await(); true }
                 ?: throw VoiceFailure("The recognition download is taking longer than expected. Check its status in Android speech settings.")
-            Unit
         } finally { engine.destroy() }
     }
 

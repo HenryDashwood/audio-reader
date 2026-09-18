@@ -104,6 +104,13 @@ the normal build/test output. Override that location with
 `IOS_INDEX_DERIVED_DATA_PATH`; `IOS_DERIVED_DATA_PATH` controls normal builds
 and tests. The separate index directory uses additional disk space.
 
+If debug-symbol generation reports missing `.pcm` files under
+`SDKExplicitPrecompiledModules` or `SwiftExplicitPrecompiledModules`, clean the
+affected build products and rebuild. Previously compiled objects can refer to
+expired Clang module-cache entries; rebuilding those objects regenerates the
+modules. Keep warning reporting enabled. For XcodeBuildMCP, use its `clean` tool
+with the same DerivedData path before repeating the build or test.
+
 Local tests use a single incremental build-and-test invocation and print its
 elapsed time. To reproduce CI's phased run, use
 `IOS_TEST_PREBOOT=1 IOS_COMPILATION_CACHE=1 make ios-test`. This boots the selected

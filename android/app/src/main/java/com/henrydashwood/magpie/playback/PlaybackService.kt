@@ -775,7 +775,7 @@ class PlaybackService : MediaLibraryService() {
             player.currentMediaItem?.mediaId == item.id && player.playbackState != Player.STATE_IDLE &&
             player.playbackState != Player.STATE_ENDED && PlaybackStatus.state.value.message == null
         val range = if (active) {
-            val index = player.currentPeriodIndex.coerceIn(audio!!.textChunks.indices)
+            val index = player.currentPeriodIndex.coerceIn(audio.textChunks.indices)
             val chunk = audio.playerChunk(player.currentTimeline, index)
             readingRangeAt(listOf(chunk), audio.ranges(index).map { it.copy(startMs = it.startMs + chunk.startMs) }, player.currentPosition)
         } else null

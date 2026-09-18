@@ -325,7 +325,6 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
             is LocalCommand.Sleep -> Triple("sleep", command.minutes.toDouble(), "Sleep timer set for ${command.minutes} minutes.")
             LocalCommand.CancelSleep -> Triple("cancel_sleep", null, "Sleep timer off.")
             LocalCommand.Undo -> Triple("undo_speed", null, "Playback speed restored.")
-            else -> error("Unsupported local command")
         }
         val result = status(request(state, name, Bundle().apply { value?.let { putDouble("value", it) } }))
         return MagpieRequestResult(message, false, result.item, null)

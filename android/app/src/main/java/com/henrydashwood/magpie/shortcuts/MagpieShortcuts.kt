@@ -1,5 +1,6 @@
 package com.henrydashwood.magpie.shortcuts
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ShortcutInfo
@@ -42,6 +43,7 @@ object MagpieShortcuts {
     // Only publish this capability to Android's shortcut host or the permission-protected tile.
     // Shared preferences are private and excluded from both backup and device transfer.
     @Synchronized
+    @SuppressLint("UseKtx") // Publish microphone access only after commit confirms it was saved.
     private fun microphoneProof(context: Context, create: Boolean): String? {
         val store = context.getSharedPreferences("shortcut_launch", Context.MODE_PRIVATE)
         store.getString(PROOF, null)?.takeIf { it.matches(Regex("[a-f0-9]{64}")) }?.let { return it }
@@ -82,13 +84,18 @@ object MagpieShortcuts {
         ShortcutAction.ReadItem, ShortcutAction.Following, ShortcutAction.OpenLatest, ShortcutAction.OpenFeed, ShortcutAction.Shortcuts -> R.drawable.ic_shortcut_article
         else -> R.drawable.ic_shortcut_play
     }
-    private fun info(context: Context, request: ShortcutRequest, label: String): ShortcutInfo {
-        val id = if (request.owner == null) "magpie-${request.action.name.lowercase()}" else {
+    private fun id(request: ShortcutRequest): String =
+        if (request.owner == null) "magpie-${request.action.name.lowercase()}" else {
             val key = "${request.owner}:${request.action}:${request.itemId}:${request.feedId}"
             "magpie-target-" + MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
         }
-        return ShortcutInfo.Builder(context, id).setShortLabel(label.take(40)).setLongLabel(label.take(100))
+    private fun info(context: Context, request: ShortcutRequest, label: String): ShortcutInfo {
+        return ShortcutInfo.Builder(context, id(request)).setShortLabel(label.take(40)).setLongLabel(label.take(100))
             .setIcon(Icon.createWithResource(context, icon(request.action))).setIntent(trustedIntent(context, request)).build()
+    }
+    fun reportUsed(context: Context, request: ShortcutRequest) {
+        // Ranking is best effort and must never prevent the requested action from opening.
+        runCatching { context.getSystemService(ShortcutManager::class.java)?.reportShortcutUsed(id(request)) }
     }
     fun publish(context: Context) {
         val manager = context.getSystemService(ShortcutManager::class.java) ?: return

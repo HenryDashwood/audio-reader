@@ -1,7 +1,7 @@
 package com.henrydashwood.magpie.ui
 
 import android.content.Intent
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -69,7 +69,7 @@ fun SavedArticlePreparation(item: LibraryItem, model: MagpieModel) {
             TextButton(onClick = { model.savedPreparation.retry(item) }, enabled = !state.busy,
                 modifier = Modifier.semantics { contentDescription = "Retry preparing ${item.title}" }) { Text("Retry") }
             if (item.originalUrl != null) TextButton(onClick = {
-                try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.originalUrl))) }
+                try { context.startActivity(Intent(Intent.ACTION_VIEW, item.originalUrl.toUri())) }
                 catch (_: android.content.ActivityNotFoundException) { openError = "No browser is available to open the original page." }
             }) { Text("Open original") }
         }

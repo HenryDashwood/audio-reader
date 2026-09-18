@@ -6,7 +6,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -99,11 +99,20 @@ class SavedPreparationTest {
         compose.onNodeWithText("Saved on this device · Waiting to sync").assertIsDisplayed()
         scenario!!.recreate()
         compose.onNodeWithText("Saved on this device · Waiting to sync").assertIsDisplayed()
+        compose.waitForIdle()
+        awaitIdle()
+        // Both resuming the activity and opening Saved may retry while offline.
+        // What matters is retaining the link until one successful explicit sync.
+        val offlineAttempts = api.writes
+        assertTrue(offlineAttempts >= 2)
+        assertEquals(1, model.savedPreparation.state.value.pending.size)
+        assertTrue(api.rows.none { it.id == 3 })
         api.offline = false
         compose.onNodeWithText("Sync saved links").performClick()
         compose.waitUntil(10_000) { model.savedPreparation.state.value.pending.isEmpty() }
         compose.onNodeWithText("Queued article").assertIsDisplayed()
-        assertEquals(3, api.writes) // Initial attempt, reopening Saved, then explicit sync.
+        assertEquals(offlineAttempts + 1, api.writes)
+        assertEquals(1, api.rows.count { it.id == 3 })
     }
     @Test fun failedCaptureHasExplicitRetryAndCanBeOpenedAfterPreparation() {
         runBlocking(Dispatchers.Main) {

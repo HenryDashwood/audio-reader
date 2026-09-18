@@ -8,7 +8,7 @@ import androidx.compose.ui.unit.Density
 import com.henrydashwood.magpie.ui.MagpieApp
 import com.henrydashwood.magpie.ui.MagpieTheme
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider

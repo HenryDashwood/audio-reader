@@ -44,9 +44,9 @@ class TelemetryQueueTest {
         current = first.copy(owner = "b".repeat(64), revision = 2)
         queue.invalidate(); queue.record(event("second")); runCurrent()
         gate.complete(Unit); runCurrent()
-        assertEquals(listOf(first.owner, current!!.owner), owners)
+        assertEquals(listOf(first.owner, current.owner), owners)
         assertEquals("attempt", store.rows[first.owner]!!.pending.single().id)
-        assertTrue(store.rows[current!!.owner]!!.pending.isEmpty())
+        assertTrue(store.rows[current.owner]!!.pending.isEmpty())
     }
     @Test fun storageIsBoundedAndExpiredOrFutureEventsAreDiscarded() = runTest {
         val store = Store()

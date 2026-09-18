@@ -3,7 +3,7 @@ package com.henrydashwood.magpie
 import android.content.ComponentName
 import android.os.Bundle
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.media3.session.MediaController

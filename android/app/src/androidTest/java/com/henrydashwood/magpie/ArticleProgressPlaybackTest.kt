@@ -3,7 +3,7 @@ package com.henrydashwood.magpie
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken

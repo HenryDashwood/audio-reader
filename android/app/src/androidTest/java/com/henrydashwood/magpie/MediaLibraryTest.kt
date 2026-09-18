@@ -4,7 +4,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.media.browse.MediaBrowser as PlatformBrowser
 import android.media.session.MediaController as PlatformController
-import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.*
@@ -94,6 +94,9 @@ class MediaLibraryTest {
             override fun onChildrenChanged(browser: MediaBrowser, parentId: String, itemCount: Int, params: MediaLibraryService.LibraryParams?) { changedFolders[parentId] = itemCount }
         }).buildAsync() })
         observer = await(main { MediaController.Builder(app, token()).buildAsync() })
+        // Let the initial Following composition finish its empty-query search
+        // before a test seeds a different app search alongside the media browser.
+        compose.waitForIdle()
     }
     @After fun finish() {
         api.searchGate?.complete(Unit)

@@ -6,6 +6,7 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.CancellationException
@@ -21,7 +22,11 @@ class GoogleAuthorization(context: Context, private val serverClientId: String) 
                 throw AccountFailure(0, "Google sign-in did not work. Please try again.")
             }
             return GoogleIdTokenCredential.createFrom(credential.data).idToken
-        } catch (_: GetCredentialCancellationException) { throw CancellationException("Sign-in cancelled") }
+        } catch (_: GetCredentialCancellationException) {
+            throw CancellationException("Sign-in cancelled")
+        } catch (_: NoCredentialException) {
+            throw AccountFailure(0, "No Google account is available. Add or sign in to a Google account in your device settings, then try again.")
+        }
     }
     suspend fun clear() { runCatching { manager.clearCredentialState(ClearCredentialStateRequest()) } }
 }

@@ -4,7 +4,7 @@ import android.content.Intent
 import android.content.Context
 import androidx.core.net.toUri
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.compose.ui.test.junit4.v2.AndroidComposeTestRule
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import org.junit.Rule
