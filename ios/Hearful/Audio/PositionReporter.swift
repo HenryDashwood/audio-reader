@@ -46,8 +46,7 @@ final class PositionReporter {
     ///
     /// Their state is hers to decide, not the clock's. Without this, marking
     /// the episode she is listening to as played is undone within seconds:
-    /// pausing it flushes a position, the flush reports `completed` worked out
-    /// from how far through she is, and the answer is false. She would hear
+    /// pausing it flushes an incomplete position report. She would hear
     /// the confirmation, and the episode would be back in her list.
     private var filedByHand: Set<Int> = []
     private var lastTime: TimeInterval = 0
@@ -56,13 +55,20 @@ final class PositionReporter {
     private var hasPlayed = false
     private var lastReportAt: Date = .distantPast
     private var reportQueueTail: Task<Void, Never>?
+    private let podcastJournal: PodcastProgressJournal
+    private var podcastUpload: Task<Void, Never>?
+    private var active = true
+    private var podcastSchedule = OfflineRetrySchedule()
+    private var podcastPlaybackID = UUID()
 
     init(
         api: HearfulAPIProtocol = HearfulAPI(),
         player: PlaybackCoordinator = .shared,
-        sessionScope: @escaping () -> String? = { ShortcutScope.current }
+        sessionScope: @escaping () -> String? = { ShortcutScope.current },
+        podcastJournal: PodcastProgressJournal = .shared
     ) {
         self.api = api
+        self.podcastJournal = podcastJournal
         self.player = player
         self.sessionScope = sessionScope()
         currentSessionScope = sessionScope
@@ -85,6 +91,11 @@ final class PositionReporter {
                 MainActor.assumeIsolated { self?.timeTicked(to: time) }
             }
             .store(in: &cancellables)
+        player.finished
+            .sink { [weak self] episode in
+                MainActor.assumeIsolated { self?.playbackFinished(episode) }
+            }
+            .store(in: &cancellables)
         NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)
             .sink { [weak self] note in
                 guard let change = note.object as? EpisodeFiling.Change else { return }
@@ -98,6 +109,13 @@ final class PositionReporter {
                 MainActor.assumeIsolated { self?.flush() }
             }
             .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .hearfulRetryOffline)
+            .sink { [weak self] note in MainActor.assumeIsolated {
+                if note.object as? Bool == true { self?.podcastSchedule.reset() }
+                self?.retryPodcasts()
+            } }
+            .store(in: &cancellables)
+        retryPodcasts()
     }
 
     // Internal rather than private: tests drive these directly, since
@@ -112,6 +130,15 @@ final class PositionReporter {
             report(episode: outgoing, seconds: lastTime)
         }
         trackedEpisode = episode
+        podcastPlaybackID = UUID()
+        if let episode, episode.audioURL != nil, let owner = sessionScope,
+           let revision = episode.progressRevision, isProgressToken(revision) {
+            do {
+                let local = try podcastJournal.resume(owner: owner, episodeID: episode.id, revision: revision)
+                try podcastJournal.start(owner: owner, episodeID: episode.id, playbackID: podcastPlaybackID,
+                    revision: revision, sample: local ?? .init(seconds: episode.positionSeconds ?? 0, completed: episode.completed ?? false))
+            } catch { OfflineSyncStatus.shared.report("Your listening position could not be saved. Check the available storage.") }
+        }
         // Playing it again is her overruling herself, and positions should
         // start being written for it once more. Otherwise an episode marked
         // played would never remember a position again.
@@ -121,6 +148,9 @@ final class PositionReporter {
     }
 
     func episodeFiled(_ change: EpisodeFiling.Change) {
+        if let owner = sessionScope {
+            try? podcastJournal.block(owner: owner, episodeIDs: [change.episodeID])
+        }
         if change.filing.hidesFromLatest {
             filedByHand.insert(change.episodeID)
         } else {
@@ -130,6 +160,12 @@ final class PositionReporter {
 
     func playingChanged(_ playing: Bool) {
         if playing {
+            if let episode = trackedEpisode, let owner = sessionScope, let revision = episode.progressRevision,
+               (try? podcastJournal.entries(owner: owner).first { $0.episodeID == episode.id }?.blocked) == true {
+                podcastPlaybackID = UUID()
+                try? podcastJournal.start(owner: owner, episodeID: episode.id, playbackID: podcastPlaybackID,
+                    revision: revision, sample: .init(seconds: lastTime, completed: false))
+            }
             hasPlayed = true
         } else {
             // Covers pause, AirPods pause, "Hey Siri pause", and stalls.
@@ -154,30 +190,108 @@ final class PositionReporter {
         report(episode: episode, seconds: lastTime)
     }
 
+    private func playbackFinished(_ episode: Episode) {
+        guard hasPlayed, trackedEpisode?.id == episode.id,
+            trackedEpisode?.contentID == episode.contentID
+        else { return }
+        // Clearing the player can flush again. Do not let that overwrite the
+        // final completed report with an incomplete one.
+        hasPlayed = false
+        report(episode: episode, seconds: lastTime, completed: true)
+    }
+
     /// Gives tests a deterministic boundary without making playback await the
     /// network in production.
     func waitForPendingReports() async {
         await reportQueueTail?.value
         await articleSync.waitForPendingReports()
+        await podcastUpload?.value
     }
 
     func invalidate() {
+        active = false
+        podcastUpload?.cancel()
         articleSync.invalidate()
         reportQueueTail?.cancel()
         cancellables.removeAll()
     }
 
-    private func report(episode: Episode, seconds: TimeInterval) {
+    private func retryPodcasts() {
+        guard podcastSchedule.isDue, active, let owner = sessionScope, currentSessionScope() == owner, podcastUpload == nil else { return }
+        podcastUpload = Task { [weak self] in
+            guard let self else { return }
+            defer { self.podcastUpload = nil }
+            do {
+                try await podcastJournal.flush(owner: owner, valid: {
+                    self.active && self.currentSessionScope() == owner
+                }, send: { id, request in
+                    do { return try await self.api.reportPodcastProgress(episodeID: id, report: request) }
+                    catch let error as APIError {
+                        if error.statusCode == 409 {
+                            return PodcastProgressReceipt(episode: try await self.api.episode(id: id), acceptedRevision: "")
+                        }
+                        if [403, 404, 422].contains(error.statusCode ?? 0) {
+                            try self.podcastJournal.block(owner: owner, episodeIDs: [id])
+                        }
+                        throw error
+                    }
+                }, applied: { receipt in
+                    if self.trackedEpisode?.id == receipt.episode.id {
+                        self.trackedEpisode?.progressRevision = receipt.episode.progressRevision
+                        if let episode = self.trackedEpisode {
+                            var saved = receipt.changedSinceAcceptance ? receipt.episode : episode
+                            if !receipt.changedSinceAcceptance { saved.positionSeconds = self.lastTime }
+                            PlaybackRestore.remember(saved, scope: owner)
+                        }
+                    }
+                    if receipt.changedSinceAcceptance {
+                        OfflineSyncStatus.shared.report("This episode changed on another device. Its newer listening position was kept.")
+                        NotificationCenter.default.post(name: .hearfulPositionReported, object: PositionReport(
+                            episodeID: receipt.episode.id, seconds: receipt.episode.positionSeconds ?? 0,
+                            completed: receipt.episode.completed ?? false, durationSeconds: receipt.episode.durationSeconds))
+                    }
+                })
+                podcastSchedule.reset()
+                if (try podcastJournal.entries(owner: owner)).allSatisfy({ $0.pending == nil }),
+                   OfflineSyncStatus.shared.message == "Your listening position is saved on this device and will sync when connected." {
+                    OfflineSyncStatus.shared.message = nil
+                }
+            } catch is CancellationError { }
+            catch {
+                if active && currentSessionScope() == owner {
+                    podcastSchedule.failed()
+                    OfflineSyncStatus.shared.report("Your listening position is saved on this device and will sync when connected.")
+                }
+            }
+        }
+    }
+
+    private func report(episode: Episode, seconds: TimeInterval, completed: Bool = false) {
         guard !filedByHand.contains(episode.id) else { return }
         // Shared text bookmarks are reported by their own source-bound journal.
         // Never let a legacy seconds write clear that newer bookmark.
         if player.article.progressContext?.episodeID == episode.id { return }
         lastReportAt = Date()
-        let duration = player.duration
-        let completed = duration > 0 && seconds / duration > 0.95
         let report = PositionReport(
             episodeID: episode.id, seconds: seconds, completed: completed,
             durationSeconds: player.measuredDuration.map { Int($0.rounded()) }, contentID: episode.contentID)
+        var remembered = episode
+        remembered.positionSeconds = seconds
+        remembered.completed = completed
+        PlaybackRestore.remember(remembered, scope: sessionScope)
+        if episode.audioURL != nil, episode.progressRevision.map(isProgressToken) == true,
+           let owner = sessionScope {
+            do {
+                if try podcastJournal.record(owner: owner, episodeID: episode.id, playbackID: podcastPlaybackID,
+                    sample: .init(seconds: seconds, completed: completed)) {
+                    NotificationCenter.default.post(name: .hearfulPositionReported, object: report)
+                    retryPodcasts()
+                }
+            } catch { OfflineSyncStatus.shared.report("Your listening position could not be saved. Check the available storage.") }
+            return
+        }
+        // Older servers retain best-effort seconds; replaying these later has
+        // no revision guard and could undo a deliberate filing action.
         // The lists hear first: what she sees must not wait on the network.
         NotificationCenter.default.post(name: .hearfulPositionReported, object: report)
         let api = self.api

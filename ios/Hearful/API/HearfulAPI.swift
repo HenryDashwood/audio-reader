@@ -3,6 +3,8 @@ import Foundation
 // The API layer is deliberately nonisolated: it holds no mutable state and is
 // called from App Intents and background tasks as well as the UI.
 nonisolated protocol HearfulAPIProtocol: Sendable {
+    func offlineLibraryAction(_ action: String, episodeID: Int, contentID: Int?, requestID: String, undoRequestID: String?) async throws -> CommandResponse
+    func reportPodcastProgress(episodeID: Int, report: PodcastProgressReport) async throws -> PodcastProgressReceipt
     func reportArticleProgress(episodeID: Int, report: ArticleProgressReport) async throws -> ArticleProgressReceipt
     func articleText(episodeID: Int, contentID: Int?) async throws -> EpisodeText
     func reportPosition(episodeID: Int, seconds: Double, completed: Bool, durationSeconds: Int?, contentID: Int?) async throws
@@ -91,6 +93,12 @@ nonisolated protocol HearfulAPIProtocol: Sendable {
 }
 
 extension HearfulAPIProtocol {
+    func offlineLibraryAction(_ action: String, episodeID: Int, contentID: Int?, requestID: String, undoRequestID: String?) async throws -> CommandResponse {
+        throw APIError(underlying: "Offline filing sync is unavailable.")
+    }
+    func reportPodcastProgress(episodeID: Int, report: PodcastProgressReport) async throws -> PodcastProgressReceipt {
+        throw APIError(underlying: "Podcast progress sync is unavailable.")
+    }
     func reportArticleProgress(episodeID: Int, report: ArticleProgressReport) async throws -> ArticleProgressReceipt {
         throw APIError(underlying: "Article bookmark sync is unavailable.")
     }
@@ -679,6 +687,25 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         return try await send(request)
     }
 
+    func offlineLibraryAction(_ action: String, episodeID: Int, contentID: Int?, requestID: String, undoRequestID: String?) async throws -> CommandResponse {
+        // A distinct route fails safely on older servers, which cannot bind
+        // Undo to its original action or reject an obsolete article version.
+        var request = URLRequest(url: baseURL.appendingPathComponent("actions/offline"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        struct Body: Encodable {
+            let action: String
+            let episode_id: Int
+            let content_id: Int?
+            let request_id: String
+            let undo_request_id: String?
+        }
+        request.httpBody = try JSONEncoder().encode(Body(action: action, episode_id: episodeID,
+            content_id: contentID, request_id: requestID, undo_request_id: undoRequestID))
+        return try await send(request)
+    }
+
     func me() async throws -> UserInfo {
         try await send(URLRequest(url: baseURL.appendingPathComponent("me")))
     }
@@ -713,6 +740,20 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
             PositionUpdate(
                 contentID: contentID, positionSeconds: seconds, completed: completed, durationSeconds: durationSeconds))
         try await perform(request)
+    }
+
+    func reportPodcastProgress(episodeID: Int, report: PodcastProgressReport) async throws -> PodcastProgressReceipt {
+        guard episodeID > 0, report.isValid else { throw APIError(underlying: "Invalid podcast position") }
+        var request = URLRequest(url: baseURL.appendingPathComponent("episodes/\(episodeID)/progress"))
+        request.httpMethod = "PUT"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(report)
+        let receipt: PodcastProgressReceipt = try await send(request)
+        guard receipt.episode.id == episodeID, receipt.episode.audioURL != nil,
+              receipt.episode.progressRevision.map(isProgressToken) == true, isProgressToken(receipt.acceptedRevision)
+        else { throw APIError(underlying: "The podcast position reply could not be confirmed") }
+        return receipt
     }
 
     func reportArticleProgress(episodeID: Int, report: ArticleProgressReport) async throws -> ArticleProgressReceipt {

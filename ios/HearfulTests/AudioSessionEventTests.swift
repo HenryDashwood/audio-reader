@@ -301,9 +301,7 @@ struct ArticleCompletionTests {
     }
 
     @Test func theLastChunkFinishingLandsOnTheEnd() async {
-        // The position must land exactly on the duration: the position
-        // reporter reads completion off that, and an article stopping a
-        // second short would never be marked as read.
+        // The final position should match the duration when speech finishes.
         let (player, synthesizer, recorder) = await reading()
         #expect(player.duration > 0, "the article never loaded; the test proves nothing")
 

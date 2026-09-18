@@ -118,6 +118,11 @@ nonisolated enum EpisodeFiling: String, Sendable, Hashable {
 func fileEpisode(_ filing: EpisodeFiling, _ episode: Episode, api: HearfulAPIProtocol) async -> Bool
 {
     do {
+        if api is HearfulAPI, ShortcutScope.current != nil {
+            try OfflineLibraryActions.shared.enqueue(filing, episode: episode)
+            AccessibilityNotification.Announcement(filing.confirmation(for: episode) + " Saved on this device; waiting to sync.").post()
+            return true
+        }
         try await api.setEpisodeState(
             episodeID: episode.id,
             played: filing.update.played,

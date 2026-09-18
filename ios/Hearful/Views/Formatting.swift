@@ -83,9 +83,9 @@ enum ListeningProgress: Equatable {
             return
         }
         let remaining = Double(durationSeconds) - positionSeconds
-        // Within the last minute is effectively finished; an outro is not
-        // something to send her back to.
-        self = remaining <= 60 ? .played : .inProgress(remainingSeconds: Int(remaining))
+        // A duration can be an estimate. Only explicit completion makes an
+        // item played, even when its clock reaches or passes that estimate.
+        self = .inProgress(remainingSeconds: max(0, Int(remaining)))
     }
 
     /// Begun and not finished — the episodes worth offering to carry on with.

@@ -42,6 +42,9 @@ final class SpeechRecognizer: SpeechRecognizing {
     }
 
     private var timeouts = ListeningTimeouts()
+    private var localOnly = false
+    func configure(localOnly: Bool) { self.localOnly = localOnly }
+
     private var hasHeardSpeech = false
     private var arrivals = BufferArrivals()
 
@@ -73,10 +76,13 @@ final class SpeechRecognizer: SpeechRecognizing {
         var captured = false
         let ready: @MainActor () -> Void = { captured = true; onReady() }
         let preferOnDevice = recognizer.supportsOnDeviceRecognition
+        guard !localOnly || preferOnDevice else {
+            throw APIError(spokenResponse: "Offline speech recognition is not installed. Use the playback buttons, or connect to install a speech model.", underlying: "On-device recognition unavailable")
+        }
         do {
             return try await recognise(
                 using: recognizer, onDevice: preferOnDevice, id: id, onReady: ready)
-        } catch SpeechError.recognitionFailed where preferOnDevice && !captured {
+        } catch SpeechError.recognitionFailed where preferOnDevice && !captured && !localOnly {
             try checkActive(id)
             // The device claims on-device support but has no models installed.
             log.notice("on-device recognition failed; retrying server-based")

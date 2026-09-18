@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from audioreader import positions, telemetry
+from audioreader import positions, saved, telemetry
 from audioreader.auth.dependencies import get_current_user
 from audioreader.commands import service, undo
 from audioreader.commands.conversation import AssistantDelta, ConversationFinished, converse
@@ -28,7 +28,7 @@ from audioreader.models import Episode, Subscription, User, utcnow
 from audioreader.ratelimit import SlidingWindow
 from audioreader.routers.auth import has_current_ai_data_sharing_consent
 from audioreader.routers.feeds import episodes_read
-from audioreader.schemas import CommandRequest, CommandResponse, LibraryActionRequest
+from audioreader.schemas import CommandRequest, CommandResponse, LibraryActionRequest, OfflineLibraryActionRequest
 from audioreader.settings_types import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -310,24 +310,69 @@ async def cancel_voice_command(request_id: str, session: Session, user: CurrentU
 @router.post("/actions", dependencies=[Depends(check_rate_limit)])
 async def library_action(body: LibraryActionRequest, session: Session, user: CurrentUser) -> CommandResponse:
     """Typed, model-free actions with the same receipts and undo as voice."""
+    return await _library_action(body, session, user)
+
+
+@router.post("/actions/offline", dependencies=[Depends(check_rate_limit)])
+async def offline_library_action(
+    body: OfflineLibraryActionRequest, session: Session, user: CurrentUser
+) -> CommandResponse:
+    if body.action == "undo" and body.undo_request_id is None:
+        raise HTTPException(422, detail="The original action is required for offline Undo")
+    return await _library_action(body, session, user)
+
+
+async def _library_action(body: LibraryActionRequest, session: AsyncSession, user: User) -> CommandResponse:
+    offline = body if isinstance(body, OfflineLibraryActionRequest) else None
     if body.action != "undo" and body.episode_id is None:
         raise HTTPException(status_code=422, detail="An episode is required")
-    request = CommandRequest(transcript=f"library-action:{body.action}:{body.episode_id}", request_id=body.request_id)
+    transcript = f"library-action:{body.action}:{body.episode_id}"
+    if offline is not None:
+        transcript += f":offline:{offline.content_id}:{offline.undo_request_id}"
+    request = CommandRequest(transcript=transcript, request_id=body.request_id)
 
     async def events(active: AsyncSession) -> AsyncIterator[bytes]:
         await check_cancelled(active)
         if body.action == "undo":
-            result = await undo.undo_last(active, user)
+            result = await undo.undo_last(
+                active, user, expected_request_id=offline.undo_request_id if offline else None
+            )
             response = await _action_response(active, user, result)
         else:
-            episode = await active.scalar(
-                select(Episode)
-                .options(joinedload(Episode.feed))
-                .where(
-                    Episode.id == body.episode_id,
-                    Episode.feed_id.in_(select(Subscription.feed_id).where(Subscription.user_id == user.id)),
+            assert body.episode_id is not None
+            if offline is not None:
+                await positions.lock_user(active, user.id)
+                episode = await active.get(Episode, body.episode_id, options=[joinedload(Episode.feed)])
+                selection = await saved.selection(active, user, body.episode_id)
+                subscribed = (
+                    episode is not None
+                    and episode.feed_id is not None
+                    and await active.scalar(
+                        select(Subscription.id).where(
+                            Subscription.user_id == user.id, Subscription.feed_id == episode.feed_id
+                        )
+                    )
+                    is not None
                 )
-            )
+                if not subscribed and selection is None:
+                    episode = None
+                elif offline.content_id != (selection.content_id if selection else None):
+                    yield _line(
+                        {
+                            "type": "error",
+                            "spoken_response": "The saved article changed. Refresh it before applying this change.",
+                        }
+                    )
+                    return
+            else:
+                episode = await active.scalar(
+                    select(Episode)
+                    .options(joinedload(Episode.feed))
+                    .where(
+                        Episode.id == body.episode_id,
+                        Episode.feed_id.in_(select(Subscription.feed_id).where(Subscription.user_id == user.id)),
+                    )
+                )
             if episode is None:
                 yield _line({"type": "error", "spoken_response": "That item is no longer in your library."})
                 return
@@ -338,7 +383,9 @@ async def library_action(body: LibraryActionRequest, session: Session, user: Cur
                 episode.id,
                 played=True if body.action == "mark_played" else False if body.action == "restore" else None,
                 dismissed=True if body.action == "dismiss" else False if body.action == "restore" else None,
+                commit=offline is None,
             )
+            before["request_id"] = body.request_id
             await undo.remember(active, user, before)
             response = CommandResponse(
                 action=body.action,

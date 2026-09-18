@@ -8,6 +8,39 @@ import org.junit.Test
 class ArticleDocumentTest {
     private val item = RichArticleSample.item
 
+    private fun chartSource(svg: String) = "data:image/svg+xml;base64," +
+        java.util.Base64.getEncoder().encodeToString(svg.toByteArray())
+
+    @Test fun preservesStaticChartsAndCaptionsWithoutAddingLabelsToSpeech() {
+        val source = chartSource("""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420"
+            width="640" height="420" color="black" style="background:white;color:black">
+            <circle cx="320" cy="210" r="100" fill="#ff5500"/><text x="20" y="30">Chart label</text></svg>""")
+        val saved = item.copy(html = """<p>Article text.</p><figure><img src="$source" alt="Usage chart">
+            <figcaption>Usage over time.</figcaption></figure>""", text = "Article text. Usage over time.")
+        val document = Jsoup.parse(ArticleDocument.body(saved))
+        assertEquals(source, document.selectFirst("img")!!.attr("src"))
+        assertEquals("Usage chart", document.selectFirst("img")!!.attr("alt"))
+        assertEquals("Usage over time.", document.selectFirst("figcaption")!!.text())
+        assertFalse(document.text().contains("Chart label"))
+        assertFalse(saved.text.contains("Chart label"))
+    }
+
+    @Test fun rejectsActiveExternalOrOversizedChartPayloads() {
+        val badChildren = listOf("<script>alert(1)</script>", "<foreignObject><p>HTML</p></foreignObject>",
+            "<image href=\"https://example.org/image.png\"/>", "<use href=\"#x\"/>",
+            "<animate attributeName=\"fill\"/>", "<circle onload=\"alert(1)\"/>",
+            "<circle fill=\"url(https://example.org/paint)\"/>", "<circle style=\"fill:red\"/>",
+            "<svg><circle/></svg>", "<g>".repeat(45) + "<circle/>" + "</g>".repeat(45))
+        for (child in badChildren) {
+            val source = chartSource("<svg xmlns=\"http://www.w3.org/2000/svg\">$child</svg>")
+            val document = Jsoup.parse(ArticleDocument.body(item.copy(html = "<p>Still readable</p><img src=\"$source\">")))
+            assertTrue(child, document.select("img[src]").isEmpty())
+        }
+        assertFalse(ArticleImageSource.isEmbedded(chartSource("<!DOCTYPE svg><svg xmlns=\"http://www.w3.org/2000/svg\"><circle/></svg>")))
+        assertFalse(ArticleImageSource.isEmbedded(chartSource("<svg xmlns=\"http://www.w3.org/2000/svg\"><text>${"x".repeat(200_000)}</text></svg>")))
+        assertFalse(ArticleImageSource.isEmbedded("data:image/svg+xml;base64,AAAA"))
+    }
+
     @Test fun keepsOnlyRecognisedPlayersWithSafePermissionsAndBrowserFallbacks() {
         val html = """<p>Before</p>
             <iframe src="https://www.youtube.com/embed/AbCdEf123_-?autoplay=1&amp;start=23"

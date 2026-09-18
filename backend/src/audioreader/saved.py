@@ -18,7 +18,16 @@ from sqlalchemy.orm import joinedload
 from audioreader.feeds import articles
 from audioreader.feeds.artwork import artwork_url_in_html, favicon_url
 from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes
+from audioreader.feeds.images import normalise_images
 from audioreader.models import ArticleContent, Episode, Feed, PlaybackPosition, SavedArticle, User, utcnow
+from audioreader.page_capture import (
+    missing_prose,
+    publisher_body,
+    short_illustrated_body,
+    social_post_author,
+    social_title,
+    substantial_paragraphs,
+)
 from audioreader.schemas import secure_url
 from audioreader.text import article_text, word_count
 
@@ -151,6 +160,8 @@ async def capture(
             body.html, browser=True, url=episode.link, article=body.content_format == "article"
         )
         title = (extracted_title if body.content_format == "article" else body.title) or extracted_title or title
+        if social_post_author(episode.link):
+            title = extracted_title or social_title(episode.link, title, article_text(html))
         image_url = artwork_url_in_html(body.html, episode.link or "", prefer_social=True)
     elif episode.feed_id is not None and not replace:
         text, html_value = await articles.content_for(session, episode, commit=False)
@@ -164,7 +175,7 @@ async def capture(
         try:
             raw, final_url = await fetch_public_bytes(episode.link, max_bytes=MAX_ARTICLE_BYTES)
             page = raw.decode("utf-8", errors="replace")
-            html, extracted_title = extract(page, url=episode.link)
+            html, extracted_title = extract(page, url=final_url)
             image_url = artwork_url_in_html(page, final_url, prefer_social=True)
             title = extracted_title or title
         except FeedFetchError as exc:
@@ -206,6 +217,7 @@ def extract(
         # lxml exposes platform-specific parser exception classes from its C module.
         return "", None
     metadata = trafilatura.extract_metadata(raw)
+    normalise_images(page, url or "")
     # Also protect URL saves and queued captures from older clients. Only Safari
     # can resolve stylesheet visibility; here we can remove explicit hidden nodes.
     for node in list(page.iter()):
@@ -259,7 +271,31 @@ def extract(
                 if nodes is not matches[0]:
                     for node in nodes:
                         node.drop_tree()
-        html = articles.extract_with_videos(lxml_html.tostring(page, encoding="unicode"))
+        html = publisher_body(page, url)
+        if html is None and url:
+            canonical = page.xpath('//link[@rel="canonical"]/@href')
+            try:
+                if len(canonical) == 1 and normalize_url(canonical[0]) == normalize_url(url):
+                    html = short_illustrated_body(page)
+            except ValueError:
+                pass
+        if html is None:
+            evidence = (
+                substantial_paragraphs(matches[0] if len(candidates) > 1 else candidates[0]) if candidates else []
+            )
+            html = articles.extract_with_videos(lxml_html.tostring(page, encoding="unicode"))
+            if missing_prose(evidence, html):
+                return "", None
+            if (
+                not candidates
+                and word_count(article_text(html)) < 120
+                and re.match(
+                    r"\s*(?:sponsored by|advertisement|subscribe to (?:our|the) newsletter|sign in|log in)\b",
+                    article_text(html),
+                    re.IGNORECASE,
+                )
+            ):
+                return "", None
     html = articles.sanitised(html)
     text = article_text(html)
     if word_count(text) < 120 and re.search(
@@ -269,7 +305,17 @@ def extract(
         re.IGNORECASE,
     ):
         return "", None
-    return html, metadata.title[:500] if metadata and metadata.title else None
+    title = metadata.title[:500] if metadata and metadata.title else None
+    if social_post_author(url) and html:
+        selected = lxml_html.fromstring(html)
+        headings = selected.xpath(".//h1")
+        headline = headings[0].text_content() if len(headings) == 1 else None
+        article_titles = page.xpath('//*[@data-testid="twitterArticleTitle"]')
+        if len(article_titles) == 1:
+            headline = article_titles[0].text_content()
+        declared_title = page.xpath("//title/text()")
+        title = social_title(url, declared_title[0] if declared_title else title or "", text, headline)
+    return html, title
 
 
 def _matching_headline(heading: str, hint: str) -> bool:

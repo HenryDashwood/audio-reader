@@ -35,6 +35,7 @@ struct LatestView: View {
                 }
             }
             .navigationTitle("Latest")
+            .safeAreaInset(edge: .top) { PendingLibraryChanges().padding(.horizontal) }
             // Keep the title in one place rather than changing its size and
             // alignment when the list scrolls.
             .toolbarTitleDisplayMode(.inline)
@@ -73,6 +74,9 @@ struct LatestView: View {
         .task { await reload() }
         // Filing by voice has to move the list too: she may well be looking
         // at it — or have VoiceOver reading it — while she speaks.
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulRetryOffline)) { _ in
+            if model.needsRetry { Task { await model.load() } }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)) { note in
             if let change = note.object as? EpisodeFiling.Change {
                 Task { await model.filed(change) }
@@ -106,6 +110,7 @@ struct LatestView: View {
 
     private func episodeList(_ episodes: [Episode], offline: Bool) -> some View {
         List {
+            OfflineSyncNotice()
             PendingNewslettersSection(model: pendingModel)
             if offline {
                 Label("Offline — showing the last episodes we saw", systemImage: "wifi.slash")
@@ -316,12 +321,28 @@ final class LatestModel: ObservableObject {
         }
     }
 
+    var needsRetry: Bool {
+        switch state { case .stale, .failed: true; default: false }
+    }
+    private var loading = false
     func load() async {
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+        let scope = ShortcutScope.current
+        if let cached = cache.load([Episode].self, for: .recentEpisodes) {
+            state = .loaded(OfflineLibraryActions.shared.overlay(cached).filter { $0.completed != true && $0.dismissed != true })
+        }
         do {
-            let episodes = try await api.recentEpisodes(limit: 50)
+            let fetched = try await api.recentEpisodes(limit: 50)
+            let episodes = OfflineLibraryActions.shared.overlay(fetched).map { episode in
+                scope.map { PodcastProgressJournal.shared.overlay(episode, owner: $0) } ?? episode
+            }.filter { $0.completed != true && $0.dismissed != true }
+            guard !Task.isCancelled, ShortcutScope.current == scope else { return }
             cache.save(episodes, for: .recentEpisodes)
             state = .loaded(episodes)
         } catch {
+            guard !Task.isCancelled, ShortcutScope.current == scope else { return }
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             if (error as? APIError)?.isAuthFailure != true,
                 let cached = cache.load([Episode].self, for: .recentEpisodes)

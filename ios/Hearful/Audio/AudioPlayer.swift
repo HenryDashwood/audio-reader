@@ -187,9 +187,8 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     /// Stops and unloads, leaving nothing loaded at all.
     ///
     /// The episode is published as nil before the clock is wound back: the
-    /// position reporter flushes on that change and works out from the
-    /// duration whether she finished it, so zeroing first would file a
-    /// finished episode as unplayed.
+    /// position reporter flushes on that change, so zeroing first would lose
+    /// her last listening position.
     func clear() {
         playbackRequested = false
         stallTask?.cancel()
@@ -261,7 +260,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         player.replaceCurrentItem(with: item)
         observeEnd(of: item)
         currentEpisode = episode
-        PlaybackRestore.remember(episodeID: episode.id)
+        PlaybackRestore.remember(episode)
         currentTime = resumeAt ?? 0
         // The feed's stated duration is a good enough starting value; the real
         // one arrives once the asset has loaded.
@@ -312,8 +311,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                // Land exactly on the end so the position reporter, which is
-                // watching this clock, records the episode as finished.
+                // Preserve the final position before announcing completion.
                 self.currentTime = self.duration
                 self.feedback.play(.finished)
                 self.finished.send()

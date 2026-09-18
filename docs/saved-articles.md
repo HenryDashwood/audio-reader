@@ -21,6 +21,22 @@ Competing article bodies need a unique matching headline; ambiguous pages and
 stale canonical URLs fall back to saving the current link. Publishers that split
 one story into multiple article elements can retain their common article ID.
 This uses the loaded page, not Safari's private Reader implementation.
+Responsive images keep the browser-selected source before responsive attributes
+are removed; unloaded images can use their declared lazy or picture sources.
+Known Canary Media article layouts retain all prose sections, images, and
+captions. Simon Willison sighting pages retain their short text and photo
+galleries. These layout rules also apply to server-fetched saves. An unfamiliar
+layout on these routes fails capture instead of saving navigation or a sponsor.
+Other short illustrated articles can be retained when a single article body,
+matching canonical URL, and article metadata identify the content. Generic
+extraction checks substantial paragraphs in the selected article and rejects a
+result that silently omits them; it does not merge unrelated page sections.
+
+X/Twitter status links use a concise author-and-opening title (at most 100 Unicode
+code points), while retaining the complete post body. Explicit article headlines
+keep their normal title. The share preview and stored title use the same policy,
+with shared regression cases; ordinary publisher titles are unaffected.
+
 Archive.today-family short links can use a timestamped canonical URL on the same
 origin when the page's unique Open Graph URL matches the shared short link.
 This preserves the shared URL as the saved identity and still rejects stale or
@@ -80,7 +96,7 @@ the full article is visible; Retry alone still performs a server fetch.
   progress. A different browser capture cannot inherit that speech's seconds.
 - Offline text is keyed by episode and content version. Reading and playback use
   the same selected snapshot. Text availability is shown in Saved; images still
-  require the network.
+  require the network (except embedded static chart images).
 
 New public RSS ingestion reconciles a standalone article on a conservative URL
 match, retaining the article ID, saved selections, and progress. Fragments and
@@ -166,12 +182,40 @@ articles, split publisher markup, stale page identity, relative links, and large
 page chrome. Backend tests cover replacement privacy, replay, failure, old-version
 access, progress, browser envelope identity, and sanitization. The script test
 gate verifies that `CapturePage.js` matches the pinned Readability source and
-`scripts/safari_capture.js`; regenerate it with
-`python3 scripts/build_safari_capture.py` after changing either source.
+`scripts/capture_helpers.js` plus `scripts/safari_capture.js`; regenerate it with
+`python3 scripts/build_safari_capture.py` after changing a source.
+
+`BrowserCaptureReliabilityTests` and the backend's browser-capture regression
+tests share reduced publisher and title fixtures. The test target has a Resources
+phase so those fixtures travel with the test bundle; synchronized groups still
+own source membership. Tests check retained paragraphs and images, safe and
+idempotent chart sanitization, title consistency, and chart rendering in WebKit.
+Android's reader tests verify the same static image representation, including
+unsafe-payload rejection and rendering on an emulator. Run `make android-check`
+and the `ArticleReaderTest` instrumentation suite when changing that allowlist.
 
 A physical-device share-sheet check is still required before release, especially
 signed-in Safari capture, offline saving, VoiceOver, and the new provisioning
 profiles.
+
+## Static charts
+
+Supported inline SVG charts become self-contained SVG image elements during
+backend sanitization. The SVG is rebuilt from a small allowlist of static shapes,
+text, geometry, colors, and typography. Publisher scripts, event handlers,
+external references, embedded HTML, animation, and arbitrary CSS are omitted;
+complex features such as gradients, filters, and external fonts are not retained.
+Chart captions and image descriptions remain available, while axis labels stay
+out of narration and text-offset calculations. iOS already supports the image
+representation; Android's reader allowlist now validates the same static subset.
+Android needs the updated client to display these charts. No new JSON fields or
+client-side permissions are required.
+These embedded chart images are part of the saved HTML and work offline;
+ordinary remotely hosted article images still require a network connection.
+
+Existing immutable captures are unchanged. Re-share an affected article or use
+**Replace saved text** after the updated capture code and backend are available
+to recover discarded text/images and update a social-post title.
 
 
 ## Embedded videos

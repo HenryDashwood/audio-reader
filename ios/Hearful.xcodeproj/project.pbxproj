@@ -175,6 +175,7 @@
 			buildPhases = (
 				AA00000000000000000000B5 /* Sources */,
 				AA00000000000000000000B4 /* Frameworks */,
+				AA00000000000000000000B6 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -241,6 +242,13 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		AA00000000000000000000B6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AA00000000000000000000B3 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;

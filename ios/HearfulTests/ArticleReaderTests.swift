@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 import WebKit
 
@@ -46,6 +47,60 @@ private final class ArticleWebViewLoadWaiter: NSObject, WKNavigationDelegate {
 @Suite("Article reader")
 @MainActor
 struct ArticleReaderTests {
+    @Test func switchingArticlesInPlaceReplacesTheBodyAlongWithTheHeader() async throws {
+        let api = FakeAPI()
+        let cache = makeCache()
+        func episode(_ id: Int) -> Episode {
+            Episode(
+                id: id, title: "Article \(id)", description: nil, audioURL: nil,
+                durationSeconds: nil, publishedAt: nil, link: nil)
+        }
+        func reader(_ id: Int) -> ArticleView {
+            ArticleView(episode: episode(id), api: api, cache: cache)
+        }
+        func webView(in view: UIView) -> WKWebView? {
+            if let webView = view as? WKWebView { return webView }
+            return view.subviews.lazy.compactMap { webView(in: $0) }.first
+        }
+        func page(in host: UIHostingController<ArticleView>) async -> String? {
+            guard let view = webView(in: host.view) else { return nil }
+            return try? await view.callAsyncJavaScript(
+                "return document.body.innerText;", arguments: [:], in: nil,
+                contentWorld: ArticleReadingMarkerScript.world) as? String
+        }
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: reader(1))
+        window.rootViewController = host
+        api.articleText = "Body belonging to article 1."
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        // Reuse the same SwiftUI destination, as tapping the player title
+        // does when another article is already open. Both content IDs are nil.
+        for id in [1, 2, 1] {
+            let expectedBody = "Body belonging to article \(id)."
+            api.articleText = expectedBody
+            host.rootView = reader(id)
+            var displayed: String?
+            for _ in 0..<200 {
+                host.view.layoutIfNeeded()
+                displayed = await page(in: host)
+                if displayed?.contains(expectedBody) == true,
+                    displayed?.contains("Article \(id)") == true
+                {
+                    break
+                }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            #expect(displayed?.contains("Article \(id)") == true)
+            #expect(displayed?.contains(expectedBody) == true)
+        }
+    }
+
     @Test func blankLinesDoNotBecomeEmptyParagraphs() async {
         let api = FakeAPI()
         api.articleText = "One.\n\n\n\nTwo.\n"

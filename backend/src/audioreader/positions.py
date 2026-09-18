@@ -103,6 +103,7 @@ async def set_episode_state(
     *,
     played: bool | None = None,
     dismissed: bool | None = None,
+    commit: bool = True,
 ) -> PlaybackPosition:
     """File an episode: heard, put aside, or back in the list.
 
@@ -124,7 +125,10 @@ async def set_episode_state(
     if dismissed is not None:
         position.dismissed = dismissed
     position.updated_at = utcnow()
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     return position
 
 

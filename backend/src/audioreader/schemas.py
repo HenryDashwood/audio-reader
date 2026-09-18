@@ -375,6 +375,13 @@ class LibraryActionRequest(BaseModel):
     request_id: str = Field(pattern=r"^[a-zA-Z0-9-]{1,64}$")
 
 
+class OfflineLibraryActionRequest(LibraryActionRequest):
+    """An explicit target prevents delayed Undo from changing another device's action."""
+
+    undo_request_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,64}$")
+    content_id: int | None = Field(default=None, gt=0)
+
+
 class CommandRequest(BaseModel):
     supports_compound_actions: bool = False
     request_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,64}$")

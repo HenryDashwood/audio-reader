@@ -21,6 +21,38 @@ import WebKit
 /// every article cost a third of a phone screen on the one screen whose whole
 /// job is to show as much prose as it can.
 struct ArticleView: View {
+    let episode: Episode
+    private let api: HearfulAPIProtocol
+    private let cache: OfflineCache
+    private let learnedWordCount: (Int) -> Void
+
+    init(
+        episode: Episode,
+        api: HearfulAPIProtocol = HearfulAPI(),
+        cache: OfflineCache = .shared,
+        learnedWordCount: @escaping (Int) -> Void = { _ in }
+    ) {
+        self.episode = episode
+        self.api = api
+        self.cache = cache
+        self.learnedWordCount = learnedWordCount
+    }
+
+    var body: some View {
+        // Navigation can replace the selected episode in an existing destination.
+        // Scope all reader state to that episode: feed articles commonly share
+        // a nil contentID, so a content-version task alone cannot detect a switch.
+        ArticleReaderView(
+            episode: episode, api: api, cache: cache, learnedWordCount: learnedWordCount
+        )
+        .id(episode.id)
+    }
+
+    /// The gap between one piece of floating furniture and the next.
+    static let gap: CGFloat = 10
+}
+
+private struct ArticleReaderView: View {
     private let originalEpisode: Episode
     @State private var replacementEpisode: Episode?
     private var episode: Episode { replacementEpisode ?? originalEpisode }
@@ -28,7 +60,7 @@ struct ArticleView: View {
     /// article. Its row otherwise keeps the older episode snapshot whose
     /// count was unknown before extraction.
     let learnedWordCount: (Int) -> Void
-    @StateObject private var model = ArticleTextModel()
+    @StateObject private var model: ArticleTextModel
     /// The article's own scrolling, handed to the bars so they know what to
     /// get out of the way of. UIKit will hunt for a scroll view to track when
     /// it is not told, and it does not find this one: it belongs to a web
@@ -41,9 +73,15 @@ struct ArticleView: View {
     /// anything that scales on its own.
     @Environment(\.dynamicTypeSize) private var typeSize
 
-    init(episode: Episode, learnedWordCount: @escaping (Int) -> Void = { _ in }) {
+    init(
+        episode: Episode,
+        api: HearfulAPIProtocol = HearfulAPI(),
+        cache: OfflineCache = .shared,
+        learnedWordCount: @escaping (Int) -> Void = { _ in }
+    ) {
         self.originalEpisode = episode
         self.learnedWordCount = learnedWordCount
+        _model = StateObject(wrappedValue: ArticleTextModel(api: api, cache: cache))
     }
 
     var body: some View {
@@ -129,6 +167,11 @@ struct ArticleView: View {
         // a drag is visible as a jump in the article.
         .background(ArticleChrome(tracking: articleWebView?.scrollView))
         .navigationDestination(item: $openFeed) { PodcastPreviewView(podcast: $0) }
+        .onReceive(PlaybackCoordinator.shared.$currentEpisode) { current in
+            if episode.contentID == nil, let current, current.id == episode.id, current.contentID != nil {
+                replacementEpisode = current
+            }
+        }
         .onReceive(SavedLibrary.shared.$episodes) { saved in
             if let updated = saved.first(where: { $0.id == episode.id }),
                 updated.contentID != episode.contentID
@@ -136,15 +179,21 @@ struct ArticleView: View {
                 replacementEpisode = updated
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulArticleCached)) { note in
+            if note.object as? Int == episode.id {
+                model.recoverCached(episodeID: episode.id, contentID: episode.contentID)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulRetryOffline)) { _ in
+            guard model.needsRetry else { return }
+            Task { await model.load(episodeID: episode.id, contentID: episode.contentID) }
+        }
         .task(id: episode.contentID) {
             if let wordCount = await model.load(episodeID: episode.id, contentID: episode.contentID) {
                 learnedWordCount(wordCount)
             }
         }
     }
-
-    /// The gap between one piece of floating furniture and the next.
-    static let gap: CGFloat = 10
 
     @ViewBuilder
     private var content: some View {
@@ -821,6 +870,12 @@ private struct ArticleWebView: UIViewRepresentable {
             }
         }
 
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            guard let loaded else { return }
+            pageIsReady = false
+            webView.loadHTMLString(loaded, baseURL: ArticleVideoScript.readerURL)
+        }
+
         private func receive(_ location: ArticleSpokenLocation?) {
             spokenLocation = location
             show(location)
@@ -1192,27 +1247,32 @@ final class ArticleTextModel: ObservableObject {
     func load(episodeID: Int, contentID: Int? = nil) async -> Int? {
         loadGeneration += 1
         let generation = loadGeneration
-        state = .loading
-        let key: OfflineCache.Key = contentID.map { .articleVersion(episodeID: episodeID, contentID: $0) } ?? .articleText(episodeID: episodeID)
+        let scope = ShortcutScope.current
+        isLoading = true
+        defer { if generation == loadGeneration { isLoading = false } }
+        if let cached = cache.article(episodeID: episodeID, contentID: contentID) {
+            state = .loaded(Article(text: cached.text, html: cached.html))
+        } else { state = .loading }
         do {
             let article = try await api.articleText(episodeID: episodeID, contentID: contentID)
-            guard generation == loadGeneration, !Task.isCancelled else { return nil }
-            if let contentID, article.contentID != contentID {
+            guard generation == loadGeneration, !Task.isCancelled, ShortcutScope.current == scope else { return nil }
+            if article.episodeID != episodeID || (contentID != nil && article.contentID != contentID) {
                 throw APIError(underlying: "The server returned a different article version")
             }
-            cache.save(article, for: key)
+            guard !article.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw APIError(underlying: "The article has no readable text yet")
+            }
+            cache.saveArticle(article)
             isOffline = false
             state = .loaded(Article(text: article.text, html: article.html))
             return article.wordCount
         } catch {
-            guard generation == loadGeneration, !Task.isCancelled else { return nil }
+            guard generation == loadGeneration, !Task.isCancelled, ShortcutScope.current == scope else { return nil }
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             // Same rule as everywhere else: an expired session is the one
             // failure the cache must not paper over.
             if (error as? APIError)?.isAuthFailure != true,
-                let cached = cache.load(EpisodeText.self, for: key),
-                contentID == nil || cached.contentID == contentID,
-                !cached.text.isEmpty
+                let cached = cache.article(episodeID: episodeID, contentID: contentID)
             {
                 isOffline = true
                 state = .loaded(Article(text: cached.text, html: cached.html))
@@ -1226,6 +1286,19 @@ final class ArticleTextModel: ObservableObject {
     }
 
     private var loadGeneration = 0
+    private var isLoading = false
+    var needsRetry: Bool {
+        guard !isLoading else { return false }
+        if case .failed = state { return true }
+        return isOffline
+    }
+
+    func recoverCached(episodeID: Int, contentID: Int?) {
+        if case .loaded = state { return }
+        guard let cached = cache.article(episodeID: episodeID, contentID: contentID) else { return }
+        state = .loaded(Article(text: cached.text, html: cached.html))
+        isOffline = true
+    }
 
     /// Text on its way into a document, so an article about `<script>` reads
     /// as one rather than becoming one.

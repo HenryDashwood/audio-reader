@@ -102,9 +102,14 @@ struct ListeningProgressTests {
         #expect(progress(position: 20) == .unplayed)
     }
 
-    @Test func theLastMinuteCountsAsFinished() {
-        // Sending her back into an outro is worse than calling it done.
-        #expect(progress(position: 3570) == .played)
+    @Test func theLastMinuteRemainsInProgress() {
+        #expect(progress(position: 3570) == .inProgress(remainingSeconds: 30))
+        #expect(progress(position: 3570).hasStarted)
+    }
+
+    @Test func reachingAnEstimatedDurationDoesNotMeanFinished() {
+        #expect(progress(position: 3600, completed: false) == .inProgress(remainingSeconds: 0))
+        #expect(progress(position: 3700) == .inProgress(remainingSeconds: 0))
     }
 
     @Test func anUnknownDurationCannotBeInProgress() {
@@ -125,10 +130,9 @@ struct ListeningProgressTests {
     }
 
     @Test func neverSaysZeroMinutesLeft() {
-        // Just over a minute to go still rounds up to one, and anything under
-        // a minute has already been called played.
+        // Even the final seconds remain unfinished until playback ends.
         #expect(progress(position: 3539, duration: 3600).label == "1 min left")
-        #expect(progress(position: 3541, duration: 3600).label == "Played")
+        #expect(progress(position: 3541, duration: 3600).label == "1 min left")
     }
 }
 

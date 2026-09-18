@@ -42,6 +42,9 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     @Published private(set) var articlePlaybackRate: Float = 1.0
     @Published private(set) var playbackFailure: PlaybackFailure?
 
+    /// Emitted only when the active transport finishes, before clearing its state.
+    let finished = PassthroughSubject<Episode, Never>()
+
     let audio: AudioPlayer
     let article: ArticlePlayer
     private let nowPlaying: NowPlayingPublisher
@@ -348,14 +351,14 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     /// only starts the outro again. Clearing here rather than in the players
     /// keeps both kinds of item ending the same way.
     ///
-    /// The order matters: the players sound their end-of-item cue and land the
-    /// clock on the duration before this runs, so the position reporter still
-    /// sees a finished episode when clear() publishes the change.
+    /// Notify the position reporter before clearing the episode and its clock.
+    /// Completion comes from the transport, not a duration estimate.
     private func wireCompletion() {
         audio.finished
             .sink { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.mode == .audio else { return }
+                    if let episode = self.currentEpisode { self.finished.send(episode) }
                     self.clear()
                 }
             }
@@ -364,6 +367,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
             .sink { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.mode == .article else { return }
+                    if let episode = self.currentEpisode { self.finished.send(episode) }
                     self.clear()
                 }
             }

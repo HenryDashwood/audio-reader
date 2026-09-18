@@ -136,7 +136,23 @@ final class ShortcutLibrary {
     /// Resolve at execution, never recreate a playable Episode from an entity.
     func episode(id: Int) async throws -> Episode {
         let key = try session()
-        let result = try await withVoiceDeadline(seconds: 12, sleep: deadlineSleep) { try await self.api.episode(id: id) }
+        if let local = PlaybackRestore.cached(id: id, scope: key),
+           local.audioURL != nil || OfflineCache.shared.article(episodeID: id, contentID: local.contentID) != nil {
+            return local
+        }
+        if let local = OfflineCache.shared.cachedEpisode(id: id),
+           OfflineCache.shared.article(episodeID: id, contentID: local.contentID) != nil {
+            return local
+        }
+        let result: Episode
+        do {
+            result = try await withVoiceDeadline(seconds: 12, sleep: deadlineSleep) { try await self.api.episode(id: id) }
+        } catch {
+            try check(key)
+            guard (error as? APIError)?.isAuthFailure != true,
+                  let local = OfflineCache.shared.cachedEpisode(id: id) else { throw error }
+            return local
+        }
         try check(key)
         return result
     }

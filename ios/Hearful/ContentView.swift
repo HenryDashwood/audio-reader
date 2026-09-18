@@ -135,6 +135,7 @@ struct ContentView: View {
                 showingVoice = true
             }
             applyShortcutNavigation()
+            OfflineRecovery.shared.start()
             await PlaybackRestore.restore()
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulAskByVoice)) { _ in
@@ -154,6 +155,9 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulServerChanged)) { _ in
             SavedLibrary.shared.clear()
+            OfflineCache.shared.clear()
+            PlaybackCoordinator.shared.clear()
+            ShortcutLibrary.shared.invalidate()
             serverGeneration += 1
         }
         .onChange(of: selectedTab) { _, tab in
@@ -272,6 +276,7 @@ struct VoiceSheet: View {
     @StateObject private var openingAnnouncement = VoiceOpeningAnnouncement()
     private let initialInput: VoicePrompt.Input?
     private let launchID: UUID
+    @State private var showingConsent = false
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var auth: AuthController
     @Environment(\.dismiss) private var dismiss
@@ -283,6 +288,7 @@ struct VoiceSheet: View {
         self.initialInput = initialInput
         self.launchID = launchID
         let controller = VoiceController.live(telemetryAccountID: accountID)
+        controller.remoteRequestsAllowed = false
         controller.viewedEpisode = viewedEpisode
         let shows = OfflineCache.shared.load([Show].self, for: .shows) ?? []
         let episodes = OfflineCache.shared.load([Episode].self, for: .recentEpisodes) ?? []
@@ -291,27 +297,28 @@ struct VoiceSheet: View {
     }
 
     var body: some View {
-        Group {
-            if auth.user?.aiDataSharingConsented == true {
-                consentedBody
-            } else if auth.user == nil {
-                VStack(spacing: 20) {
-                    ProgressView()
-                    Text("Checking your AI data-sharing choice…")
-                        .multilineTextAlignment(.center)
-                    Button("Try Again") { Task { await auth.refreshUser() } }
-                        .buttonStyle(.bordered)
-                }
-                .padding(28)
-            } else {
-                AIDataSharingConsentView(onNotNow: { dismiss() })
+        consentedBody
+            .onAppear { controller.remoteRequestsAllowed = auth.user?.aiDataSharingConsented == true }
+            .onChange(of: auth.user?.aiDataSharingConsented) { _, granted in
+                controller.remoteRequestsAllowed = granted == true
             }
-        }
+            .sheet(isPresented: $showingConsent) {
+                AIDataSharingConsentView(onNotNow: { showingConsent = false })
+            }
     }
 
     private var consentedBody: some View {
         ZStack(alignment: .topTrailing) {
             VStack(spacing: 24) {
+                if auth.user?.aiDataSharingConsented != true {
+                    Text("Playback commands work on this device.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Button("Enable other voice requests") {
+                        if auth.user == nil { Task { await auth.refreshUser() } }
+                        else { showingConsent = true }
+                    }
+                }
+
                 // The whole area is one button rather than a tap gesture over
                 // a plain stack. Visually identical — she can still tap
                 // anywhere without aiming, which is the point — but it is now
@@ -433,6 +440,7 @@ struct VoiceSheet: View {
                 guard await openingAnnouncement.prepare() else { return }
             }
             guard !Task.isCancelled, scenePhase != .background else { return }
+            controller.remoteRequestsAllowed = auth.user?.aiDataSharingConsented == true
             await controller.beginCommand(
                 transcript: initialInput?.transcript, recovering: initialInput?.recovering ?? false)
         }

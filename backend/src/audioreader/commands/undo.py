@@ -75,12 +75,14 @@ async def remember(session, user, before):
     await session.commit()
 
 
-async def undo_last(session, user):
+async def undo_last(session, user, *, expected_request_id=None):
     await positions.lock_user(session, user.id)
     row = await session.get(VoiceUndo, user.id)
     if row is None:
         return InterpretResult(Action.UNKNOWN, "There is no recent reversible voice action to undo.")
     saved = json.loads(row.payload)
+    if expected_request_id is not None and saved.get("request_id") != expected_request_id:
+        return InterpretResult(Action.UNKNOWN, "Another action happened since then. I left it as it is.")
     if (utcnow() - datetime.fromisoformat(saved["recorded_at"])).total_seconds() > 600:
         return InterpretResult(Action.UNKNOWN, "That action is too old to undo by voice.")
     if saved["kind"] == "filing":

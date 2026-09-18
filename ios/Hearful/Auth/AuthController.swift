@@ -72,6 +72,7 @@ final class AuthController: ObservableObject {
             return
         }
         state = .signedIn
+        OfflineLibraryActions.shared.retry()
         HearfulShortcuts.updateAppShortcutParameters()
         Task { await refreshUser() }
     }
@@ -261,6 +262,9 @@ final class AuthController: ObservableObject {
         positionReporter?.invalidate()
         positionReporter = nil
         try? FileArticleProgressStorage.shared.clearAll()
+        try? FilePodcastProgressStorage.shared.clearAll()
+        OfflineSyncStatus.shared.message = nil
+        OfflineLibraryActions.shared.clear()
         google.signOut()
         linkedProviders = nil
         linkingError = nil

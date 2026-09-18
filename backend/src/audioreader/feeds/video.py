@@ -65,19 +65,25 @@ def normalise_frames(html: str) -> str:
 
 
 def extract_with_videos(source: str, *, favor_recall: bool = False) -> str:
-    """Protect players in article order while trafilatura selects the prose.
+    """Protect players and chart figures in order while trafilatura selects prose.
 
     Only markers inside the selected article survive; sidebar videos are never
     appended to an unrelated extraction. Tokens are per extraction, not supplied
     by a publisher, and are removed before storing or deriving spoken text.
+    A figure travels with its caption; charts are rebuilt during sanitization.
     """
     page = lxml_html.document_fromstring(normalise_frames(source))
     videos: dict[str, str] = {}
-    for frame in page.xpath("//iframe"):
+    for frame in page.xpath("//iframe | //svg[not(ancestor::svg)]"):
+        if page not in frame.iterancestors():
+            continue  # A containing figure was already protected.
+        frame = next(frame.iterancestors("figure"), frame)
         token = f"MAGPIEVIDEO{uuid4().hex}"
         tail = frame.tail
         frame.tail = None
         videos[token] = lxml_html.tostring(frame, encoding="unicode")
+        # Chart descendants must not leak axis labels into the spoken prose.
+        frame.clear()
         frame.tag = "p"
         frame.attrib.clear()
         frame.text = token

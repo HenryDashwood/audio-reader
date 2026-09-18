@@ -12,8 +12,50 @@ final class SavedLibrary: ObservableObject {
     @Published var error: String?
     @Published var loading = false
     @Published private(set) var replacing = false
+    enum DownloadState: Equatable {
+        case waiting, downloading, available, failed(String)
+        var label: String {
+            switch self {
+            case .waiting: "Waiting to download"
+            case .downloading: "Downloading for offline reading…"
+            case .available: "Available offline"
+            case .failed(let message): "Download failed: " + message
+            }
+        }
+    }
+    struct DownloadKey: Hashable {
+        let episodeID: Int
+        let contentID: Int?
+        init(_ episode: Episode) { episodeID = episode.id; contentID = episode.contentID }
+    }
+    @Published private(set) var downloads: [DownloadKey: DownloadState] = [:]
     private let api = HearfulAPI()
+
+    func availability(_ episode: Episode) -> DownloadState {
+        downloads[DownloadKey(episode)] ?? .waiting
+    }
+
+    private func refreshAvailability() {
+        var states = downloads
+        for episode in episodes {
+            let key = DownloadKey(episode)
+            guard states[key] != .downloading else { continue }
+            if OfflineCache.shared.article(episodeID: episode.id, contentID: episode.contentID) != nil {
+                states[key] = .available
+            } else if states[key] == .available || states[key] == nil { states[key] = .waiting }
+        }
+        downloads = states
+    }
+
+    var needsRetry: Bool {
+        !pending.isEmpty || error != nil || episodes.contains { availability($0) != .available }
+    }
     private var generation = 0
+    private var schedule = OfflineRetrySchedule()
+    func retryIfDue(reset: Bool) async {
+        if reset { schedule.reset() }
+        if schedule.isDue && needsRetry { await load() }
+    }
     private var currentAccount: CaptureInbox.Account? {
         guard let account = CaptureInbox.shared.account, account.server == api.baseURL,
             KeychainTokenStore.token != nil
@@ -25,60 +67,95 @@ final class SavedLibrary: ObservableObject {
         guard !loading, !replacing, let account = currentAccount else { return }
         let generation = self.generation
         loading = true
-        defer { if self.generation == generation { loading = false } }
-        error = nil
-        do {
-            pending = CaptureInbox.shared.pending(for: account)
-            for capture in pending {
-                guard currentAccount == account, self.generation == generation else { return }
-                do {
-                    let episode = try await api.saveArticle(
-                        url: capture.url, title: capture.title, html: capture.html,
-                        savedAt: capture.createdAt, contentFormat: capture.contentFormat,
-                        replaceExisting: capture.replaceExisting == true, createIfMissing: true)
-                    // Signing out or switching servers during a request must not
-                    // write the previous account's response into the next cache.
-                    guard currentAccount == account, self.generation == generation else { return }
-                    invalidateReplacedPlayback(episode)
-                    await download(episode)
-                    guard currentAccount == account, self.generation == generation else { return }
-                    try CaptureInbox.shared.remove(capture)
-                } catch {
-                    guard currentAccount == account, self.generation == generation else { return }
-                    self.error = (error as? APIError)?.spokenResponse ?? error.localizedDescription
-                    break
-                }
+        defer {
+            if self.generation == generation {
+                loading = false
+                if needsRetry { schedule.failed() } else { schedule.reset() }
             }
-            pending = CaptureInbox.shared.pending(for: account)
         }
-        guard currentAccount == account, self.generation == generation else { return }
+        error = nil
+        if let local = OfflineCache.shared.load([Episode].self, for: .savedArticles) {
+            episodes = OfflineLibraryActions.shared.overlay(local)
+        }
+        refreshAvailability()
+        pending = CaptureInbox.shared.pending(for: account)
+        // Library display and preparation are independent of pending uploads.
+        // A slow or bad capture must not hide everything already saved.
         do {
             let loaded = try await api.savedArticles()
-            guard currentAccount == account, self.generation == generation else { return }
-            episodes = loaded
+            guard currentAccount == account, self.generation == generation, !Task.isCancelled else { return }
+            episodes = OfflineLibraryActions.shared.overlay(loaded)
+            refreshAvailability()
             for episode in loaded { invalidateReplacedPlayback(episode) }
-            OfflineCache.shared.save(loaded, for: .savedArticles)
-            for episode in loaded where episode.contentID != nil {
-                guard currentAccount == account, self.generation == generation else { return }
-                await download(episode)
-            }
+            OfflineCache.shared.save(episodes, for: .savedArticles)
         } catch {
-            guard currentAccount == account, self.generation == generation else { return }
-            episodes = OfflineCache.shared.load([Episode].self, for: .savedArticles) ?? []
-            self.error = (error as? APIError)?.spokenResponse ?? "Could not load saved articles."
+            guard currentAccount == account, self.generation == generation, !Task.isCancelled else { return }
+            if (error as? APIError)?.isAuthFailure == true { episodes = []; return }
+            self.error = (error as? APIError)?.spokenResponse ?? "Could not refresh saved articles."
+        }
+        for capture in pending {
+            guard currentAccount == account, self.generation == generation, !Task.isCancelled else { return }
+            do {
+                let episode = try await api.saveArticle(
+                    url: capture.url, title: capture.title, html: capture.html,
+                    savedAt: capture.createdAt, contentFormat: capture.contentFormat,
+                    replaceExisting: capture.replaceExisting == true, createIfMissing: true)
+                guard currentAccount == account, self.generation == generation, !Task.isCancelled else { return }
+                invalidateReplacedPlayback(episode)
+                episodes.removeAll { $0.id == episode.id }
+                episodes.insert(episode, at: 0)
+                // Retain the capture if the acknowledged metadata cannot be
+                // persisted. A failed text download remains visible/retryable.
+                guard OfflineCache.shared.save(episodes, for: .savedArticles) else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                await download(episode)
+                guard currentAccount == account, self.generation == generation else { return }
+                guard availability(episode) == .available else {
+                    throw APIError(spokenResponse: "Your capture is saved on this device. Its prepared text will download when connected.", underlying: "Download pending")
+                }
+                try CaptureInbox.shared.remove(capture)
+            } catch {
+                guard currentAccount == account, self.generation == generation else { return }
+                self.error = (error as? APIError)?.spokenResponse ?? error.localizedDescription
+                break
+            }
+        }
+        guard currentAccount == account, self.generation == generation else { return }
+        pending = CaptureInbox.shared.pending(for: account)
+        let missing = episodes.filter { ($0.hasText == true || $0.contentID != nil) && availability($0) != .available }
+        // At most three downloads in flight, including after reconnection.
+        for start in stride(from: 0, to: missing.count, by: 3) {
+            guard currentAccount == account, self.generation == generation, !Task.isCancelled else { return }
+            await withTaskGroup(of: Void.self) { group in
+                for episode in missing[start..<min(start + 3, missing.count)] {
+                    group.addTask { await self.download(episode) }
+                }
+            }
         }
     }
 
     func download(_ episode: Episode) async {
-        guard let contentID = episode.contentID else { return }
-        let key = OfflineCache.Key.articleVersion(episodeID: episode.id, contentID: contentID)
-        guard OfflineCache.shared.load(EpisodeText.self, for: key) == nil else { return }
-        guard let account = currentAccount else { return }
+        guard downloads[DownloadKey(episode)] != .downloading, let account = currentAccount else { return }
+        if OfflineCache.shared.article(episodeID: episode.id, contentID: episode.contentID) != nil {
+            downloads[DownloadKey(episode)] = .available
+            return
+        }
         let generation = self.generation
-        if let text = try? await api.articleText(episodeID: episode.id, contentID: contentID),
-            currentAccount == account, self.generation == generation
-        {
-            OfflineCache.shared.save(text, for: key)
+        downloads[DownloadKey(episode)] = .downloading
+        do {
+            let text = try await withVoiceDeadline(seconds: 10) { [api] in
+                try await api.articleText(episodeID: episode.id, contentID: episode.contentID)
+            }
+            guard currentAccount == account, self.generation == generation, !Task.isCancelled else { return }
+            guard text.episodeID == episode.id, episode.contentID == nil || text.contentID == episode.contentID else {
+                throw APIError(underlying: "The server returned a different article version")
+            }
+            guard OfflineCache.shared.saveArticle(text) else { throw CocoaError(.fileWriteUnknown) }
+            downloads[DownloadKey(episode)] = .available
+        } catch {
+            guard currentAccount == account, self.generation == generation else { return }
+            downloads[DownloadKey(episode)] = .failed((error as? APIError)?.spokenResponse ?? "Try again when connected.")
         }
     }
 
@@ -154,9 +231,11 @@ final class SavedLibrary: ObservableObject {
 
     func clear() {
         generation += 1
+        schedule.reset()
         loading = false
         replacing = false
         episodes = []
+        downloads = [:]
         pending = []
         error = nil
     }
@@ -185,6 +264,8 @@ struct SavedView: View {
     var body: some View {
         NavigationStack {
             List {
+                OfflineSyncNotice()
+                PendingLibraryChanges()
                 Picker("Saved articles", selection: $finished) {
                     Text("To read").tag(false)
                     Text("Finished").tag(true)
@@ -217,6 +298,14 @@ struct SavedView: View {
                             play: { player.playReportingFailure(episode) }
                         )
                         .contentShape(Rectangle()).onTapGesture { openEpisode = episode }
+                        if episode.hasText == true || episode.contentID != nil {
+                            Text(model.availability(episode).label)
+                                .font(.caption).foregroundStyle(.secondary)
+                            if case .failed = model.availability(episode) {
+                                Button("Retry download") { Task { await model.download(episode) } }
+                                    .accessibilityLabel("Retry download: \(episode.title)")
+                            }
+                        }
                         if let error = episode.captureError {
                             Text(error).font(.caption).foregroundStyle(.secondary)
                             HStack {
@@ -274,6 +363,9 @@ struct SavedView: View {
                 Button("Cancel", role: .cancel) {}
             } message: { _ in
                 Text("Download a fresh copy from the original link. If the text changes, listening starts from the beginning. If it fails, your current copy is kept. For pages requiring sign-in, share from Safari to update your saved copy.")
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .hearfulRetryOffline)) { note in
+                Task { await model.retryIfDue(reset: note.object as? Bool == true) }
             }
             .refreshable { await model.load() }
             .toolbar {

@@ -56,6 +56,9 @@ struct LibraryView: View {
                 path.append(show)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulRetryOffline)) { _ in
+            if model.needsRetry { Task { await model.load() } }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
             Task { await model.load() }
         }
@@ -578,15 +581,28 @@ final class LibraryModel: ObservableObject {
         self.cache = cache
     }
 
+    var needsRetry: Bool {
+        switch state { case .stale, .failed: true; default: false }
+    }
+    private var loading = false
     func load() async {
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+        let scope = ShortcutScope.current
+        if case .loading = state, let cached = cache.load([Show].self, for: .shows) {
+            state = cached.isEmpty ? .empty : .loaded(cached)
+        }
         do {
             let shows = try await api.shows()
+            guard !Task.isCancelled, ShortcutScope.current == scope else { return }
             cache.save(shows, for: .shows)
             state = shows.isEmpty ? .empty : .loaded(shows)
         } catch {
+            guard !Task.isCancelled, ShortcutScope.current == scope else { return }
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             if (error as? APIError)?.isAuthFailure != true,
-                let cached = cache.load([Show].self, for: .shows), !cached.isEmpty
+                let cached = cache.load([Show].self, for: .shows)
             {
                 state = .stale(cached)
             } else {

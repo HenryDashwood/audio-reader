@@ -2,7 +2,7 @@
 // Bundled with pinned Mozilla Readability by build_safari_capture.py.
 var ExtensionPreprocessingJS = {
     run: function (arguments) {
-        var fallback = { url: document.URL, title: document.title, html: '', preview: '' };
+        var fallback = { url: document.URL, title: MagpieCapture.socialTitle(document.URL, document.title, '', null), html: '', preview: '' };
         try {
             function identity(value) {
                 var url = new URL(value, document.baseURI);
@@ -42,6 +42,7 @@ var ExtensionPreprocessingJS = {
             var clones = page.querySelectorAll('*');
             if (live.length > 50000) throw new Error('Page too complex');
             live.forEach(function (node, index) {
+                if (node.tagName === 'IMG') MagpieCapture.normalizeImage(node, clones[index], document.baseURI);
                 var style = window.getComputedStyle(node);
                 if (node.hidden || node.getAttribute('aria-hidden') === 'true'
                     || style.display === 'none' || style.visibility === 'hidden'
@@ -98,6 +99,8 @@ var ExtensionPreprocessingJS = {
                 });
             }
             // Resolve URLs before parsing; a cloned document may lose its base URI.
+            var articleTitles = page.querySelectorAll('[data-testid="twitterArticleTitle"]');
+            var socialHeadline = articleTitles.length === 1 ? articleTitles[0].textContent.trim() : null;
             page.querySelectorAll('[href], [src], [srcset]').forEach(function (node) {
                 ['href', 'src'].forEach(function (attribute) {
                     if (node.hasAttribute(attribute)) {
@@ -106,9 +109,40 @@ var ExtensionPreprocessingJS = {
                 });
                 node.removeAttribute('srcset');
             });
-            var article = new Readability(page, { maxElemsToParse: 50000, charThreshold: 350, disableJSONLD: true }).parse();
-            if (!article || article.length < 350) throw new Error('No article');
-            var title = (headline || article.title || document.title).slice(0, 500);
+            var publisher = MagpieCapture.publisherBody(page, document.URL);
+            var evidence = MagpieCapture.paragraphs(candidates.length === 1 ? candidates[0] : []);
+            var shortScopes = Array.from(page.querySelectorAll('article')).filter(function (node) {
+                return !node.parentElement.closest('article') && prose([node]) >= 40;
+            });
+            var declaredArticle = document.querySelector('meta[property="og:type"][content="article"]');
+            var shortIdentified = Boolean(canonical && declaredArticle && shortScopes.length === 1);
+            if (!publisher && candidates.length === 0 && shortScopes.length > 1) throw new Error('Competing short articles');
+            var shortProse = shortIdentified ? Array.from(shortScopes[0].querySelectorAll('p')).map(function (p) {
+                return p.textContent.replace(/\s+/g, ' ').trim();
+            }) : [];
+            // Once a short illustrated body has explicit identity, preserve it:
+            // prose scoring can discard its photo-only figure even at low limits.
+            var selectedBody = publisher || (shortIdentified && prose(shortScopes) < 350
+                && shortScopes[0].querySelector('img') ? shortScopes[0].cloneNode(true) : null);
+            if (selectedBody) selectedBody.querySelectorAll('footer').forEach(function (node) { node.remove(); });
+            var article = selectedBody ? { content: selectedBody.innerHTML, textContent: selectedBody.textContent,
+                length: selectedBody.textContent.trim().length, title: document.title }
+                : new Readability(page, { maxElemsToParse: 50000, charThreshold: 350, disableJSONLD: true }).parse();
+            if (!article || (!publisher && article.length < 350 && !shortIdentified)) throw new Error('No article');
+            var extracted = document.createElement('div');
+            extracted.innerHTML = article.content;
+            if (!extracted.textContent.trim() || (!publisher && MagpieCapture.missingProse(evidence, extracted))) throw new Error('Incomplete article');
+            if (!publisher && shortIdentified) {
+                var retained = extracted.textContent.replace(/\s+/g, ' ').trim();
+                if (shortProse.some(function (p) { return p.length >= 40 && !retained.includes(p); })) throw new Error('Missing short article');
+            }
+            if (!publisher && article.length < 350 && (!extracted.querySelector('p')
+                || extracted.textContent.trim().length < 40 || !extracted.querySelector('img, h1'))) throw new Error('Uncertain short article');
+            var headings = extracted.querySelectorAll('h1');
+            if (headings.length === 1) headline = headings[0].textContent.trim();
+            var titleSource = MagpieCapture.socialAuthor(document.URL) ? document.title : (headline || article.title || document.title);
+            var title = MagpieCapture.socialTitle(document.URL, titleSource.slice(0, 500),
+                (extracted.querySelector('p') || extracted).textContent, socialHeadline || headline);
             // A single envelope carries identity, title and body together. The backend
             // sanitizes it without running a second competing extraction algorithm.
             var output = document.implementation.createHTMLDocument(title);

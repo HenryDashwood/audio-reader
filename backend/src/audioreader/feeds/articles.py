@@ -18,6 +18,7 @@ import nh3
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes
+from audioreader.feeds.graphics import protect_graphics
 from audioreader.feeds.video import extract_with_videos, normalise_frames
 from audioreader.latex import with_mathml
 from audioreader.models import Episode
@@ -195,12 +196,16 @@ def sanitised(html: str | None) -> str:
     """
     if not html:
         return ""
-    return nh3.clean(
-        normalise_frames(html),
+    html, graphics = protect_graphics(normalise_frames(html))
+    clean = nh3.clean(
+        html,
         tags=_ALLOWED_TAGS,
         attributes=_ALLOWED_ATTRIBUTES,
         clean_content_tags=_STRIPPED_WHOLE,
     ).strip()
+    for token, image in graphics.items():
+        clean = clean.replace(token, image)
+    return clean
 
 
 def rendered(html: str | None) -> str | None:

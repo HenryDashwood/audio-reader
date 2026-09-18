@@ -110,10 +110,12 @@ struct EpisodeSearchTests {
         model.queryChanged("krakatoa", showID: 3)
         await model.pending?.value
 
-        guard case .failed = model.state else {
-            Issue.record("expected a failure, got \(model.state)")
+        guard case .loaded(let episodes) = model.state else {
+            Issue.record("expected filtered local results, got \(model.state)")
             return
         }
+        #expect(episodes.isEmpty)
+        #expect(model.isOffline)
     }
 
     @Test func openingTheShowStillFallsBackToTheSavedEpisodes() async {

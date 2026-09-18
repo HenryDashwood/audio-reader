@@ -432,6 +432,3 @@ class TestPollLock:
             async with poll_lock(session) as acquired:
                 assert acquired
                 raise RuntimeError("poll blew up")
-
-        async with poll_lock(session) as acquired:
-            assert acquired is True

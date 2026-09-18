@@ -67,6 +67,37 @@ class ArticleReaderTest {
         bitmap.recycle()
     }
 
+    @Test fun staticChartsRenderWithCaptionsAndFitTheReader() {
+        val svg = """<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420"
+            color="black" style="background:white;color:black"><circle cx="320" cy="210" r="100" fill="#ff5500"/>
+            <text x="20" y="40" font-size="24">Chart label</text></svg>"""
+        val source = "data:image/svg+xml;base64," + java.util.Base64.getEncoder().encodeToString(svg.toByteArray())
+        val item = RichArticleSample.item.copy(title = "An embedded chart", text = "Article text. Usage over time.",
+            html = """<p>Article text.</p><figure><img src="$source" alt="Usage chart"><figcaption>Usage over time.</figcaption></figure>""")
+        compose.runOnUiThread { compose.activity.setContent { MagpieTheme(darkTheme = true) { ArticleReader(item, "") } } }
+        val view = browser()
+        compose.waitUntil(10_000) {
+            inspect(view, "({loaded: document.querySelector('img').naturalWidth > 0})").getBoolean("loaded")
+        }
+        val result = inspect(view, """(() => {
+            const img = document.querySelector('img'), canvas = document.createElement('canvas');
+            canvas.width = 640; canvas.height = 420;
+            const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, 640, 420);
+            return {pixel: [...ctx.getImageData(320, 210, 1, 1).data],
+                pageFits: document.documentElement.scrollWidth <= innerWidth,
+                imageFits: img.getBoundingClientRect().width <= innerWidth,
+                alt: img.alt, caption: document.querySelector('figcaption').textContent,
+                text: document.querySelector('main').textContent};
+        })()""")
+        assertEquals("[255,85,0,255]", result.getJSONArray("pixel").toString())
+        assertTrue(result.getBoolean("pageFits"))
+        assertTrue(result.getBoolean("imageFits"))
+        assertEquals("Usage chart", result.getString("alt"))
+        assertEquals("Usage over time.", result.getString("caption"))
+        assertFalse(result.getString("text").contains("Chart label"))
+        capture("article-static-chart")
+    }
+
     @Test fun videoFramesRunInIsolationWithAppReferrerAndFitTheReader() {
         val ran = java.util.concurrent.atomic.AtomicBoolean(false)
         val referrer = AtomicReference<String?>(null)

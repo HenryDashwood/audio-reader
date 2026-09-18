@@ -1,0 +1,63 @@
+[
+  {
+    "url": "https://x.com/ArtemisConsort/status/2097781417476546644",
+    "title": "Artemis on X: \"A small discovery. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. More detail. \" / X",
+    "text": "Full body remains unchanged.",
+    "expected": "@ArtemisConsort: A small discovery."
+  },
+  {
+    "url": "https://twitter.com/writer/status/123",
+    "title": "Writer on Twitter: “Birds are back 🌿\nMore observations” / Twitter",
+    "text": "body",
+    "expected": "@writer: Birds are back 🌿"
+  },
+  {
+    "url": "https://x.com/writer/status/123",
+    "title": "X",
+    "text": "https://example.com/a\nHello there!\nMore here",
+    "expected": "@writer: Hello there!"
+  },
+  {
+    "url": "https://x.com/writer/status/123",
+    "title": "Writer on X: \"A short post\" / X",
+    "text": "A short post",
+    "expected": "@writer: A short post"
+  },
+  {
+    "url": "https://x.com/writer/status/123",
+    "title": "X",
+    "text": "",
+    "expected": "Post by @writer"
+  },
+  {
+    "url": "https://x.com/writer/status/123",
+    "title": "X",
+    "text": "A long essay",
+    "headline": "A genuine article headline",
+    "expected": "A genuine article headline"
+  },
+  {
+    "url": "https://x.com.evil.example/writer/status/123",
+    "title": "Original title",
+    "text": "Do not use this",
+    "expected": "Original title"
+  },
+  {
+    "url": "https://example.com/essay",
+    "title": "A normal publisher title long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long ",
+    "text": "Opening",
+    "expected": "A normal publisher title long long long long long long long long long long long long long long long long long long long long long long long long long long long long long long "
+  },
+  {
+    "url": "https://x.com/writer/status/123",
+    "title": "@writer: Already concise",
+    "text": "Another opening",
+    "expected": "@writer: Already concise"
+  },
+  {
+    "url": "https://x.com/writer/status/123",
+    "title": "X",
+    "text": "A thoughtful observation about 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our environment ",
+    "expected": "@writer: A thoughtful observation about 🌿 our environment 🌿 our environment 🌿 our environment 🌿 our…"
+  }
+]

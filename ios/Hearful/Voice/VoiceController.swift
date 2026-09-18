@@ -20,12 +20,14 @@ protocol SpeechRecognizing {
     func finishListening()
     func configure(vocabulary: [String], onCaptureEnded: @escaping @MainActor () -> Void)
     func configure(timeouts: ListeningTimeouts)
+    func configure(localOnly: Bool)
 }
 
 extension SpeechRecognizing {
     func finishListening() {}
     func configure(vocabulary: [String], onCaptureEnded: @escaping @MainActor () -> Void) {}
     func configure(timeouts: ListeningTimeouts) {}
+    func configure(localOnly: Bool) {}
 
     func listen() async throws -> String { try await listen(onReady: {}) }
 
@@ -137,6 +139,10 @@ final class VoiceController: ObservableObject {
     private var recentActions: [String] {
         get { sessionContext.recentActions }
         set { sessionContext.recentActions = newValue }
+    }
+    /// Checked after local command matching, before any server request or telemetry.
+    var remoteRequestsAllowed = true {
+        didSet { speech.configure(localOnly: !remoteRequestsAllowed) }
     }
     var viewedEpisode: Episode?
     var vocabulary: [String] = []
@@ -275,7 +281,7 @@ final class VoiceController: ObservableObject {
         VoiceAttempt.current = attempt
         defer {
             if VoiceAttempt.current === attempt { VoiceAttempt.current = nil }
-            telemetry?.report(attempt)
+            if remoteRequestsAllowed { telemetry?.report(attempt) }
         }
 
         do {
@@ -404,6 +410,10 @@ final class VoiceController: ObservableObject {
                 }
             }
 
+            guard remoteRequestsAllowed else {
+                await finish(saying: "Playback commands work on this device. Other requests need a connection and your AI data-sharing permission.")
+                return .done
+            }
             sessionContext.undoSpeed = nil
             if player is PlaybackCoordinator { ShortcutUndo.clear() }
             attempt.commandSent = true

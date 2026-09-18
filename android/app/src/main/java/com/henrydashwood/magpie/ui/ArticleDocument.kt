@@ -109,7 +109,7 @@ object ArticleDocument {
         }
         document.select("img").forEach { image ->
             val src = image.attr("src")
-            val embedded = Regex("^data:image/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=\\r\\n]+$").matches(src)
+            val embedded = ArticleImageSource.isEmbedded(src)
             if (!embedded && webUrl(src)?.startsWith("https://") != true) image.removeAttr("src")
             image.attr("referrerpolicy", "no-referrer")
             if (!image.hasAttr("alt")) image.attr("alt", "Article image")

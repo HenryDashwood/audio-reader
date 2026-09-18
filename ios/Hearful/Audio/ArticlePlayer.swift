@@ -297,21 +297,16 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         let resumeAt = episode.completed == true ? 0 : (episode.positionSeconds ?? 0)
         currentTime = resumeAt > 5 ? resumeAt : 0
         duration = 0
-        PlaybackRestore.remember(episodeID: episode.id)
+        PlaybackRestore.remember(episode)
 
         loadTask = Task { [weak self, api, cache] in
-            if andPlay { await self?.progressDrain?() }
             guard !Task.isCancelled else { return }
             // ArticleView has already saved this exact payload after showing
             // it. Reading must use the same copy first: asking the server for
             // text we can see makes a brief outage turn a readable article
             // into a spoken network error.
-            let key: OfflineCache.Key = episode.contentID.map { .articleVersion(episodeID: episode.id, contentID: $0) } ?? .articleText(episodeID: episode.id)
-            let cached = cache.load(
-                EpisodeText.self,
-                for: key
-            )
-            let saved = cached.flatMap { episode.contentID == nil || $0.contentID == episode.contentID ? $0 : nil }
+            let scope = ShortcutScope.current
+            let saved = cache.article(episodeID: episode.id, contentID: episode.contentID)
             let savedMayBeFeedTeaser =
                 episode.link != nil
                 && (saved?.text.count ?? Self.likelyTeaserCharacterLimit)
@@ -325,24 +320,32 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             }
 
             do {
-                let selection = andPlay && saved?.articleProgress != nil
-                    ? try await api.episode(id: episode.id) : episode
-                try Task.checkCancellation()
-                let article = try await api.articleText(episodeID: episode.id, contentID: selection.contentID)
-                guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id else {
-                    return
+                // Existing text remains playable even when bookmark reconciliation
+                // or an apparently connected network stalls. Late results cannot
+                // replace a playback session that has already started locally.
+                let (selection, article) = try await withVoiceDeadline(seconds: saved == nil ? 20 : 2) { [weak self] in
+                    if andPlay { await self?.progressDrain?() }
+                    try Task.checkCancellation()
+                    let selection = andPlay && saved?.articleProgress != nil
+                        ? try await api.episode(id: episode.id) : episode
+                    let article = try await api.articleText(episodeID: episode.id, contentID: selection.contentID)
+                    try Task.checkCancellation()
+                    return (selection, article)
                 }
-                if let expected = selection.contentID, article.contentID != expected {
+                guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id,
+                      ShortcutScope.current == scope else { return }
+                if article.episodeID != episode.id || (selection.contentID != nil && article.contentID != selection.contentID) {
                     throw APIError(underlying: "The server returned a different article version")
                 }
-                let selectedKey: OfflineCache.Key = article.contentID.map { .articleVersion(episodeID: episode.id, contentID: $0) } ?? .articleText(episodeID: episode.id)
-                cache.save(article, for: selectedKey)
+                guard !article.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw APIError(underlying: "The article has no readable text yet")
+                }
+                cache.saveArticle(article)
                 self.currentEpisode = selection
                 self.textLoaded(article)
             } catch {
-                guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id else {
-                    return
-                }
+                guard let self, !Task.isCancelled, self.currentEpisode?.id == episode.id,
+                      ShortcutScope.current == scope else { return }
                 // A suspicious short copy is still better than silence when
                 // she is genuinely offline. Keep it as a fallback, but do not
                 // use it to conceal an expired sign-in session.
@@ -367,6 +370,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             currentEpisode?.completed = false
         }
         currentEpisode?.contentID = article.contentID
+        if let episode = currentEpisode { PlaybackRestore.remember(episode) }
         sourceUTF16 = Array(article.text.utf16)
         let loaded = ArticleScript(text: article.text)
         if let progress = article.articleProgress {
@@ -505,8 +509,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         if chunkIndex < script.chunks.count {
             speakCurrentChunk()
         } else {
-            // The end of the article. Position lands on the full duration so
-            // the position reporter records it as completed.
+            // Only the final utterance finishing completes the article.
             wantsPlayback = false
             progressContext?.offsetUTF16 = sourceUTF16.count
             progressContext?.completed = true
@@ -549,8 +552,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// voice begins its next word. Publishing the zero-width start keeps the
     /// marker from lingering on the old line during that short gap.
     func cachedArticleProgress(episodeID: Int, contentID: Int?) -> ArticleProgressState? {
-        let key: OfflineCache.Key = contentID.map { .articleVersion(episodeID: episodeID, contentID: $0) } ?? .articleText(episodeID: episodeID)
-        return cache.load(EpisodeText.self, for: key)?.articleProgress
+        return cache.article(episodeID: episodeID, contentID: contentID)?.articleProgress
     }
 
     func acceptArticleProgress(_ receipt: ArticleProgressReceipt, replacing observed: ArticleProgressState?, playbackID: UUID?) {
@@ -560,7 +562,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         if var text = cache.load(EpisodeText.self, for: key), text.articleProgress == observed,
             ArticleScript.textVersion(text.text) == receipt.progress.textVersion, text.contentID == receipt.progress.contentID {
             text.articleProgress = receipt.progress
-            cache.save(text, for: key)
+            cache.saveArticle(text, select: false)
         }
         if currentEpisode?.id == receipt.episode.id, progressContext?.playbackID == playbackID,
             currentEpisode?.contentID == receipt.episode.contentID {

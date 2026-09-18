@@ -6,6 +6,26 @@ import Foundation
 @MainActor
 enum PlaybackRestore {
     static let lastEpisodeKey = "HearfulLastEpisodeID"
+    private static let snapshotKey = "HearfulLastEpisodeSnapshot"
+    private struct Snapshot: Codable {
+        let owner: String
+        let episode: Episode
+    }
+
+    static func remember(_ episode: Episode, defaults: UserDefaults = .standard,
+                         scope: String? = ShortcutScope.current) {
+        remember(episodeID: episode.id, defaults: defaults)
+        guard let scope, let data = try? JSONEncoder().encode(Snapshot(owner: scope, episode: episode)) else { return }
+        defaults.set(data, forKey: snapshotKey)
+    }
+
+    static func cached(id: Int, defaults: UserDefaults = .standard,
+                       scope: String? = ShortcutScope.current) -> Episode? {
+        guard let scope, let data = defaults.data(forKey: snapshotKey),
+              let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data),
+              snapshot.owner == scope, snapshot.episode.id == id else { return nil }
+        return snapshot.episode
+    }
 
     /// Called by the player whenever an episode is loaded.
     static func remember(episodeID: Int, defaults: UserDefaults = .standard) {
@@ -17,19 +37,25 @@ enum PlaybackRestore {
     /// bottom of the screen, which is the thing she was getting rid of.
     static func forget(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: lastEpisodeKey)
+        defaults.removeObject(forKey: snapshotKey)
     }
 
-    /// Called once when the signed-in UI appears. Fetches the episode fresh
-    /// rather than caching it: the payload carries the saved playback
-    /// position, which may have moved on another device since last launch.
+    /// Restore local metadata immediately. Explicit playback reconciles the
+    /// article bookmark; restoring a paused player must not require a server.
     static func restore(
         api: HearfulAPIProtocol = HearfulAPI(),
         player: PlaybackCoordinator = .shared,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        scope: String? = ShortcutScope.current
     ) async {
         guard player.currentEpisode == nil else { return }
         let id = defaults.integer(forKey: lastEpisodeKey)
         guard id > 0 else { return }
+        if let local = cached(id: id, defaults: defaults, scope: scope),
+           local.audioURL != nil || local.hasText == true {
+            player.restore(scope.map { PodcastProgressJournal.shared.overlay(local, owner: $0) } ?? local)
+            return
+        }
         guard let episode = try? await api.episode(id: id),
             episode.audioURL != nil || episode.hasText == true
         else {
@@ -39,7 +65,7 @@ enum PlaybackRestore {
         }
         // She may have started something herself while the fetch was in
         // flight; what she chose wins.
-        guard player.currentEpisode == nil else { return }
+        guard player.currentEpisode == nil, ShortcutScope.current == scope else { return }
         player.restore(episode)
     }
 }

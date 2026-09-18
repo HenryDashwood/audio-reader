@@ -111,6 +111,83 @@ struct PlayerDismissalTests {
         #expect(api.reportedPositions.last?.completed == true)
     }
 
+    @Test(arguments: [0.96, 1.0, 1.1])
+    func podcastPositionAloneNeverCompletesPlayback(fraction: Double) async {
+        let (coordinator, _, api) = makeCoordinator()
+        let reporter = PositionReporter(api: api, player: coordinator, sessionScope: { nil })
+        coordinator.restore(podcast())
+        // Drive the clock without streaming an external audio asset. Even a
+        // position beyond an inaccurate duration is not an end-of-audio event.
+        #expect(coordinator.duration == 3600)
+        reporter.playingChanged(true)
+        reporter.timeTicked(to: coordinator.duration * fraction)
+        reporter.flush()
+        reporter.playingChanged(false)
+        coordinator.clear()
+        await reporter.waitForPendingReports()
+
+        #expect(!api.reportedPositions.isEmpty)
+        #expect(api.reportedPositions.allSatisfy { !$0.completed })
+        #expect(api.reportedPositions.last?.seconds == 3600 * fraction)
+    }
+
+    @Test func podcastEndCompletesEvenWhenTheDurationIsInaccurate() async {
+        let (coordinator, _, api) = makeCoordinator()
+        let reporter = PositionReporter(api: api, player: coordinator, sessionScope: { nil })
+        coordinator.restore(podcast())
+        reporter.playingChanged(true)
+        reporter.timeTicked(to: 120)
+        reporter.flush()
+
+        coordinator.audio.finished.send()
+        reporter.flush()
+        await reporter.waitForPendingReports()
+
+        #expect(coordinator.currentEpisode == nil)
+        #expect(api.reportedPositions.last?.episodeID == 2)
+        #expect(api.reportedPositions.last?.completed == true)
+        #expect(api.reportedPositions.filter(\.completed).count == 1)
+    }
+
+    @Test func articleStaysUnfinishedUntilTheLastUtteranceFinishes() async throws {
+        let (coordinator, synthesizer, api) = makeCoordinator()
+        let reporter = PositionReporter(api: api, player: coordinator, sessionScope: { nil })
+        try coordinator.play(article())
+        await waitUntilLoaded(coordinator)
+        #expect(coordinator.isPlaying)
+
+        synthesizer.speakOn(toFraction: 0.99)
+        #expect(coordinator.currentTime / coordinator.duration > 0.95)
+        reporter.flush()
+        coordinator.pause()
+        await reporter.waitForPendingReports()
+        #expect(!api.reportedPositions.isEmpty)
+        #expect(api.reportedPositions.allSatisfy { !$0.completed })
+        #expect(coordinator.currentEpisode?.id == 1)
+
+        coordinator.resume()
+        synthesizer.finishSpeaking()
+        await reporter.waitForPendingReports()
+        #expect(coordinator.currentEpisode == nil)
+        #expect(api.reportedPositions.last?.completed == true)
+        #expect(api.reportedPositions.filter(\.completed).count == 1)
+    }
+
+    @Test func closingAnArticleNearTheEndLeavesItUnfinished() async throws {
+        let (coordinator, synthesizer, api) = makeCoordinator()
+        let reporter = PositionReporter(api: api, player: coordinator, sessionScope: { nil })
+        try coordinator.play(article())
+        await waitUntilLoaded(coordinator)
+        synthesizer.speakOn(toFraction: 0.99)
+        #expect(coordinator.currentTime / coordinator.duration > 0.95)
+
+        coordinator.clear()
+        await reporter.waitForPendingReports()
+
+        #expect(!api.reportedPositions.isEmpty)
+        #expect(api.reportedPositions.allSatisfy { !$0.completed })
+    }
+
     @Test func closingForgetsTheEpisodeSoItIsNotBackNextLaunch() {
         let suite = "player-dismissal-tests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

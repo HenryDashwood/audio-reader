@@ -16,6 +16,7 @@ struct ShowDetailView: View {
 
     var body: some View {
         List {
+            PendingLibraryChanges()
             Section {
                 showHeader
                 if let description = show.description, !description.isEmpty {
@@ -36,7 +37,7 @@ struct ShowDetailView: View {
                         EdgeInsets(top: 12, leading: 20, bottom: 8, trailing: 20))
                     .listRowSeparator(.hidden)
                 if model.isOffline {
-                    Label("Offline — showing saved \(show.itemNoun)s", systemImage: "wifi.slash")
+                    Label(model.isSearching ? "On this device — the full archive needs a connection" : "Offline — showing saved \(show.itemNoun)s", systemImage: "wifi.slash")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -106,6 +107,12 @@ struct ShowDetailView: View {
             placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: "Search this show")
         .searchFocused($searchFocused)
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulRetryOffline)) { _ in
+            if model.isOffline { model.searchNow(searchText, showID: show.id) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
+            model.searchNow(searchText, showID: show.id)
+        }
         .onChange(of: searchText) { _, text in
             model.queryChanged(text, showID: show.id)
         }
@@ -452,9 +459,24 @@ final class EpisodeListModel: ObservableObject {
     }
 
     private func fetch(showID: Int, query: String?) async {
+        let scope = ShortcutScope.current
+        let local = cache.load([Episode].self, for: .episodes(showID: showID)).map { episodes in
+            episodes.filter { episode in
+                guard let query else { return true }
+                return (episode.title + " " + (episode.description ?? "")).localizedCaseInsensitiveContains(query)
+            }
+        }
+        if let local {
+            state = .loaded(local)
+            isSearching = query != nil
+            isOffline = query != nil
+        }
         do {
-            let episodes = try await api.episodes(showID: showID, query: query)
-            guard !Task.isCancelled else { return }
+            let fetched = try await api.episodes(showID: showID, query: query)
+            let episodes = OfflineLibraryActions.shared.overlay(fetched).map { episode in
+                scope.map { PodcastProgressJournal.shared.overlay(episode, owner: $0) } ?? episode
+            }
+            guard !Task.isCancelled, ShortcutScope.current == scope else { return }
             // Only the whole show is worth keeping. Writing a result set here
             // would leave the cache holding three episodes about volcanoes and
             // call them the show — and the next time she opened it with no
@@ -466,17 +488,10 @@ final class EpisodeListModel: ObservableObject {
             isOffline = false
             state = .loaded(episodes)
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, ShortcutScope.current == scope else { return }
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             isSearching = query != nil
-            // A search that cannot reach the network falls back to nothing
-            // rather than to the cached show: answering "what have you got
-            // about Krakatoa?" with the last fifty episodes is not a worse
-            // answer, it is a different question.
-            if query == nil, (error as? APIError)?.isAuthFailure != true,
-                let cached = cache.load([Episode].self, for: .episodes(showID: showID)),
-                !cached.isEmpty
-            {
+            if (error as? APIError)?.isAuthFailure != true, let cached = local {
                 isOffline = true
                 state = .loaded(cached)
             } else {
