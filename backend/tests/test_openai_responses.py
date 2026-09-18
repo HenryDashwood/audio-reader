@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -96,3 +97,23 @@ class TestStream:
 
         assert [event.text for event in events if isinstance(event, ResponseTextDelta)] == ["Hel", "lo"]
         assert [event.response["id"] for event in events if isinstance(event, ResponseCompleted)] == ["resp_1"]
+
+
+class TestConnection:
+    async def test_closing_from_another_task_does_not_raise(self, client):
+        # Starlette cancels a hung-up conversation from a different asyncio
+        # context. Resetting the ContextVar token there used to become a
+        # "Task exception was never retrieved".
+        started = asyncio.Event()
+
+        async def produce():
+            async with client.connection():
+                started.set()
+                yield "open"
+                await asyncio.sleep(60)
+
+        agen = produce()
+        assert await agen.__anext__() == "open"
+        await started.wait()
+
+        await asyncio.create_task(agen.aclose())

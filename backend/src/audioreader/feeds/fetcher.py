@@ -248,6 +248,9 @@ async def _fetch_resource(
     user_agent: str = FEED_USER_AGENT,
     request_headers: Mapping[str, str] | None = None,
     accept_not_modified: bool = False,
+    max_retries: int = MAX_UPSTREAM_RETRIES,
+    max_retry_delay: float = MAX_RETRY_DELAY_SECONDS,
+    wait_out_rate_limits: bool = False,
 ) -> FeedFetchResult:
     """Fetch one bounded public resource, revalidating every redirect hop."""
     current = url
@@ -294,8 +297,9 @@ async def _fetch_resource(
 
                     if response.status_code in RETRYABLE_STATUSES:
                         retry_after = response.headers.get("retry-after")
-                        delay = _retry_delay_seconds(retry_after)
-                        if retry_count < MAX_UPSTREAM_RETRIES and delay <= MAX_RETRY_DELAY_SECONDS:
+                        hinted = _retry_delay_seconds(retry_after)
+                        delay = min(hinted, max_retry_delay) if wait_out_rate_limits else hinted
+                        if retry_count < max_retries and (wait_out_rate_limits or hinted <= max_retry_delay):
                             retry_count += 1
                             await asyncio.sleep(delay)
                             continue
@@ -303,7 +307,7 @@ async def _fetch_resource(
                             raise FeedRateLimitedError(
                                 "the site temporarily limited Magpie's feed requests",
                                 status_code=429,
-                                retry_after_seconds=delay if retry_after else None,
+                                retry_after_seconds=hinted if retry_after else None,
                             )
                     try:
                         response.raise_for_status()
@@ -382,7 +386,15 @@ async def fetch_feed_resource(url: str) -> FeedFetchResult:
     )
 
 
-async def fetch_feed_update(url: str, *, etag: str | None = None, last_modified: str | None = None) -> FeedFetchResult:
+async def fetch_feed_update(
+    url: str,
+    *,
+    etag: str | None = None,
+    last_modified: str | None = None,
+    max_retries: int = MAX_UPSTREAM_RETRIES,
+    max_retry_delay: float = MAX_RETRY_DELAY_SECONDS,
+    wait_out_rate_limits: bool = False,
+) -> FeedFetchResult:
     """Fetch a feed conditionally when validators from its last poll exist."""
     headers = {"Accept": FEED_ACCEPT}
     if etag:
@@ -394,6 +406,9 @@ async def fetch_feed_update(url: str, *, etag: str | None = None, last_modified:
         max_bytes=MAX_FEED_BYTES,
         request_headers=headers,
         accept_not_modified=True,
+        max_retries=max_retries,
+        max_retry_delay=max_retry_delay,
+        wait_out_rate_limits=wait_out_rate_limits,
     )
 
 

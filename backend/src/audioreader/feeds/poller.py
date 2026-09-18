@@ -90,7 +90,9 @@ async def refresh_stale_feed(session: AsyncSession, feed: Feed) -> None:
         logger.warning("could not refresh cached feed %s: %s", feed.id, exc)
 
 
-async def poll_feed(session: AsyncSession, feed: Feed, *, only_if_stale: bool = False) -> int:
+async def poll_feed(
+    session: AsyncSession, feed: Feed, *, only_if_stale: bool = False, wait_out_rate_limits: bool = False
+) -> int:
     """Fetch one feed and store its new episodes. Returns how many were added."""
     # Foreground previews can now overlap the background poller or another
     # preview. Lock and reload the feed before checking freshness and known
@@ -103,12 +105,23 @@ async def poll_feed(session: AsyncSession, feed: Feed, *, only_if_stale: bool = 
     ):
         await session.commit()
         return 0
+    retry = (
+        {
+            "max_retries": settings.feed_poll_rate_limit_retries,
+            "max_retry_delay": settings.feed_poll_rate_limit_wait_seconds,
+            "wait_out_rate_limits": True,
+        }
+        if wait_out_rate_limits
+        else {}
+    )
     if feed.private_fetch_url:
         from audioreader.feeds.private import fetch_personal_feed
 
-        fetched = await fetch_personal_feed(feed.private_fetch_url, etag=feed.etag, last_modified=feed.last_modified)
+        fetched = await fetch_personal_feed(
+            feed.private_fetch_url, etag=feed.etag, last_modified=feed.last_modified, **retry
+        )
     else:
-        fetched = await fetch_feed_update(feed.url, etag=feed.etag, last_modified=feed.last_modified)
+        fetched = await fetch_feed_update(feed.url, etag=feed.etag, last_modified=feed.last_modified, **retry)
     if fetched.not_modified:
         # A 304 is a successful poll: the publisher confirmed that the stored
         # episodes are current, so a previous transient failure must clear.
@@ -234,7 +247,7 @@ async def poll_all_feeds(session: AsyncSession, *, spacing_seconds: float = 0.0)
             continue
         feed_url = feed.url
         try:
-            summary.episodes_added += await poll_feed(session, feed)
+            summary.episodes_added += await poll_feed(session, feed, wait_out_rate_limits=True)
             summary.polled += 1
         except FeedRateLimitedError as exc:
             await session.rollback()

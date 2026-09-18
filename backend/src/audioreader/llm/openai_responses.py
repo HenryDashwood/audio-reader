@@ -79,7 +79,16 @@ class OpenAIResponsesClient:
             try:
                 yield client
             finally:
-                self._connection.reset(token)
+                try:
+                    self._connection.reset(token)
+                except ValueError:
+                    # The listener hung up. Starlette closes the streaming
+                    # generator from a different asyncio context than the one
+                    # that opened this client, and ContextVar tokens cannot
+                    # be reset across that boundary. The token's context is
+                    # already gone; raising here becomes a "Task exception
+                    # was never retrieved" on every cancelled conversation.
+                    pass
 
     def payload(
         self,

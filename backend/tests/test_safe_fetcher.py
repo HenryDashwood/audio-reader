@@ -85,6 +85,28 @@ async def test_a_long_retry_after_is_reported_without_hammering(respx_mock):
     assert raised.value.retry_after_seconds == 60
 
 
+async def test_a_background_poll_waits_out_a_longer_throttle(respx_mock, monkeypatch):
+    sleeps: list[float] = []
+
+    async def record(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(fetcher.asyncio, "sleep", record)
+    responses = [httpx.Response(429, headers={"Retry-After": "60"}), httpx.Response(200, content=b"feed")]
+    route = respx_mock.get("https://busy.example/feed").mock(side_effect=responses)
+
+    fetched = await fetcher.fetch_feed_update(
+        "https://busy.example/feed",
+        max_retries=2,
+        max_retry_delay=45,
+        wait_out_rate_limits=True,
+    )
+
+    assert fetched.content == b"feed"
+    assert route.call_count == 2
+    assert sleeps == [45]
+
+
 async def test_requests_identify_the_app_to_rate_limiters(respx_mock):
     route = respx_mock.get("https://ua.example/feed").respond(content=b"feed")
 

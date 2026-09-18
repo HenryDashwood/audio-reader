@@ -2,11 +2,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from sqlalchemy import select
 
 from audioreader.config import settings
-from audioreader.feeds import poller, service
+from audioreader.feeds import fetcher, poller, service
 from audioreader.feeds.poller import feed_is_failing, poll_all_feeds, poll_feed, poll_lock
 from audioreader.models import Episode, utcnow
 
@@ -246,6 +247,12 @@ def aware(moment: datetime | None) -> datetime:
 class TestThrottling:
     """A 429 is the site asking for a pause, not a feed that has broken."""
 
+    @pytest.fixture(autouse=True)
+    def give_up_immediately(self, monkeypatch):
+        # These tests are about the give-up path. The background poller
+        # otherwise sits out a short 429 so the posts still arrive.
+        monkeypatch.setattr(settings, "feed_poll_rate_limit_retries", 0)
+
     async def test_a_throttle_is_not_held_against_the_feed(self, session, user, respx_mock, podcast_xml):
         feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
         respx_mock.get(FEED_URL).respond(status_code=429, headers={"Retry-After": "60"})
@@ -340,6 +347,39 @@ class TestThrottling:
         # A feed that merely has nothing new is not failing at all.
         feed.last_error = None
         assert not feed_is_failing(feed)
+
+
+class TestWaitingOutRateLimits:
+    """A brief 429 should not skip the posts the poller is there to collect."""
+
+    async def test_a_brief_throttle_is_waited_out_and_posts_arrive(
+        self, session, user, respx_mock, podcast_xml, podcast_updated_xml, monkeypatch
+    ):
+        feed = await subscribed_feed(session, user, respx_mock, podcast_xml)
+        sleeps: list[float] = []
+
+        async def record(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        monkeypatch.setattr(fetcher.asyncio, "sleep", record)
+        monkeypatch.setattr(settings, "feed_poll_rate_limit_retries", 2)
+        monkeypatch.setattr(settings, "feed_poll_rate_limit_wait_seconds", 45)
+        respx_mock.get(FEED_URL).mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "60"}),
+                httpx.Response(200, content=podcast_updated_xml),
+            ]
+        )
+
+        summary = await poll_all_feeds(session)
+
+        assert summary.polled == 1
+        assert summary.throttled == 0
+        assert summary.episodes_added == 1
+        assert sleeps == [45]
+        await session.refresh(feed)
+        assert feed.throttled_until is None
+        assert feed.last_error is None
 
 
 class TestPacing:

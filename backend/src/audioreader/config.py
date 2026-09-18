@@ -121,6 +121,13 @@ class Settings(BaseSettings):
     # minutes; never more than half the interval, however many feeds there are.
     feed_poll_spacing_seconds: float = 3.0
 
+    # How long the background poller will sit out a 429 before giving up on
+    # this pass. Discovery and preview stay at eight seconds because someone
+    # is waiting; a poll pass can spend a minute and still bring the posts
+    # in rather than skipping the feed for an hour.
+    feed_poll_rate_limit_wait_seconds: float = 60.0
+    feed_poll_rate_limit_retries: int = 2
+
     # How long to leave a feed alone after its site answered 429. A larger
     # Retry-After from the site wins; asking again fifteen minutes later, as
     # every other feed is, only extends the throttle.

@@ -13,6 +13,8 @@ from audioreader.feeds.discovery import feed_links_in_headers, feed_links_in_htm
 from audioreader.feeds.fetcher import (
     FEED_ACCEPT,
     MAX_FEED_BYTES,
+    MAX_RETRY_DELAY_SECONDS,
+    MAX_UPSTREAM_RETRIES,
     FeedFetchError,
     FeedFetchResult,
     _fetch_public_resource,
@@ -39,7 +41,13 @@ def personalised(url: str) -> bool:
 
 
 async def fetch_personal_feed(
-    url: str, *, etag: str | None = None, last_modified: str | None = None
+    url: str,
+    *,
+    etag: str | None = None,
+    last_modified: str | None = None,
+    max_retries: int = MAX_UPSTREAM_RETRIES,
+    max_retry_delay: float = MAX_RETRY_DELAY_SECONDS,
+    wait_out_rate_limits: bool = False,
 ) -> FeedFetchResult:
     parts = urlsplit(url)
     headers = {"Accept": FEED_ACCEPT}
@@ -54,7 +62,13 @@ async def fetch_personal_feed(
     if last_modified:
         headers["If-Modified-Since"] = last_modified
     return await _fetch_public_resource(
-        url, max_bytes=MAX_FEED_BYTES, request_headers=headers, accept_not_modified=bool(etag or last_modified)
+        url,
+        max_bytes=MAX_FEED_BYTES,
+        request_headers=headers,
+        accept_not_modified=bool(etag or last_modified),
+        max_retries=max_retries,
+        max_retry_delay=max_retry_delay,
+        wait_out_rate_limits=wait_out_rate_limits,
     )
 
 
