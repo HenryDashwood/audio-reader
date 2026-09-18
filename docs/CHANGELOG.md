@@ -10,6 +10,27 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.6.0
+
+Bring the podcasts and publications you follow into Magpie. Export an OPML
+file from your podcast or RSS reader app, save it to Files, then choose Import
+subscriptions in Magpie's Settings or Add sources. Review the list before
+importing. Sources you already follow should not be added twice.
+
+Personalised subscription feeds, including supported paid feeds, stay private
+to your account. Please try a mix of podcasts, publications and personal feed
+links, and check the results if a source could not be imported. Reading and
+listening history and folder organisation are not included.
+
+Settings now also has Export subscriptions. Save or share the OPML file and
+try opening it in another reader. Personal feed links are included, so share
+the file only with apps and people you trust. Email-only newsletters are not
+included in the export.
+
+Please report missing subscriptions, duplicates, feeds that stop updating,
+or import and export controls that are difficult to use with VoiceOver or
+larger text.
+
 ## 1.5.0
 
 You can now sign in with Google as well as Apple. If you already use Magpie,
