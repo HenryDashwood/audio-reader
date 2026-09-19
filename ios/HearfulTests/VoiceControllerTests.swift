@@ -337,6 +337,7 @@ private func makeController(
     api: FakeAPI = FakeAPI(),
     holdsTheConfirmation: Bool = false, sessionContext: VoiceSessionContext = VoiceSessionContext(),
     progressDelay: ControlledDelay = ControlledDelay(),
+    listeningDeadline: ControlledDelay = ControlledDelay(),
     preferences: VoiceConversationPreferences = VoiceConversationPreferences(keepListening: false)
 ) -> (VoiceController, Recorder, FakeSpeech, FakeAPI, FakePlayer) {
     let recorder = Recorder()
@@ -355,7 +356,8 @@ private func makeController(
         api: api, speech: speech, speaker: speaker, player: player,
         feedback: FakeFeedback(recorder), sleepTimer: sleepTimer, sessionContext: sessionContext,
         conversationPreferences: { preferences },
-        progressDelay: { try await progressDelay.wait(for: $0) })
+        progressDelay: { try await progressDelay.wait(for: $0) },
+        listeningDeadlineSleep: { try await listeningDeadline.wait(for: $0) })
     return (controller, recorder, speech, api, player)
 }
 
@@ -1608,16 +1610,36 @@ struct VoicePipelineTests {
         #expect(context.recentActions.count == 1)
     }
 
-    @Test func tappingWhileListeningFinishesCaptureWithoutAnotherRequest() async {
-        let (controller, _, speech, api, _) = makeController()
+    @Test func tappingWhileListeningFinishesCaptureWithoutAnotherRequest() async throws {
+        let deadline = ControlledDelay()
+        let (controller, _, speech, api, _) = makeController(listeningDeadline: deadline)
         speech.keepsListening = true
         let running = Task { await controller.beginCommand() }
-        await wait { speech.isListening }
+        defer { controller.cancel() }
+        await wait { speech.isListening && deadline.pendingCount == 1 }
+        try #require(speech.isListening && deadline.pendingCount == 1)
+        #expect(deadline.durations == [.seconds(90)])
         await controller.activate()
         await running.value
         #expect(speech.finishCount == 1)
         #expect(speech.listenCount == 1)
         #expect(api.transcripts.count == 1)
+    }
+
+    @Test func listeningDeadlineEndsCaptureWithoutSendingARequest() async throws {
+        let deadline = ControlledDelay()
+        let (controller, recorder, speech, api, _) = makeController(listeningDeadline: deadline)
+        speech.keepsListening = true
+        let running = Task { await controller.beginCommand() }
+        defer { controller.cancel() }
+        await wait { speech.isListening && deadline.pendingCount == 1 }
+        try #require(speech.isListening && deadline.pendingCount == 1)
+        #expect(deadline.durations == [.seconds(90)])
+        deadline.elapse()
+        await running.value
+        #expect(!speech.isListening)
+        #expect(api.transcripts.isEmpty)
+        #expect(recorder.spoken == ["Sorry, I could not hear you. Please tap and try again."])
     }
 
     @Test func reopeningTheSheetRecoversTheOriginalRequestIdentifier() async {

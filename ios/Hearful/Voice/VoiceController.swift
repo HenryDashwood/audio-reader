@@ -129,6 +129,7 @@ final class VoiceController: ObservableObject {
     /// Tests control this delay so runner load cannot turn a prompt fake
     /// response into a slow request with an extra progress cue.
     private let progressDelay: @MainActor (Duration) async throws -> Void
+    private let listeningDeadlineSleep: @MainActor @Sendable (Duration) async throws -> Void
     private var commandTask: Task<Void, Never>?
     private var commandID: UUID?
     private let sessionContext: VoiceSessionContext
@@ -166,6 +167,9 @@ final class VoiceController: ObservableObject {
         },
         progressDelay: @escaping @MainActor (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
+        },
+        listeningDeadlineSleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
         }
     ) {
         self.sessionContext = sessionContext
@@ -179,6 +183,7 @@ final class VoiceController: ObservableObject {
         self.telemetry = telemetry
         self.conversationPreferences = conversationPreferences
         self.progressDelay = progressDelay
+        self.listeningDeadlineSleep = listeningDeadlineSleep
     }
 
     /// Keeps the conversation open until silence, an explicit goodbye, playback,
@@ -313,7 +318,7 @@ final class VoiceController: ObservableObject {
                         self.feedback.play(.processing)
                     }
                 }
-                transcript = try await withVoiceDeadline(seconds: 90) {
+                transcript = try await withVoiceDeadline(seconds: 90, sleep: listeningDeadlineSleep) {
                     try await self.speech.listen(
                         onReady: {
                             guard !announced, self.commandID == id else { return }
