@@ -197,7 +197,10 @@ with installation guidance instead of silently testing a different version.
 CI and TestFlight build validation run the complete suite on iOS 27 first and
 then on the oldest installed released iOS 26 runtime. The workflows request the
 Xcode 27 runner image, require released Xcode 27.0, and install released iOS
-27.0 and 26.5 runtimes. Both checks must pass. Magpie still supports iOS 26.
+27.0 and 26.5 runtimes through `scripts/prepare-ios-simulators.sh`. Setup reuses
+available released runtimes and iPhone simulators, and verifies availability
+after any download, including when Xcode reports a nonzero exit status. Both
+checks must pass. Magpie still supports iOS 26.
 `make ios-test-latest` is optional coverage for the newest installed runtime,
 including betas. Set `IOS_SIMULATOR_ID` to explicitly override runtime selection
 for any local command. Direct `xcodebuild` commands remain useful for one-off

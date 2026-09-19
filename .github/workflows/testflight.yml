@@ -72,11 +72,8 @@ jobs:
           xcodebuild -version
 
       - name: Install released simulator runtimes
-        run: |
-          xcodebuild -downloadPlatform iOS -buildVersion 27.0
-          xcodebuild -downloadPlatform iOS -buildVersion 26.5
-          xcrun simctl create 'iPhone 17' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-27-0
-          xcrun simctl create 'iPhone 17' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5
+        id: simulators
+        run: bash scripts/prepare-ios-simulators.sh
 
       - name: Run the iOS 27 tests
         # Both supported OS generations must pass before signing or uploading.

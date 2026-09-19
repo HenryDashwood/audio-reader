@@ -94,11 +94,8 @@ jobs:
           echo "macos=$(sw_vers -buildVersion)" >> "$GITHUB_OUTPUT"
 
       - name: Install released simulator runtimes
-        run: |
-          xcodebuild -downloadPlatform iOS -buildVersion 27.0
-          xcodebuild -downloadPlatform iOS -buildVersion 26.5
-          xcrun simctl create 'iPhone 17' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-27-0
-          xcrun simctl create 'iPhone 17' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5
+        id: simulators
+        run: bash scripts/prepare-ios-simulators.sh
 
       # Cache compiler outputs, not a previous test result or build database.
       # Xcode validates inputs on every build; the full suite always runs.
@@ -120,7 +117,7 @@ jobs:
         run: make ios-test
 
       - name: Run the iOS 26 compatibility tests
-        if: ${{ !cancelled() && steps.xcode.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.simulators.outcome == 'success' }}
         env:
           IOS_COMPILATION_CACHE: '1'
           IOS_TEST_PREBOOT: '1'
