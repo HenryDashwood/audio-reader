@@ -72,8 +72,9 @@ jobs:
 
   ios:
     name: iOS tests
-    runs-on: macos-latest
-    timeout-minutes: 30
+    # macos-latest still ships Xcode 26; request the Xcode 27 image explicitly.
+    runs-on: xcode-27
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v7
@@ -82,11 +83,22 @@ jobs:
         id: xcode
         run: |
           set -euo pipefail
-          xcode=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          xcode=/Applications/Xcode_27.0.app
+          if [[ ! -d "$xcode" ]]; then
+            echo "::error::The runner must provide released Xcode 27.0 at $xcode"
+            exit 1
+          fi
           sudo xcode-select -s "$xcode"
           xcodebuild -version
           echo "build=$(xcodebuild -version | awk '/Build version/ { print $3 }')" >> "$GITHUB_OUTPUT"
           echo "macos=$(sw_vers -buildVersion)" >> "$GITHUB_OUTPUT"
+
+      - name: Install released simulator runtimes
+        run: |
+          xcodebuild -downloadPlatform iOS -buildVersion 27.0
+          xcodebuild -downloadPlatform iOS -buildVersion 26.5
+          xcrun simctl create 'iPhone 17' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-27-0
+          xcrun simctl create 'iPhone 17' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5
 
       # Cache compiler outputs, not a previous test result or build database.
       # Xcode validates inputs on every build; the full suite always runs.
@@ -101,11 +113,30 @@ jobs:
       - name: Verify the iOS toolchain
         run: make ios-doctor
 
-      - name: Run the iOS tests
+      - name: Run the iOS 27 tests
         env:
           IOS_COMPILATION_CACHE: '1'
           IOS_TEST_PREBOOT: '1'
         run: make ios-test
+
+      - name: Run the iOS 26 compatibility tests
+        if: ${{ !cancelled() && steps.xcode.outcome == 'success' }}
+        env:
+          IOS_COMPILATION_CACHE: '1'
+          IOS_TEST_PREBOOT: '1'
+        run: make ios-test-compatibility
+
+      - name: Retain iOS diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-diagnostics
+          path: |
+            build/ios-logs/
+            build/DerivedData/Build/Intermediates.noindex/**/swbuild.tmp.*/Data.noindex/**
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
 
   compatibility:
     name: Released iOS client compatibility

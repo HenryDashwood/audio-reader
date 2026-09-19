@@ -46,8 +46,8 @@ concurrency:
 jobs:
   testflight:
     if: inputs.distribute_build == ''
-    runs-on: macos-latest
-    timeout-minutes: 60
+    runs-on: xcode-27
+    timeout-minutes: 90
     outputs:
       build: ${{ steps.version.outputs.build }}
 
@@ -63,21 +63,39 @@ jobs:
       - name: Select Xcode
         run: |
           set -euo pipefail
-          xcode=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
-          sudo xcode-select -s "$xcode"
-          xcodebuild -version
-          # The deployment target is iOS 26, so anything older cannot build this.
-          major=$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')
-          if [ "$major" -lt 26 ]; then
-            echo "::error::Need Xcode 26+ for the iOS 26 SDK, found $major in $xcode"
+          xcode=/Applications/Xcode_27.0.app
+          if [[ ! -d "$xcode" ]]; then
+            echo "::error::The runner must provide released Xcode 27.0 at $xcode"
             exit 1
           fi
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
 
-      - name: Run the iOS tests
-        # Match main CI's simulator selection and run the same full suite.
-        # Choosing a device by alphabetical order picked iPhone Air on a
-        # different runtime, where the article web-view tests could stall.
+      - name: Install released simulator runtimes
+        run: |
+          xcodebuild -downloadPlatform iOS -buildVersion 27.0
+          xcodebuild -downloadPlatform iOS -buildVersion 26.5
+          xcrun simctl create 'iPhone 17' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-27-0
+          xcrun simctl create 'iPhone 17' com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5
+
+      - name: Run the iOS 27 tests
+        # Both supported OS generations must pass before signing or uploading.
         run: make ios-test
+
+      - name: Run the iOS 26 compatibility tests
+        run: make ios-test-compatibility
+
+      - name: Retain iOS diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-diagnostics
+          path: |
+            build/ios-logs/
+            build/DerivedData/Build/Intermediates.noindex/**/swbuild.tmp.*/Data.noindex/**
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Work out the version numbers
         id: version

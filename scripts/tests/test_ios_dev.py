@@ -1,6 +1,8 @@
 """Regression checks for the shell wrapper around the iOS toolchain."""
 
+import json
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -88,6 +90,9 @@ def ios_runner(tmp_path: Path):
         tools / "xcodebuild",
         """
 printf '%s\\n' "$@" > "$FAKE_CALLS/$1.args"
+if [[ -n "${FAKE_DIAGNOSTIC:-}" ]]; then
+  echo "$FAKE_DIAGNOSTIC" >&2
+fi
 if [[ "$1" == build-for-testing ]]; then
   if [[ "${FAKE_HANDSHAKE:-0}" == 1 ]]; then
     for ((i=0; i<200; i++)); do
@@ -126,11 +131,19 @@ if [[ "$2" == bootstatus ]]; then
   echo 'Simulator boot elapsed time: 0s'
   exit "${FAKE_BOOT_STATUS:-0}"
 fi
+if [[ -n "${FAKE_RUNTIMES:-}" ]]; then
+  if [[ "$3" == runtimes ]]; then
+    cat "$FAKE_RUNTIMES"
+  else
+    cat "$FAKE_DEVICES"
+  fi
+  exit 0
+fi
 printf '{}\\n'
 """,
     )
     _executable(tools / "jq", "cat >/dev/null\nprintf 'iPhone 17\\n'\n")
-    _executable(tools / "xcbeautify", "cat\n")
+    _executable(tools / "xcbeautify", 'if [[ "${FAKE_HIDE_OUTPUT:-0}" == 1 ]]; then cat >/dev/null; else cat; fi\n')
     _executable(tools / "xcode-build-server", "cat >/dev/null\n")
     # Copy the wrapper/Makefile so even the index log stays in the test sandbox.
     repo = Path(__file__).resolve().parents[2]
@@ -141,7 +154,22 @@ printf '{}\\n'
     wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
     (sandbox / "Makefile").write_bytes((repo / "Makefile").read_bytes())
 
-    def run(target="ios-test", *, test=None, **overrides):
+    def run(target="ios-test", *, test=None, runtimes=None, devices=None, **overrides):
+        if runtimes is not None:
+            # Exercise the actual jq selector, not a mock of its result.
+            jq = shutil.which("jq")
+            assert jq is not None, "Runtime selection tests require jq (also required by ios-dev.sh)"
+            (tools / "jq").unlink()
+            (tools / "jq").symlink_to(jq)
+            runtime_file = tmp_path / "runtimes.json"
+            runtime_file.write_text(json.dumps({"runtimes": runtimes}))
+            device_file = tmp_path / "devices.json"
+            device_file.write_text(json.dumps({"devices": devices or {}}))
+            overrides = {
+                "IOS_SIMULATOR_ID": "",
+                "FAKE_RUNTIMES": str(runtime_file),
+                "FAKE_DEVICES": str(device_file),
+            } | overrides
         environment = (
             {
                 key: value
@@ -175,6 +203,7 @@ printf '{}\\n'
         ("ios-test", None, None),
         ("ios-test", "VoiceControllerTests", "HearfulTests/VoiceControllerTests"),
         ("ios-test-latest", "VoiceControllerTests/example()", "HearfulTests/VoiceControllerTests/example()"),
+        ("ios-test-compatibility", "VoiceControllerTests", "HearfulTests/VoiceControllerTests"),
         ("ios-test", "HearfulTests/VoiceControllerTests", "HearfulTests/VoiceControllerTests"),
     ],
 )
@@ -219,6 +248,20 @@ def test_formatter_does_not_hide_local_test_failure(ios_runner):
     assert "Error 65" in result.stderr
 
 
+@pytest.mark.parametrize("phased", [False, True])
+def test_compiler_crash_survives_formatter_and_is_saved(ios_runner, tmp_path, phased):
+    diagnostic = "swift-frontend crashed: diagnostic omitted by formatter"
+    overrides = {"IOS_TEST_PREBOOT": "1", "FAKE_BUILD_STATUS": "65"} if phased else {"FAKE_TEST_STATUS": "65"}
+    result, calls = ios_runner(FAKE_DIAGNOSTIC=diagnostic, FAKE_HIDE_OUTPUT="1", **overrides)
+    assert result.returncode != 0
+    assert "Error 65" in result.stderr
+    assert diagnostic in result.stderr
+    logs = list((tmp_path / "repo/build/ios-logs").glob("xcodebuild-*"))
+    assert len(logs) == 1
+    assert diagnostic in logs[0].read_text()
+    assert "test-without-building" not in calls
+
+
 def test_build_failure_stops_background_boot(ios_runner, tmp_path):
     result, calls = ios_runner(IOS_TEST_PREBOOT="1", FAKE_BUILD_STATUS="65", FAKE_BLOCK_BOOT="1", FAKE_HANDSHAKE="1")
     assert result.returncode != 0
@@ -238,3 +281,63 @@ def test_index_clean_uses_separate_output_even_with_normal_override(ios_runner, 
     assert calls["clean"][:2] == ["clean", "build-for-testing"]
     assert str(index_path) in calls["clean"]
     assert str(tmp_path / "normal output") not in calls["clean"]
+
+
+def runtime(version, *, build="24A437", available=True):
+    return {
+        "identifier": f"com.apple.CoreSimulator.SimRuntime.iOS-{version.replace('.', '-')}",
+        "version": version,
+        "buildversion": build,
+        "isAvailable": available,
+    }
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [("ios-test", "27.0"), ("ios-test-compatibility", "26.2"), ("ios-test-latest", "28.0")],
+)
+def test_runtime_policy_and_preferred_phone(ios_runner, target, expected):
+    runtimes = [
+        runtime("28.0", build="25A5000a"),
+        runtime("26.10"),
+        runtime("27.0"),
+        runtime("26.2"),
+        runtime("27.1", build="24B5000a"),
+        runtime("26.0", available=False),
+    ]
+    devices = {
+        item["identifier"]: [
+            {"udid": "air", "name": "iPhone Air", "isAvailable": True},
+            {"udid": item["version"], "name": "iPhone 17", "isAvailable": True},
+        ]
+        for item in runtimes
+    }
+    result, calls = ios_runner(target, runtimes=runtimes, devices=devices)
+    assert result.returncode == 0, result.stderr
+    assert f"platform=iOS Simulator,id={expected}" in calls["test"]
+    assert f"Using iPhone 17 on iOS {expected}" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("target", "runtimes", "required"),
+    [
+        ("ios-test", [runtime("26.5"), runtime("28.0")], "27.0"),
+        ("ios-test", [runtime("27.0", build="24A5000a")], "27.0"),
+        ("ios-test", [runtime("27.0", available=False)], "27.0"),
+        ("ios-test-compatibility", [runtime("27.0")], "26"),
+        ("ios-test-compatibility", [runtime("26.0", build="23A5000a")], "26"),
+    ],
+)
+def test_required_runtime_never_silently_falls_back(ios_runner, target, runtimes, required):
+    result, calls = ios_runner(target, runtimes=runtimes)
+    assert result.returncode != 0
+    assert f"no available released iOS {required} simulator runtime" in result.stderr
+    assert "Install one in Xcode Settings > Components" in result.stderr
+    assert not calls
+
+
+def test_explicit_simulator_can_opt_into_preview(ios_runner):
+    devices = {"preview": [{"udid": "preview-id", "name": "iPhone 17", "isAvailable": True}]}
+    result, calls = ios_runner(runtimes=[], devices=devices, IOS_SIMULATOR_ID="preview-id")
+    assert result.returncode == 0, result.stderr
+    assert "platform=iOS Simulator,id=preview-id" in calls["test"]

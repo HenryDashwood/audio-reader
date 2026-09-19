@@ -173,7 +173,7 @@ or production services are changed by this implementation.
 ## Verification
 
 Run `make backend-check`, `make backend-compatibility`, `make ios-build`,
-`make ios-test`, and `make ios-test-latest`. Focused tests cover privacy across
+`make ios-test`, and `make ios-test-compatibility`. Focused tests cover privacy across
 accounts, capture deduplication, immutable selection, mismatched progress, failed
 extraction/retry, feed reconciliation, newsletter retention, account deletion,
 private search, migration preservation, durable local capture, and cache versions.

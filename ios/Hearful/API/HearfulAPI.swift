@@ -242,10 +242,10 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
     var baseURL: URL { fixedBaseURL ?? AppConfiguration.apiBaseURL }
     let transport: DataTransport
 
-    /// Where the bearer token comes from. Static because the client is built
-    /// fresh at every call site (views, intents, voice) and they must all see
-    /// the same session; settable so tests can supply a fixed token.
-    nonisolated(unsafe) static var tokenProvider: @Sendable () -> String? = {
+    /// Live clients read the shared Keychain session. Overrides are scoped to
+    /// the current task and its children, so parallel tests cannot change
+    /// another request's credentials or invalidate its account fingerprint.
+    @TaskLocal static var tokenProvider: @Sendable () -> String? = {
         KeychainTokenStore.token
     }
 

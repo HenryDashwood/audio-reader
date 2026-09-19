@@ -82,7 +82,7 @@ new. The client keeps short-lived context in memory, not a transcript archive.
 ## Verification
 
 Run `make backend-check`, `make ios-build`, `make ios-test`, and
-`make ios-test-latest`. The test suites cover cancellation followed by an
+`make ios-test-compatibility`. The test suites cover cancellation followed by an
 immediate new command, capture finishing, compound playback/speed, duplicate
 requests, disconnects, cancellation-before-arrival, exact undo, library filters,
 and task-completion grading. No live model call or newsletter submission is

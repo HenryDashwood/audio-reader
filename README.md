@@ -170,28 +170,42 @@ Use `zed: open log` for startup failures. See Zed's documentation for
 
 ## iOS development
 
-Requires Xcode with the iOS simulator runtime
-(`xcodebuild -downloadPlatform iOS` if `xcrun simctl list runtimes` is empty).
+Requires Xcode 27 with the released iOS 27.0 simulator runtime, plus a released
+iOS 26 runtime for compatibility checks. Install runtimes in Xcode Settings >
+Components; an installed iOS 27.0 beta does not satisfy the stable default.
 
 ```bash
 make ios-doctor       # verify Xcode and choose a compatible simulator
-make ios-build        # compile on the oldest installed iOS 26+ runtime
+make ios-build        # compile on the pinned stable iOS 27.0 runtime
 make ios-index        # refresh local SourceKit-LSP build settings
 make ios-test         # run the full Swift test suite there
 make ios-test TEST=VoiceControllerTests # run one suite while iterating
-make ios-test-latest  # also check the newest installed runtime
+make ios-test-compatibility # check the oldest installed released iOS 26 runtime
+make ios-test-latest  # optional preview check on the newest installed runtime
 make ios-phone        # Release build, install over Wi-Fi, and launch against staging
 make ios-phone-production # same Release install, pointed at production
 make ios-phone-debug  # same Release install, pointed at this Mac's local API
 ```
 
 The commands choose an available iPhone automatically and keep DerivedData in
-the ignored `build/` directory. Set `IOS_SIMULATOR_ID` to use a specific
-simulator. Direct `xcodebuild` commands remain useful for one-off destinations.
+the ignored `build/` directory. Builds, tests, and index refreshes default to
+released iOS 27.0. The stable version is pinned in `scripts/ios-dev.sh` and must
+be advanced deliberately after public releases; installing a newer beta does
+not change the default. If the required runtime is missing, the command fails
+with installation guidance instead of silently testing a different version.
+
+CI and TestFlight build validation run the complete suite on iOS 27 first and
+then on the oldest installed released iOS 26 runtime. The workflows request the
+Xcode 27 runner image, require released Xcode 27.0, and install released iOS
+27.0 and 26.5 runtimes. Both checks must pass. Magpie still supports iOS 26.
+`make ios-test-latest` is optional coverage for the newest installed runtime,
+including betas. Set `IOS_SIMULATOR_ID` to explicitly override runtime selection
+for any local command. Direct `xcodebuild` commands remain useful for one-off
+destinations.
 
 `TEST` also accepts a single test, for example
 `make ios-test TEST='VoiceControllerTests/playsTheEpisodeTheBackendChose()'`,
-or a full `HearfulTests/...` identifier. It works with `ios-test-latest` too.
+or a full `HearfulTests/...` identifier. It works with `ios-test-compatibility` and `ios-test-latest` too.
 Omit `TEST` for the complete suite before merging. Focused runs still compile
 the test bundle and check your current sources; they only filter execution.
 
@@ -208,7 +222,10 @@ modules. Keep warning reporting enabled. For XcodeBuildMCP, use its `clean` tool
 with the same DerivedData path before repeating the build or test.
 
 Local tests use a single incremental build-and-test invocation and print its
-elapsed time. To reproduce CI's phased run, use
+elapsed time. Unformatted Xcode output is retained in `build/ios-logs/` and
+printed on failure so the formatter cannot hide compiler crashes. CI and
+TestFlight retain those logs and compiler crash reproducers as the
+`ios-diagnostics` artifact for 14 days. To reproduce CI's phased run, use
 `IOS_TEST_PREBOOT=1 IOS_COMPILATION_CACHE=1 make ios-test`. This boots the selected
 simulator while building for testing, waits for both to succeed, then tests
 those freshly built products. The log reports build time, simulator boot

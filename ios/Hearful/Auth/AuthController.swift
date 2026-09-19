@@ -43,14 +43,20 @@ final class AuthController: ObservableObject {
     private var sessionGeneration = 0
     private let api: HearfulAPIProtocol
     private let notificationCenter: NotificationCenter
+    private let readToken: () -> String?
+    private let writeToken: (String?) -> Void
     private var authRequiredObserver: NSObjectProtocol?
     private var positionReporter: PositionReporter?
 
     init(api: HearfulAPIProtocol = HearfulAPI(), google: any GoogleAuthorizing = GoogleAuthorization(),
-         notificationCenter: NotificationCenter = .default) {
+         notificationCenter: NotificationCenter = .default,
+         readToken: @escaping () -> String? = { KeychainTokenStore.token },
+         writeToken: @escaping (String?) -> Void = { KeychainTokenStore.token = $0 }) {
         self.api = api
         self.google = google
         self.notificationCenter = notificationCenter
+        self.readToken = readToken
+        self.writeToken = writeToken
         authRequiredObserver = notificationCenter.addObserver(
             forName: .hearfulAuthRequired, object: nil, queue: .main
         ) { [weak self] _ in
@@ -67,7 +73,7 @@ final class AuthController: ObservableObject {
         // An older build used one queue for every account. Never attach those
         // ambiguous events to whichever account happens to open this version.
         TelemetryReporter.removeLegacyQueue()
-        guard KeychainTokenStore.token != nil else {
+        guard readToken() != nil else {
             state = .signedOut
             return
         }
@@ -223,7 +229,7 @@ final class AuthController: ObservableObject {
         linkedProviders = nil
         positionReporter?.invalidate()
         positionReporter = nil
-        KeychainTokenStore.token = response.token
+        writeToken(response.token)
         user = response.user
         state = .signedIn
         ShortcutLibrary.shared.invalidate()
@@ -268,7 +274,7 @@ final class AuthController: ObservableObject {
         google.signOut()
         linkedProviders = nil
         linkingError = nil
-        KeychainTokenStore.clear()
+        writeToken(nil)
         ShortcutLifecycle.resetSession()
         // The next person to sign in on this phone must not be shown the last
         // person's library out of the cache.

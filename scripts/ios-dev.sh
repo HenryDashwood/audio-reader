@@ -7,13 +7,15 @@ project="$repo_root/ios/Hearful.xcodeproj"
 scheme="Hearful"
 derived_data="${IOS_DERIVED_DATA_PATH:-$repo_root/build/DerivedData}"
 minimum_os="${IOS_MINIMUM_OS:-26.0}"
+# Advance this deliberately after a public release, never from installed betas.
+stable_runtime="27.0"
 preferred_name="${IOS_SIMULATOR_NAME:-iPhone 17}"
 device_derived_data="${IOS_DEVICE_DERIVED_DATA_PATH:-$repo_root/build/Device}"
 bundle_id="com.henrydashwood.hearful"
 device_api_url="${IOS_DEVICE_API_URL:-https://audio-reader-staging.up.railway.app}"
 
 usage() {
-  echo "Usage: $0 {doctor|build|index|test|test-latest|device|device-local}"
+  echo "Usage: $0 {doctor|build|index|test|test-compatibility|test-latest|device|device-local}"
   echo
   echo "Overrides: IOS_SIMULATOR_ID, IOS_SIMULATOR_NAME, IOS_MINIMUM_OS, IOS_DERIVED_DATA_PATH"
   echo "           IOS_INDEX_DERIVED_DATA_PATH, TEST (suite or suite/test identifier)"
@@ -29,11 +31,14 @@ require() {
   fi
 }
 
-runtime_policy="minimum"
+runtime_policy="stable"
 action="${1:-}"
 local_device_build=0
 if [[ "$action" == "test-latest" ]]; then
   runtime_policy="latest"
+  action="test"
+elif [[ "$action" == "test-compatibility" ]]; then
+  runtime_policy="compatibility"
   action="test"
 fi
 
@@ -86,11 +91,22 @@ runtime_version=""
 simulator_name=""
 
 run_xcodebuild() {
+  local log_dir="$repo_root/build/ios-logs" raw_log status=0
+  mkdir -p "$log_dir"
+  raw_log="$(mktemp "$log_dir/xcodebuild-$1.XXXXXX")"
+  echo "Raw Xcode log: $raw_log"
   if command -v xcbeautify >/dev/null 2>&1; then
-    NSUnbufferedIO=YES xcodebuild "$@" 2>&1 | xcbeautify
+    NSUnbufferedIO=YES xcodebuild "$@" 2>&1 | tee "$raw_log" | xcbeautify || status=$?
   else
-    xcodebuild "$@"
+    xcodebuild "$@" 2>&1 | tee "$raw_log" || status=$?
   fi
+  if [[ "$status" != 0 ]]; then
+    # Formatters can omit compiler crash stacks and the failed command. Keep
+    # the original failure visible even when no ordinary diagnostic was parsed.
+    echo "Xcode failed (exit $status). Unformatted output follows:" >&2
+    cat "$raw_log" >&2
+  fi
+  return "$status"
 }
 
 report_timing() {
@@ -201,16 +217,10 @@ choose_simulator() {
     return
   fi
 
-  local runtime_json runtime_id device_json sort_expression
+  local runtime_json runtime_id device_json
   runtime_json="$(xcrun simctl list runtimes -j)"
 
-  if [[ "$runtime_policy" == "latest" ]]; then
-    sort_expression="last"
-  else
-    sort_expression="first"
-  fi
-
-  runtime_id="$(jq -r --arg minimum "$minimum_os" --arg pick "$sort_expression" '
+  runtime_id="$(jq -r --arg minimum "$minimum_os" --arg policy "$runtime_policy" --arg stable "$stable_runtime" '
     [
       .runtimes[]
       | select(.isAvailable == true)
@@ -219,14 +229,28 @@ choose_simulator() {
           (.version | split(".") | map(tonumber))
           >= ($minimum | split(".") | map(tonumber))
         )
+      | select(
+          if $policy == "stable" then .version == $stable
+          elif $policy == "compatibility" then (.version | split(".")[0]) == "26"
+          else true end
+        )
+      # Apple prerelease build numbers end in a lowercase letter. Latest is
+      # explicitly opt-in preview coverage, so it may include those builds.
+      | select($policy == "latest" or ((.buildversion // "") | test("[a-z]$") | not))
     ]
     | sort_by(.version | split(".") | map(tonumber))
-    | if $pick == "last" then last.identifier else first.identifier end
+    | if $policy == "compatibility" then first.identifier else last.identifier end
     // empty
   ' <<<"$runtime_json")"
 
   if [[ -z "$runtime_id" ]]; then
-    echo "error: no available iOS simulator runtime satisfies iOS $minimum_os+" >&2
+    if [[ "$runtime_policy" == "stable" ]]; then
+      echo "error: no available released iOS $stable_runtime simulator runtime satisfies iOS $minimum_os+" >&2
+    elif [[ "$runtime_policy" == "compatibility" ]]; then
+      echo "error: no available released iOS 26 simulator runtime satisfies iOS $minimum_os+" >&2
+    else
+      echo "error: no available iOS simulator runtime satisfies iOS $minimum_os+" >&2
+    fi
     echo "Install one in Xcode Settings > Components." >&2
     exit 1
   fi

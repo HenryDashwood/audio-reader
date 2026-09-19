@@ -493,13 +493,31 @@ struct DirectorySearchTests {
 
 @Suite("Auth and positions", .serialized)
 struct AuthAndPositionTests {
-    /// tokenProvider is process-global, so these tests run serialized and
-    /// always restore it.
-    private func withToken<T>(_ token: String?, _ body: () async throws -> T) async rethrows -> T {
-        let previous = HearfulAPI.tokenProvider
-        HearfulAPI.tokenProvider = { token }
-        defer { HearfulAPI.tokenProvider = previous }
-        return try await body()
+    private func withToken<T>(
+        _ token: String?, _ body: nonisolated(nonsending) () async throws -> T
+    ) async rethrows -> T {
+        try await HearfulAPI.$tokenProvider.withValue({ token }, operation: body)
+    }
+
+    @Test func concurrentRequestsKeepTheirOwnTokens() async {
+        let originalToken = HearfulAPI.tokenProvider()
+        await withTaskGroup(of: String?.self) { group in
+            for token in ["first-account", "second-account"] {
+                group.addTask {
+                    await HearfulAPI.$tokenProvider.withValue({ token }) {
+                        await Task.yield()
+                        #expect(HearfulAPI.tokenProvider() == token)
+                        return HearfulAPI.tokenProvider()
+                    }
+                }
+            }
+            var tokens: Set<String> = []
+            for await token in group {
+                if let token { tokens.insert(token) }
+            }
+            #expect(tokens == ["first-account", "second-account"])
+        }
+        #expect(HearfulAPI.tokenProvider() == originalToken)
     }
 
     @Test func attachesBearerTokenToRequests() async throws {

@@ -23,8 +23,8 @@
 
 - The app is `ios/Hearful.xcodeproj`, scheme `Hearful`, written in Swift 6 and SwiftUI with an iOS 26 deployment target.
 - The product's user-facing name is **Magpie** (display name, Siri phrases, store metadata, spoken strings). The Xcode project, scheme, target, module, folder names, bundle identifier, and `UserDefaults`/Keychain keys deliberately remain `Hearful`; do not rename them.
-- Run `make ios-doctor` when diagnosing the local Apple toolchain. Use `make ios-build` for a compile check and `make ios-test` for the full Swift Testing suite. `make ios-test-latest` adds coverage on the newest installed iOS runtime.
-- The commands select the oldest installed compatible runtime by default. Set `IOS_SIMULATOR_ID` to target a particular simulator.
+- Run `make ios-doctor` when diagnosing the local Apple toolchain. Use `make ios-build` for a compile check and `make ios-test` for the full Swift Testing suite. `make ios-test-compatibility` checks the oldest installed released iOS 26 runtime; `make ios-test-latest` is optional preview coverage, including betas.
+- The commands default to released iOS 27.0, pinned in `scripts/ios-dev.sh`; update that pin deliberately after public releases. CI and TestFlight build validation require both iOS 27 and iOS 26 checks to pass. Set `IOS_SIMULATOR_ID` to target a particular simulator.
 - Files below `ios/Hearful/` and `ios/HearfulTests/` belong to Xcode file-system synchronized groups. Do not hand-edit `project.pbxproj` merely to add or remove source files.
 - Keep Swift concurrency checks clean. Do not silence Sendable or actor-isolation diagnostics without explaining why the underlying access is safe.
 - Accessibility is a product requirement: preserve VoiceOver semantics, Dynamic Type, sufficient contrast, and non-visual feedback when changing UI or playback flows.
@@ -37,7 +37,7 @@
 - For backend changes, run `make backend-check`.
 - For isolated Swift logic changes, run the relevant test or the full `make ios-test` suite.
 - For project settings, app entry points, or broad refactors, run both `make ios-build` and `make ios-test`.
-- For SDK-sensitive changes, also run `make ios-test-latest` when a newer simulator runtime is installed.
+- For SDK-sensitive changes, also run `make ios-test-compatibility`. Use `make ios-test-latest` for additional preview coverage when a newer simulator runtime is installed.
 - Report compiler warnings separately from test failures; do not present a warning-bearing build as clean.
 
 ## Android

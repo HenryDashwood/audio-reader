@@ -1,4 +1,4 @@
-.PHONY: backend-dev backend-check backend-compatibility ios-phone-staging ios-phone-production ios-doctor ios-build ios-index ios-test ios-test-latest ios-phone ios-phone-debug ios-phone-debug-stop app-store-validate app-store-fixtures app-store-backend app-store-screenshot app-store-sync
+.PHONY: backend-dev backend-check backend-compatibility ios-phone-staging ios-phone-production ios-doctor ios-build ios-index ios-test ios-test-compatibility ios-test-latest ios-phone ios-phone-debug ios-phone-debug-stop app-store-validate app-store-fixtures app-store-backend app-store-screenshot app-store-sync
 
 .PHONY: android-doctor android-build android-check android-unit-test android-emulators android-emulator android-test android-run android-screenshot android-layout android-logs
 
@@ -70,6 +70,9 @@ export TEST
 
 ios-test:
 	@./scripts/ios-dev.sh test
+
+ios-test-compatibility:
+	@./scripts/ios-dev.sh test-compatibility
 
 ios-test-latest:
 	@./scripts/ios-dev.sh test-latest

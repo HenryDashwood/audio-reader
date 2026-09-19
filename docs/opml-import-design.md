@@ -142,7 +142,7 @@ account changes, and recovering server jobs. Android instrumentation covers
 entry points, starting without confirmation, stopping after reopening, and large-text dark mode.
 
 Required release checks: `make backend-check`, `make backend-compatibility`,
-`make ios-build`, `make ios-test`, `make ios-test-latest`, `make android-check`,
+`make ios-build`, `make ios-test`, `make ios-test-compatibility`, `make android-check`,
 and the Android instrumentation tests. Tests use isolated data and mocked
 publishers; they do not subscribe a real account to public fixture feeds.
 

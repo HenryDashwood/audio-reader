@@ -32,14 +32,20 @@ struct LinkedAccountRefreshTests {
     }
 
     @Test func connectingReloadsPrivacyChoiceAndBothLibraryLists() async {
-        let previousToken = KeychainTokenStore.token
-        KeychainTokenStore.clear()
-        defer { KeychainTokenStore.token = previousToken }
+        // This suite runs alongside library/playback tests. Changing the real
+        // token would invalidate their in-flight account-scoped requests.
+        let originalScope = ShortcutScope.current
+        var storedToken: String?
         let api = HearfulAPI(baseURL: URL(string: "https://link.test")!, transport: Transport())
         let center = NotificationCenter()
-        let auth = AuthController(api: api, google: Google(), notificationCenter: center)
+        let auth = AuthController(
+            api: api, google: Google(), notificationCenter: center,
+            readToken: { storedToken }, writeToken: { storedToken = $0 })
         auth.bootstrap()
+        #expect(auth.state == .signedOut)
         await auth.signInWithGoogle()
+        #expect(storedToken == "link-test")
+        #expect(ShortcutScope.current == originalScope)
         #expect(auth.user?.aiDataSharingConsented == true)
         let notifications = Notifications()
         let observers = [Notification.Name.hearfulSubscriptionsChanged, .hearfulSavedChanged].map { name in
@@ -53,6 +59,7 @@ struct LinkedAccountRefreshTests {
         #expect(auth.user?.id == "current")
         #expect(auth.user?.aiDataSharingConsented == false)
         #expect(notifications.names == [.hearfulSubscriptionsChanged, .hearfulSavedChanged])
+        #expect(ShortcutScope.current == originalScope)
     }
 
     private final class Notifications {
