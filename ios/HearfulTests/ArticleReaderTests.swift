@@ -337,7 +337,7 @@ struct ArticleAffordanceTests {
     }
 }
 
-@Suite("Rendering an article")
+@Suite("Rendering an article", .serialized)
 @MainActor
 struct ArticleDocumentTests {
     @Test func htmlFromTheBackendIsRenderedAsItIs() async {
@@ -786,7 +786,7 @@ private final class FailingAPI: HearfulAPIProtocol, @unchecked Sendable {
     func reportDiagnostic(_ event: [String: any Sendable]) async throws {}
 }
 
-@Suite("Captured article headlines")
+@Suite("Captured article headlines", .serialized)
 @MainActor
 struct CapturedArticleHeadlineTests {
     private func load(title: String, body: String) async -> WKWebView {

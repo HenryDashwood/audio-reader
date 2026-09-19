@@ -249,6 +249,29 @@ def test_formatter_does_not_hide_local_test_failure(ios_runner):
 
 
 @pytest.mark.parametrize("phased", [False, True])
+@pytest.mark.parametrize("diagnostics", [None, "on-failure"])
+def test_system_diagnostics_are_opt_in_without_masking_test_failure(ios_runner, phased, diagnostics):
+    overrides = {"IOS_TEST_PREBOOT": "1"} if phased else {}
+    if diagnostics is not None:
+        overrides["IOS_TEST_DIAGNOSTICS"] = diagnostics
+    result, calls = ios_runner(FAKE_TEST_STATUS="65", **overrides)
+    assert result.returncode != 0
+    action = "test-without-building" if phased else "test"
+    arguments = calls[action]
+    index = arguments.index("-collect-test-diagnostics")
+    assert arguments[index + 1] == (diagnostics or "never")
+    if phased:
+        assert "-collect-test-diagnostics" not in calls["build-for-testing"]
+
+
+def test_invalid_diagnostic_policy_does_not_start_xcode(ios_runner):
+    result, calls = ios_runner(IOS_TEST_DIAGNOSTICS="invalid")
+    assert result.returncode != 0
+    assert "IOS_TEST_DIAGNOSTICS must be never or on-failure" in result.stderr
+    assert not calls
+
+
+@pytest.mark.parametrize("phased", [False, True])
 def test_compiler_crash_survives_formatter_and_is_saved(ios_runner, tmp_path, phased):
     diagnostic = "swift-frontend crashed: diagnostic omitted by formatter"
     overrides = {"IOS_TEST_PREBOOT": "1", "FAKE_BUILD_STATUS": "65"} if phased else {"FAKE_TEST_STATUS": "65"}

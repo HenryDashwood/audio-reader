@@ -20,6 +20,7 @@ usage() {
   echo "Overrides: IOS_SIMULATOR_ID, IOS_SIMULATOR_NAME, IOS_MINIMUM_OS, IOS_DERIVED_DATA_PATH"
   echo "           IOS_INDEX_DERIVED_DATA_PATH, TEST (suite or suite/test identifier)"
   echo "           IOS_TEST_PREBOOT=1 (overlap boot/build and report phase timings)"
+  echo "           IOS_TEST_DIAGNOSTICS=on-failure (opt into slow system diagnostics)"
   echo "           IOS_COMPILATION_CACHE=1 (enable Xcode compilation caching)"
   echo "           IOS_DEVICE_ID, IOS_DEVICE_API_URL, IOS_DEVICE_DERIVED_DATA_PATH, IOS_DEVICE_DRY_RUN"
 }
@@ -394,6 +395,16 @@ fi
 # Keep this array nonempty: macOS's Bash 3.2 treats an empty array as unset
 # under nounset, even when expanded with [@].
 test_args=("${common_args[@]}")
+if [[ "$action" == "test" ]]; then
+  # Xcode's simulator log collection can stall for ten minutes even after a
+  # passing suite. Ordinary test results and our raw logs remain available.
+  test_diagnostics="${IOS_TEST_DIAGNOSTICS:-never}"
+  case "$test_diagnostics" in
+    never|on-failure) ;;
+    *) echo "error: IOS_TEST_DIAGNOSTICS must be never or on-failure" >&2; exit 2 ;;
+  esac
+  test_args+=(-collect-test-diagnostics "$test_diagnostics")
+fi
 if [[ "$action" == "test" && -n "${TEST:-}" ]]; then
   test_identifier="$TEST"
   if [[ "$test_identifier" != HearfulTests && "$test_identifier" != HearfulTests/* ]]; then

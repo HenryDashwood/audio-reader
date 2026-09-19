@@ -25,7 +25,8 @@ private final class CapturePageLoader: NSObject, WKNavigationDelegate {
     }
 }
 
-@Suite("Safari article capture")
+// Each web view launches WebKit processes; bound concurrency on CI runners.
+@Suite("Safari article capture", .serialized)
 @MainActor
 struct SafariCaptureTests {
     private func paragraphs(_ subject: String, count: Int = 8) -> String {

@@ -10,6 +10,7 @@ final class VoiceOpeningAnnouncement: ObservableObject {
     private let center: NotificationCenter
     private let voiceOverRunning: @MainActor () -> Bool
     private let announce: @MainActor (String) -> Void
+    private let waitForTimeout: @MainActor (Duration) async throws -> Void
     private var observers: [NSObjectProtocol] = []
     private var timeout: Task<Void, Never>?
     private var continuation: CheckedContinuation<Bool, Never>?
@@ -21,11 +22,15 @@ final class VoiceOpeningAnnouncement: ObservableObject {
         announce: @escaping @MainActor (String) -> Void = {
             UIAccessibility.post(notification: .announcement, argument: NSAttributedString(
                 string: $0, attributes: [.accessibilitySpeechQueueAnnouncement: true]))
+        },
+        waitForTimeout: @escaping @MainActor (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
         }
     ) {
         self.center = center
         self.voiceOverRunning = voiceOverRunning
         self.announce = announce
+        self.waitForTimeout = waitForTimeout
     }
 
     func prepare() async -> Bool {
@@ -56,7 +61,7 @@ final class VoiceOpeningAnnouncement: ObservableObject {
                     }
                 })
                 timeout = Task {
-                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                    do { try await self.waitForTimeout(.seconds(30)) } catch { return }
                     // If VoiceOver interrupted the instruction or never reports
                     // completion, leave the accessible button available.
                     self.finish(id: id, ready: false)

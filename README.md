@@ -236,6 +236,11 @@ details, any remaining boot wait, test-and-launch time, and total elapsed time.
 Keep the default local mode for a warm simulator to avoid a second Xcode
 invocation.
 
+The wrapper disables Xcode's verbose system diagnostic collection, which can
+stall for ten minutes even after successful tests. Normal test results and raw
+logs are still generated. Set `IOS_TEST_DIAGNOSTICS=on-failure` when investigating
+a simulator problem that needs system diagnostics.
+
 Day to day, open `ios/Hearful.xcodeproj` and press ⌘R. The app and test targets
 use file-system synchronized groups, so files added under `ios/Hearful/` are
 picked up automatically without editing the project file.

@@ -5,6 +5,16 @@ import UIKit
 @Suite("VoiceOver conversation opening")
 @MainActor
 struct VoiceOpeningAnnouncementTests {
+    private func opening(
+        center: NotificationCenter = NotificationCenter(),
+        delay: ControlledDelay = ControlledDelay(),
+        announce: @escaping @MainActor (String) -> Void = { _ in }
+    ) -> VoiceOpeningAnnouncement {
+        VoiceOpeningAnnouncement(
+            center: center, voiceOverRunning: { true }, announce: announce,
+            waitForTimeout: { try await delay.wait(for: $0) })
+    }
+
     private func settle(until condition: () -> Bool) async {
         for _ in 0..<1000 {
             if condition() { return }
@@ -22,7 +32,7 @@ struct VoiceOpeningAnnouncementTests {
     @Test func waitsForItsOwnCompletedInstruction() async {
         let center = NotificationCenter()
         var spoken = ""
-        let opening = VoiceOpeningAnnouncement(center: center, voiceOverRunning: { true }, announce: { spoken = $0 })
+        let opening = opening(center: center, announce: { spoken = $0 })
         let task = Task { await opening.prepare() }
         await settle { opening.isWaiting }
         #expect(spoken == VoiceOpeningAnnouncement.message)
@@ -36,7 +46,7 @@ struct VoiceOpeningAnnouncementTests {
 
     @Test func interruptedInstructionDoesNotStartRecording() async {
         let center = NotificationCenter()
-        let opening = VoiceOpeningAnnouncement(center: center, voiceOverRunning: { true }, announce: { _ in })
+        let opening = opening(center: center)
         let task = Task { await opening.prepare() }
         await settle { opening.isWaiting }
         complete(center, success: false)
@@ -45,7 +55,7 @@ struct VoiceOpeningAnnouncementTests {
 
     @Test func closingCancelsTheWaitAndIgnoresLateAnnouncements() async {
         let center = NotificationCenter()
-        let opening = VoiceOpeningAnnouncement(center: center, voiceOverRunning: { true }, announce: { _ in })
+        let opening = opening(center: center)
         let task = Task { await opening.prepare() }
         await settle { opening.isWaiting }
         opening.cancel()
@@ -55,7 +65,7 @@ struct VoiceOpeningAnnouncementTests {
     }
 
     @Test func cancellingTheViewTaskDoesNotHang() async {
-        let opening = VoiceOpeningAnnouncement(voiceOverRunning: { true }, announce: { _ in })
+        let opening = opening()
         let task = Task { await opening.prepare() }
         await settle { opening.isWaiting }
         task.cancel()
@@ -68,5 +78,17 @@ struct VoiceOpeningAnnouncementTests {
         let opening = VoiceOpeningAnnouncement(voiceOverRunning: { false }, announce: { _ in announced = true })
         #expect(await opening.prepare())
         #expect(!announced)
+    }
+
+    @Test func missingCompletionTimesOutWithoutStartingRecording() async {
+        let delay = ControlledDelay()
+        let opening = opening(delay: delay)
+        let task = Task { await opening.prepare() }
+        await settle { delay.pendingCount == 1 }
+        #expect(opening.isWaiting)
+        #expect(delay.durations == [.seconds(30)])
+        delay.elapse()
+        #expect(await task.value == false)
+        #expect(!opening.isWaiting)
     }
 }
