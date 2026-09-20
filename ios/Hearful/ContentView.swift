@@ -369,6 +369,20 @@ struct VoiceSheet: View {
                     .accessibilitySortPriority(0.5)
                 }
 
+                if let question = controller.clarification, controller.canChooseClarification {
+                    ScrollView {
+                        VStack(spacing: 8) {
+                            ForEach(question.choices) { choice in
+                                Button(choice.label) { Task { await controller.choose(choice) } }
+                                    .buttonStyle(.bordered)
+                                    .frame(minHeight: 44)
+                                    .accessibilityHint("Answers Magpie's question")
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+                }
+
                 // Only when listening has actually been refused: the trip to
                 // Settings is otherwise a hunt through someone else's app.
                 // Outside the button above, so it is reachable on its own.

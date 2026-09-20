@@ -74,7 +74,13 @@ async def recoverable_events(
 ) -> AsyncGenerator[bytes]:
     assert body.request_id is not None
     key = (user_id, body.request_id)
-    fingerprint = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
+    # Preserve existing receipt fingerprints when new optional protocol fields
+    # carry their defaults; retries created before the upgrade still recover.
+    payload = body.model_dump(mode="json")
+    for name, default in (("clarification_id", None), ("selected_option_id", None), ("timezone", "UTC")):
+        if payload.get(name) == default:
+            payload.pop(name, None)
+    fingerprint = hashlib.sha256(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     maker = async_sessionmaker(session.bind, expire_on_commit=False)
     lock = _receipt_locks.setdefault(session.bind, asyncio.Lock())
     queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=256)

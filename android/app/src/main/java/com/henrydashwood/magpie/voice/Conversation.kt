@@ -14,7 +14,8 @@ data class ConversationTurn(val speaker: String, val text: String) {
 data class VoiceRequest(val transcript: String, val requestId: String = UUID.randomUUID().toString(),
     val viewedEpisodeId: Int? = null, val nowPlayingEpisodeId: Int? = null,
     val turns: List<ConversationTurn> = emptyList(), val recentActions: List<String> = emptyList(),
-    val country: String? = null) {
+    val country: String? = null, val clarificationId: String? = null, val selectedOptionId: String? = null,
+    val timezone: String = java.util.TimeZone.getDefault().id) {
     init {
         require(transcript.isNotBlank() && transcript.length <= 2_000)
         require(requestId.matches(Regex("[a-zA-Z0-9-]{1,64}")))
@@ -128,6 +129,8 @@ class Conversation(private val store: ConversationStore? = null,
         private set
     var pending: VoiceRequest? = null
         private set
+    var clarification: VoiceClarification? = null
+        private set
     var receipt: VoiceResponse? = null
         private set
     private var execution: String? = null
@@ -147,7 +150,8 @@ class Conversation(private val store: ConversationStore? = null,
         this.owner = owner; revision++; activation++; restoredOwner = null; recoveries = emptyList(); restoredRequests = emptySet()
         clear(); pending = null; receipt = null; execution = null; recentActions = emptyList()
     }
-    fun clear() { turns = emptyList(); lastSpoke = null }
+    fun abandonClarification() { clarification = null }
+    fun clear() { turns = emptyList(); lastSpoke = null; clarification = null }
     fun forgetIfStale() {
         if (lastSpoke?.let { nowMillis() - it > 120_000 } == true) clear()
     }
@@ -160,7 +164,7 @@ class Conversation(private val store: ConversationStore? = null,
     }
     /** Capture history before appending the current transcript, as required by /command. */
     fun request(transcript: String, viewedEpisodeId: Int? = null, playingEpisodeId: Int? = null,
-        country: String? = null, recover: Boolean = false): VoiceRequest {
+        country: String? = null, recover: Boolean = false, selectedOptionId: String? = null): VoiceRequest {
         forgetIfStale()
         require(transcript.isNotBlank() && transcript.length <= 2_000)
         if (recover && pending != null) {
@@ -170,6 +174,7 @@ class Conversation(private val store: ConversationStore? = null,
         check(recoveries.size < 100) { "Check your unfinished requests before starting another library request." }
         val request = VoiceRequest(transcript.trim(), viewedEpisodeId = viewedEpisodeId,
             nowPlayingEpisodeId = playingEpisodeId, country = country,
+            clarificationId = clarification?.id, selectedOptionId = selectedOptionId,
             turns = turns.takeLast(8), recentActions = recentActions)
         userSaid(request.transcript)
         revision++; pending = request; receipt = null
@@ -179,6 +184,7 @@ class Conversation(private val store: ConversationStore? = null,
     fun confirmed(request: VoiceRequest, account: String?, response: VoiceResponse) {
         if (owner == account && pending?.requestId == request.requestId) {
             structured(request.requestId)?.validate(response)
+            clarification = response.clarification
             receipt = response
             recoveries = recoveries.map { if (it.request.requestId == request.requestId) it.copy(receipt = response) else it }
         }
@@ -186,6 +192,7 @@ class Conversation(private val store: ConversationStore? = null,
     /** Keep a receipt until its client-side effects have succeeded, including after cancellation. */
     fun applied(request: VoiceRequest, account: String?, actions: List<String>) {
         if (owner != account || pending?.requestId != request.requestId) return
+        clarification = receipt?.clarification
         recoveries = recoveries.filterNot { it.request.requestId == request.requestId }
         restoredRequests = restoredRequests - request.requestId
         pending = recoveries.lastOrNull()?.request; receipt = recoveries.lastOrNull()?.receipt

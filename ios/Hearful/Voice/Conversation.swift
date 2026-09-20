@@ -26,12 +26,9 @@ nonisolated struct ConversationTurn: Encodable, Equatable, Sendable {
 /// nowhere. Every clarification the app asked for was a question it could not
 /// use the answer to.
 ///
-/// Held here rather than on the server: an exchange is a handful of short
-/// sentences that matter for the next half-minute, so keeping it on the phone
-/// costs a few hundred tokens per request and saves a session table, an expiry
-/// sweep, and any question of which device is mid-sentence. It is also the
-/// list she can see — the transcript in the voice sheet is these turns, so
-/// what is on screen is exactly what the model is being told.
+/// This text remains on the phone and is sent with each request. Structured
+/// pending questions live separately in VoiceSessionContext and on the server;
+/// their stable IDs let a short answer complete the intended action.
 struct Conversation: Equatable {
     /// How many turns travel with a request. Four questions and their answers,
     /// which is more than any real request needs; past that the history

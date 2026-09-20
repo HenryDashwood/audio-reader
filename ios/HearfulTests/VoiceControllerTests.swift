@@ -1719,6 +1719,45 @@ struct VoicePipelineTests {
 @Suite("Open voice conversations")
 @MainActor
 struct OpenVoiceConversationTests {
+    @Test func choiceButtonCanAnswerWhileFollowUpMicrophoneIsOpen() async {
+        let question = CommandClarification(id: "pending", question: "History or Politics?",
+            choices: [.init(id: "10", label: "History"), .init(id: "20", label: "Politics")], expiresAt: "2099-01-01T00:00:00Z")
+        let api = FakeAPI()
+        api.responses = [
+            CommandResponse(action: .unknown, spokenResponse: question.question, episode: nil,
+                expectsReply: true, clarification: question),
+            CommandResponse(action: .unsubscribed, spokenResponse: "Unsubscribed from Politics.", episode: nil),
+        ]
+        let (controller, _, speech, _, _) = makeController(api: api)
+        speech.keepsListening = true
+        let speaking = Task { await controller.beginCommand(transcript: "Unsubscribe from The Rest Is") }
+        await wait { controller.state == .listening }
+        #expect(controller.canChooseClarification)
+        await controller.choose(question.choices[1])
+        await speaking.value
+        #expect(api.requests.count == 2)
+        #expect(api.requests.last?.selectedOptionID == "20")
+        #expect(controller.clarification == nil)
+    }
+
+    @Test func shortAnswerCarriesStructuredQuestionWithANewRequestID() async {
+        let question = CommandClarification(id: "pending", question: "History or Politics?",
+            choices: [.init(id: "10", label: "History"), .init(id: "20", label: "Politics")], expiresAt: "2099-01-01T00:00:00Z")
+        let api = FakeAPI()
+        api.responses = [
+            CommandResponse(action: .unknown, spokenResponse: question.question, episode: nil,
+                expectsReply: true, clarification: question),
+            CommandResponse(action: .unsubscribed, spokenResponse: "Unsubscribed from Politics.", episode: nil),
+        ]
+        let (controller, _, speech, _, _) = makeController(api: api, preferences: .init(keepListening: false))
+        speech.transcripts = ["Unsubscribe from The Rest Is", "Politics"]
+        await controller.beginCommand()
+        #expect(api.requests.count == 2)
+        #expect(api.requests.last?.clarificationID == "pending")
+        #expect(api.requests.first?.requestID != api.requests.last?.requestID)
+        #expect(controller.clarification == nil)
+    }
+
     @Test func ordinaryAnswersAllowAnotherQuestionAndSilenceEndsQuietly() async {
         let api = FakeAPI()
         api.responses = [

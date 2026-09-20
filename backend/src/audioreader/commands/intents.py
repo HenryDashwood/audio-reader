@@ -23,12 +23,9 @@ class Speaker(StrEnum):
 class Turn(BaseModel):
     """One line already spoken in this exchange.
 
-    Conversations are held by the phone and sent back with each request, rather
-    than kept here under a session id. An exchange is a handful of short
-    sentences that matter for the next thirty seconds, so keeping it on the
-    device costs a few hundred tokens and saves a table, an expiry sweep, and
-    the whole question of what happens when two devices answer at once — and
-    the backend goes on answering every request from what it was sent.
+    Conversation text is held by the phone and sent with each request. Pending
+    clarification choices are stored separately on the server, so a short answer
+    can resolve an exact action without reconstructing it from this prose.
 
     It is also, verbatim, what the app shows her on screen: the transcript in
     the voice sheet is this list, so what she can see is what the model reads.
@@ -127,6 +124,26 @@ class Candidate:
     is_article: bool = False
 
 
+class ClarificationChoice(BaseModel):
+    id: str
+    label: str
+
+
+class Clarification(BaseModel):
+    id: str
+    question: str
+    choices: list[ClarificationChoice] = Field(default_factory=list)
+    expires_at: datetime
+
+
+class CommandStatus(StrEnum):
+    COMPLETED = "completed"
+    NEEDS_CLARIFICATION = "needs_clarification"
+    NOT_FOUND = "not_found"
+    UNSUPPORTED = "unsupported"
+    FAILED = "failed"
+
+
 @dataclass
 class InterpretResult:
     action: Action
@@ -144,3 +161,10 @@ class InterpretResult:
     #: after a remark that was the end of the matter.
     expects_reply: bool = False
     actions: list["InterpretResult"] = field(default_factory=list)
+
+    status: CommandStatus = CommandStatus.COMPLETED
+    clarification: Clarification | None = None
+
+    def __post_init__(self):
+        if self.expects_reply:
+            self.status = CommandStatus.NEEDS_CLARIFICATION

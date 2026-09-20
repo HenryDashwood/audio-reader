@@ -17,7 +17,7 @@ from audioreader.auth.dependencies import get_current_user
 from audioreader.config import settings
 from audioreader.db import get_session
 from audioreader.llm.client import LLMError
-from audioreader.llm.openai_responses import ResponseCompleted, ResponseTextDelta
+from audioreader.llm.openai_responses import ResponseCompleted
 from audioreader.llm.provider import get_conversation_llm_client
 from audioreader.main import create_app
 from audioreader.models import Episode, Feed, Subscription
@@ -120,11 +120,22 @@ async def test_released_client_exchanges(client, session, user, fake_llm, monkey
 
     class StreamedQuestion:
         async def stream(self, **kwargs):
-            yield ResponseTextDelta("Which show would you like?")
             yield ResponseCompleted(
                 {
                     "output": [
-                        {"type": "message", "content": [{"type": "output_text", "text": "Which show would you like?"}]}
+                        {
+                            "type": "function_call",
+                            "name": "ask_clarification",
+                            "call_id": "question",
+                            "arguments": json.dumps(
+                                {
+                                    "action": "other",
+                                    "target_ids": [],
+                                    "question": "Which show would you like?",
+                                    "remaining_request": "Choose a show",
+                                }
+                            ),
+                        }
                     ]
                 }
             )

@@ -30,6 +30,18 @@ class VoiceWireTest {
         override fun getResponseCode() = status
         override fun getErrorStream() = ByteArrayInputStream(error.toByteArray())
     }
+    @Test fun clarificationWireRoundTripPreservesChoiceIDsAndTimezone() {
+        val json = JSONObject("""{"action":"unknown","spoken_response":"Which?","expects_reply":true,
+            "status":"needs_clarification","clarification":{"id":"q1","question":"Which?",
+            "expires_at":"2099-01-01T00:00:00Z","choices":[{"id":"20","label":"Politics"}]}}""")
+        val question = VoiceWire.response(json).clarification!!
+        val body = VoiceWire.request(VoiceRequest("Politics", clarificationId = question.id,
+            selectedOptionId = question.choices.single().id, timezone = "Europe/London"))
+        assertEquals("q1", body.getString("clarification_id"))
+        assertEquals("20", body.getString("selected_option_id"))
+        assertEquals("Europe/London", body.getString("timezone"))
+    }
+
     @Test fun requestUsesExistingSwiftContractAndStreamDeliversFinalEpisode() = runBlocking {
         lateinit var connection: Connection
         val api = HttpVoiceApi("https://voice.invalid", connect = { url ->

@@ -160,6 +160,22 @@ class VoiceConversationTest {
         }
     }
 
+    @Test fun clarificationButtonsSendStableChoiceAndClearWhenAnswered() {
+        val question = VoiceClarification("pending-question", "History or Politics?",
+            listOf(ClarificationChoice("10", "History"), ClarificationChoice("20", "Politics")), "2099-01-01T00:00:00Z")
+        api.response = VoiceResponse(VoiceAction.Unknown, question.question, expectsReply = true, clarification = question)
+        ask("Unsubscribe from The Rest Is"); idle()
+        compose.runOnUiThread { model.voice.listen() }
+        compose.waitUntil(5_000) { input.active }
+        compose.onNodeWithText("Politics", substring = false).assertIsDisplayed()
+        api.response = VoiceResponse(VoiceAction.Unsubscribed, "Unsubscribed from Politics.")
+        compose.onNodeWithText("Politics", substring = false).performClick(); idle()
+        assertEquals("pending-question", api.requests.last().clarificationId)
+        assertEquals("20", api.requests.last().selectedOptionId)
+        assertNotEquals(api.requests.first().requestId, api.requests.last().requestId)
+        assertNull(model.voice.state.value.clarification)
+    }
+
     @Test fun confirmationFinishesBeforeNewPlaybackAndInterruptedReplyCanRecover() {
         play(); output.gate = CompletableDeferred(); api.response = VoiceResponse(VoiceAction.Play, "Playing the second podcast.", api.second)
         ask("Play the second podcast")

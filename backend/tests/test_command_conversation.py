@@ -1,7 +1,7 @@
 from audioreader.commands.conversation import AssistantDelta, ConversationFinished, converse
 from audioreader.commands.intents import Action
-from audioreader.llm.openai_responses import ResponseCompleted, ResponseTextDelta
-from audioreader.models import Episode, Feed, Subscription
+from audioreader.llm.openai_responses import ResponseCompleted
+from audioreader.models import Episode, Feed, Subscription, utcnow
 from audioreader.routers.commands import command_stream
 from audioreader.schemas import CommandRequest
 
@@ -63,35 +63,28 @@ async def test_model_can_resolve_imperfect_dictation_then_subscribe(session, use
     assert len(client.requests) == 1
 
 
-async def test_model_question_is_streamed_and_reopens_microphone(session, user):
+async def test_model_question_explicitly_reopens_microphone(session, user):
     client = ScriptedResponsesClient(
         [
             [
-                ResponseTextDelta("Do you mean SemiAnalysis, "),
-                ResponseTextDelta("the semiconductor research firm?"),
-                ResponseCompleted(
+                action_call(
+                    "ask_clarification",
                     {
-                        "output": [
-                            {
-                                "type": "message",
-                                "content": [
-                                    {
-                                        "type": "output_text",
-                                        "text": "Do you mean SemiAnalysis, the semiconductor research firm?",
-                                    }
-                                ],
-                            }
-                        ]
-                    }
-                ),
+                        "action": "other",
+                        "target_ids": [],
+                        "question": "Which publication do you mean?",
+                        "remaining_request": "Subscribe to analysis",
+                    },
+                )
             ]
         ]
     )
-
     events = [event async for event in converse(session, client, transcript="subscribe to analysis", user=user)]
-    finished = next(event for event in events if isinstance(event, ConversationFinished))
-    assert finished.result.action is Action.UNKNOWN
-    assert finished.result.expects_reply is True
+    result = next(event.result for event in events if isinstance(event, ConversationFinished))
+    assert result.action is Action.UNKNOWN
+    assert result.expects_reply is True
+    assert result.clarification is not None
+    assert result.clarification.question == "Which publication do you mean?"
 
 
 async def test_saloni_dattani_regression_uses_web_result_then_subscribes(session, user, monkeypatch):
@@ -256,7 +249,9 @@ async def test_compound_request_keeps_each_action_and_continues(session, user, m
 
 async def test_compound_request_continues_through_lookup_between_actions(session, user, monkeypatch):
     feed = Feed(url="https://example.com/feed", title="A show")
-    episode = Episode(feed=feed, guid="latest", title="The latest", audio_url="https://example.com/audio.mp3")
+    episode = Episode(
+        feed=feed, guid="latest", title="The latest", audio_url="https://example.com/audio.mp3", published_at=utcnow()
+    )
     session.add(episode)
     await session.commit()
 
@@ -276,7 +271,22 @@ async def test_compound_request_continues_through_lookup_between_actions(session
         [
             [action_call("subscribe_to_feed", {"feed_url": feed.url, "continue_request": True})],
             [action_call("load_show_episodes", {"feed_url": feed.url, "episode_query": None})],
-            [action_call("play_episode", {"episode_id": episode.id, "continue_request": False})],
+            [
+                action_call(
+                    "play_matching_episode",
+                    {
+                        "feed_id": feed.id,
+                        "query": "",
+                        "day": None,
+                        "order": "latest",
+                        "unheard": False,
+                        "saved_only": False,
+                        "kind": None,
+                        "max_seconds": None,
+                        "continue_request": False,
+                    },
+                )
+            ],
         ]
     )
     events = [

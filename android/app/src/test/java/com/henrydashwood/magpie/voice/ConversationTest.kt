@@ -4,6 +4,31 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ConversationTest {
+    @Test fun shortAnswerRetainsQuestionButGetsNewRequestIdAndClearsAfterCompletion() {
+        val context = Conversation().apply { activate("alice") }
+        val first = context.request("Unsubscribe from The Rest Is")
+        val question = VoiceClarification("question-id", "History or Politics?",
+            listOf(ClarificationChoice("10", "History"), ClarificationChoice("20", "Politics")), "2026-09-21T00:00:00Z")
+        context.confirmed(first, "alice", VoiceResponse(VoiceAction.Unknown, question.question,
+            expectsReply = true, clarification = question))
+        context.applied(first, "alice", emptyList())
+        val reply = context.request("Politics", selectedOptionId = "20")
+        assertEquals("question-id", reply.clarificationId)
+        assertEquals("20", reply.selectedOptionId)
+        assertNotEquals(first.requestId, reply.requestId)
+        assertSame(reply, context.request("try again", recover = true))
+        context.confirmed(reply, "alice", VoiceResponse(VoiceAction.Unsubscribed, "Unsubscribed from Politics"))
+        assertNull(context.clarification)
+    }
+    @Test fun questionCannotSurviveAccountChange() {
+        val context = Conversation().apply { activate("alice") }
+        val request = context.request("Which show")
+        context.confirmed(request, "alice", VoiceResponse(VoiceAction.Unknown, "Which?", clarification =
+            VoiceClarification("private", "Which?", emptyList(), "2026-09-21T00:00:00Z")))
+        context.activate("bob")
+        assertNull(context.request("Politics").clarificationId)
+    }
+
     @Test fun confirmedReceiptsSurviveRecoveryButCannotLeakToNewRequestsOrAccounts() {
         val context = Conversation().apply { activate("alice") }
         val request = context.request("File this")

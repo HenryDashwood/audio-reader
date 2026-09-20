@@ -111,6 +111,21 @@ final class VoiceController: ObservableObject {
     /// the model as settled history.
     @Published private(set) var liveUserText = ""
     @Published private(set) var liveAssistantText = ""
+    @Published private(set) var clarification: CommandClarification?
+    private var selectedOptionID: String?
+
+    func choose(_ choice: CommandClarification.Choice) async {
+        guard canChooseClarification, clarification?.choices.contains(where: { $0.id == choice.id }) == true else { return }
+        if state == .listening {
+            let previous = commandTask
+            cancel()
+            await previous?.value
+        }
+        guard !isBusy, !sessionContext.isExecuting else { return }
+        selectedOptionID = choice.id
+        defer { selectedOptionID = nil }
+        await beginCommand(transcript: choice.label)
+    }
     /// True once listening has been refused for want of permission. The sheet
     /// puts a button on screen so the trip to Settings is one tap rather than
     /// a hunt through someone else's app.
@@ -130,7 +145,7 @@ final class VoiceController: ObservableObject {
     /// response into a slow request with an extra progress cue.
     private let progressDelay: @MainActor (Duration) async throws -> Void
     private let listeningDeadlineSleep: @MainActor @Sendable (Duration) async throws -> Void
-    private var commandTask: Task<Void, Never>?
+    @Published private var commandTask: Task<Void, Never>?
     private var commandID: UUID?
     private let sessionContext: VoiceSessionContext
     private var pendingRequest: CommandRequest? {
@@ -147,7 +162,8 @@ final class VoiceController: ObservableObject {
     }
     var viewedEpisode: Episode?
     var vocabulary: [String] = []
-    private var isBusy: Bool { commandTask != nil }
+    var isBusy: Bool { commandTask != nil }
+    var canChooseClarification: Bool { !isBusy || state == .listening }
     /// True while an episode has been paused only so she could be heard.
     private var interruptedPlayback = false
     /// True once the sheet has gone while a command was still in flight.
@@ -173,6 +189,7 @@ final class VoiceController: ObservableObject {
         }
     ) {
         self.sessionContext = sessionContext
+        self.clarification = sessionContext.clarification
         self.conversation = sessionContext.conversation
         self.api = api
         self.speech = speech
@@ -375,10 +392,12 @@ final class VoiceController: ObservableObject {
             // the more specific of the two ("stop" is a pause, "stop in
             // twenty minutes" is not).
             let simplePhrase = heard.lowercased().trimmingCharacters(in: .punctuationCharacters)
-            if VoiceConversationPreferences.endsConversation(heard) {
+            if selectedOptionID == nil, VoiceConversationPreferences.endsConversation(heard) {
                 attempt.outcome = .spoken
                 state = .idle
                 feedback.play(.listeningEnded)
+                sessionContext.clarification = nil
+                clarification = nil
                 conversationEnded = true
                 return .done
             }
@@ -395,14 +414,18 @@ final class VoiceController: ObservableObject {
                 await finish(saying: "Back to \(rate) times speed.")
                 return .answered
             }
-            if let sleep = SleepCommand.match(heard) {
+            if selectedOptionID == nil, let sleep = SleepCommand.match(heard) {
+                sessionContext.clarification = nil
+                clarification = nil
                 sessionContext.undoSpeed = nil
                 attempt.outcome = .sleep
                 attempt.sleepCommand = sleep == .cancel ? "cancel" : "after"
                 await perform(sleep)
                 return .answered
             }
-            if let transport = TransportCommand.match(heard) {
+            if selectedOptionID == nil, let transport = TransportCommand.match(heard) {
+                sessionContext.clarification = nil
+                clarification = nil
                 attempt.outcome = .transport
                 attempt.transportCommand = String(describing: transport)
                 perform(transport)
@@ -437,6 +460,7 @@ final class VoiceController: ObservableObject {
                 recovery
                 ? pendingRequest ?? CommandRequest(transcript: heard)
                 : CommandRequest(
+                    clarificationID: sessionContext.clarification?.id, selectedOptionID: selectedOptionID,
                     transcript: heard, requestID: UUID().uuidString, viewedEpisodeID: viewedEpisode?.id,
                     recentActions: recentActions, nowPlayingEpisodeID: nowPlaying, turns: Array(earlier))
             pendingRequest = request
@@ -451,6 +475,9 @@ final class VoiceController: ObservableObject {
             ) { self.liveAssistantText += $0 }
             guard !isCancelled else { return .done }
             progress.cancel()
+            sessionContext.clarification = response.clarification
+            clarification = response.clarification
+            selectedOptionID = nil
             attempt.markResponse()
             attempt.outcome = Self.outcome(of: response)
             await handle(response)

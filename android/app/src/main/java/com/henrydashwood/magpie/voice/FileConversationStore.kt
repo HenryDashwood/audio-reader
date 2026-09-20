@@ -35,7 +35,10 @@ class FileConversationStore(private val directory: File) : ConversationStore {
                 request.getJSONArray("turns").let { turns -> (0 until turns.length()).map { turns.getJSONObject(it).let { turn ->
                     ConversationTurn(turn.getString("speaker"), turn.getString("text")) } } },
                 request.getJSONArray("recent_actions").let { actions -> (0 until actions.length()).map(actions::getString) },
-                if (request.isNull("country")) null else request.getString("country")),
+                if (request.isNull("country")) null else request.getString("country"),
+                request.optString("clarification_id").takeIf { it.isNotEmpty() },
+                request.optString("selected_option_id").takeIf { it.isNotEmpty() },
+                request.optString("timezone", "UTC")),
                 if (row.isNull("receipt")) null else VoiceWire.response(row.getJSONObject("receipt")),
                 if (row.isNull("structured")) null else row.getJSONObject("structured").let {
                     StructuredLibraryRequest(it.getString("action"), it.optionalInt("episode_id"), it.getBoolean("use_current"))
@@ -61,6 +64,10 @@ class FileConversationStore(private val directory: File) : ConversationStore {
         catch (failure: Exception) { file.failWrite(stream); throw failure }
     } }
     private fun response(value: VoiceResponse): JSONObject = JSONObject().put("action", value.action.wire)
+        .put("status", value.status).put("clarification", value.clarification?.let { question ->
+            JSONObject().put("id", question.id).put("question", question.question).put("expires_at", question.expiresAt)
+                .put("choices", JSONArray().apply { question.choices.forEach { put(JSONObject().put("id", it.id).put("label", it.label)) } })
+        })
         .put("spoken_response", value.spokenResponse).put("speed", value.speed).put("expects_reply", value.expectsReply)
         .put("episode", value.episode?.let(::episode)).put("actions", JSONArray().apply { value.actions.forEach { put(response(it)) } })
     private fun episode(value: RemoteEpisode) = JSONObject().put("id", value.id).put("title", value.title)

@@ -11,6 +11,22 @@ import java.io.File
 import java.util.UUID
 
 class FileConversationStoreTest {
+    @Test fun clarificationFieldsSurviveARecoveredRequestAndReceipt() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<MagpieTestApplication>()
+        val directory = File(app.noBackupFilesDir, "clarification-test-${UUID.randomUUID()}")
+        try {
+            val owner = "a".repeat(64)
+            val request = VoiceRequest("Politics", clarificationId = "question", selectedOptionId = "20", timezone = "Europe/London")
+            val question = VoiceClarification("next-question", "Which episode?",
+                listOf(ClarificationChoice("30", "The Budget")), "2099-01-01T00:00:00Z")
+            val receipt = VoiceResponse(VoiceAction.Unknown, question.question, expectsReply = true,
+                status = "needs_clarification", clarification = question)
+            val rows = listOf(RecoverableVoiceRequest(request, receipt))
+            FileConversationStore(directory).write(owner, rows)
+            assertEquals(rows, FileConversationStore(directory).read(owner))
+        } finally { directory.deleteRecursively() }
+    }
+
     @Test fun freshStoresPreserveExactRequestContextAndCompoundReceiptForEachAccount() = runBlocking {
         val app = ApplicationProvider.getApplicationContext<MagpieTestApplication>()
         val directory = File(app.noBackupFilesDir, "voice-journal-test-${UUID.randomUUID()}")

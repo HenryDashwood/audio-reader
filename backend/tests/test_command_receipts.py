@@ -107,3 +107,65 @@ async def test_cancellation_cannot_erase_a_completed_receipt(session, user):
     first = [line async for line in recoverable_events(request, user.id, session, events)]
     await cancel_request(session, user.id, "finished")
     assert first == [line async for line in recoverable_events(request, user.id, session, events)]
+
+
+async def test_answer_receipt_replays_and_other_request_cannot_consume_question_twice(session, user):
+    from sqlalchemy import select
+
+    from audioreader.models import Feed, Subscription
+    from audioreader.routers.commands import command_stream
+
+    class NoModel:
+        async def stream(self, **kwargs):
+            raise AssertionError("Bounded question and exact answer must not call a model")
+            yield
+
+    feeds = [Feed(title=f"The Rest Is {name}", url=f"https://example.test/{name}") for name in ("History", "Politics")]
+    session.add_all(feeds)
+    await session.flush()
+    session.add_all(Subscription(user_id=user.id, feed_id=feed.id) for feed in feeds)
+    await session.commit()
+
+    async def call(body):
+        response = await command_stream(body, session, NoModel(), user)
+        lines = [
+            json.loads(line if isinstance(line, (str, bytes)) else line.tobytes())
+            async for line in response.body_iterator
+        ]
+        return next(line["response"] for line in lines if line["type"] == "result")
+
+    first = await call(CommandRequest(transcript="Unsubscribe from The Rest Is", request_id="question"))
+    question = first["clarification"]
+    assert first["status"] == "needs_clarification"
+    answer = CommandRequest(transcript="Politics", request_id="answer", clarification_id=question["id"])
+    result = await call(answer)
+    assert result["action"] == "unsubscribed"
+    assert await call(answer) == result
+    again = await call(answer.model_copy(update={"request_id": "different-answer"}))
+    assert again["status"] == "not_found"
+    assert list(await session.scalars(select(Subscription.feed_id))) == [feeds[0].id]
+
+
+async def test_default_new_fields_preserve_old_receipt_fingerprint(session, user):
+    import hashlib
+
+    from audioreader.models import VoiceCommandReceipt
+
+    body = CommandRequest(transcript="old request", request_id="old")
+    old_payload = body.model_dump(exclude={"clarification_id", "selected_option_id", "timezone"})
+    final = '{"type":"result","response":{"action":"unknown","spoken_response":"Earlier result"}}\n'
+    session.add(
+        VoiceCommandReceipt(
+            user_id=user.id,
+            request_id="old",
+            result_json=final,
+            fingerprint=hashlib.sha256(json.dumps(old_payload, separators=(",", ":")).encode()).hexdigest(),
+        )
+    )
+    await session.commit()
+
+    async def never(_session):
+        raise AssertionError("Do not reexecute an old receipt")
+        yield
+
+    assert [line async for line in recoverable_events(body, user.id, session, never)] == [final.encode()]

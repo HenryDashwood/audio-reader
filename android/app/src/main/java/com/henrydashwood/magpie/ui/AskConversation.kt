@@ -139,6 +139,11 @@ fun AskConversation(model: MagpieModel) {
                         Column { Text(if (turn.speaker == "her") "You" else "Magpie", style = MaterialTheme.typography.labelLarge)
                             Text(turn.text) }
                     }
+                    if (!state.busy || state.phase == VoicePhase.Listening) state.clarification?.choices?.forEach { choice -> item {
+                        TextButton(onClick = { model.voice.choose(choice) }, modifier = Modifier.fillMaxWidth()) {
+                            Text(choice.label)
+                        }
+                    } }
                     if (state.turns.isEmpty()) item {
                         Text("Tap Listen, then ask Magpie to find something, read an article, or control playback. You can also type a request.")
                     }

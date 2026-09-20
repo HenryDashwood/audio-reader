@@ -35,7 +35,7 @@ enum class VoicePhase { Idle, Preparing, Listening, Thinking, Speaking, Consent 
 data class VoiceSessionState(val visible: Boolean = false, val phase: VoicePhase = VoicePhase.Idle,
     val turns: List<ConversationTurn> = emptyList(), val heard: String = "", val reply: String = "",
     val error: String? = null, val recoverable: Boolean = false, val launchListening: String? = null,
-    val recoveryRequests: List<VoiceRequest> = emptyList()) {
+    val recoveryRequests: List<VoiceRequest> = emptyList(), val clarification: VoiceClarification? = null) {
     val busy: Boolean get() = phase in setOf(VoicePhase.Preparing, VoicePhase.Listening, VoicePhase.Thinking, VoicePhase.Speaking)
 }
 
@@ -69,7 +69,7 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         close()
         activate(); viewedId = viewedEpisodeId; conversation.forgetIfStale()
         mutable.value = VoiceSessionState(visible = true, turns = conversation.turns, recoverable = conversation.pending != null,
-            launchListening = if (listenOnOpen) UUID.randomUUID().toString() else null, recoveryRequests = conversation.recoveryRequests)
+            launchListening = if (listenOnOpen) UUID.randomUUID().toString() else null, recoveryRequests = conversation.recoveryRequests, clarification = conversation.clarification)
         val account = host.account()
         if (conversation.durable && account.live && account.owner != null) {
             val id = version
@@ -99,6 +99,10 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         runCatching { telemetry.begin(host.account(), accessible, conversation.turns.size)?.apply {
             outcome = VoiceOutcome.PermissionDenied; finish()
         } }
+    }
+    fun choose(choice: ClarificationChoice) {
+        if ((state.value.busy && state.value.phase != VoicePhase.Listening) || conversation.clarification?.choices?.contains(choice) != true) return
+        start(choice.label, autoFollowUp = false, selectedOptionId = choice.id)
     }
     fun submit(text: String) { if (text.isNotBlank()) start(text.trim(), autoFollowUp = false) }
     fun continueRequest(request: VoiceHandoffs.Request) {
@@ -134,7 +138,7 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         mutable.update { it.copy(visible = false, phase = VoicePhase.Idle, heard = "", reply = "", launchListening = null) }
     }
 
-    private fun start(text: String?, autoFollowUp: Boolean, accessible: Boolean = false, allowConsent: Boolean = false, recoveryId: String? = null, dismissId: String? = null) {
+    private fun start(text: String?, autoFollowUp: Boolean, accessible: Boolean = false, allowConsent: Boolean = false, recoveryId: String? = null, dismissId: String? = null, selectedOptionId: String? = null) {
         if (!state.value.visible) return
         if (text != null && text.length > 2_000) {
             mutable.update { it.copy(error = "Please ask in a shorter sentence.") }; return
@@ -193,14 +197,16 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                         break
                     }
                     mutable.update { it.copy(phase = VoicePhase.Thinking, heard = heard) }
-                    val command = LocalCommand.match(heard)
+                    val command = if (selectedOptionId == null) LocalCommand.match(heard) else null
                     if (command == LocalCommand.EndConversation) {
+                        conversation.abandonClarification()
                         attempt?.local(command)
                         conversation.userSaid(heard); publish(); mutable.update { it.copy(visible = false) }; break
                     }
                     val local = command?.let { host.local(it, active.token) }
                     var expectsReply = false
                     if (local != null) {
+                        conversation.abandonClarification()
                         attempt?.local(checkNotNull(command)); attempt?.answered()
                         conversation.userSaid(heard); publish()
                         say(local.reply, ::checkTurn)
@@ -221,7 +227,7 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                         checkTurn()
                         val request = if (undo) conversation.unfinished("undo")?.also { conversation.selectRecovery(it.requestId) }
                             ?: conversation.structuredRequest(StructuredLibraryRequest("undo", null), "Undo the last library change")
-                        else conversation.request(heard, viewedId, account.playingEpisodeId, country = account.country, recover = recovering)
+                        else conversation.request(heard, viewedId, account.playingEpisodeId, country = account.country, recover = recovering, selectedOptionId = selectedOptionId)
                         publish()
                         active.safeToResume = false
                         conversation.persist(owner); checkTurn()
@@ -282,5 +288,5 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         mutable.update { it.copy(phase = VoicePhase.Speaking, reply = "") }
         output.speak(text); checkTurn()
     }
-    private fun publish() { mutable.update { it.copy(turns = conversation.turns, heard = if (it.phase == VoicePhase.Consent) it.heard else "", recoverable = conversation.pending != null, recoveryRequests = conversation.recoveryRequests) } }
+    private fun publish() { mutable.update { it.copy(turns = conversation.turns, heard = if (it.phase == VoicePhase.Consent) it.heard else "", recoverable = conversation.pending != null, recoveryRequests = conversation.recoveryRequests, clarification = conversation.clarification) } }
 }

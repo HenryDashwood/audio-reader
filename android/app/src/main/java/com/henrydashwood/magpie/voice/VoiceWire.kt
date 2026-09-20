@@ -6,6 +6,8 @@ import org.json.JSONObject
 
 object VoiceWire {
     fun request(value: VoiceRequest) = JSONObject().put("supports_compound_actions", true)
+        .put("clarification_id", value.clarificationId).put("selected_option_id", value.selectedOptionId)
+        .put("timezone", value.timezone)
         .put("transcript", value.transcript).put("request_id", value.requestId)
         .put("viewed_episode_id", value.viewedEpisodeId).put("now_playing_episode_id", value.nowPlayingEpisodeId)
         .put("country", value.country?.lowercase(java.util.Locale.ROOT))
@@ -39,7 +41,15 @@ object VoiceWire {
             require(action != VoiceAction.Speed || speed != null)
             require(action !in setOf(VoiceAction.Play, VoiceAction.Played, VoiceAction.Dismiss, VoiceAction.Restore) || episode != null)
         }
-        return VoiceResponse(action, spoken, episode, speed, json.optBoolean("expects_reply"), actions)
+        val clarification = json.optJSONObject("clarification")?.let { value ->
+            val options = value.getJSONArray("choices")
+            require(options.length() <= 3)
+            VoiceClarification(value.getString("id"), value.getString("question"),
+                (0 until options.length()).map { index -> options.getJSONObject(index).let {
+                    ClarificationChoice(it.getString("id"), it.getString("label")) } }, value.getString("expires_at"))
+        }
+        return VoiceResponse(action, spoken, episode, speed, json.optBoolean("expects_reply"), actions,
+            json.optString("status").takeIf { it.isNotEmpty() }, clarification)
     }
     fun failure(body: String): String = runCatching {
         JSONObject(body).optJSONObject("detail")?.optString("spoken_response")?.takeIf { it.isNotBlank() && it.length <= 32_000 }

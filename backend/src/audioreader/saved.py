@@ -425,7 +425,20 @@ async def reconcile(session: AsyncSession, episodes: list[Episode]) -> list[Epis
     return result
 
 
-async def voice_candidates(session, user, query="", *, unheard=False, kind=None, max_seconds=None):
+async def voice_candidates(
+    session,
+    user,
+    query="",
+    *,
+    unheard=False,
+    kind=None,
+    max_seconds=None,
+    feed_id=None,
+    published_after=None,
+    published_before=None,
+    oldest=False,
+    chronological=False,
+):
     """Search private titles only inside their owner's saved selections."""
     from audioreader.commands.intents import Candidate
     from audioreader.text import search_key
@@ -446,6 +459,15 @@ async def voice_candidates(session, user, query="", *, unheard=False, kind=None,
     words = search_key(query).split()
     matches = []
     for record, episode in records:
+        if feed_id is not None and episode.feed_id != feed_id:
+            continue
+        published = episode.published_at
+        if published is not None and published.tzinfo is None:
+            published = published.replace(tzinfo=utcnow().tzinfo)
+        if published_after is not None and (published is None or published < published_after):
+            continue
+        if published_before is not None and (published is None or published >= published_before):
+            continue
         content = record.content
         if content is None and episode.audio_url is None:
             continue
@@ -474,5 +496,17 @@ async def voice_candidates(session, user, query="", *, unheard=False, kind=None,
                 duration_seconds=seconds,
                 is_article=episode.audio_url is None,
             )
+        )
+    # Filter and order before truncation so older dated matches remain reachable.
+    if published_after is not None or published_before is not None or oldest or chronological:
+        matches = [item for item in matches if item.published_at is not None]
+        matches.sort(
+            key=lambda item: (
+                item.published_at.replace(tzinfo=utcnow().tzinfo)
+                if item.published_at and item.published_at.tzinfo is None
+                else item.published_at or datetime.min.replace(tzinfo=UTC),
+                item.id,
+            ),
+            reverse=not oldest,
         )
     return matches[:60]

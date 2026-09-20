@@ -658,7 +658,7 @@ def directory_results(term: str, world: tuple[Show, ...], limit: int = 5) -> lis
 #: Hosts the eval is allowed to reach for real. Only the model: everything
 #: else is served from the definitions above, so a run is reproducible and
 #: costs one API call per model turn rather than a walk of the live web.
-LLM_HOSTS = ("openrouter.ai", "api.anthropic.com", "api.openai.com")
+LLM_HOSTS = ("openrouter.ai", "api.anthropic.com", "api.openai.com", "api.typesafe.ai")
 
 
 def stub_world(world: tuple[Show, ...]) -> respx.MockRouter:

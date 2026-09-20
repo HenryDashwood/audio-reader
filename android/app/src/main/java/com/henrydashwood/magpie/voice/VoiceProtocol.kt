@@ -11,9 +11,11 @@ enum class VoiceAction(val wire: String) {
     Subscribed("subscribed"), Unsubscribed("unsubscribed"), Unknown("unknown");
     companion object { fun decode(value: String) = entries.firstOrNull { it.wire == value } ?: Unknown }
 }
+data class ClarificationChoice(val id: String, val label: String)
+data class VoiceClarification(val id: String, val question: String, val choices: List<ClarificationChoice>, val expiresAt: String)
 data class VoiceResponse(val action: VoiceAction, val spokenResponse: String,
     val episode: RemoteEpisode? = null, val speed: Float? = null, val expectsReply: Boolean = false,
-    val actions: List<VoiceResponse> = emptyList()) {
+    val actions: List<VoiceResponse> = emptyList(), val status: String? = null, val clarification: VoiceClarification? = null) {
     val recoveryMessage: String get() = "Earlier result: $spokenResponse" +
         if (effects.any { it.action in setOf(VoiceAction.Play, VoiceAction.Speed) }) " Choose Play or a playback speed to continue now." else ""
     val effects: List<VoiceResponse> get() = if (actions.isEmpty()) listOf(this) else actions.flatMap { it.effects }

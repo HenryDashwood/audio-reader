@@ -86,6 +86,11 @@ def check_rate_limit(user: CurrentUser) -> None:
 async def command(
     body: CommandRequest, session: Session, llm: LLM, discovery_llm: DiscoveryLLM, user: CurrentUser
 ) -> CommandResponse:
+    if body.clarification_id or body.selected_option_id:
+        raise HTTPException(
+            status_code=422,
+            detail={"spoken_response": "Please answer this question through the conversation endpoint."},
+        )
     # This is deliberately enforced server-side as well as in the app. An old
     # client, a Siri shortcut, or a hand-written request must not be able to
     # send personal data to the model without the recorded current choice.
@@ -185,6 +190,8 @@ async def command(
             episode=episode,
             speed=result.speed,
             expects_reply=result.expects_reply,
+            status=result.status,
+            clarification=result.clarification,
         )
 
 
@@ -242,6 +249,9 @@ async def command_stream(
                     supports_compound_actions=body.supports_compound_actions,
                     viewed_episode_id=body.viewed_episode_id,
                     recent_actions=body.recent_actions,
+                    clarification_id=body.clarification_id,
+                    selected_option_id=body.selected_option_id,
+                    timezone=body.timezone,
                 ):
                     if isinstance(event, AssistantDelta):
                         yield _line({"type": "assistant_delta", "text": event.text})
@@ -268,6 +278,8 @@ async def command_stream(
                             episode=episode,
                             speed=result.speed,
                             expects_reply=result.expects_reply,
+                            status=result.status,
+                            clarification=result.clarification,
                         )
                         yield _line({"type": "result", "response": response.model_dump(mode="json")})
                         return
@@ -296,6 +308,8 @@ async def _action_response(session, user, result) -> CommandResponse:
         episode=episode,
         speed=result.speed,
         expects_reply=result.expects_reply,
+        status=result.status,
+        clarification=result.clarification,
     )
 
 

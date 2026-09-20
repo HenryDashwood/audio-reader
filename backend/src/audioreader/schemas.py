@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
-from audioreader.commands.intents import MAX_TURNS, Turn
+from audioreader.commands.intents import MAX_TURNS, Clarification, CommandStatus, Turn
 from audioreader.text import strip_html
 
 
@@ -383,6 +383,21 @@ class OfflineLibraryActionRequest(LibraryActionRequest):
 
 
 class CommandRequest(BaseModel):
+    clarification_id: str | None = Field(default=None, max_length=64)
+    selected_option_id: str | None = Field(default=None, max_length=64)
+    timezone: str = Field(default="UTC", max_length=100)
+
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("Expected an IANA timezone") from exc
+        return value
+
     supports_compound_actions: bool = False
     request_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9-]{1,64}$")
     viewed_episode_id: int | None = None
@@ -434,6 +449,8 @@ class CommandRequest(BaseModel):
 
 
 class CommandResponse(BaseModel):
+    status: CommandStatus = CommandStatus.COMPLETED
+    clarification: Clarification | None = None
     actions: list["CommandResponse"] = Field(default_factory=list)
     action: str
     spoken_response: str

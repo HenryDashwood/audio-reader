@@ -1,28 +1,35 @@
-"""A streamed, model-led voice conversation with explicit app tools.
+"""Streamed voice commands with explicit actions, filters and saved clarification choices.
 
-The model owns interpretation and clarification. Python owns only the hard
-boundary: it validates identifiers and URLs, performs the chosen action, and
-reports what actually happened. In particular, a publication name is not
-passed through a second name-matching classifier after the model has resolved
-it to a feed.
+Models interpret language; Python validates targets, performs calendar and
+library selection, claims continuations once, and reports verified effects.
 """
 
 import asyncio
 import copy
 import json
 import logging
+import re
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import logfire
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from audioreader.commands import library, service, undo
-from audioreader.commands.intents import Action, Candidate, InterpretResult, Speaker, Turn
+from audioreader.commands import clarifications, library, selection, service, undo
+from audioreader.commands.intents import (
+    Action,
+    Candidate,
+    Clarification,
+    CommandStatus,
+    InterpretResult,
+    Speaker,
+    Turn,
+)
 from audioreader.commands.receipts import check_cancelled
 from audioreader.config import settings
 from audioreader.feeds import service as feed_service
@@ -38,7 +45,7 @@ from audioreader.llm.openai_responses import (
     ResponsesStreamingClient,
     ResponseTextDelta,
 )
-from audioreader.models import Episode, Feed, Subscription, User
+from audioreader.models import Episode, Feed, Subscription, User, utcnow
 from audioreader.newsletters import service as newsletters
 from audioreader.newsletters.service import PendingSender
 
@@ -54,6 +61,7 @@ web results. Transcription may split one brand into ordinary words, omit
 punctuation, or choose a common word with the same sound. Do not search only
 for the literal transcript when its intended meaning is clear.
 
+Resolve material ambiguity BEFORE taking any action in a compound request.
 Prefer completing a request in one turn. Publications can use a custom domain
 even when the user calls them a Substack: use web search to identify a named
 newsletter, blog, publication, or person's writing, then inspect its real site
@@ -297,6 +305,104 @@ TOOLS.append(
     }
 )
 
+
+def _function(name, description, properties):
+    return {
+        "type": "function",
+        "name": name,
+        "description": description,
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": properties,
+            "required": list(properties),
+            "additionalProperties": False,
+        },
+    }
+
+
+TOOLS.extend(
+    [
+        _function(
+            "ask_clarification",
+            "Save an unresolved action and ask one answerable question. No action runs yet.",
+            {
+                "action": {"type": "string", "enum": clarifications.ACTIONS},
+                "target_ids": {"type": "array", "items": {"type": "integer"}},
+                "question": {"type": "string"},
+                "remaining_request": {
+                    "type": "string",
+                    "description": "Later steps, or empty. For other, the entire unfinished request.",
+                },
+            },
+        ),
+        _function(
+            "finish_response",
+            "Report a limitation or an informational answer without taking an action.",
+            {
+                "status": {"type": "string", "enum": ["completed", "not_found", "unsupported", "failed"]},
+                "message": {"type": "string"},
+            },
+        ),
+    ]
+)
+
+INSTRUCTIONS += """
+Use ask_clarification for every question; never signal a question by punctuation alone.
+For a choice of supplied episodes, subscriptions or waiting senders, provide 2-3 target_ids
+in spoken order and the intended action. Retain only unfinished later steps in remaining_request.
+For an open question (including public discovery), use action other, no target_ids, and
+retain the complete unfinished request. Ask about ONE missing detail. Do not ask for confirmation
+when the user has already chosen. Accept neither, corrections, cancellation and new requests.
+Examples: 'unsubscribe from The Rest Is' with History and Politics subscriptions requires a choice;
+'follow the newsletter' with two waiting senders requires a choice, not a guess.
+But 'subscribe to The Rest Is Entertainment' names a DIFFERENT specific show: search the
+public directory. Never restrict new subscriptions to the user's existing subscriptions.
+For a topic request within a known show, several episodes on that same topic can all satisfy
+the request: choose the newest matching episode unless a specific part/version matters.
+Do not ask a second question after the user already supplied the show and topic.
+An arbitrary
+acceptable match for 'play something short' does not require a question.
+'Skip ahead thirty seconds' means seek, never dismiss, mark played, or restart an episode.
+This server cannot seek: use finish_response unsupported if the device has not handled it.
+'Get rid of this episode' means dismiss the episode; 'stop following this show' means unsubscribe.
+A missing search result needs broader retrieval or not_found, not a fabricated choice.
+Use finish_response for unsupported, not_found and failed outcomes. Never substitute a different action.
+"""
+
+
+TOOLS.append(
+    _function(
+        "play_matching_episode",
+        "Filter the library and play a matching episode. Code calculates dates and selects latest/oldest. "
+        "Use for date, latest, unheard, duration and kind requirements instead of choosing an episode ID.",
+        {
+            "feed_id": {"type": ["integer", "null"]},
+            "query": {"type": "string", "description": "Topic/title terms only, without the show name or date words."},
+            "day": {
+                "type": ["string", "null"],
+                "description": "Null unless a calendar day was requested. Latest alone means null.",
+            },
+            "order": {"type": "string", "enum": ["latest", "oldest", "any"]},
+            "unheard": {"type": "boolean"},
+            "saved_only": {"type": "boolean"},
+            "kind": {"type": ["string", "null"], "enum": ["article", "audio", None]},
+            "max_seconds": {"type": ["integer", "null"]},
+        },
+    )
+)
+INSTRUCTIONS += """
+For latest/oldest, date, unheard, duration or kind constraints, use play_matching_episode.
+LATEST DOES NOT MEAN TODAY. Use day null for 'latest In Our Time' or 'latest Astral Codex Ten'.
+Only set day when the user explicitly requested a calendar day. Never add a date requirement.
+Copy weekdays literally; code computes the most recent occurrence in the user's timezone,
+including today. For a different week, ask for a specific date if necessary. Never compare
+calendar dates or durations yourself. A feed_id identifies the supplied subscription;
+query contains only topic/title terms. Empty matches mean not_found: do not relax constraints.
+For an episode description without these constraints, search_library can expand retrieval.
+"""
+
+
 # Single actions return immediately. Compound requests explicitly continue
 # after an action, preserving the fast path without throwing away later work.
 _ACTION_TOOLS = {
@@ -308,6 +414,7 @@ _ACTION_TOOLS = {
     "sign_up_for_newsletter",
     "read_newsletter_address",
     "play_episode",
+    "play_matching_episode",
     "set_playback_speed",
     "file_episode",
 }
@@ -344,6 +451,8 @@ def _combined(actions: list[InterpretResult], text: str = "", expects_reply: boo
         speed=last.speed,
         expects_reply=expects_reply,
         actions=list(actions) if len(actions) > 1 else [],
+        status=last.status,
+        clarification=last.clarification,
     )
 
 
@@ -369,14 +478,171 @@ class _ToolResult:
 async def converse(
     session: AsyncSession, client: ResponsesStreamingClient, **kwargs
 ) -> AsyncIterator[ConversationEvent]:
+    async def spoken_events():
+        emitted = False
+        async for event in _with_clarification(session, client, **kwargs):
+            if isinstance(event, AssistantDelta):
+                emitted = True
+            elif isinstance(event, ConversationFinished) and not emitted:
+                yield AssistantDelta(event.result.spoken_response)
+            yield event
+
     async with asyncio.timeout(120):
         if isinstance(client, OpenAIResponsesClient):
             async with client.connection():
-                async for event in _converse(session, client, **kwargs):
+                async for event in spoken_events():
                     yield event
         else:
-            async for event in _converse(session, client, **kwargs):
+            async for event in spoken_events():
                 yield event
+
+
+async def _with_clarification(session, client, *, clarification_id=None, selected_option_id=None, **kwargs):
+    if clarification_id is None:
+        if selected_option_id is not None:
+            yield ConversationFinished(clarifications.unavailable())
+            return
+        async for event in _converse(session, client, **kwargs):
+            yield event
+        return
+    user, answer = kwargs["user"], kwargs["transcript"]
+    saved = await clarifications.load(session, user, clarification_id)
+    if saved is None:
+        yield ConversationFinished(clarifications.unavailable())
+        return
+    public = Clarification.model_validate(saved["public"])
+    selected = clarifications.choice_for(public, answer, selected_option_id)
+    cancel = clarifications.words(answer) in {"cancel", "cancel that", "never mind", "nevermind", "stop"}
+    new_request = False
+    if selected_option_id is not None and selected is None:
+        yield ConversationFinished(
+            InterpretResult(
+                Action.UNKNOWN,
+                public.question,
+                expects_reply=True,
+                status=CommandStatus.NEEDS_CLARIFICATION,
+                clarification=public,
+            )
+        )
+        return
+    if selected is None and not cancel and public.choices:
+        # This small classification sees only the saved choices. It cannot change
+        # the pending action's arguments or silently invent a fourth choice.
+        resolution = "unclear"
+        choices = [item.id for item in public.choices]
+        await session.commit()
+        async for event in client.stream(
+            instructions=(
+                "Resolve the answer to this pending question. Choose an offered ID only if clearly identified. "
+                "Yes alone cannot answer an either/or question. Neither is unclear; ask for a distinguishing detail. "
+                "Use new_request only for an explicit different command, cancel for cancellation, otherwise unclear. "
+                "Call resolve_answer without text."
+            ),
+            input_items=[
+                {"role": "user", "content": json.dumps({"question": public.model_dump(mode="json"), "answer": answer})}
+            ],
+            tools=[
+                _function(
+                    "resolve_answer",
+                    "Resolve a pending choice",
+                    {"choice": {"type": "string", "enum": choices + ["cancel", "new_request", "unclear"]}},
+                )
+            ],
+        ):
+            if isinstance(event, ResponseCompleted):
+                for call in event.response.get("output", []):
+                    if call.get("name") == "resolve_answer":
+                        try:
+                            resolution = json.loads(call.get("arguments", "{}"))["choice"]
+                        except (ValueError, KeyError, TypeError):
+                            pass
+        selected = resolution if resolution in choices else None
+        cancel, new_request = resolution == "cancel", resolution == "new_request"
+        if selected is None and not cancel and not new_request:
+            question = public.question
+            if clarifications.words(answer) in {"neither", "neither one", "something else"}:
+                question = "What name or topic would distinguish the one you mean?"
+                # Retain the intended request for a free-form correction.
+                await check_cancelled(session)
+                if not await clarifications.claim(session, user, clarification_id):
+                    yield ConversationFinished(clarifications.unavailable())
+                    return
+                result = await clarifications.create(
+                    session,
+                    user,
+                    action="other",
+                    target_ids=[],
+                    question=question,
+                    remaining_request=saved["request"],
+                    candidates=[],
+                    request=saved["request"],
+                )
+            else:
+                result = InterpretResult(
+                    Action.UNKNOWN,
+                    question,
+                    expects_reply=True,
+                    status=CommandStatus.NEEDS_CLARIFICATION,
+                    clarification=public,
+                )
+            yield ConversationFinished(result)
+            return
+    await check_cancelled(session)
+    if not await clarifications.claim(session, user, clarification_id):
+        yield ConversationFinished(clarifications.unavailable())
+        return
+    if cancel:
+        yield ConversationFinished(InterpretResult(Action.UNKNOWN, "Cancelled."))
+        return
+    if new_request or not public.choices:
+        if new_request:
+            kwargs["turns"] = ()
+        else:
+            kwargs["turns"] = [
+                *kwargs.get("turns", ())[-4:],
+                Turn(speaker=Speaker.HER, text=saved["remaining_request"] or saved["request"]),
+                Turn(speaker=Speaker.APP, text=public.question),
+            ]
+        async for event in _converse(session, client, **kwargs):
+            yield event
+        return
+    call = saved["calls"][selected]
+    candidates = []
+    if episode_id := call["arguments"].get("episode_id"):
+        candidate = await service._now_playing(session, episode_id, user)
+        if candidate is not None:
+            candidates.append(candidate)
+    outcome = await _call_tool(
+        session,
+        name=call["name"],
+        arguments=json.dumps(call["arguments"]),
+        user=user,
+        allowed_episode_ids={item.id for item in candidates},
+        candidates=candidates,
+        country=kwargs.get("country"),
+    )
+    if outcome.terminal is None or not outcome.output.get("ok"):
+        yield ConversationFinished(
+            InterpretResult(
+                Action.UNKNOWN, "That choice is no longer available. Please ask again.", status=CommandStatus.NOT_FOUND
+            )
+        )
+        return
+    if not saved["remaining_request"]:
+        yield ConversationFinished(outcome.terminal)
+        return
+    kwargs["transcript"] = saved["remaining_request"]
+    kwargs["turns"] = [Turn(speaker=Speaker.APP, text=outcome.terminal.spoken_response)]
+    if outcome.terminal.episode:
+        kwargs["now_playing_episode_id"] = outcome.terminal.episode.id
+    async for event in _converse(session, client, **kwargs):
+        if isinstance(event, ConversationFinished):
+            following = event.result.actions or [event.result]
+            yield ConversationFinished(
+                _combined([outcome.terminal, *following], expects_reply=event.result.expects_reply)
+            )
+        else:
+            yield event
 
 
 async def _converse(
@@ -391,6 +657,7 @@ async def _converse(
     supports_compound_actions: bool = True,
     viewed_episode_id: int | None = None,
     recent_actions: Sequence[str] = (),
+    timezone: str = "UTC",
 ) -> AsyncIterator[ConversationEvent]:
     candidates = await service.build_candidates(session, user, service.spoken_so_far(transcript, turns))
     now_playing = await service._now_playing(session, now_playing_episode_id, user)
@@ -411,6 +678,72 @@ async def _converse(
 
     pending = await newsletters.pending_senders(session, user)
 
+    simple = clarifications.words(transcript)
+    if re.fullmatch(
+        r"(?:please )?(?:skip|jump|go|seek) (?:ahead|forward|back|backward)(?: .*)?", simple
+    ) and not re.search(r"\b(speed|normal)\b", simple):
+        yield ConversationFinished(
+            InterpretResult(
+                Action.UNKNOWN,
+                "I cannot skip within an episode from here. Use the player's skip controls.",
+                status=CommandStatus.UNSUPPORTED,
+            )
+        )
+        return
+    match = re.fullmatch(
+        r"(?:please )?(?:unsubscribe|stop following)(?: me)?(?: from)? (.+)", transcript.strip(), re.I
+    )
+    remaining = ""
+    if match:
+        fragment = match[1].rstrip(".!?")
+        matches = [feed for feed in subscriptions if service.matches_name(fragment, feed.title)]
+        if not matches:
+            parts = re.split(r"\s+(?:and then|and|then)\s+", fragment, maxsplit=1, flags=re.I)
+            if len(parts) == 2:
+                matches = [feed for feed in subscriptions if service.matches_name(parts[0].rstrip(","), feed.title)]
+                remaining = parts[1]
+        if remaining and not supports_compound_actions:
+            yield ConversationFinished(
+                InterpretResult(
+                    Action.UNKNOWN,
+                    "Please update Magpie to carry out several actions together.",
+                    status=CommandStatus.UNSUPPORTED,
+                )
+            )
+            return
+        if 1 < len(matches) <= 3:
+            result = await clarifications.create(
+                session,
+                user,
+                action="unsubscribe",
+                target_ids=[f.id for f in matches],
+                question="Which show?",
+                remaining_request=remaining,
+                candidates=candidates,
+                request=transcript,
+            )
+            yield ConversationFinished(result)
+            return
+    if len(pending) > 1 and simple in {
+        "follow the newsletter",
+        "subscribe to the newsletter",
+        "follow it",
+        "follow that newsletter",
+    }:
+        if len(pending) <= 3:
+            result = await clarifications.create(
+                session,
+                user,
+                action="approve_newsletter",
+                target_ids=[p.feed.id for p in pending],
+                question="Which newsletter?",
+                remaining_request="",
+                candidates=candidates,
+                request=transcript,
+            )
+            yield ConversationFinished(result)
+            return
+
     input_items = _conversation_input(
         transcript=transcript,
         turns=turns,
@@ -418,6 +751,7 @@ async def _converse(
         subscriptions=subscriptions,
         now_playing=now_playing,
         pending=pending,
+        today=utcnow().astimezone(ZoneInfo(timezone)).date(),
     )
     states = await service.positions.positions_for(session, user, allowed)
     details = ["Listening details (unknown duration must not be guessed):"]
@@ -470,12 +804,12 @@ async def _converse(
                 if not text:
                     raise LLMError("OpenAI returned neither text nor an app action")
                 result = (
-                    _combined(completed_actions, text, text.rstrip().endswith("?"))
+                    _combined(completed_actions, text)
                     if completed_actions
                     else InterpretResult(
                         action=Action.UNKNOWN,
                         spoken_response=text,
-                        expects_reply=text.rstrip().endswith("?"),
+                        expects_reply=False,
                     )
                 )
                 yield ConversationFinished(result)
@@ -505,6 +839,9 @@ async def _converse(
                             allowed_episode_ids=allowed,
                             candidates=candidates,
                             country=country,
+                            transcript=transcript,
+                            timezone=timezone,
+                            request_context=" ".join(turn.text for turn in turns if turn.speaker is Speaker.HER),
                         )
                     _annotate_tool_result(span, tool_result)
                 input_items.append(
@@ -517,6 +854,9 @@ async def _converse(
                 if tool_result.terminal is not None:
                     terminal = tool_result.terminal
                     completed_actions.append(terminal)
+                    if terminal.expects_reply or terminal.status is not CommandStatus.COMPLETED:
+                        yield ConversationFinished(_combined(completed_actions, expects_reply=terminal.expects_reply))
+                        return
                     continue_request = supports_compound_actions and bool(
                         json.loads(arguments).get("continue_request", False)
                     )
@@ -591,6 +931,7 @@ def _conversation_input(
     subscriptions: list[Feed],
     now_playing: Candidate | None,
     pending: Sequence[PendingSender] = (),
+    today: date | None = None,
 ) -> list[dict[str, Any]]:
     items = [
         {
@@ -599,7 +940,7 @@ def _conversation_input(
         }
         for turn in turns
     ]
-    lines = [f"Today is {date.today().isoformat()}.", f'User said: "{transcript}"', ""]
+    lines = [f"Today is {(today or date.today()).isoformat()}.", f'User said: "{transcript}"', ""]
     if now_playing is not None:
         lines.append(f"Now playing: [{now_playing.id}] {now_playing.title} — {now_playing.feed_title}")
     lines.append("Subscriptions (valid IDs for unsubscribe):")
@@ -631,7 +972,12 @@ async def _call_tool(session, **kwargs) -> _ToolResult:
     except (ValueError, TypeError, AttributeError):
         before = None
     result = await _execute_tool(session, **kwargs)
-    if result.terminal is not None and result.output.get("ok"):
+    if (
+        result.terminal is not None
+        and result.output.get("ok")
+        and kwargs["name"] in _ACTION_TOOLS
+        and result.terminal.status is CommandStatus.COMPLETED
+    ):
         await undo.remember(session, kwargs["user"], before)
     return result
 
@@ -645,6 +991,9 @@ async def _execute_tool(
     allowed_episode_ids: set[int],
     candidates: list[Candidate],
     country: str | None,
+    transcript: str = "",
+    timezone: str = "UTC",
+    request_context: str = "",
 ) -> _ToolResult:
     try:
         args = json.loads(arguments)
@@ -652,6 +1001,132 @@ async def _execute_tool(
         return _ToolResult({"ok": False, "error": "Tool arguments were not valid JSON."})
 
     try:
+        if name == "ask_clarification":
+            day = selection.requested_day(transcript) if args.get("action") == "play_episode" else None
+            date_window = None
+            if day:
+                start, end = selection.date_bounds(day, timezone, utcnow())
+                valid = {
+                    item.id
+                    for item in candidates
+                    if item.published_at is not None
+                    and start
+                    <= (
+                        item.published_at.replace(tzinfo=UTC)
+                        if item.published_at.tzinfo is None
+                        else item.published_at
+                    )
+                    < end
+                }
+                if not set(args.get("target_ids", [])) <= valid:
+                    return _ToolResult(
+                        {
+                            "ok": False,
+                            "error": f"Those choices do not match {day}. Use play_matching_episode with day={day}, "
+                            "feed_id=null if no show was named, order=latest. Do not ask the user to compare dates.",
+                        }
+                    )
+                date_window = (start, end)
+            result = await clarifications.create(
+                session,
+                user,
+                action=args["action"],
+                target_ids=args["target_ids"],
+                question=args["question"],
+                remaining_request=args["remaining_request"],
+                candidates=candidates,
+                request=transcript,
+                date_window=date_window,
+            )
+            return _ToolResult({"ok": True}, result)
+        if name == "finish_response":
+            status = CommandStatus(args["status"])
+            if status is CommandStatus.NEEDS_CLARIFICATION or not str(args["message"]).strip():
+                raise ValueError("Use ask_clarification for questions")
+            return _ToolResult({"ok": True}, InterpretResult(Action.UNKNOWN, str(args["message"]), status=status))
+        if name == "play_matching_episode":
+            maximum = args.get("max_seconds")
+            if maximum is not None and (type(maximum) is not int or maximum <= 0):
+                raise ValueError("Duration must be positive seconds")
+            if args.get("kind") not in {None, "audio", "article"} or args.get("order") not in {
+                "latest",
+                "oldest",
+                "any",
+            }:
+                raise ValueError("Invalid selection constraints")
+            feed_id = args.get("feed_id")
+            external = False
+            if feed_id is not None and not await session.scalar(
+                select(Subscription.id).where(Subscription.user_id == user.id, Subscription.feed_id == feed_id)
+            ):
+                # Public discovery is allowed only after episodes from that feed
+                # were actually offered. Never broaden to arbitrary catalog IDs.
+                external = bool(
+                    await session.scalar(
+                        select(Episode.id)
+                        .join(Feed)
+                        .where(
+                            Episode.id.in_(allowed_episode_ids),
+                            Episode.feed_id == feed_id,
+                            or_(Feed.owner_user_id.is_(None), Feed.owner_user_id == user.id),
+                        )
+                        .limit(1)
+                    )
+                )
+                if not external:
+                    raise ValueError("Feed must be a supplied subscription or loaded show")
+            day = args.get("day")
+            if (
+                day == "today"
+                and transcript
+                and not re.search(
+                    r"\b(today|this morning|this afternoon|this evening|tonight)\b",
+                    (request_context + " " + transcript).casefold(),
+                )
+            ):
+                return _ToolResult(
+                    {"ok": False, "error": "Latest does not mean today. Set day to null unless a day was requested."}
+                )
+            start, end = selection.date_bounds(args.get("day"), timezone, utcnow())
+            loaded = await library.search(
+                session,
+                user,
+                query=str(args.get("query", "")),
+                unheard=bool(args.get("unheard")),
+                saved_only=bool(args.get("saved_only")),
+                kind=args.get("kind"),
+                max_seconds=maximum,
+                feed_id=feed_id,
+                published_after=start,
+                published_before=end,
+                oldest=args["order"] == "oldest",
+                chronological=args["order"] != "any",
+                external_feed=external,
+            )
+            if args["order"] != "any":
+                loaded = selection.ordered(loaded, latest=args["order"] == "latest")
+            if not loaded:
+                return _ToolResult(
+                    {"ok": True},
+                    InterpretResult(
+                        Action.UNKNOWN,
+                        "I could not find an episode matching those requirements.",
+                        status=CommandStatus.NOT_FOUND,
+                    ),
+                )
+            chosen = loaded[0]
+            allowed_episode_ids.add(chosen.id)
+            if all(item.id != chosen.id for item in candidates):
+                candidates.append(chosen)
+            return await _execute_tool(
+                session,
+                name="play_episode",
+                arguments=json.dumps({"episode_id": chosen.id}),
+                user=user,
+                allowed_episode_ids=allowed_episode_ids,
+                candidates=candidates,
+                country=country,
+            )
         if name == "search_library":
             maximum = args.get("max_seconds")
             if maximum is not None and (type(maximum) is not int or maximum <= 0):
@@ -776,17 +1251,36 @@ async def _execute_tool(
                 {
                     "ok": True,
                     "show": feed.title,
+                    "feed_id": feed.id,
                     "episodes": await _candidate_details(session, user, loaded),
                 }
             )
 
         if name == "play_episode":
+            if re.search(
+                r"\b(latest|newest|oldest|unheard|today|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
+                r"|\bunder .+ minutes?",
+                transcript.casefold(),
+            ):
+                return _ToolResult(
+                    {"ok": False, "error": "Use play_matching_episode to enforce the requested constraints."}
+                )
             episode_id = int(args["episode_id"])
             if episode_id not in allowed_episode_ids:
                 return _ToolResult({"ok": False, "error": "That episode ID was not supplied by Magpie."})
             episode = await session.get(Episode, episode_id, options=[joinedload(Episode.feed)])
             if episode is None:
                 return _ToolResult({"ok": False, "error": "That episode no longer exists."})
+            if args.get("published_after"):
+                published = episode.published_at
+                if published is not None and published.tzinfo is None:
+                    published = published.replace(tzinfo=UTC)
+                if published is None or not (
+                    datetime.fromisoformat(args["published_after"])
+                    <= published
+                    < datetime.fromisoformat(args["published_before"])
+                ):
+                    return _ToolResult({"ok": False, "error": "That episode no longer matches the requested date."})
             result = InterpretResult(Action.PLAY_EPISODE, f"Playing {service._spoken_title(episode.title)}.", episode)
             return _ToolResult({"ok": True, "title": episode.title, "status": "ready_to_play"}, result)
 

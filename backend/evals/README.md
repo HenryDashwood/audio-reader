@@ -136,3 +136,76 @@ transcripts from the iOS recording benchmark into cases with matching IDs,
 so the same run measures whether transcription errors changed the task outcome.
 See [the voice pipeline guide](../../docs/voice/pipeline.md) for local recording
 format, privacy, migration, and device verification details.
+
+## Jev comparison (evaluation only)
+
+`compare_jev` runs the same corpus through the production conversation executor
+with three decision sources: the configured OpenAI model, a bounded Jev adapter,
+and that adapter with OpenAI fallback. It does not register a production provider
+or change the app's settings. Put `JEV_API_KEY` in the repository-root `.env`;
+the existing OpenAI key and model settings provide the baseline.
+
+```bash
+cd backend
+uv run python -m evals.compare_jev --repeat 3 --json ../build/jev-evals/comparison.json
+# Small smoke test; do not mix its results into the main comparison.
+uv run python -m evals.compare_jev --repeat 1 --patterns recent-by-topic compound-play-and-speed \
+  --json ../build/jev-evals/smoke.json
+```
+
+The adapter sees only the application's normal conversation input, never case
+IDs, expected outcomes or the synthetic world's hidden catalogue. It asks Choice
+questions for request scope, action, episode, subscription, waiting newsletter
+and speed in one call. Code computes weekday/latest labels from supplied dates.
+The default confidence threshold is 0.9 for every decision required by an action;
+it is an initial policy, not a calibrated probability of success. Speed choices
+cover 0.5–3.0 in 0.05 increments. New subscriptions, compound requests, broader
+library search, unmatched targets and uncertain decisions fall back. In Jev-only
+mode these return a templated clarification and still receive the ordinary grade:
+unsupported requests are not silently excluded or counted as successful actions.
+
+Jobs are shuffled with a recorded seed and interleaved across configurations.
+OpenAI calls are paced at 1.8-second intervals by default to avoid saturating the
+account's token-per-minute limit (`--openai-interval` changes this). The benchmark
+records that artificial waiting separately and subtracts it from reported command
+latency. Raw command time including the throttle remains in the JSON.
+Each request/repetition has its own database. The current date anchors the world
+and is recorded with model IDs, prompt-source hashes, confidence, all provider
+usage and per-case outcomes. JSON is saved after every completed request, with
+`complete: false` until all jobs finish. Live calls cost money. Model-hosted web
+search can still run; the app's feed/directory requests and mutations are mocked.
+
+`command_seconds` excludes database creation/seeding but includes candidate
+retrieval, model calls and execution. Model-call time is also recorded separately.
+Neither includes speech recognition, phone networking or playback startup. Costs
+use published standard token prices and the API's reported cached-input tokens;
+web-search fees and unreported usage are listed separately rather than silently
+treated as zero. Repeated synthetic prompts can get more cache hits than live
+traffic, so inspect both usage and cache rates before projecting savings.
+
+The existing corpus is a regression suite, not a representative traffic sample
+or a held-out validation set. Repeats measure variability, not new independent
+requests. Any threshold or prompt tuning using its outcomes requires a separate
+evaluation before claiming production accuracy.
+
+## Complete clarification conversations
+
+The single-request corpus cannot show whether an actual question is answerable.
+Run the separate conversation corpus against the same database across turns:
+
+```bash
+uv run python -m evals.conversations --repeat 3 --json ../build/jev-evals/conversations.json
+```
+
+It uses fixed user replies and actual provider-generated questions, preserving
+public clarification IDs through a request serialization round trip. It checks
+that no action happens before clarification, that final effects match exactly,
+and that the last answer completes the request. It includes ordinals, a vague
+“yes,” “neither,” cancellation, topic changes and remaining compound steps.
+The saved results include processing time across all turns, model calls, token
+cost estimates and spoken word count; device speech and user response time are
+not measured. `--modes baseline` omits Jev. Only synthetic data is sent.
+
+See [the implementation and validation report](../../docs/voice-query-reliability.md)
+for protocol details, limits and deployment order. Asking a question is a safe
+intermediate outcome, not proof that a conversation succeeds.

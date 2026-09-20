@@ -419,6 +419,17 @@ def _fill_search_text(_mapper, _connection, episode: Episode) -> None:
     episode.search_text = search_key(episode.title, episode.description)
 
 
+class VoiceClarification(Base):
+    """Account-scoped, expiring continuation; claiming precedes any side effect."""
+
+    __tablename__ = "voice_clarifications"
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payload: Mapped[str] = mapped_column(Text)
+    consumed: Mapped[bool] = mapped_column(default=False, server_default=false())
+
+
 class VoiceCommandReceipt(Base):
     """Durable claim: a retry never repeats a possibly committed action."""
 

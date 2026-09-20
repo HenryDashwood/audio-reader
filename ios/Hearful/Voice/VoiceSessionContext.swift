@@ -8,6 +8,7 @@ final class VoiceSessionContext {
     private var lastUsed = ContinuousClock.now
     var executionID: UUID?
     var isExecuting: Bool { executionID != nil }
+    var clarification: CommandClarification?
     var pendingRequest: CommandRequest?
     var recentActions: [String] = []
     var conversation = Conversation()

@@ -35,7 +35,7 @@ class MeteredClient:
     times should have to say so.
     """
 
-    def __init__(self, inner: LLMClient):
+    def __init__(self, inner: LLMClient | ResponsesStreamingClient):
         self.inner = inner
         self.calls = 0
         self.seconds = 0.0
@@ -44,7 +44,7 @@ class MeteredClient:
         self.calls += 1
         started = time.monotonic()
         try:
-            return await self.inner.decide(system=system, user=user, output_model=output_model)
+            return await cast(LLMClient, self.inner).decide(system=system, user=user, output_model=output_model)
         finally:
             self.seconds += time.monotonic() - started
 
@@ -70,6 +70,9 @@ class Run:
     seconds: float
     llm_calls: int
     spoken: str = ""
+    # Excludes creating/seeding the synthetic database; includes retrieval,
+    # model calls and execution. `seconds` retains its historical meaning.
+    command_seconds: float = 0.0
 
 
 @dataclass
@@ -97,7 +100,9 @@ class Report:
         return Grade.PASS
 
 
-async def run_case(case: Case, world: tuple[Show, ...], client: LLMClient, *, pipeline: str = "legacy") -> Run:
+async def run_case(
+    case: Case, world: tuple[Show, ...], client: LLMClient | ResponsesStreamingClient, *, pipeline: str = "legacy"
+) -> Run:
     """One case against a database of its own, so nothing leaks between cases."""
     engine = create_async_engine("sqlite+aiosqlite://")
     metered = MeteredClient(client)
@@ -113,6 +118,7 @@ async def run_case(case: Case, world: tuple[Show, ...], client: LLMClient, *, pi
             await seed(session, user, world)
 
             before = await subscribed_urls(session, user)
+            command_started = time.monotonic()
             try:
                 if pipeline == "conversation":
                     result = None
@@ -145,8 +151,10 @@ async def run_case(case: Case, world: tuple[Show, ...], client: LLMClient, *, pi
                     detail=f"{type(exc).__name__}: {exc}",
                     seconds=time.monotonic() - started,
                     llm_calls=metered.calls,
+                    command_seconds=time.monotonic() - command_started,
                 )
             after = await subscribed_urls(session, user)
+            command_seconds = time.monotonic() - command_started
 
         observed = Observed.of(result, before, after)
         verdict, detail = grade(case, observed)
@@ -157,6 +165,7 @@ async def run_case(case: Case, world: tuple[Show, ...], client: LLMClient, *, pi
             seconds=time.monotonic() - started,
             llm_calls=metered.calls,
             spoken=observed.spoken,
+            command_seconds=command_seconds,
         )
     finally:
         await engine.dispose()
@@ -187,7 +196,7 @@ async def subscribed_urls(session, user: User) -> frozenset[str]:
 async def run(
     cases: tuple[Case, ...],
     world: tuple[Show, ...],
-    client: LLMClient,
+    client: LLMClient | ResponsesStreamingClient,
     *,
     repeat: int = 1,
     concurrency: int = 4,

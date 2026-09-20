@@ -134,6 +134,21 @@ nonisolated struct EpisodeText: Codable, Equatable {
     }
 }
 
+nonisolated struct CommandClarification: Decodable, Sendable {
+    nonisolated struct Choice: Decodable, Sendable, Identifiable {
+        let id: String
+        let label: String
+    }
+    let id: String
+    let question: String
+    let choices: [Choice]
+    let expiresAt: String
+    enum CodingKeys: String, CodingKey {
+        case id, question, choices
+        case expiresAt = "expires_at"
+    }
+}
+
 nonisolated struct CommandResponse: Decodable, Sendable {
     let action: CommandAction
     let spokenResponse: String
@@ -150,9 +165,11 @@ nonisolated struct CommandResponse: Decodable, Sendable {
     /// behaved before any of this.
     var expectsReply: Bool?
     var actions: [CommandResponse]? = nil
+    var status: String? = nil
+    var clarification: CommandClarification? = nil
 
     enum CodingKeys: String, CodingKey {
-        case action, episode, speed, actions
+        case action, episode, speed, actions, status, clarification
         case spokenResponse = "spoken_response"
         case expectsReply = "expects_reply"
     }
@@ -257,6 +274,9 @@ nonisolated struct UserInfo: Decodable, Equatable {
 /// Body of POST /command.
 nonisolated struct CommandRequest: Encodable, Sendable {
     var supportsCompoundActions = true
+    var clarificationID: String? = nil
+    var selectedOptionID: String? = nil
+    var timezone: String = TimeZone.current.identifier
     let transcript: String
     var requestID: String? = nil
     var viewedEpisodeID: Int? = nil
@@ -271,6 +291,9 @@ nonisolated struct CommandRequest: Encodable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case supportsCompoundActions = "supports_compound_actions"
+        case clarificationID = "clarification_id"
+        case selectedOptionID = "selected_option_id"
+        case timezone
         case transcript, turns, country
         case requestID = "request_id"
         case viewedEpisodeID = "viewed_episode_id"
