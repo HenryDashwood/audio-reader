@@ -21,14 +21,16 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from audioreader.commands.conversation import INSTRUCTIONS, TOOLS
 from audioreader.config import REPO_ROOT, settings
 from audioreader.llm.openai_responses import OpenAIResponsesClient, ResponseCompleted
 from evals import cases as corpus
 from evals.jev import MODEL, JevClient
 from evals.runner import run_case
-from evals.world import build_world, stub_world
+from evals.world import REFERENCE_DATE, build_world, evaluation_clock, stub_world
 
-# Public standard rates checked 2026-09-20. Estimates, not billing records.
+# Public standard rates checked 2026-09-20; GPT-6 Luna added 2026-09-22.
+# Estimates, not billing records.
 PRICING = {
     "jev": {"input_per_million": 0.042, "output_per_million": 0},
     "gpt-5.6-luna": {
@@ -36,6 +38,12 @@ PRICING = {
         "cached_per_million": 0.02,
         "cache_write_per_million": 0.25,
         "output_per_million": 1.2,
+    },
+    "gpt-6-luna": {
+        "input_per_million": 0.1,
+        "cached_per_million": 0.01,
+        "cache_write_per_million": 0.125,
+        "output_per_million": 0.5,
     },
 }
 
@@ -58,6 +66,9 @@ class TracedOpenAI:
         wait = await self.pacer.wait() if self.pacer else 0.0
         started = time.perf_counter()
         record = {"provider": "openai", "model": self.model, "benchmark_wait_seconds": wait}
+        # Synthetic evaluation inputs only. Snapshot before the tool loop appends
+        # outputs so failures can be audited against precisely what was sent.
+        record["request"] = json.loads(json.dumps(kwargs))
         self.calls.append(record)
         try:
             async for event in self.inner.stream(**kwargs):
@@ -172,6 +183,7 @@ def parse_args(argv=None):
         "--openai-interval", type=float, default=1.8, help="Minimum seconds between baseline API calls."
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--reference-date", type=date.fromisoformat, default=REFERENCE_DATE)
     parser.add_argument("--json", type=Path, required=True)
     return parser.parse_args(argv)
 
@@ -189,13 +201,15 @@ async def main(argv=None):
     cases = corpus.select(tuple(args.patterns))
     if not cases:
         raise ValueError("No matching cases")
-    reference = date.today()
+    reference = args.reference_date
     world = build_world(reference)
     metadata = {
         "started_at": datetime.now(UTC).isoformat(),
         "reference_date": reference.isoformat(),
         "baseline_model": settings.openai_model,
         "baseline_reasoning": settings.openai_reasoning_effort,
+        "instructions_sha256": hashlib.sha256(INSTRUCTIONS.encode()).hexdigest(),
+        "tools_sha256": hashlib.sha256(json.dumps(TOOLS, sort_keys=True).encode()).hexdigest(),
         "jev_model": MODEL,
         "confidence_threshold": args.threshold,
         "candidate_limit": settings.command_candidate_limit,
@@ -267,7 +281,7 @@ async def main(argv=None):
     settings.inbound_email_domain = settings.inbound_email_domain or "magpieinbox.com"
     settings.inbound_email_secret = settings.inbound_email_secret or "eval"
     try:
-        with stub_world(world):
+        with evaluation_clock(reference), stub_world(world):
             await asyncio.gather(*(one(*job) for job in jobs))
     finally:
         settings.inbound_email_domain, settings.inbound_email_secret = configured

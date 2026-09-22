@@ -41,9 +41,12 @@ hundred-odd episodes going back two years, two chattier podcasts, and a blog
 that posts twice a week. Two more shows and a second blog exist only in the
 stubbed directory, so asking for them exercises discovery.
 
-Dates count back from today, so "the latest" and "Tuesday's one" keep meaning
-what they mean. Pin them with `--reference-date` when comparing two runs
-exactly.
+Dates use a fixed reference day (2026-09-22 by default), with the application
+clock pinned to 23:59 UTC on that same day. The world includes that day's
+publications, so an unqualified weekday includes today consistently. Use
+`--reference-date` to exercise another day; latest-overall expectations are
+computed from that run's world. Restore cases seed dismissed, completed, and
+already-restored positions separately.
 
 The crowding is deliberate. Four subscriptions publishing six times a week
 means the sixty newest items — the default `command_candidate_limit` — reach
@@ -72,6 +75,10 @@ Case(
   which feed got subscribed — not what the model replied. Subscriptions are
   compared against the database either side of the call, so a model that says
   "Subscribed!" without subscribing anything fails.
+- Grading also rejects unrequested subscription or filing changes and verifies
+  persisted completion, dismissal, and playback position. `asked` requires an
+  actual needs-clarification status; a refusal or not-found result cannot pass
+  as a safe question when the expected outcome was an action.
 - `why` is required. It is printed with every failure.
 - `never` lists outcomes that are wrong however plausible they look.
 - `question_is_acceptable=False` where a question is itself the bug.
@@ -169,11 +176,14 @@ OpenAI calls are paced at 1.8-second intervals by default to avoid saturating th
 account's token-per-minute limit (`--openai-interval` changes this). The benchmark
 records that artificial waiting separately and subtracts it from reported command
 latency. Raw command time including the throttle remains in the JSON.
-Each request/repetition has its own database. The current date anchors the world
+Each request/repetition has its own database. A fixed reference date anchors the world
 and is recorded with model IDs, prompt-source hashes, confidence, all provider
 usage and per-case outcomes. JSON is saved after every completed request, with
 `complete: false` until all jobs finish. Live calls cost money. Model-hosted web
 search can still run; the app's feed/directory requests and mutations are mocked.
+OpenAI call records contain snapshots of the exact synthetic instructions,
+context and tools sent, and metadata includes prompt/tool hashes. This tracing
+is evaluation-only; it does not add production transcript storage.
 
 `command_seconds` excludes database creation/seeding but includes candidate
 retrieval, model calls and execution. Model-call time is also recorded separately.

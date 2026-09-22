@@ -29,7 +29,7 @@ from evals.cases import IN_OUR_TIME, MONEY_STUFF, REST_IS_POLITICS
 from evals.compare_jev import Pacer, TracedOpenAI, token_cost
 from evals.jev import JevClient
 from evals.runner import subscribed_urls
-from evals.world import build_world, seed, stub_world
+from evals.world import REFERENCE_DATE, build_world, evaluation_clock, seed, stub_world
 
 
 @dataclass(frozen=True)
@@ -227,6 +227,7 @@ async def main():
     pacer, world, rows = Pacer(1.8), build_world(), []
     metadata = {
         "started_at": datetime.now(UTC).isoformat(),
+        "reference_date": REFERENCE_DATE.isoformat(),
         "model": settings.openai_model,
         "repeat": args.repeat,
         "scope": "Synthetic libraries, live providers; excludes speech/device latency. Fixed scripted user replies.",
@@ -244,7 +245,7 @@ async def main():
     configured = settings.inbound_email_domain, settings.inbound_email_secret
     settings.inbound_email_domain, settings.inbound_email_secret = "magpieinbox.com", "eval"
     try:
-        with stub_world(world):
+        with evaluation_clock(REFERENCE_DATE), stub_world(world):
             for repetition in range(args.repeat):
                 for scenario in SCENARIOS:
                     for mode in args.modes:

@@ -122,6 +122,7 @@ class Candidate:
     duration_seconds: int | None
     # An item with no audio, read aloud by the app instead of streamed.
     is_article: bool = False
+    feed_id: int | None = None
 
 
 class ClarificationChoice(BaseModel):

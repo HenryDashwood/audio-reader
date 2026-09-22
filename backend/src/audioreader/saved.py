@@ -491,6 +491,7 @@ async def voice_candidates(
                 id=episode.id,
                 title=title,
                 feed_title="Saved",
+                feed_id=episode.feed_id,
                 description=f"Saved on {record.saved_at.date()}.",
                 published_at=episode.published_at,
                 duration_seconds=seconds,

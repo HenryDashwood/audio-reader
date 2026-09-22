@@ -36,7 +36,7 @@ class TestBuildLLMClient:
         monkeypatch.setattr(settings, "openai_api_key", "sk-test")
         client = build_llm_client()
         assert isinstance(client, OpenAIResponsesClient)
-        assert client.model == "gpt-5.6-luna"
+        assert client.model == "gpt-6-luna"
 
     def test_missing_key_fails_loudly(self, monkeypatch):
         # Better to fail at startup than to serve 503s to a blind user.

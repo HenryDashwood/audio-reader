@@ -17,8 +17,10 @@ and every feed from these definitions, and lets only the LLM host through.
 import logging
 import re
 import unicodedata
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
+from unittest.mock import patch
 from urllib.parse import urlparse
 from xml.sax.saxutils import escape, quoteattr
 
@@ -31,6 +33,22 @@ from audioreader.models import APPROVAL_PENDING, FEED_SOURCE_EMAIL, Episode, Fee
 logger = logging.getLogger(__name__)
 
 MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY = range(5)
+REFERENCE_DATE = date(2026, 9, 22)
+
+
+@contextmanager
+def evaluation_clock(reference: date = REFERENCE_DATE):
+    """Use the same completed UTC day for prompt dates and executor filtering.
+
+    Enter once around a run, not around concurrent cases: all cases share this
+    clock, while the HTTP client's real timeout clock remains untouched.
+    """
+    now = datetime.combine(reference, time(23, 59), tzinfo=UTC)
+    with (
+        patch("audioreader.commands.conversation.utcnow", return_value=now),
+        patch("audioreader.commands.service.utcnow", return_value=now),
+    ):
+        yield
 
 
 @dataclass(frozen=True)
@@ -117,11 +135,10 @@ def slug(title: str) -> str:
 def _dates(reference: date, weekdays: tuple[int, ...], count: int, at: time) -> list[datetime]:
     """The `count` most recent publication times on those weekdays, newest first.
 
-    Never the reference day itself: a feed she has already been served from is
-    a feed the poller has already seen.
+    Include the reference day: evaluations observe the completed day at 23:59 UTC.
     """
     out: list[datetime] = []
-    day = reference - timedelta(days=1)
+    day = reference
     while len(out) < count:
         if day.weekday() in weekdays:
             out.append(datetime.combine(day, at, tzinfo=UTC))
@@ -360,7 +377,7 @@ def _podcast_items(prefix: str, titles, dates, blurb, guests=None) -> tuple[Item
 
 def build_world(reference: date | None = None) -> tuple[Show, ...]:
     """Every show in the world, with its items dated against `reference`."""
-    reference = reference or date.today()
+    reference = reference or REFERENCE_DATE
     morning, midday = time(5, 0), time(12, 30)
 
     in_our_time = Show(

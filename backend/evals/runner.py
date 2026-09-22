@@ -9,7 +9,8 @@ reaching the internet is the model itself.
 import asyncio
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import date
 from typing import Any, cast
 
 from pydantic import BaseModel
@@ -21,10 +22,10 @@ from audioreader.commands.conversation import ConversationFinished, converse
 from audioreader.config import settings
 from audioreader.llm.client import LLMClient, LLMError
 from audioreader.llm.openai_responses import ResponsesStreamingClient
-from audioreader.models import Base, Episode, Feed, Subscription, User
+from audioreader.models import Base, Episode, Feed, PlaybackPosition, Subscription, User
 from evals.cases import Case
 from evals.grading import Grade, Observed, grade
-from evals.world import Show, seed, stub_world
+from evals.world import REFERENCE_DATE, Show, evaluation_clock, seed, stub_world
 
 
 class MeteredClient:
@@ -104,6 +105,11 @@ async def run_case(
     case: Case, world: tuple[Show, ...], client: LLMClient | ResponsesStreamingClient, *, pipeline: str = "legacy"
 ) -> Run:
     """One case against a database of its own, so nothing leaks between cases."""
+    if case.expect.latest_overall:
+        newest = max(
+            (item for show in world if show.subscribed for item in show.items), key=lambda item: item.published_at
+        )
+        case = replace(case, expect=replace(case.expect, episode=newest.guid))
     engine = create_async_engine("sqlite+aiosqlite://")
     metered = MeteredClient(client)
     started = time.monotonic()
@@ -116,8 +122,20 @@ async def run_case(
             session.add(user)
             await session.commit()
             await seed(session, user, world)
+            for guid, completed, dismissed, position in case.initial_states:
+                session.add(
+                    PlaybackPosition(
+                        user_id=user.id,
+                        episode_id=await episode_id(session, guid),
+                        completed=completed,
+                        dismissed=dismissed,
+                        position_seconds=position,
+                    )
+                )
+            await session.commit()
 
             before = await subscribed_urls(session, user)
+            positions_before = await position_states(session, user)
             command_started = time.monotonic()
             try:
                 if pipeline == "conversation":
@@ -154,9 +172,12 @@ async def run_case(
                     command_seconds=time.monotonic() - command_started,
                 )
             after = await subscribed_urls(session, user)
+            positions_after = await position_states(session, user)
             command_seconds = time.monotonic() - command_started
 
-        observed = Observed.of(result, before, after)
+        observed = replace(
+            Observed.of(result, before, after), positions_before=positions_before, positions_after=positions_after
+        )
         verdict, detail = grade(case, observed)
         return Run(
             case=case,
@@ -193,6 +214,15 @@ async def subscribed_urls(session, user: User) -> frozenset[str]:
     return frozenset(urls)
 
 
+async def position_states(session, user):
+    rows = await session.execute(
+        select(Episode.guid, PlaybackPosition.completed, PlaybackPosition.dismissed, PlaybackPosition.position_seconds)
+        .join(PlaybackPosition, PlaybackPosition.episode_id == Episode.id)
+        .where(PlaybackPosition.user_id == user.id)
+    )
+    return {guid: (completed, dismissed, seconds) for guid, completed, dismissed, seconds in rows}
+
+
 async def run(
     cases: tuple[Case, ...],
     world: tuple[Show, ...],
@@ -202,6 +232,7 @@ async def run(
     concurrency: int = 4,
     on_result=None,
     pipeline: str = "legacy",
+    reference_date: date = REFERENCE_DATE,
 ) -> Report:
     report = Report(
         model=getattr(client, "model", type(client).__name__),
@@ -230,7 +261,7 @@ async def run(
     # One flat list of (case, attempt) pairs, so repeats of a slow case
     # overlap with other cases rather than queueing behind each other.
     try:
-        with stub_world(world):
+        with evaluation_clock(reference_date), stub_world(world):
             report.runs = list(await asyncio.gather(*(one(case) for _ in range(repeat) for case in cases)))
     finally:
         settings.inbound_email_domain, settings.inbound_email_secret = configured

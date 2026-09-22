@@ -91,6 +91,7 @@ class Expect:
     #: two shows she meant.
     says: tuple[str, ...] = ()
     steps: tuple["Expect", ...] = ()
+    latest_overall: bool = False
 
     @property
     def episodes(self) -> tuple[str, ...]:
@@ -125,6 +126,8 @@ class Case:
     #: request: "the one about Agincourt" is not a command on its own, and a
     #: case that leaves this out is testing a sentence nobody would ever say.
     context: tuple[Turn, ...] = field(default_factory=tuple)
+    # guid, completed, dismissed, playback position in seconds.
+    initial_states: tuple[tuple[str, bool, bool, float], ...] = ()
 
 
 CASES: tuple[Case, ...] = (
@@ -188,7 +191,7 @@ CASES: tuple[Case, ...] = (
     Case(
         id="latest-of-everything",
         said="Play the latest",
-        expect=Expect(Action.PLAY_EPISODE, episode=_newest_overall()),
+        expect=Expect(Action.PLAY_EPISODE, episode=_newest_overall(), latest_overall=True),
         why="With no show named, the newest item across every subscription is the answer.",
         tags=("play", "latest"),
         question_is_acceptable=False,
@@ -464,6 +467,28 @@ CASES: tuple[Case, ...] = (
         ),
         tags=("filing", "now-playing"),
         now_playing=_latest("in_our_time"),
+        initial_states=((_latest("in_our_time"), False, True, 123.0),),
+        question_is_acceptable=False,
+    ),
+    Case(
+        id="restore-completed",
+        said="I haven't heard this after all, put it back",
+        expect=Expect(Action.RESTORE, episode=_latest("in_our_time")),
+        why="Restoring a completed item must clear completion and reset playback to the beginning.",
+        tags=("filing", "now-playing"),
+        now_playing=_latest("in_our_time"),
+        initial_states=((_latest("in_our_time"), True, False, 123.0),),
+        question_is_acceptable=False,
+    ),
+    Case(
+        id="restore-already-restored",
+        said="Put this one back in my list",
+        expect=Expect(Action.RESTORE, episode=_latest("in_our_time")),
+        why="An explicit restore is idempotent, including when it is already available and unheard.",
+        tags=("filing", "now-playing"),
+        now_playing=_latest("in_our_time"),
+        initial_states=((_latest("in_our_time"), False, False, 123.0),),
+        question_is_acceptable=False,
     ),
     Case(
         id="skip-ahead-is-not-dismissal",

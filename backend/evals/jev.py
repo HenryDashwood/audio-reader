@@ -68,6 +68,19 @@ def parse_input(items: list[dict[str, Any]]) -> dict[str, Any]:
             section = "details"
         elif line.startswith(("Today is", "Now playing:", "On screen:", "Previously completed action:")):
             state["context"].append(line)
+        elif section == "episodes" and line.startswith("{"):
+            episode = json.loads(line)
+            state["episodes"][str(episode["id"])] = {
+                **episode,
+                "show": episode["feed_title"],
+                "published": episode["published_at"] or "undated",
+                "listening_state": json.dumps(
+                    {
+                        key: episode[key]
+                        for key in ("kind", "duration_seconds", "completed", "dismissed", "position_seconds")
+                    }
+                ),
+            }
         elif match := re.match(r"^\[(\d+)\] (.*)$", line):
             item_id, label = match.groups()
             if section in ("subscriptions", "newsletters"):
@@ -86,7 +99,7 @@ def parse_input(items: list[dict[str, Any]]) -> dict[str, Any]:
     newest = max((episode["published"] for episode in dated), default="")
     for episode in dated:
         published = episode["published"]
-        episode["weekday"] = date.fromisoformat(published).strftime("%A")
+        episode["weekday"] = date.fromisoformat(published[:10]).strftime("%A")
         latest_by_show[episode["show"]] = max(published, latest_by_show.get(episode["show"], ""))
     for episode in state["episodes"].values():
         episode["latest_in_show"] = episode["published"] == latest_by_show.get(episode["show"])

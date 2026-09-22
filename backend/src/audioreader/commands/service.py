@@ -378,6 +378,7 @@ def _to_candidates(episodes) -> list[Candidate]:
             id=episode.id,
             title=episode.title,
             feed_title=episode.feed.title if episode.feed else "Saved",
+            feed_id=episode.feed_id,
             # The model sees stripped, truncated text: feed descriptions are
             # HTML soup and would otherwise dominate the token bill.
             description=summarise(episode.description, limit=300),

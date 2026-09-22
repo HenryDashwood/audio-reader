@@ -281,7 +281,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("AUDIOREADER_OPENAI_API_KEY", "OPENAI_API_KEY"),
     )
     openai_responses_url: str = "https://api.openai.com/v1/responses"
-    openai_model: str = "gpt-5.6-luna"
+    openai_model: str = "gpt-6-luna"
     # Luna can use the tools and infer likely names without emitting separate
     # reasoning tokens. Those tokens added roughly ten seconds to a simple
     # already-subscribed answer in real-device testing.

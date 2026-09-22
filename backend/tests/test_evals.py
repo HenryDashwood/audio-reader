@@ -7,20 +7,20 @@ a wrong episode apart from a question.
 """
 
 from dataclasses import replace
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 import pytest
 
 from audioreader.commands import service
-from audioreader.commands.intents import Action, InterpretResult
+from audioreader.commands.intents import Action, CommandStatus, InterpretResult
 from audioreader.config import settings
 from audioreader.llm.fake import FakeLLMClient
 from audioreader.models import Episode, Feed, Subscription
 from evals import cases as corpus
 from evals.grading import Grade, Observed, grade, readable_aloud
 from evals.runner import run_case
-from evals.world import build_world, seed, stub_world
+from evals.world import build_world, evaluation_clock, seed, stub_world
 
 REFERENCE = date(2026, 8, 13)  # a Thursday, so every weekday case is well defined
 
@@ -53,9 +53,9 @@ class TestWorld:
             published = [item.published_at for item in show.items]
             assert published == sorted(published, reverse=True), show.title
 
-    def test_nothing_is_published_today_or_later(self, world):
+    def test_nothing_is_published_after_the_reference_day(self, world):
         for show in world:
-            assert show.items[0].published_at.date() < REFERENCE, show.title
+            assert show.items[0].published_at.date() <= REFERENCE, show.title
 
     def test_weekday_shows_publish_on_their_day(self, world):
         by_key = {show.key: show for show in world}
@@ -188,13 +188,39 @@ class TestGrading:
         assert "wrong episode" in detail
 
     def test_a_question_is_its_own_verdict(self):
-        asked = self.observed(action=Action.UNKNOWN, spoken="Which one?", episode_guid=None)
+        asked = self.observed(
+            action=Action.UNKNOWN, spoken="Which one?", episode_guid=None, status=CommandStatus.NEEDS_CLARIFICATION
+        )
         assert grade(self.case(), asked)[0] is Grade.ASKED
+
+    @pytest.mark.parametrize("status", [CommandStatus.UNSUPPORTED, CommandStatus.NOT_FOUND, CommandStatus.FAILED])
+    def test_refusal_or_not_found_is_not_a_question(self, status):
+        observed = self.observed(action=Action.UNKNOWN, spoken="I cannot do that.", episode_guid=None, status=status)
+        assert grade(self.case(), observed)[0] is Grade.FAIL
+        assert not observed.describe().startswith("asked:")
+
+    def test_right_playback_with_unrequested_subscription_fails(self):
+        observed = self.observed(subscribed_added=frozenset({"https://extra.test/feed"}))
+        assert grade(self.case(), observed) == (Grade.FAIL, "Unrequested subscription change")
+
+    def test_right_playback_with_unrequested_filing_fails(self):
+        observed = self.observed(positions_before={}, positions_after={"other": (True, False, 0)})
+        assert grade(self.case(), observed)[0] is Grade.FAIL
+
+    def test_claimed_restore_without_changing_state_fails(self):
+        state = {"iot-dark-matter": (False, True, 123)}
+        observed = self.observed(action=Action.RESTORE, positions_before=state, positions_after=state)
+        case = self.case(expect=corpus.Expect(Action.RESTORE, episode="iot-dark-matter"))
+        assert grade(case, observed)[0] is Grade.FAIL
+        restored = replace(observed, positions_after={"iot-dark-matter": (False, False, 0)})
+        assert grade(case, restored)[0] is Grade.PASS
 
     def test_a_question_fails_when_the_request_was_clear(self):
         verdict, _ = grade(
             self.case(question_is_acceptable=False),
-            self.observed(action=Action.UNKNOWN, spoken="Which one?", episode_guid=None),
+            self.observed(
+                action=Action.UNKNOWN, spoken="Which one?", episode_guid=None, status=CommandStatus.NEEDS_CLARIFICATION
+            ),
         )
         assert verdict is Grade.FAIL
 
@@ -367,3 +393,86 @@ async def test_eval_can_drive_the_production_streaming_pipeline(world):
     with stub_world(world):
         result = await run_case(case, world, StreamingModel({}), pipeline="conversation")
     assert result.grade is Grade.PASS
+
+
+@pytest.mark.parametrize("day_offset", range(7))
+@pytest.mark.parametrize("case_id", ["by-weekday", "latest-of-everything"])
+async def test_calendar_and_latest_expectations_follow_the_selected_world(day_offset, case_id):
+    from audioreader.commands import conversation
+    from audioreader.llm.openai_responses import ResponseCompleted
+
+    reference = date(2026, 9, 21) + timedelta(days=day_offset)
+    world = build_world(reference)
+
+    class CalendarModel:
+        async def stream(self, *, instructions, input_items, tools=None):
+            import json
+
+            assert f"Today is {reference.isoformat()}." in input_items[-1]["content"]
+            assert conversation.utcnow() == datetime.combine(reference, datetime.min.time(), UTC).replace(
+                hour=23, minute=59
+            )
+            yield ResponseCompleted(
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "name": "play_matching_episode",
+                            "call_id": "play",
+                            "arguments": json.dumps(
+                                {
+                                    "feed_id": None,
+                                    "query": "",
+                                    "order": "latest",
+                                    "day": "tuesday" if case_id == "by-weekday" else None,
+                                    "unheard": False,
+                                    "saved_only": False,
+                                    "kind": None,
+                                    "max_seconds": None,
+                                }
+                            ),
+                        }
+                    ]
+                }
+            )
+
+    with evaluation_clock(reference), stub_world(world):
+        result = await run_case(corpus.by_id(case_id), world, CalendarModel(), pipeline="conversation")
+    assert result.grade is Grade.PASS, result.detail
+
+
+@pytest.mark.parametrize("case_id", ["restore-this", "restore-completed", "restore-already-restored"])
+async def test_restore_fixture_reaches_model_and_grader_verifies_result(case_id):
+    import json
+
+    from audioreader.llm.openai_responses import ResponseCompleted
+
+    case = corpus.by_id(case_id)
+    world = build_world()
+    _, completed, dismissed, position = case.initial_states[0]
+
+    class RestoreModel:
+        async def stream(self, *, instructions, input_items, tools=None):
+            records = [json.loads(line) for line in input_items[-1]["content"].splitlines() if line.startswith("{")]
+            episode = next(row for row in records if row["title"] == "Archive: Coffee")
+            assert (episode["completed"], episode["dismissed"], episode["position_seconds"]) == (
+                completed,
+                dismissed,
+                position,
+            )
+            yield ResponseCompleted(
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "name": "file_episode",
+                            "call_id": "restore",
+                            "arguments": json.dumps({"episode_id": episode["id"], "action": "restore"}),
+                        }
+                    ]
+                }
+            )
+
+    with evaluation_clock(), stub_world(world):
+        result = await run_case(case, world, RestoreModel(), pipeline="conversation")
+    assert result.grade is Grade.PASS, result.detail

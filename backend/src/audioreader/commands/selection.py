@@ -9,6 +9,7 @@ WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", 
 def date_bounds(day: str | None, timezone: str, now: datetime):
     if day is None:
         return None, None
+    day = day.strip().casefold()
     zone = ZoneInfo(timezone)
     today = now.astimezone(zone).date()
     if day == "today":

@@ -10,7 +10,7 @@ lands, and she has no way to check.
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
-from audioreader.commands.intents import Action, InterpretResult
+from audioreader.commands.intents import Action, CommandStatus, InterpretResult
 from evals.cases import Case
 
 
@@ -42,6 +42,9 @@ class Observed:
     steps: tuple["Observed", ...] = ()
     subscribed_added: frozenset[str] = frozenset()
     subscribed_removed: frozenset[str] = frozenset()
+    status: CommandStatus = CommandStatus.COMPLETED
+    positions_before: dict[str, tuple[bool, bool, float]] | None = None
+    positions_after: dict[str, tuple[bool, bool, float]] | None = None
 
     @classmethod
     def of(
@@ -54,6 +57,7 @@ class Observed:
         return cls(
             steps=tuple(cls.of(step, before, after) for step in result.actions),
             action=result.action,
+            status=result.status,
             spoken=result.spoken_response,
             episode_guid=episode.guid if episode else None,
             episode_show=episode.feed.title if episode and episode.feed else None,
@@ -83,7 +87,8 @@ class Observed:
         if self.speed is not None:
             return f"set speed {self.speed:g}"
         if self.action is Action.UNKNOWN:
-            return f"asked: {self.spoken!r}" if self.spoken.strip() else "said nothing"
+            label = "asked" if self.status is CommandStatus.NEEDS_CLARIFICATION else self.status.value
+            return f"{label}: {self.spoken!r}" if self.spoken.strip() else "said nothing"
         return f"{self.action}: {self.spoken!r}"
 
 
@@ -100,6 +105,41 @@ def readable_aloud(text: str) -> bool:
 
 def grade(case: Case, observed: Observed) -> tuple[Grade, str]:
     """The verdict, and one line saying why."""
+    expected = case.expect.steps or (case.expect,)
+    allowed_additions = {step.feed for step in expected if step.action is Action.SUBSCRIBED}
+    allowed_removals = {step.feed for step in expected if step.action is Action.UNSUBSCRIBED}
+    if observed.subscribed_added - allowed_additions or observed.subscribed_removed - allowed_removals:
+        return Grade.FAIL, "Unrequested subscription change"
+    if observed.positions_before is not None and observed.positions_after is not None:
+        wanted = dict(observed.positions_before)
+        for step in expected:
+            performed = any(
+                result.action is step.action and result.status is CommandStatus.COMPLETED
+                for result in observed.steps or (observed,)
+            )
+            if performed and step.action in {Action.RESTORE, Action.DISMISS, Action.MARK_PLAYED} and step.episode:
+                completed, dismissed, position = wanted.get(step.episode, (False, False, 0.0))
+                if step.action is Action.RESTORE:
+                    completed, dismissed = False, False
+                    position = 0.0
+                elif step.action is Action.DISMISS:
+                    dismissed = True
+                else:
+                    completed = True
+                wanted[step.episode] = (completed, dismissed, position)
+        # A missing position row and an untouched default row are equivalent.
+        keys = wanted.keys() | observed.positions_after.keys()
+        if any(
+            wanted.get(key, (False, False, 0.0)) != observed.positions_after.get(key, (False, False, 0.0))
+            for key in keys
+        ):
+            return Grade.FAIL, "Missing or unexpected filing/progress change"
+    if observed.steps and not case.expect.steps:
+        return Grade.FAIL, "Unrequested additional action"
+    return _grade_action(case, observed)
+
+
+def _grade_action(case: Case, observed: Observed) -> tuple[Grade, str]:
     expect = case.expect
     did = observed.describe()
     if expect.steps:
@@ -110,7 +150,8 @@ def grade(case: Case, observed: Observed) -> tuple[Grade, str]:
         remaining = list(observed.steps)
         for expected in expect.steps:
             match = next(
-                (step for step in remaining if grade(replace(case, expect=expected), step)[0] is Grade.PASS), None
+                (step for step in remaining if _grade_action(replace(case, expect=expected), step)[0] is Grade.PASS),
+                None,
             )
             if match is None:
                 return Grade.FAIL, f"missing or incorrect {expected.action} action"
@@ -130,10 +171,13 @@ def grade(case: Case, observed: Observed) -> tuple[Grade, str]:
 
     if observed.action is not expect.action:
         if observed.action is Action.UNKNOWN:
-            if case.question_is_acceptable:
+            if case.question_is_acceptable and observed.status is CommandStatus.NEEDS_CLARIFICATION:
                 return Grade.ASKED, did
-            return Grade.FAIL, f"{did} — this request is clear enough to act on"
+            return Grade.FAIL, f"{did} — requested action was not completed"
         return Grade.FAIL, f"expected {expect.action}, {did}"
+
+    if observed.action is not Action.UNKNOWN and observed.status is not CommandStatus.COMPLETED:
+        return Grade.FAIL, f"{did} — action did not complete"
 
     if expect.episodes and observed.episode_guid not in expect.episodes:
         return Grade.FAIL, f"{did} — wrong episode"

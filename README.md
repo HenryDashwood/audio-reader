@@ -591,7 +591,7 @@ development needs no configuration.
 - `OPENAI_API_KEY` (or `AUDIOREADER_OPENAI_API_KEY`) — calls OpenAI Responses
   for streamed voice understanding. The standard key is never sent to the app.
 - `AUDIOREADER_OPENAI_MODEL` / `_REASONING_EFFORT` — direct Responses model
-  and reasoning level (defaults `gpt-5.6-luna` and `none`).
+  and reasoning level (defaults `gpt-6-luna` and `none`).
 - `AUDIOREADER_SESSION_IDLE_TIMEOUT_DAYS` — how long a session token stays
   valid after its last use (default 180; 0 disables expiry)
 - `AUDIOREADER_DEVELOPMENT_AUTH_TOKEN` — enables the fixed local development
@@ -906,17 +906,28 @@ The test suite stubs the LLM, so no API key is needed to run it.
 ### Choosing an LLM provider
 
 `AUDIOREADER_LLM_PROVIDER` selects the backend; the bare vendor key names
-(`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`) are read as-is from `.env`.
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`) are read as-is from `.env`.
 
 | Provider | Key | Model setting |
 | --- | --- | --- |
-| `openrouter` (default) | `OPENROUTER_API_KEY` | `AUDIOREADER_OPENROUTER_MODEL` |
+| `openai` (default) | `OPENAI_API_KEY` | `AUDIOREADER_OPENAI_MODEL` |
+| `openrouter` | `OPENROUTER_API_KEY` | `AUDIOREADER_OPENROUTER_MODEL` |
 | `anthropic` | `ANTHROPIC_API_KEY` | `AUDIOREADER_LLM_MODEL` |
 
-The default is `openai/gpt-5.6-luna`. Model choice is decided by
-`backend/evals` rather than by impressions — the numbers below are that
-corpus run three times over, alongside the cost of one spoken command measured
-from real token usage:
+The default is direct OpenAI Responses with `gpt-6-luna` and reasoning `none`
+for voice understanding, streamed conversations, and publication discovery.
+This processes text transcribed on the phone; speech recognition and speech
+synthesis are unchanged. `AUDIOREADER_OPENAI_MODEL` overrides the default,
+including rollback to `gpt-5.6-luna`. After correcting prompt/tool context and
+evaluation fixtures, both models passed all 43 command cases and all nine
+clarification conversations in the
+[2026-09-22 comparison](docs/gpt-6-luna-evaluation-2026-09-22.md#results-after-the-fixes).
+
+Model choice is checked with `backend/evals`. The historical OpenRouter
+comparison below used the earlier corpus run three times over, alongside the
+cost of one spoken command measured from real token usage. These are GPT-5.6
+Luna results, not measurements of GPT-6 Luna; the optional OpenRouter provider
+retains its evaluated `openai/gpt-5.6-luna` default:
 
 | Model | $ / command | Corpus, 66 runs |
 | --- | --- | --- |

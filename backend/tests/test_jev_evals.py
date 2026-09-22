@@ -121,16 +121,26 @@ async def test_real_executor_and_grader_judge_jev_selected_episode(monkeypatch, 
     assert result.command_seconds < result.seconds
 
 
-def test_cost_includes_cache_discount_and_free_jev_output():
+@pytest.mark.parametrize(
+    ("model", "cached_cost", "write_cost", "uncached_cost"),
+    [
+        ("gpt-5.6-luna", 0.000176, 0.000181, 0.00032),
+        ("gpt-6-luna", 0.000078, 0.0000805, 0.00015),
+    ],
+)
+def test_cost_includes_cache_discount_and_free_jev_output(monkeypatch, model, cached_cost, write_cost, uncached_cost):
+    from audioreader.config import settings
+
+    monkeypatch.setattr(settings, "openai_model", model)
     assert token_cost({"provider": "jev", "usage": {"input_tokens": 1000, "output_tokens": 5000}}) == 0.000042
     call = {
         "provider": "openai",
         "usage": {"input_tokens": 1000, "input_tokens_details": {"cached_tokens": 800}, "output_tokens": 100},
     }
-    assert token_cost(call) == pytest.approx(0.000176)
+    assert token_cost(call) == pytest.approx(cached_cost)
     call["usage"]["input_tokens_details"]["cache_write_tokens"] = 100
-    assert token_cost(call) == pytest.approx(0.000181)
-    assert token_cost(call, ignore_cache=True) == pytest.approx(0.00032)
+    assert token_cost(call) == pytest.approx(write_cost)
+    assert token_cost(call, ignore_cache=True) == pytest.approx(uncached_cost)
     assert token_cost({"provider": "jev"}) is None
     assert percentile([1, 2, 3], 0.95) == 3
 

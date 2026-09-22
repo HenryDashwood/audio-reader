@@ -342,6 +342,15 @@ async def test_saved_date_requirement_is_rechecked_when_answered(session, user):
     assert result.episode is None
 
 
+@pytest.mark.parametrize("day", ["tuesday", "Tuesday", " TUESDAY "])
+def test_weekday_tool_arguments_are_case_insensitive(day):
+    now = datetime(2026, 9, 22, 12, tzinfo=UTC)
+    assert selection.date_bounds(day, "UTC", now) == (
+        datetime(2026, 9, 22, tzinfo=UTC),
+        datetime(2026, 9, 23, tzinfo=UTC),
+    )
+
+
 def test_additive_migration_preserves_users_and_matches_runtime_schema():
     import importlib.util
     from pathlib import Path

@@ -23,7 +23,7 @@ from audioreader.settings_types import LLMProvider
 from evals import cases as corpus
 from evals.grading import Grade
 from evals.runner import Report, Run, run
-from evals.world import build_world
+from evals.world import REFERENCE_DATE, build_world
 
 COLOURS = {
     Grade.PASS: "\033[32m",
@@ -76,7 +76,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--reference-date",
         type=date.fromisoformat,
-        help="Pin the world's dates (YYYY-MM-DD) instead of counting back from today.",
+        default=REFERENCE_DATE,
+        help=f"Pin the world and application clock (YYYY-MM-DD, default {REFERENCE_DATE}).",
     )
     parser.add_argument("--audio-results", help="Use transcripts from the iOS recorded-speech benchmark.")
     parser.add_argument("--json", metavar="PATH", help="Also write the results as JSON.")
@@ -92,6 +93,8 @@ def apply_overrides(args: argparse.Namespace) -> None:
     if args.model:
         if settings.llm_provider is LLMProvider.OPENROUTER:
             settings.openrouter_model = args.model
+        elif settings.llm_provider is LLMProvider.OPENAI:
+            settings.openai_model = args.model
         else:
             settings.llm_model = args.model
     if args.candidates is not None:
@@ -100,6 +103,7 @@ def apply_overrides(args: argparse.Namespace) -> None:
         settings.command_search_limit = args.search
     if args.reasoning is not None:
         settings.openrouter_reasoning = args.reasoning
+        settings.openai_reasoning_effort = "low" if args.reasoning else "none"
 
 
 def line(run_: Run, colour: bool) -> str:
@@ -211,6 +215,7 @@ async def main(argv: list[str] | None = None) -> int:
         concurrency=args.concurrency,
         on_result=show,
         pipeline=args.pipeline,
+        reference_date=args.reference_date,
     )
     print_report(report, selected, colour)
 
