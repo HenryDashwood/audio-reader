@@ -205,9 +205,10 @@ final class OfflineLibraryActions: ObservableObject {
 struct PendingLibraryChanges: View {
     @ObservedObject private var actions = OfflineLibraryActions.shared
     var body: some View {
-        if !actions.pending.isEmpty {
+        // Routine uploads are silent; show recovery controls only after a failure.
+        if !actions.pending.isEmpty, let error = actions.error {
             VStack(alignment: .leading, spacing: 8) {
-                Text(actions.error ?? "Library changes saved on this device · Waiting to sync")
+                Text(error)
                     .font(.footnote).foregroundStyle(.secondary)
                 HStack {
                     Button("Retry sync") { actions.retry(force: true) }
