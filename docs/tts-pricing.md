@@ -133,6 +133,88 @@ So: a mid-tier engine at $9.99/month clears its costs with room for the rest of
 the hosting bill. A premium ElevenLabs voice does not, at any price a reader
 app can plausibly charge, unless caching carries most of the load.
 
+## Gemini 3.8 TTS (added 23 September 2026)
+
+Google shipped two models, checked against the official pricing page on
+23 September 2026. Prices per 1M tokens:
+
+| Model | Text in | Audio out | Batch out | From 1 Jan 2027 (out) |
+| --- | ---: | ---: | ---: | ---: |
+| Gemini 3.8 Flash TTS | $0.50 | $9.00 | $4.50 | $18.00 (batch $9.00) |
+| Gemini 3.8 Flash-Lite TTS | $0.50 | $6.00 | $3.00 | $12.00 (batch $6.00) |
+| Gemini 3.1 Flash TTS (for comparison) | $1.00 | $20.00 | $10.00 | unchanged |
+
+Launch prices are a promotion that **doubles on 1 January 2027**. A
+subscription priced today has to survive the 2027 rates, so everything below
+uses them.
+
+Audio is billed at 25 tokens per second, so a narration hour is 90,000 output
+tokens. Input text (~15k tokens an hour) is a rounding error. That makes the
+bill track *generated audio duration*: a model that reads slowly costs more per
+article, and playback speed on the phone still changes nothing. The 170 wpm
+assumption above needs checking against real Gemini output. (It also means the
+Gemini 2.5 Flash row in the provider table understates that model: 90k tokens
+at $10/1M is $0.90 an hour, not $0.59.)
+
+| | $/narration hour | $/1,200-word article |
+| --- | ---: | ---: |
+| Flash, 2026 launch price | 0.82 | 0.10 |
+| **Flash, 2027** | **1.64** | **0.19** |
+| Flash-Lite, 2026 launch price | 0.55 | 0.06 |
+| **Flash-Lite, 2027** | **1.10** | **0.13** |
+| Either, 2027 batch | 0.82 / 0.55 | 0.10 / 0.06 |
+
+At 2027 rates Flash lands between `gpt-4o-mini-tts` and Chirp 3 HD, and is
+only 10% cheaper than the 3.1 model it replaces. Flash-Lite is the one that
+fits a feed reader.
+
+Per subscriber per month, no caching (same profiles as above):
+
+| Profile | Hours | Flash 2027 | Flash-Lite 2027 |
+| --- | ---: | ---: | ---: |
+| Light, 3/week | 1.5 | $2.50 | $1.67 |
+| Moderate, 1/day | 3.5 | $5.77 | $3.86 |
+| Committed, 3/day | 10.6 | $17.31 | $11.59 |
+| Heavy, 6/day | 21.2 | $34.62 | $23.18 |
+| Power, 12/day | 42.4 | $69.24 | $46.37 |
+| **Blended mix (6.4h)** | 6.4 | **$10.51** | **$7.04** |
+| Blended, 50% cache hits | | $5.26 | $3.52 |
+| Blended, 80% cache hits | | $2.10 | $1.41 |
+
+In aggregate (blended mix, 2027 rates, per month):
+
+| Subscribers | Flash, no cache | Flash, 50% | Flash-Lite, no cache | Flash-Lite, 50% | Flash-Lite, 80% |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 100 | $1,050 | $530 | $700 | $350 | $140 |
+| 1,000 | $10,500 | $5,300 | $7,000 | $3,500 | $1,400 |
+| 10,000 | $105,000 | $53,000 | $70,000 | $35,000 | $14,000 |
+
+Cache hit rate should rise with the subscriber count, because more listeners
+share each feed article, so the right-hand columns become more realistic as the
+product grows.
+
+What a subscription has to cost (Apple at 15%):
+
+- **Break-even on TTS alone, blended, no cache:** $12.37 on Flash, $8.28 on
+  Flash-Lite. Leaving TTS at 40% of net revenue takes $30.91 and $20.70.
+- **Hours a price covers at the cap:** $9.99 nets $8.49, which buys 5.2h of
+  Flash or 7.8h of Flash-Lite. $14.99 buys 7.8h and 11.6h.
+- **The 15-hour cap recommended above does not survive 2027 pricing** on either
+  model: a maxed-out subscriber costs $24.52 on Flash and $16.42 on Flash-Lite.
+
+Recommendation for Gemini 3.8 specifically:
+
+- Use **Flash-Lite** as the premium voice unless a listening test on real feed
+  text finds Flash clearly better. Flash costs 50% more for every hour.
+- **$9.99 a month with a 7.5-hour cap** (around 60 articles, two a day) covers
+  the worst case on Flash-Lite at list price ($8.21 against $8.49 net), and the
+  blended mix with 50% caching spends about 40% of net revenue on TTS. Flash at
+  the same cap would need $14.99 ($12.26 against $12.74).
+- **Pre-render popular feed articles through the Batch API** at ingest. Batch
+  halves the rate and its slow turnaround doesn't matter for articles rendered
+  ahead of time; use standard calls only for on-demand, uncached articles.
+- Do not set the price from the 2026 launch rates. They end in three months.
+
 ## The levers that change the arithmetic
 
 1. **Cache by article, not by user.** Feeds are shared. One rendering of a new
@@ -199,7 +281,7 @@ the final cap.
 - [ElevenReader pricing](https://elevenreader.io/pricing)
 - [OpenAI API pricing](https://platform.openai.com/docs/pricing) —
   [TTS breakdown](https://texttolab.com/blog/openai-tts-pricing)
-- [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)
+- [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing), including Gemini 3.8 Flash TTS and Flash-Lite TTS
 - [Google Cloud Text-to-Speech pricing](https://cloud.google.com/text-to-speech/pricing)
 - [Amazon Polly pricing](https://aws.amazon.com/polly/pricing/)
 - [Azure Neural HD price change](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/azure-speech-%e2%80%93-neural-hd-text-to-speech-recent-voice-updates/4505380)
