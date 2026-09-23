@@ -89,10 +89,56 @@ private actor BookmarkPlaybackAPI: HearfulAPIProtocol {
 @MainActor
 struct ArticleProgressPlaybackTests {
     private let owner = String(repeating: "d", count: 64)
+    // These tests control responses, not elapsed time. A loaded CI runner must
+    // not race their mock replies against the production cache deadline.
+    private let loadDeadline = ControlledDelay()
     private func loaded(_ player: ArticlePlayer) async throws {
-        for _ in 0..<100 where !player.isReadyToPlay { try await Task.sleep(for: .milliseconds(10)) }
-        #expect(player.isReadyToPlay); #expect(player.loadingError == nil)
+        await player.waitForPendingLoad()
+        try #require(player.isReadyToPlay); try #require(player.loadingError == nil)
     }
+
+    @Test(arguments: [true, false])
+    func loadDeadlineFallsBackOnlyWhenTextIsCached(hasCachedText: Bool) async throws {
+        let api = BookmarkPlaybackAPI()
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = OfflineCache(directory: directory)
+        if hasCachedText { cache.saveArticle(try await api.articleText(episodeID: 1)) }
+        let synth = SilentSynthesizer()
+        let requestStarted = CommandGate()
+        let releaseRequest = CommandGate()
+        var deadline: Duration?
+        let player = ArticlePlayer(
+            api: api, cache: cache, synthesizer: synth, progressScope: { nil }, activateAudioSession: {},
+            loadDeadlineSleep: { duration in
+                deadline = duration
+                // Expire only after reconciliation starts, without waiting for
+                // wall time or depending on which task the runner schedules first.
+                await requestStarted.wait()
+            })
+        player.progressDrain = {
+            await requestStarted.release()
+            await releaseRequest.wait()
+        }
+
+        player.play(try await api.episode(id: 1))
+        await player.waitForPendingLoad()
+        await releaseRequest.release()
+
+        #expect(deadline == .seconds(hasCachedText ? 2 : 20))
+        #expect(player.isReadyToPlay == hasCachedText)
+        #expect(player.isPlaying == hasCachedText)
+        if hasCachedText {
+            #expect(player.loadingError == nil)
+            #expect(synth.lastSpoken?.hasPrefix("Café") == true)
+            #expect(player.progressContext?.progress.textVersion == ArticleScript.textVersion(api.body))
+        } else {
+            #expect(player.loadingError != nil)
+            #expect(player.progressContext == nil)
+        }
+        player.clear()
+    }
+
     @Test func freshPlayUsesExactRemoteTextCoordinateInsteadOfEstimatedSecondsOrCachedBookmark() async throws {
         let api = BookmarkPlaybackAPI(); let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -101,7 +147,8 @@ struct ArticleProgressPlaybackTests {
         let offset = (api.body as NSString).range(of: "🦉").location
         await api.setBookmark(offset, revision: String(repeating: "c", count: 64))
         let synth = SilentSynthesizer()
-        let player = ArticlePlayer(api: api, cache: cache, synthesizer: synth, progressScope: { nil }, activateAudioSession: {})
+        let player = ArticlePlayer(api: api, cache: cache, synthesizer: synth, progressScope: { nil }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
         player.play(try await api.episode(id: 1)); try await loaded(player)
         #expect(synth.lastSpoken?.hasPrefix("Another") == true)
         #expect(player.progressContext?.offsetUTF16 == (api.body as NSString).range(of: "Another").location)
@@ -113,7 +160,8 @@ struct ArticleProgressPlaybackTests {
         let cache = OfflineCache(directory: directory.appending(path: "text"))
         let store = FileArticleProgressStorage(directory: directory.appending(path: "progress"))
         let journal = ArticleProgressJournal(store: store); let synth = SilentSynthesizer()
-        let player = ArticlePlayer(api: api, cache: cache, synthesizer: synth, bookmarkJournal: journal, progressScope: { owner }, activateAudioSession: {})
+        let player = ArticlePlayer(api: api, cache: cache, synthesizer: synth, bookmarkJournal: journal, progressScope: { owner }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
         let sync = ArticleProgressSync(api: api, player: player)
         defer { sync.invalidate() }
         player.prepare(try await api.episode(id: 1)); try await loaded(player)
@@ -127,7 +175,8 @@ struct ArticleProgressPlaybackTests {
         sync.invalidate(); player.clear()
         let freshJournal = ArticleProgressJournal(store: FileArticleProgressStorage(directory: store.directory))
         let freshSynth = SilentSynthesizer()
-        let fresh = ArticlePlayer(api: api, cache: cache, synthesizer: freshSynth, bookmarkJournal: freshJournal, progressScope: { owner }, activateAudioSession: {})
+        let fresh = ArticlePlayer(api: api, cache: cache, synthesizer: freshSynth, bookmarkJournal: freshJournal, progressScope: { owner }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
         let freshSync = ArticleProgressSync(api: api, player: fresh); defer { freshSync.invalidate() }
         let episode = Episode(id: 1, title: "Article", description: nil, audioURL: nil, durationSeconds: nil,
             publishedAt: nil, link: nil, positionSeconds: 0, completed: false, hasText: true, contentID: 7)
@@ -146,7 +195,8 @@ struct ArticleProgressPlaybackTests {
         let journal = ArticleProgressJournal(store: FileArticleProgressStorage(directory: directory.appending(path: "progress")))
         let synth = SilentSynthesizer()
         let article = ArticlePlayer(api: api, cache: OfflineCache(directory: directory.appending(path: "text")), synthesizer: synth,
-            bookmarkJournal: journal, progressScope: { owner }, activateAudioSession: {})
+            bookmarkJournal: journal, progressScope: { owner }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
         let coordinator = PlaybackCoordinator(audio: AudioPlayer(), article: article)
         let reporter = PositionReporter(api: api, player: coordinator, sessionScope: { nil })
         defer { reporter.invalidate() }
@@ -168,7 +218,8 @@ struct ArticleProgressPlaybackTests {
         let journal = ArticleProgressJournal(store: FileArticleProgressStorage(directory: directory.appending(path: "progress")))
         let synth = SilentSynthesizer()
         let player = ArticlePlayer(api: api, cache: OfflineCache(directory: directory.appending(path: "text")), synthesizer: synth,
-            bookmarkJournal: journal, progressScope: { owner }, activateAudioSession: {})
+            bookmarkJournal: journal, progressScope: { owner }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
         let sync = ArticleProgressSync(api: api, player: player); defer { sync.invalidate() }
         await api.failProgressReports()
         player.play(try await api.episode(id: 1)); try await loaded(player)
@@ -192,7 +243,8 @@ struct ArticleProgressPlaybackTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let journal = ArticleProgressJournal(store: FileArticleProgressStorage(directory: directory.appending(path: "progress")))
         let player = ArticlePlayer(api: api, cache: OfflineCache(directory: directory.appending(path: "text")), synthesizer: SilentSynthesizer(),
-            bookmarkJournal: journal, progressScope: { owner }, activateAudioSession: {})
+            bookmarkJournal: journal, progressScope: { owner }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
         let sync = ArticleProgressSync(api: api, player: player); defer { sync.invalidate() }
         player.play(try await api.episode(id: 1)); try await loaded(player)
         player.pause(); await sync.waitForPendingReports()

@@ -73,6 +73,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     private var synthesizer: SpeechSynthesizing
     private let makeSynthesizer: @MainActor () -> SpeechSynthesizing
     private let activateAudioSession: @MainActor () throws -> Void
+    private let loadDeadlineSleep: @MainActor @Sendable (Duration) async throws -> Void
     private var needsInterruptionRecovery = false
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
@@ -106,7 +107,10 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         bookmarkJournal: ArticleProgressJournal = .shared,
         progressScope: @escaping () -> String? = { ShortcutScope.current },
         makeSynthesizer: @escaping @MainActor () -> SpeechSynthesizing = SpeechSynthesizers.make,
-        activateAudioSession: @escaping @MainActor () throws -> Void = AudioSession.configureForPlayback
+        activateAudioSession: @escaping @MainActor () throws -> Void = AudioSession.configureForPlayback,
+        loadDeadlineSleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        }
     ) {
         self.api = api
         self.cache = cache
@@ -116,6 +120,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         self.synthesizer = synthesizer
         self.makeSynthesizer = makeSynthesizer
         self.activateAudioSession = activateAudioSession
+        self.loadDeadlineSleep = loadDeadlineSleep
         self.defaults = defaults
         synthesizer.delegate = self
         playbackRate = PlaybackSpeedPreference.load(.article, defaults: defaults)
@@ -282,6 +287,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     // MARK: - Loading
 
+    /// Wait for the current load, including bookmark reconciliation or cache fallback.
+    func waitForPendingLoad() async { await loadTask?.value }
+
     private func load(_ episode: Episode, andPlay: Bool) {
         loadTask?.cancel()
         deactivate()
@@ -299,7 +307,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         duration = 0
         PlaybackRestore.remember(episode)
 
-        loadTask = Task { [weak self, api, cache] in
+        loadTask = Task { [weak self, api, cache, loadDeadlineSleep] in
             guard !Task.isCancelled else { return }
             // ArticleView has already saved this exact payload after showing
             // it. Reading must use the same copy first: asking the server for
@@ -323,7 +331,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
                 // Existing text remains playable even when bookmark reconciliation
                 // or an apparently connected network stalls. Late results cannot
                 // replace a playback session that has already started locally.
-                let (selection, article) = try await withVoiceDeadline(seconds: saved == nil ? 20 : 2) { [weak self] in
+                let (selection, article) = try await withVoiceDeadline(
+                    seconds: saved == nil ? 20 : 2, sleep: loadDeadlineSleep
+                ) { [weak self] in
                     if andPlay { await self?.progressDrain?() }
                     try Task.checkCancellation()
                     let selection = andPlay && saved?.articleProgress != nil
