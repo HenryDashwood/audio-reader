@@ -381,7 +381,9 @@ struct SavedView: View {
                             play: { player.playReportingFailure(episode) }
                         )
                         .contentShape(Rectangle()).onTapGesture { openEpisode = episode }
-                        if episode.hasText == true || episode.contentID != nil {
+                        if (episode.hasText == true || episode.contentID != nil),
+                            model.availability(episode) != .available
+                        {
                             Text(model.availability(episode).label)
                                 .font(.caption).foregroundStyle(.secondary)
                             if case .failed = model.availability(episode) {
