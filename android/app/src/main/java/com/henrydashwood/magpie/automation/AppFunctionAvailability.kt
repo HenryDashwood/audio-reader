@@ -30,8 +30,8 @@ object AppFunctionAvailability {
                         if (enabled || id in localFunctionIds) AppFunctionManager.APP_FUNCTION_STATE_ENABLED else AppFunctionManager.APP_FUNCTION_STATE_DISABLED)
                     break
                 } catch (cancelled: CancellationException) { throw cancelled
-                } catch (_: Exception) {
-                    if (attempt == 3) Log.w("MagpieAppFunctions", "Could not update assistant action availability")
+                } catch (error: Exception) {
+                    if (attempt == 3) Log.w("MagpieAppFunctions", "Could not update assistant action availability", error)
                     else delay((attempt + 1) * 1_000L)
                 }
             }
