@@ -24,6 +24,17 @@ class ArticleReadingPositionTest {
         assertEquals(20, readingRangeAt(listOf(chunk), ranges, 3700)!!.startUtf16)
     }
 
+    @Test fun rotatedGoogleEngineRangesAreReordered() {
+        // Values as delivered by Google's engine on a Pixel 10a: SpeechFrame(frame, start, end)
+        // received (text end, audio frame, text start).
+        val chunk = TimedChunk(TextChunk("The price is high", 100, 117), 0, 2000)
+        val received = listOf(SpeechFrame(3, 360, 0), SpeechFrame(9, 4800, 4), SpeechFrame(12, 12000, 10), SpeechFrame(17, 24000, 13))
+        assertEquals(listOf(TimedSpeechRange(15, 100, 103), TimedSpeechRange(200, 104, 109),
+            TimedSpeechRange(500, 110, 112), TimedSpeechRange(1000, 113, 117)), timedSpeechRanges(chunk, received, 24000))
+        // Documented-order ranges are never rotated, even when the rotation would also fit.
+        assertEquals(listOf(SpeechFrame(1, 2, 3)), engineSpeechFrames(listOf(SpeechFrame(1, 2, 3)), 5))
+    }
+
     @Test fun missingOrInvalidTimingsFallBackToTheCurrentChunk() {
         val first = TimedChunk(TextChunk("First", 0, 5), 0, 1000)
         val second = TimedChunk(TextChunk("Second", 7, 13), 1000, 2000)
