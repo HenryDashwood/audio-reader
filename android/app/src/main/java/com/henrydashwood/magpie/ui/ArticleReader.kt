@@ -59,8 +59,11 @@ private fun ArticleReaderContent(item: LibraryItem, query: String, position: Art
     val reading = position?.takeIf { it.itemId == item.id && it.contentVersion == item.contentVersion }
     var following by rememberSaveable(item.id) { mutableStateOf(true) }
     val fontSize = 20f * LocalDensity.current.fontScale
-    val body = remember(item) { ArticleDocument.body(item) }
-    val document = remember(item, body, fontSize, colors) {
+    // Keyed on the displayed fields only. Playback saves progress into the item every few
+    // seconds; rebuilding the page then minted a new CSP nonce and reloaded the WebView,
+    // briefly showing the top of the article.
+    val body = remember(item.html, item.text, item.originalUrl) { ArticleDocument.body(item) }
+    val document = remember(item.title, item.source, item.publishedAt, body, fontSize, colors) {
         ArticleDocument.page(item, body, fontSize, colors.onSurface.css(), colors.surface.css(),
             colors.onSurfaceVariant.css(), colors.outlineVariant.css(), colors.primary.css(), colors.surface.luminance() < .5f)
     }
