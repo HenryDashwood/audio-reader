@@ -29,7 +29,35 @@ final class SavedLibrary: ObservableObject {
         init(_ episode: Episode) { episodeID = episode.id; contentID = episode.contentID }
     }
     @Published private(set) var downloads: [DownloadKey: DownloadState] = [:]
-    private let api = HearfulAPI()
+    private let api: HearfulAPI
+    private let inbox: CaptureInbox
+    private let cache: OfflineCache
+    private let isSignedIn: () -> Bool
+    private var removals = Set<Int>()
+    private var captureRemovals = Set<UUID>()
+    private var preparationWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(
+        api: HearfulAPI = HearfulAPI(), inbox: CaptureInbox = .shared,
+        cache: OfflineCache = .shared,
+        isSignedIn: @escaping () -> Bool = { KeychainTokenStore.token != nil }
+    ) {
+        self.api = api
+        self.inbox = inbox
+        self.cache = cache
+        self.isSignedIn = isSignedIn
+    }
+
+    private func waitForPreparation() async {
+        guard loading || replacing else { return }
+        await withCheckedContinuation { preparationWaiters.append($0) }
+    }
+
+    private func finishPreparation() {
+        let waiters = preparationWaiters
+        preparationWaiters = []
+        for waiter in waiters { waiter.resume() }
+    }
 
     func availability(_ episode: Episode) -> DownloadState {
         downloads[DownloadKey(episode)] ?? .waiting
@@ -40,7 +68,7 @@ final class SavedLibrary: ObservableObject {
         for episode in episodes {
             let key = DownloadKey(episode)
             guard states[key] != .downloading else { continue }
-            if OfflineCache.shared.article(episodeID: episode.id, contentID: episode.contentID) != nil {
+            if cache.article(episodeID: episode.id, contentID: episode.contentID) != nil {
                 states[key] = .available
             } else if states[key] == .available || states[key] == nil { states[key] = .waiting }
         }
@@ -57,28 +85,30 @@ final class SavedLibrary: ObservableObject {
         if schedule.isDue && needsRetry { await load() }
     }
     private var currentAccount: CaptureInbox.Account? {
-        guard let account = CaptureInbox.shared.account, account.server == api.baseURL,
-            KeychainTokenStore.token != nil
+        guard let account = inbox.account, account.server == api.baseURL,
+            isSignedIn()
         else { return nil }
         return account
     }
 
     func load() async {
-        guard !loading, !replacing, let account = currentAccount else { return }
+        guard !loading, !replacing, removals.isEmpty, captureRemovals.isEmpty,
+            let account = currentAccount else { return }
         let generation = self.generation
         loading = true
         defer {
             if self.generation == generation {
                 loading = false
                 if needsRetry { schedule.failed() } else { schedule.reset() }
+                finishPreparation()
             }
         }
         error = nil
-        if let local = OfflineCache.shared.load([Episode].self, for: .savedArticles) {
+        if let local = cache.load([Episode].self, for: .savedArticles) {
             episodes = OfflineLibraryActions.shared.overlay(local)
         }
         refreshAvailability()
-        pending = CaptureInbox.shared.pending(for: account)
+        pending = inbox.pending(for: account)
         // Library display and preparation are independent of pending uploads.
         // A slow or bad capture must not hide everything already saved.
         do {
@@ -87,7 +117,7 @@ final class SavedLibrary: ObservableObject {
             episodes = OfflineLibraryActions.shared.overlay(loaded)
             refreshAvailability()
             for episode in loaded { invalidateReplacedPlayback(episode) }
-            OfflineCache.shared.save(episodes, for: .savedArticles)
+            cache.save(episodes, for: .savedArticles)
         } catch {
             guard currentAccount == account, self.generation == generation, !Task.isCancelled else { return }
             if (error as? APIError)?.isAuthFailure == true { episodes = []; return }
@@ -106,7 +136,7 @@ final class SavedLibrary: ObservableObject {
                 episodes.insert(episode, at: 0)
                 // Retain the capture if the acknowledged metadata cannot be
                 // persisted. A failed text download remains visible/retryable.
-                guard OfflineCache.shared.save(episodes, for: .savedArticles) else {
+                guard cache.save(episodes, for: .savedArticles) else {
                     throw CocoaError(.fileWriteUnknown)
                 }
                 await download(episode)
@@ -114,7 +144,7 @@ final class SavedLibrary: ObservableObject {
                 guard availability(episode) == .available else {
                     throw APIError(spokenResponse: "Your capture is saved on this device. Its prepared text will download when connected.", underlying: "Download pending")
                 }
-                try CaptureInbox.shared.remove(capture)
+                try inbox.remove(capture)
             } catch {
                 guard currentAccount == account, self.generation == generation else { return }
                 self.error = (error as? APIError)?.spokenResponse ?? error.localizedDescription
@@ -122,7 +152,7 @@ final class SavedLibrary: ObservableObject {
             }
         }
         guard currentAccount == account, self.generation == generation else { return }
-        pending = CaptureInbox.shared.pending(for: account)
+        pending = inbox.pending(for: account)
         let missing = episodes.filter { ($0.hasText == true || $0.contentID != nil) && availability($0) != .available }
         // At most three downloads in flight, including after reconnection.
         for start in stride(from: 0, to: missing.count, by: 3) {
@@ -137,7 +167,7 @@ final class SavedLibrary: ObservableObject {
 
     func download(_ episode: Episode) async {
         guard downloads[DownloadKey(episode)] != .downloading, let account = currentAccount else { return }
-        if OfflineCache.shared.article(episodeID: episode.id, contentID: episode.contentID) != nil {
+        if cache.article(episodeID: episode.id, contentID: episode.contentID) != nil {
             downloads[DownloadKey(episode)] = .available
             return
         }
@@ -151,7 +181,7 @@ final class SavedLibrary: ObservableObject {
             guard text.episodeID == episode.id, episode.contentID == nil || text.contentID == episode.contentID else {
                 throw APIError(underlying: "The server returned a different article version")
             }
-            guard OfflineCache.shared.saveArticle(text) else { throw CocoaError(.fileWriteUnknown) }
+            guard cache.saveArticle(text) else { throw CocoaError(.fileWriteUnknown) }
             downloads[DownloadKey(episode)] = .available
         } catch {
             guard currentAccount == account, self.generation == generation else { return }
@@ -171,15 +201,46 @@ final class SavedLibrary: ObservableObject {
     }
 
     func remove(_ episode: Episode) async {
-        guard let account = currentAccount else { return }
+        guard let account = currentAccount, removals.insert(episode.id).inserted else { return }
+        defer { removals.remove(episode.id) }
         let generation = self.generation
+        // Let an already submitted save finish before deleting its bookmark, so
+        // a late server response cannot recreate a dismissed article.
+        await waitForPreparation()
+        guard currentAccount == account, self.generation == generation else { return }
         do {
             try await api.removeSavedArticle(id: episode.id)
             guard currentAccount == account, self.generation == generation else { return }
+            if let link = episode.link {
+                for capture in inbox.pending(for: account) where CaptureInbox.sameArticle(capture.url, link) {
+                    try inbox.remove(capture)
+                }
+            }
+            pending = inbox.pending(for: account)
             episodes.removeAll { $0.id == episode.id }
-            OfflineCache.shared.save(episodes, for: .savedArticles)
+            downloads = downloads.filter { $0.key.episodeID != episode.id }
+            error = nil
+            cache.save(episodes, for: .savedArticles)
             AccessibilityNotification.Announcement("Removed from Saved: \(episode.title)").post()
-        } catch { self.error = (error as? APIError)?.spokenResponse ?? error.localizedDescription }
+        } catch {
+            guard currentAccount == account, self.generation == generation else { return }
+            self.error = (error as? APIError)?.spokenResponse ?? error.localizedDescription
+        }
+    }
+
+    func remove(_ capture: CaptureInbox.Capture) async {
+        guard currentAccount == capture.account, captureRemovals.insert(capture.id).inserted else { return }
+        defer { captureRemovals.remove(capture.id) }
+        let generation = self.generation
+        await waitForPreparation()
+        guard currentAccount == capture.account, self.generation == generation else { return }
+        do {
+            if inbox.pending(for: capture.account).contains(where: { $0.id == capture.id }) {
+                try inbox.remove(capture)
+            }
+            pending = inbox.pending(for: capture.account)
+            error = nil
+        } catch { self.error = error.localizedDescription }
     }
 
     func file(_ filing: EpisodeFiling, episode: Episode) async {
@@ -193,23 +254,47 @@ final class SavedLibrary: ObservableObject {
     }
 
     func retry(_ episode: Episode) async {
+        guard !loading, !replacing, removals.isEmpty, captureRemovals.isEmpty,
+            let account = currentAccount else { return }
+        let generation = self.generation
+        replacing = true
+        defer {
+            if self.generation == generation {
+                replacing = false
+                finishPreparation()
+            }
+        }
+        error = nil
         do {
-            _ = try await api.retrySavedArticle(id: episode.id)
-            await load()
-        } catch { self.error = (error as? APIError)?.spokenResponse ?? error.localizedDescription }
+            let updated = try await api.retrySavedArticle(id: episode.id)
+            guard currentAccount == account, self.generation == generation else { return }
+            if let index = episodes.firstIndex(where: { $0.id == updated.id }) { episodes[index] = updated }
+            cache.save(episodes, for: .savedArticles)
+            if updated.hasText == true || updated.contentID != nil { await download(updated) }
+        } catch {
+            guard currentAccount == account, self.generation == generation else { return }
+            self.error = (error as? APIError)?.spokenResponse ?? error.localizedDescription
+        }
     }
 
     func replace(_ episode: Episode) async {
-        guard !loading, !replacing, let account = currentAccount else { return }
+        guard !loading, !replacing, removals.isEmpty, captureRemovals.isEmpty,
+            let account = currentAccount else { return }
         let generation = self.generation
         replacing = true
-        defer { if self.generation == generation { replacing = false } }
+        defer {
+            if self.generation == generation {
+                replacing = false
+                finishPreparation()
+            }
+        }
+        error = nil
         do {
             let updated = try await api.saveArticle(episodeID: episode.id, replaceExisting: true)
             guard currentAccount == account, self.generation == generation else { return }
             invalidateReplacedPlayback(updated)
             if let index = episodes.firstIndex(where: { $0.id == updated.id }) { episodes[index] = updated }
-            OfflineCache.shared.save(episodes, for: .savedArticles)
+            cache.save(episodes, for: .savedArticles)
             await download(updated)
             guard currentAccount == account, self.generation == generation else { return }
             AccessibilityNotification.Announcement("Saved text replaced: \(updated.title)").post()
@@ -234,6 +319,7 @@ final class SavedLibrary: ObservableObject {
         schedule.reset()
         loading = false
         replacing = false
+        finishPreparation()
         episodes = []
         downloads = [:]
         pending = []
@@ -282,10 +368,7 @@ struct SavedView: View {
                         }
                         .contextMenu {
                             Button("Remove saved link", role: .destructive) {
-                                do {
-                                    try CaptureInbox.shared.remove(capture)
-                                    Task { await model.load() }
-                                } catch { model.error = error.localizedDescription }
+                                Task { await model.remove(capture) }
                             }
                         }
                     }

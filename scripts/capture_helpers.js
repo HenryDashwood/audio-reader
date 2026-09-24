@@ -136,7 +136,8 @@ var MagpieCapture = {
                 var parent = p;
                 while (parent) {
                     if (['ASIDE', 'NAV', 'FORM', 'FOOTER'].includes(parent.tagName)
-                        || /related|newsletter|comment|social|share|promo|author|footer/i.test((parent.getAttribute('class') || '') + ' ' + parent.id)) return;
+                        || /related|newsletter|comment|social|share|promo|author|footer/i.test((parent.getAttribute('class') || '') + ' ' + parent.id)
+                        || /(?:^|\s)(?:sidebar(?:[-_]\S+)?|td-(?:ss-)?main-sidebar)(?:\s|$)/i.test((parent.getAttribute('class') || '') + ' ' + parent.id)) return;
                     parent = parent.parentElement;
                 }
                 var text = self.proseText(p);

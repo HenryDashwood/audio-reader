@@ -115,7 +115,9 @@ var ExtensionPreprocessingJS = {
                 return !node.parentElement.closest('article') && prose([node]) >= 40;
             });
             var declaredArticle = document.querySelector('meta[property="og:type"][content="article"]');
-            var shortIdentified = Boolean(canonical && declaredArticle && shortScopes.length === 1);
+            // The stricter short-article check must not count every paragraph in
+            // a long article's surrounding layout (which can include sidebars).
+            var shortIdentified = Boolean(canonical && declaredArticle && shortScopes.length === 1 && prose(shortScopes) < 350);
             if (!publisher && candidates.length === 0 && shortScopes.length > 1) throw new Error('Competing short articles');
             var shortProse = shortIdentified ? Array.from(shortScopes[0].querySelectorAll('p')).map(function (p) {
                 return p.textContent.replace(/\s+/g, ' ').trim();

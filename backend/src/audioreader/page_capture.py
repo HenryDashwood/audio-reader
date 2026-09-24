@@ -170,6 +170,11 @@ def substantial_paragraphs(nodes) -> list[str]:
                     a.get("class", "") + " " + a.get("id", ""),
                     re.I,
                 )
+                or re.search(
+                    r"(?:^|\s)(?:sidebar(?:[-_]\S+)?|td-(?:ss-)?main-sidebar)(?:\s|$)",
+                    a.get("class", "") + " " + a.get("id", ""),
+                    re.I,
+                )
                 for a in ancestors
             ):
                 continue

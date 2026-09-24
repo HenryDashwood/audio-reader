@@ -89,6 +89,23 @@ nonisolated struct CaptureInbox {
         }.sorted { $0.createdAt < $1.createdAt }
     }
 
+    /// Match the backend's saved URL identity without conflating query-selected pages.
+    static func sameArticle(_ lhs: URL, _ rhs: URL) -> Bool {
+        func identity(_ url: URL) -> String? {
+            guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+            parts.fragment = nil
+            parts.scheme = parts.scheme?.lowercased()
+            parts.host = parts.host?.lowercased()
+            if (parts.scheme == "https" && parts.port == 443) || (parts.scheme == "http" && parts.port == 80) {
+                parts.port = nil
+            }
+            if parts.path.isEmpty { parts.path = "/" }
+            return parts.string
+        }
+        guard let left = identity(lhs), let right = identity(rhs) else { return false }
+        return left == right
+    }
+
     func remove(_ capture: Capture) throws {
         guard let directory else { throw InboxError.unavailable }
         try FileManager.default.removeItem(

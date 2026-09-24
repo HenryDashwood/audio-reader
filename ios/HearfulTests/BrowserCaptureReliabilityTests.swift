@@ -111,6 +111,21 @@ struct BrowserCaptureReliabilityTests {
         #expect(result["contentFormat"] == nil)
     }
 
+    @Test func aSidebarInsideTheArticleIsNotEvidenceOfMissingBodyText() async throws {
+        let raw = try resource("article-with-sidebar")
+        let result = try await capture(raw, url: "https://example.com/article-with-sidebar")
+        let html = try #require(result["html"])
+        #expect(result["contentFormat"] == "article")
+        #expect(html.contains("Opening body paragraph"))
+        #expect(html.contains("Closing body paragraph"))
+        #expect(!html.contains("Promoted podcast"))
+        let truncated = try await capture(raw, url: "https://example.com/article-with-sidebar", setup: """
+            var first = document.querySelector('.td-post-content p').outerHTML;
+            Readability.prototype.parse = function () { return {content:first, title:document.title, length:500, textContent:first}; };
+            """)
+        #expect(truncated["html"] == "")
+    }
+
     @Test func responsiveAndLazyImagesUseResolvedSources() async throws {
         let raw = try resource("inline-charts").replacingOccurrences(of: "</article>", with: """
             <img id="selected" src="/placeholder.jpg" srcset="/small.jpg 1x, /large.jpg 2x">

@@ -242,3 +242,11 @@ async def test_article_envelopes_survive_storage_and_replay(client, name):
     assert content["html"].count("<img") == (4 if name == "inline-charts" else 2)
     again = (await client.post("/saved/replace", json=payload)).json()
     assert first["content_id"] == again["content_id"]
+
+
+def test_sidebar_inside_article_is_not_missing_body_evidence():
+    raw = (FIXTURES / "article-with-sidebar.html").read_text()
+    html, _ = saved.extract(raw, browser=True, url="https://example.com/article-with-sidebar")
+    assert "Opening body paragraph" in html
+    assert "Closing body paragraph" in html
+    assert "Promoted podcast" not in html
