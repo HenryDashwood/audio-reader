@@ -33,9 +33,11 @@ vendor keys if separate budgets become useful. No production database dump is us
 ## Release a backend change
 
 1. Open a PR. CI runs backend checks, current iOS tests, and the frozen released
-   client's compatibility tests.
-2. Merge to `main`. After all three checks pass, the CI staging job deploys that
-   exact commit. It waits for Railway `SUCCESS`, verifies the reported commit and
+   client's compatibility tests. Each job runs only when its inputs changed (see
+   the `changes` job in `ci.yml`); iOS tests are skipped when `ios/` is untouched.
+2. Merge to `main`. When the push changes `backend/` or `deploy/`, and those
+   checks pass (iOS may be skipped), the CI staging job deploys that
+   exact commit. Other pushes leave staging on the previous candidate. It waits for Railway `SUCCESS`, verifies the reported commit and
    checks `/health` and that unauthenticated `/me` returns 401. The job summary
    includes the staging deployment ID.
 3. Test staging with both the released app and the upcoming app. Check sign-in,
@@ -47,8 +49,8 @@ vendor keys if separate budgets become useful. No production database dump is us
    new candidate or restage the desired commit before promotion.
 5. The workflow checks the deployment's project, service, environment and full
    commit SHA, verifies that it belongs to `main` and its latest main CI run
-   succeeded with all four release jobs (including released-client compatibility and
-   staging deployment), then deploys precisely that SHA to production. It never substitutes
+   succeeded with backend checks, released-client compatibility and staging
+   deployment, and that iOS tests passed or were skipped as unaffected, then deploys precisely that SHA to production. It never substitutes
    the latest branch head. Wait for the production job to finish successfully.
 6. Submit/release the app when ready. Old app behaviour remains supported while
    Apple reviews it and after the new version becomes available.

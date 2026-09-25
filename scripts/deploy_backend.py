@@ -20,10 +20,12 @@ CONFIG = json.loads((ROOT / "deploy/railway.json").read_text())
 RAILWAY_API = "https://backboard.railway.com/graphql/v2"
 REQUIRED_CI_JOBS = {
     "Backend checks",
-    "iOS tests",
     "Released iOS client compatibility",
     "Deploy backend to staging",
 }
+# CI skips these when the commit leaves their platform untouched; they must
+# still have run and must not have failed.
+PATH_FILTERED_CI_JOBS = {"iOS tests"}
 PENDING = {"INITIALIZING", "QUEUED", "WAITING", "BUILDING", "DEPLOYING"}
 DEPLOYMENT_QUERY = """
 query($id: String!) {
@@ -116,7 +118,8 @@ def verify_ci(sha):
         raise DeploymentError("The staged commit must have a completed, successful main CI run")
     jobs = github(f"actions/runs/{latest['id']}/attempts/{latest.get('run_attempt', 1)}/jobs?per_page=100")["jobs"]
     passed = {job["name"] for job in jobs if job.get("conclusion") == "success"}
-    if missing := REQUIRED_CI_JOBS - passed:
+    skipped = {job["name"] for job in jobs if job.get("conclusion") == "skipped"}
+    if missing := (REQUIRED_CI_JOBS - passed) | (PATH_FILTERED_CI_JOBS - passed - skipped):
         raise DeploymentError("The commit has not passed the release gates: " + ", ".join(sorted(missing)))
 
 

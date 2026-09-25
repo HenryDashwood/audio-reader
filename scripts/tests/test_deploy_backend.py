@@ -139,8 +139,19 @@ def test_unmerged_commit_is_rejected(monkeypatch):
         module.verify_ci(SHA)
 
 
-@pytest.mark.parametrize("missing", [None, "Released iOS client compatibility", "Deploy backend to staging"])
-def test_main_ci_requires_all_release_gates(monkeypatch, missing):
+@pytest.mark.parametrize(
+    "conclusions,accepted",
+    [
+        ({}, True),
+        ({"iOS tests": "skipped"}, True),
+        ({"iOS tests": None}, False),
+        ({"iOS tests": "failure"}, False),
+        ({"Backend checks": "skipped"}, False),
+        ({"Released iOS client compatibility": None}, False),
+        ({"Deploy backend to staging": None}, False),
+    ],
+)
+def test_main_ci_requires_all_release_gates(monkeypatch, conclusions, accepted):
     run = {
         "id": 1,
         "head_sha": SHA,
@@ -149,24 +160,27 @@ def test_main_ci_requires_all_release_gates(monkeypatch, missing):
         "status": "completed",
         "conclusion": "success",
     }
+    names = module.REQUIRED_CI_JOBS | module.PATH_FILTERED_CI_JOBS
+    # None means the job is absent from the run.
+    jobs = [
+        {"name": name, "conclusion": conclusions.get(name, "success")}
+        for name in names
+        if conclusions.get(name, "success") is not None
+    ]
 
     def github(path):
         if path.startswith("compare/"):
             return {"status": "ahead"}
         if "/jobs?" in path:
-            return {
-                "jobs": [
-                    {"name": name, "conclusion": "success"} for name in module.REQUIRED_CI_JOBS if name != missing
-                ]
-            }
+            return {"jobs": jobs}
         return {"workflow_runs": [run]}
 
     monkeypatch.setattr(module, "github", github)
-    if missing:
+    if accepted:
+        module.verify_ci(SHA)
+    else:
         with pytest.raises(module.DeploymentError, match="release gates"):
             module.verify_ci(SHA)
-    else:
-        module.verify_ci(SHA)
 
 
 def test_deploy_tracks_returned_id_and_exact_sha(monkeypatch):

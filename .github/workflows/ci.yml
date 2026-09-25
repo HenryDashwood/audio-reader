@@ -18,8 +18,68 @@ permissions:
   contents: read
 
 jobs:
+  # Each platform job runs only when its own inputs changed. Jobs are skipped
+  # with `if:` rather than a workflow-level `paths:` filter so that a skipped
+  # check still reports a result and the staging job's `needs` resolve.
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      android: ${{ steps.filter.outputs.android }}
+      backend: ${{ steps.filter.outputs.backend }}
+      compatibility: ${{ steps.filter.outputs.compatibility }}
+      deploy: ${{ steps.filter.outputs.deploy }}
+      ios: ${{ steps.filter.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v7
+      # On pushes to main this compares against the commit before the push, so
+      # a multi-commit push is judged on all of its changes.
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            shared: &shared
+              - '.github/workflows/ci.yml'
+              - 'Makefile'
+            android:
+              - *shared
+              - 'android/**'
+              - 'scripts/android-dev.sh'
+            # The backend job also runs the repository-script tests and the
+            # App Store listing validation; its tests read the frozen client
+            # checksums, the deploy config and the iOS browser-capture fixtures.
+            backend:
+              - *shared
+              - 'backend/**'
+              - 'scripts/**'
+              - 'compatibility/**'
+              - 'app-store/**'
+              - 'deploy/**'
+              - 'ios/HearfulTests/BrowserCaptureFixtures/**'
+            compatibility:
+              - *shared
+              - 'backend/**'
+              - 'compatibility/**'
+              - 'scripts/check_backend_compatibility.py'
+            # What ships to Railway. Only these changes produce a new staging candidate.
+            deploy:
+              - 'backend/**'
+              - 'deploy/**'
+            ios:
+              - *shared
+              - 'ios/**'
+              - 'app-store/**'
+              - 'scripts/ios-dev.sh'
+              - 'scripts/prepare-ios-simulators.sh'
+
   android:
     name: Android checks
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -52,6 +112,8 @@ jobs:
 
   backend:
     name: Backend checks
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -72,6 +134,8 @@ jobs:
 
   ios:
     name: iOS tests
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     # macos-latest still ships Xcode 26; request the Xcode 27 image explicitly.
     runs-on: xcode-27
     timeout-minutes: 60
@@ -137,6 +201,8 @@ jobs:
 
   compatibility:
     name: Released iOS client compatibility
+    needs: changes
+    if: needs.changes.outputs.compatibility == 'true'
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
@@ -158,8 +224,16 @@ jobs:
 
   staging:
     name: Deploy backend to staging
-    needs: [backend, ios, compatibility]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [changes, backend, ios, compatibility]
+    # A backend deploy always has passing backend and compatibility checks.
+    # iOS tests gate it when they ran, and are skipped when the app is unchanged.
+    if: >-
+      !cancelled()
+      && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && needs.changes.outputs.deploy == 'true'
+      && needs.backend.result == 'success'
+      && needs.compatibility.result == 'success'
+      && (needs.ios.result == 'success' || needs.ios.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment:
