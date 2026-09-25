@@ -103,6 +103,6 @@ class HttpVoiceApi(private val baseUrl: String, private val unauthorized: (Strin
             }
             String(bytes, 0, count, Charsets.UTF_8)
         }.orEmpty()
-        throw VoiceFailure(VoiceWire.failure(body))
+        throw VoiceFailure(VoiceWire.failure(body), code = if (status == 409) VoiceFailure.REFUSED else null)
     }
 }

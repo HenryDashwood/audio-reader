@@ -74,6 +74,9 @@ class PlaybackTest {
                 val initial = PlaybackStatus.readingPosition.value!!
                 compose.runOnUiThread { controller.setPlaybackSpeed(1.5f); controller.seekTo(controller.duration * 3 / 4) }
                 compose.waitUntil(5_000) { (PlaybackStatus.readingPosition.value?.startUtf16 ?: 0) > initial.startUtf16 }
+                // Until the passage is rendered the marker holds its first character; word timings then
+                // place it on the current word. Stability is about what happens after that.
+                runCatching { compose.waitUntil(5_000) { PlaybackStatus.readingPosition.value!!.let { it.endUtf16 - it.startUtf16 > 1 } } }
                 val paused = PlaybackStatus.readingPosition.value
                 Thread.sleep(350)
                 assertEquals(paused, PlaybackStatus.readingPosition.value)

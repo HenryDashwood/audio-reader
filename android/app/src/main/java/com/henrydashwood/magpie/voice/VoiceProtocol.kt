@@ -5,7 +5,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withTimeout
 import java.io.Reader
 
-class VoiceFailure(override val message: String, cause: Throwable? = null, val code: String? = null) : Exception(message, cause)
+class VoiceFailure(override val message: String, cause: Throwable? = null, val code: String? = null) : Exception(message, cause) {
+    companion object {
+        /** The server answered with a final refusal (HTTP 409). It stores one outcome per request ID. */
+        const val REFUSED = "refused"
+    }
+}
 enum class VoiceAction(val wire: String) {
     Play("play_episode"), Speed("set_speed"), Played("mark_played"), Dismiss("dismiss"), Restore("restore"),
     Subscribed("subscribed"), Unsubscribed("unsubscribed"), Unknown("unknown");

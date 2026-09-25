@@ -73,9 +73,12 @@ class ItemFiling(private val scope: CoroutineScope, private val library: Account
                 mutable.value = ItemFilingState()
                 notice(if (historical) response.recoveryMessage else response.spokenResponse)
             } catch (failure: Exception) {
+                android.util.Log.w("MagpieFiling", "Filing ${action.route} failed for episode ${item.episodeId}", failure)
                 if (version == generation && library.state.value.revision == account.revision) {
-                    mutable.value = ItemFilingState(item, action, error =
-                        "Could not confirm the change to ${item.title}. Try again, or open Ask Magpie to check saved requests.")
+                    // The server's own explanation, when it gave one, says more than a generic failure.
+                    val reason = (failure as? VoiceFailure)?.message?.takeIf { it.isNotBlank() }
+                    mutable.value = ItemFilingState(item, action, error = reason?.let { "Could not change ${item.title}: $it" }
+                        ?: "Could not confirm the change to ${item.title}. Try again, or open Ask Magpie to check saved requests.")
                 }
                 if (failure is CancellationException && failure !is TimeoutCancellationException) throw failure
             } finally {

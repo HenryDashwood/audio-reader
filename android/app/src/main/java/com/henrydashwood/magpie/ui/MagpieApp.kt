@@ -210,7 +210,6 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                         ReaderToolbarActions(selectedItem, isPlaying, showingSearch,
                             { if (isPlaying) model.pause() else model.play(selectedItem) },
                             { showingSearch = !showingSearch; query = "" }, onAsk = { model.ask(selectedItem.episodeId) })
-                        ItemActionsMenu(selectedItem, filingActions(model, selectedItem))
                     } else if (selectedSource != null || destination == Destination.Following || destination == Destination.Saved) {
                         IconButton(onClick = { showingSearch = !showingSearch; query = "" }) {
                             Icon(if (showingSearch) Icons.Rounded.Close else Icons.Rounded.Search,
@@ -544,18 +543,6 @@ private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> U
     val leading = (if (savedList) save else actions.last()).takeIf { allowsDismissal && !isDismissed }
     val trailing = if (isDismissed) actions.last() else actions.first()
     ActionStoryRow(item, open, play, listOfNotNull(actions.first(), save) + actions.drop(1), leading, trailing, progress, currentLabel)
-}
-
-@Composable
-private fun ItemActionsMenu(item: LibraryItem, actions: List<StoryAction>) {
-    var expanded by remember(item.id) { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { expanded = true }, modifier = Modifier.size(48.dp)) { Icon(Icons.Rounded.MoreVert, "Actions for ${item.title}") }
-        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
-            actions.forEach { action -> DropdownMenuItem(text = { Text(action.label) }, enabled = action.enabled,
-                onClick = { expanded = false; action.perform() }) }
-        }
-    }
 }
 
 @Composable

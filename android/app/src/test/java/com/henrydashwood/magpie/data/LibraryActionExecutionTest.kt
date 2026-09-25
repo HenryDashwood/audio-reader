@@ -19,6 +19,16 @@ class LibraryActionExecutionTest {
         execution.run("mark_played", 1, {}, { ids += it; receipt }, {})
         assertEquals(ids[0], ids[1]); assertNotEquals(ids[1], ids[2])
     }
+    @Test fun aFinalRefusalIsNotKeptForRetrySoTheNextAttemptUsesANewRequest() = runTest {
+        val execution = LibraryActionExecution { "one" }
+        val ids = mutableListOf<String>()
+        val refused = runCatching {
+            execution.run("dismiss", 1, {}, { ids += it; throw VoiceFailure("That item is no longer in your library.", code = VoiceFailure.REFUSED) }, {})
+        }.exceptionOrNull()
+        assertEquals("That item is no longer in your library.", refused?.message)
+        execution.run("dismiss", 1, {}, { ids += it; receipt.copy(action = VoiceAction.Dismiss) }, {})
+        assertNotEquals(ids[0], ids[1])
+    }
     @Test fun receiptSurvivesCancelledReconciliationWithoutRepeatingTheServerMutation() = runTest {
         val execution = LibraryActionExecution { "one" }
         var sent = 0

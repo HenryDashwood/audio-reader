@@ -155,14 +155,17 @@ class ItemFilingTest {
         assertFalse(row(1).completed); assertEquals(0L, row(1).remotePositionMs)
         assertFalse(model.player.value.playing)
     }
-    @Test fun articleReadAndUnreadAreAvailableFromReaderAndSaved() {
+    @Test fun articleReadAndUnreadAreAvailableFromLatestAndSavedButNotTheReader() {
         compose.onNodeWithText("Latest").performClick(); compose.onNodeWithText("A garden article").performClick()
         compose.waitUntil(10_000) { row(2).textLoaded }
+        // As on iOS, the reader offers no filing menu.
+        compose.onNodeWithContentDescription("Actions for A garden article").assertDoesNotExist()
         val store = PreviewStore(app)
         store.saveBookmark(row(2).id, com.henrydashwood.magpie.playback.ArticleBookmark(row(2).contentVersion, 5))
+        compose.onNodeWithContentDescription("Back").performClick()
         actions("A garden article"); compose.onNodeWithText("Mark as read").performClick(); settled()
         assertTrue(row(2).completed)
-        compose.onNodeWithContentDescription("Back").performClick(); compose.onNodeWithText("Saved").performClick()
+        compose.onNodeWithText("Saved").performClick()
         compose.onNodeWithText("Finished").performClick()
         actions("A garden article"); compose.onNodeWithText("Mark as unread").performClick(); settled()
         compose.onNodeWithText("To read").performClick(); compose.onNodeWithText("A garden article").assertIsDisplayed()

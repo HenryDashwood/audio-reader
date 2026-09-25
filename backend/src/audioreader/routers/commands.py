@@ -24,7 +24,8 @@ from audioreader.llm.provider import (
     get_discovery_llm_client,
     get_llm_client,
 )
-from audioreader.models import Episode, Subscription, User, utcnow
+from audioreader.models import Episode, User, utcnow
+from audioreader.newsletters import companions
 from audioreader.ratelimit import SlidingWindow
 from audioreader.routers.auth import has_current_ai_data_sharing_consent
 from audioreader.routers.feeds import episodes_read
@@ -362,8 +363,8 @@ async def _library_action(body: LibraryActionRequest, session: AsyncSession, use
                     episode is not None
                     and episode.feed_id is not None
                     and await active.scalar(
-                        select(Subscription.id).where(
-                            Subscription.user_id == user.id, Subscription.feed_id == episode.feed_id
+                        select(Episode.id).where(
+                            Episode.id == episode.id, Episode.feed_id.in_(companions.her_feed_ids(user.id))
                         )
                     )
                     is not None
@@ -379,14 +380,15 @@ async def _library_action(body: LibraryActionRequest, session: AsyncSession, use
                     )
                     return
             else:
+                # Everything Latest and Saved show her: followed feeds, her newsletters'
+                # companion feeds, and articles she saved from anywhere.
                 episode = await active.scalar(
                     select(Episode)
                     .options(joinedload(Episode.feed))
-                    .where(
-                        Episode.id == body.episode_id,
-                        Episode.feed_id.in_(select(Subscription.feed_id).where(Subscription.user_id == user.id)),
-                    )
+                    .where(Episode.id == body.episode_id, Episode.feed_id.in_(companions.her_feed_ids(user.id)))
                 )
+                if episode is None and await saved.selection(active, user, body.episode_id) is not None:
+                    episode = await active.get(Episode, body.episode_id, options=[joinedload(Episode.feed)])
             if episode is None:
                 yield _line({"type": "error", "spoken_response": "That item is no longer in your library."})
                 return

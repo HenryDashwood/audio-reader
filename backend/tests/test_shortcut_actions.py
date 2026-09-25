@@ -68,6 +68,41 @@ async def test_conflicting_receipt_does_not_execute_other_action(client, item):
     assert (await client.get(f"/episodes/{item.id}")).json()["completed"] is False
 
 
+async def test_newsletter_companion_posts_in_latest_can_be_filed_online_and_offline(client, session, user):
+    # Latest shows a newsletter's companion-feed posts without a subscription to
+    # that feed. Filing them must not answer "no longer in your library".
+    companion = Feed(url="https://example.test/companion", title="Companion site")
+    newsletter = Feed(url="https://example.test/newsletter", title="Newsletter", owner_user_id=user.id)
+    first = Episode(feed=companion, guid="c1", title="Companion post", audio_url="https://example.test/c1.mp3")
+    second = Episode(
+        feed=companion, guid="c2", title="Another companion post", audio_url="https://example.test/c2.mp3"
+    )
+    session.add_all([companion, newsletter, first, second, Subscription(user_id=user.id, feed=newsletter)])
+    await session.flush()
+    newsletter.companion_feed_id = companion.id
+    await session.commit()
+    assert first.id in [row["id"] for row in (await client.get("/episodes")).json()]
+    online = await client.post(
+        "/actions", json={"action": "dismiss", "episode_id": first.id, "request_id": "companion"}
+    )
+    assert online.status_code == 200, online.text
+    assert online.json()["episode"]["dismissed"] is True
+    offline = await client.post(
+        "/actions/offline", json={"action": "mark_played", "episode_id": second.id, "request_id": "companion-offline"}
+    )
+    assert offline.status_code == 200, offline.text
+
+
+async def test_saved_articles_can_be_filed_online(client):
+    html = "<article><h1>Saved article</h1>" + "<p>Saved article words worth reading later.</p>" * 30 + "</article>"
+    item = (await client.post("/saved", json={"url": "https://example.test/saved-online", "html": html})).json()
+    result = await client.post(
+        "/actions", json={"action": "mark_played", "episode_id": item["id"], "request_id": "saved"}
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["episode"]["completed"] is True
+
+
 async def test_cannot_file_another_users_private_item(client, session):
     feed = Feed(url="https://example.test/private", title="Private")
     episode = Episode(feed=feed, guid="private", title="Private item")

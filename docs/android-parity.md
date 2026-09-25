@@ -121,7 +121,8 @@ Article and podcast rows follow the iOS layout with a single play control and no
 three-dot button. Leading swipes dismiss from Latest or remove the Saved bookmark;
 trailing swipes complete or restore. Publication rows omit the leading dismissal swipe. Long-press menus
 and TalkBack custom actions retain filing and saving without requiring gestures.
-The reader and source-management toolbar menus remain available.
+The source-management toolbar menu remains available; the reader's filing menu
+was later removed to match iOS.
 
 ## First implementation
 

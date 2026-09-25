@@ -47,9 +47,16 @@ class LibraryActionExecution(private val conversation: Conversation = Conversati
             } ?: conversation.structuredRequest(structured, label)
             conversation.persist(owner); checkAccount()
             before(request.requestId); checkAccount()
-            val receipt = conversation.receipt ?: send(request.requestId).also { response ->
+            val receipt = conversation.receipt ?: run {
+                val response = try { send(request.requestId) } catch (refused: VoiceFailure) {
+                    // A refusal is final: retrying this ID would only replay it, so the next attempt
+                    // at this item must be a new request rather than a stuck recovery.
+                    if (refused.code == VoiceFailure.REFUSED) conversation.complete(request, key, emptyList(), owner)
+                    throw refused
+                }
                 checkAccount()
                 conversation.confirmed(request, key, response)
+                response
             }
             structured.validate(receipt)
             conversation.persist(owner); checkAccount()

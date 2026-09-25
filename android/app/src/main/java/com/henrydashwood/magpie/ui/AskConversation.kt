@@ -130,6 +130,14 @@ fun AskConversation(model: MagpieModel) {
         }
     }
     val sheet = rememberModalBottomSheetState()
+    // Choices and unfinished requests need an answer, and at half height they sit below the fold.
+    val needsRoom = state.clarification != null || (state.recoveryRequests.isNotEmpty() && !state.busy)
+    LaunchedEffect(needsRoom) {
+        if (!needsRoom) return@LaunchedEffect
+        // Expanding during the opening slide is cancelled by it, so wait until the sheet is up.
+        snapshotFlow { sheet.currentValue }.first { it != SheetValue.Hidden }
+        sheet.expand()
+    }
     // Matches the iOS voice sheet: half height, one large target, and only what the moment needs.
     ModalBottomSheet(onDismissRequest = { model.voice.close() }, sheetState = sheet, dragHandle = null) {
         Box(Modifier.fillMaxWidth().fillMaxHeight().testTag("ask-sheet").semantics { isTraversalGroup = true }) {

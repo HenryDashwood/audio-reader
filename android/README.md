@@ -673,8 +673,8 @@ recovery, and process-death resume. Borrow a Samsung before broad release.
 
 Item menus on Latest, publication lists, search results and the reader offer
 read/unread or played/unplayed, individual dismissal, and restoration to Latest.
-Rows use long-press menus and TalkBack actions alongside the iOS filing swipes;
-the reader retains its toolbar menu.
+Rows use long-press menus and TalkBack actions alongside the iOS filing swipes.
+As on iOS, the reader has no filing menu.
 Signed-in changes use the same durable typed requests as assistant actions,
 without AI consent. A lost reply can be retried or checked in Ask Magpie after
 reopening the app. Filing the active item stops its old progress; marking it
