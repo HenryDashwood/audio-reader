@@ -43,9 +43,10 @@ import com.henrydashwood.magpie.R
 import java.io.ByteArrayInputStream
 
 @Composable
-fun ArticleReader(item: LibraryItem, query: String, followControl: ArticleFollowControl? = null, chrome: ReaderChrome = ReaderChrome()) {
+fun ArticleReader(item: LibraryItem, query: String, followControl: ArticleFollowControl? = null, chrome: ReaderChrome = ReaderChrome(),
+    openFeed: (() -> Unit)? = null) {
     val position by PlaybackStatus.readingPosition.collectAsStateWithLifecycle()
-    ArticleReader(item, query, position, followControl, chrome)
+    ArticleReader(item, query, position, followControl, chrome, openFeed)
 }
 
 /** How the page sits under the app's bars, and whether dragging it may fade them (as on iOS). */
@@ -54,13 +55,13 @@ data class ReaderChrome(val top: Float = 0f, val bottom: Float = 0f, val fades: 
 
 @Composable
 fun ArticleReader(item: LibraryItem, query: String, position: ArticleReadingPosition?, followControl: ArticleFollowControl? = null,
-    chrome: ReaderChrome = ReaderChrome()) {
-    key(item.id) { ArticleReaderContent(item, query, position, followControl, chrome) }
+    chrome: ReaderChrome = ReaderChrome(), openFeed: (() -> Unit)? = null) {
+    key(item.id) { ArticleReaderContent(item, query, position, followControl, chrome, openFeed) }
 }
 
 @Composable
 private fun ArticleReaderContent(item: LibraryItem, query: String, position: ArticleReadingPosition?, followControl: ArticleFollowControl?,
-    chrome: ReaderChrome) {
+    chrome: ReaderChrome, openFeed: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     val reading = position?.takeIf { it.itemId == item.id && it.contentVersion == item.contentVersion }
     var following by rememberSaveable(item.id) { mutableStateOf(true) }
@@ -69,9 +70,10 @@ private fun ArticleReaderContent(item: LibraryItem, query: String, position: Art
     // seconds; rebuilding the page then minted a new CSP nonce and reloaded the WebView,
     // briefly showing the top of the article.
     val body = remember(item.html, item.text, item.originalUrl) { ArticleDocument.body(item) }
-    val document = remember(item.title, item.source, item.publishedAt, body, fontSize, colors) {
+    val feedLink = openFeed != null
+    val document = remember(item.title, item.source, item.publishedAt, item.author, feedLink, body, fontSize, colors) {
         ArticleDocument.page(item, body, fontSize, colors.onSurface.css(), colors.surface.css(),
-            colors.onSurfaceVariant.css(), colors.outlineVariant.css(), colors.primary.css(), colors.surface.luminance() < .5f)
+            colors.onSurfaceVariant.css(), colors.outlineVariant.css(), colors.primary.css(), colors.surface.luminance() < .5f, feedLink)
     }
     var browser by remember { mutableStateOf<ArticleWebView?>(null) }
     val followOwner = remember { Any() }
@@ -116,6 +118,7 @@ private fun ArticleReaderContent(item: LibraryItem, query: String, position: Art
                 }
             },
             update = { view ->
+                view.openFeed = openFeed ?: {}
                 view.setChrome(chrome)
                 view.readingMarker.update(reading, colors.primary.toArgb(), following)
                 view.display(document, query, scrollY, item.text)
@@ -125,6 +128,7 @@ private fun ArticleReaderContent(item: LibraryItem, query: String, position: Art
                 view.setOnScrollChangeListener(null)
                 view.setFindListener(null)
                 view.openLink = {}
+                view.openFeed = {}
                 view.readingMarker.onFollowingChanged = {}
                 view.release()
             },
@@ -142,6 +146,7 @@ private fun Color.css() = "#%06X".format(toArgb() and 0xFFFFFF)
 class ArticleWebView(context: Context) : WebView(context) {
     val readingMarker = ArticleReadingMarker(this)
     var openLink: (Uri) -> Unit = {}
+    var openFeed: () -> Unit = {}
     var ready = false
         private set
     private var document: String? = null
@@ -209,6 +214,7 @@ class ArticleWebView(context: Context) : WebView(context) {
                     return true
                 }
                 if (!request.hasGesture()) return true
+                if (uri.toString() == ArticleDocument.FEED_LINK) { openFeed(); return true }
                 if (uri.toString().startsWith("${ArticleDocument.LOCAL_BASE}#")) return false
                 if (ArticleDocument.webUrl(uri.toString()) != null) openLink(uri)
                 return true

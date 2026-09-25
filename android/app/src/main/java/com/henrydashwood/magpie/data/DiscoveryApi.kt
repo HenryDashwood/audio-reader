@@ -3,7 +3,7 @@ package com.henrydashwood.magpie.data
 /** Discovery reuses the authenticated backend. Previewing never subscribes. */
 data class SourceResult(val title: String, val url: String, val publisher: String? = null,
     val count: Int? = null, val description: String? = null, val format: String? = null,
-    val audioCount: Int? = null, val recentTitle: String? = null, val primary: Boolean = false)
+    val audioCount: Int? = null, val recentTitle: String? = null, val primary: Boolean = false, val imageUrl: String? = null)
 data class RemotePreview(val feed: LibraryFeed, val episodes: List<RemoteEpisode>, val subscribed: Boolean)
 data class SourcePreview(val feed: LibraryFeed, val itemIds: List<String>, val subscribed: Boolean, val sessionRevision: Int = 0)
 data class SourceMatches(val sources: List<SourceResult>, val itemIds: List<String>, val error: String? = null)

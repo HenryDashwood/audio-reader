@@ -12,13 +12,17 @@ import java.io.ByteArrayOutputStream
 
 data class LibraryFeed(val id: String, val title: String, val count: Int, val articles: Boolean,
     val url: String? = null, val sources: List<String> = emptyList(), val description: String? = null,
-    val sourceDetails: List<FeedSource> = emptyList(), val forwarded: Boolean = false, val imageUrl: String? = null)
+    val sourceDetails: List<FeedSource> = emptyList(), val forwarded: Boolean = false, val imageUrl: String? = null,
+    /** The feed has stopped updating ("Not updating" on iOS). */
+    val failing: Boolean = false,
+    /** Arrives by email, so its items are issues. */
+    val newsletter: Boolean = false)
 data class RemoteEpisode(val id: Int, val title: String, val description: String = "", val source: String = "Saved articles",
     val feedUrl: String? = null, val audioUrl: String? = null, val link: String? = null,
     val durationSeconds: Int? = null, val wordCount: Int? = null, val positionSeconds: Double = 0.0,
     val completed: Boolean = false, val dismissed: Boolean = false, val contentId: Int? = null,
     val captureError: String? = null, val progressRevision: String? = null, val articleBookmark: RemoteArticleBookmark? = null,
-    val publishedAt: String? = null, val imageUrl: String? = null)
+    val publishedAt: String? = null, val imageUrl: String? = null, val author: String? = null)
 data class RemoteText(val episodeId: Int, val contentId: Int?, val text: String, val html: String?, val wordCount: Int?,
     val articleProgress: ArticleProgressState? = null)
 
@@ -226,7 +230,7 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
             .put("title", article.title).put("html", article.html).put("content_format", article.contentFormat)
         private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
         fun decodeSource(json: JSONObject) = SourceResult(json.getString("title"), validateLink(json.getString("feed_url")),
-            json.optionalString("publisher"), json.optionalInt("episode_count"))
+            json.optionalString("publisher"), json.optionalInt("episode_count"), imageUrl = https(json.optionalString("artwork_url")))
         fun decodeCandidate(json: JSONObject) = SourceResult(json.getString("title"), validateLink(json.getString("feed_url")),
             count = json.optInt("item_count"), description = json.optionalString("description"), format = json.optionalString("format"),
             audioCount = json.optInt("audio_item_count"), recentTitle = json.optJSONArray("recent_item_titles")?.optString(0)?.takeIf { it.isNotBlank() },
@@ -238,7 +242,8 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
         fun decodeFeed(json: JSONObject) = LibraryFeed(json.getInt("id").toString(), json.getString("title"),
             json.optInt("episode_count"), json.optBoolean("is_article_feed"), json.optionalString("url"),
             json.optJSONArray("sources")?.objects()?.map { it.getString("title") }.orEmpty(), json.optionalString("description"),
-            json.optJSONArray("sources")?.objects()?.map(::decodeFeedSource).orEmpty(), json.optBoolean("forwarded"), https(json.optionalString("image_url")))
+            json.optJSONArray("sources")?.objects()?.map(::decodeFeedSource).orEmpty(), json.optBoolean("forwarded"), https(json.optionalString("image_url")),
+            json.optBoolean("is_failing"), json.optionalString("source") == "email")
         fun decodeEpisode(json: JSONObject) = RemoteEpisode(json.getInt("id"), json.getString("title"),
             json.optionalString("description") ?: "", json.optionalString("feed_title") ?: "Saved articles",
             json.optionalString("feed_url"), https(json.optionalString("audio_url")), https(json.optionalString("link")),
@@ -246,7 +251,7 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
             json.optDouble("position_seconds", 0.0).takeIf { it.isFinite() && it >= 0 } ?: 0.0,
             json.optBoolean("completed"), json.optBoolean("dismissed"), json.optionalInt("content_id"), json.optionalString("capture_error"), json.optionalString("progress_revision"),
             if (json.isNull("article_bookmark")) null else decodeArticleBookmark(json.getJSONObject("article_bookmark")),
-            json.optionalString("published_at"), https(json.optionalString("image_url")))
+            json.optionalString("published_at"), https(json.optionalString("image_url")), json.optionalString("author"))
         fun decodeArticleBookmark(json: JSONObject) = RemoteArticleBookmark(json.getString("text_version"), json.strictOffset("offset_utf16"))
         fun decodeArticleProgress(json: JSONObject) = ArticleProgressState(json.getString("text_version"),
             (if (json.isNull("content_id")) null else json.strictOffset("content_id")), json.getString("revision"),

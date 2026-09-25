@@ -78,11 +78,10 @@ class SettingsTest {
             compose.onNodeWithTag("voice-setting").performClick()
             compose.onNodeWithTag("voice-list").performScrollToNode(hasText(selected.label))
             compose.onNodeWithText(selected.label).performClick()
-            compose.onNodeWithTag("settings-list").performScrollToNode(hasText("Listen to voice"))
-            compose.onNodeWithText("Listen to voice").performClick()
+            // As on iOS, choosing a voice previews it.
             compose.waitUntil(5_000) { model.voices.value.previewing || model.voices.value.error != null }
             assertNull(model.voices.value.error)
-            compose.onNodeWithText("Stop voice preview").performClick()
+            compose.runOnUiThread { model.stopVoicePreview() }
             assertFalse(model.voices.value.previewing)
             compose.activityRule.scenario.recreate()
             model = model()

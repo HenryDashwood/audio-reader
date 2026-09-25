@@ -32,7 +32,7 @@ class ReaderToolbarTest {
                 assertEquals(Intent.ACTION_VIEW, launched.last().action)
                 assertEquals(item.value.originalUrl, launched.last().dataString)
             }
-            compose.onNodeWithContentDescription("Share link").performClick()
+            compose.onNodeWithContentDescription("Share article").performClick()
             compose.runOnIdle {
                 val chooser = launched.last()
                 assertEquals(Intent.ACTION_CHOOSER, chooser.action)
@@ -45,7 +45,7 @@ class ReaderToolbarTest {
         }
     }
 
-    @Test fun sampleToolbarSharesTextAndOpensConversation() {
+    @Test fun anArticleWithoutAWebPageShowsNeitherOriginalNorShareAndOpensConversation() {
         val playing = mutableStateOf(false)
         val searching = mutableStateOf(false)
         var shared: Intent? = null
@@ -58,12 +58,10 @@ class ReaderToolbarTest {
         }
         compose.onNodeWithContentDescription("Listen").performClick()
         compose.onNodeWithContentDescription("Pause").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Open the original").assertIsNotEnabled()
-        compose.onNodeWithContentDescription("Share sample text").performClick()
-        compose.runOnIdle {
-            val share = checkNotNull(IntentCompat.getParcelableExtra(checkNotNull(shared), Intent.EXTRA_INTENT, Intent::class.java))
-            assertTrue(checkNotNull(share.getStringExtra(Intent.EXTRA_TEXT)).contains(article.text))
-        }
+        // As on iOS, both need a web page.
+        compose.onNodeWithContentDescription("Open the original").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Share article").assertDoesNotExist()
+        compose.runOnIdle { assertNull(shared) }
         compose.onNodeWithContentDescription("Find in this page").performClick()
         compose.onNodeWithContentDescription("Close search").assertIsDisplayed()
         compose.onNodeWithContentDescription("Ask Magpie").performClick()
@@ -80,6 +78,6 @@ class ReaderToolbarTest {
         compose.onNodeWithText("No app is available to open this action.").assertIsDisplayed()
         compose.onNodeWithText("Close").performClick()
         compose.runOnIdle { item.value = article.copy(originalUrl = "file:///private/story") }
-        compose.onNodeWithContentDescription("Open the original").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Open the original").assertDoesNotExist()
     }
 }

@@ -54,7 +54,7 @@ class MiniPlayerTest {
         assertNull(PlaybackStatus.state.value.message)
     }
 
-    @Test fun dismissStopsPlaybackClearsTimerAndRestoreButKeepsBookmark() {
+    @Test fun dismissStopsPlaybackAndRestoreButKeepsBookmarkAndTimer() {
         val controller = connect()
         try {
             play(controller, "welcome")
@@ -66,7 +66,9 @@ class MiniPlayerTest {
             val bookmark = store.position("welcome")
             assertTrue(bookmark >= 7_000)
             assertNull(store.lastItem)
-            assertFalse(PlaybackStatus.sleepTimer.value.running)
+            // Closing the player leaves the sleep timer running, as on iOS.
+            assertTrue(PlaybackStatus.sleepTimer.value.running)
+            command(controller, PlaybackService.CANCEL_SLEEP_TIMER, Bundle.EMPTY)
             compose.activityRule.scenario.recreate()
             compose.onNodeWithTag("mini-player").assertDoesNotExist()
             play(controller, "welcome")
@@ -117,7 +119,7 @@ class MiniPlayerTest {
         for (font in listOf(1f, 2f)) {
             compose.runOnIdle { scale.floatValue = font }
             compose.onNodeWithTag("mini-player-open").assertIsDisplayed().performClick()
-            val actions = listOf("Follow reading position", "Resume playback", "Stop and close player")
+            val actions = listOf("Follow reading position", "Play", "Stop and close player")
             for (label in actions) {
                 val node = compose.onNodeWithContentDescription(label)
                 node.assertIsDisplayed().assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp).performClick()

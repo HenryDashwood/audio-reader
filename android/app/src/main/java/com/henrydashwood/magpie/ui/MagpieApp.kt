@@ -27,6 +27,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import com.henrydashwood.magpie.data.shortPublicationDate
+import androidx.compose.ui.graphics.Color
+import com.henrydashwood.magpie.data.countLabel
+import com.henrydashwood.magpie.data.sectionTitle
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -97,6 +102,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     val pendingSources by model.pendingSources.collectAsStateWithLifecycle()
     val pendingLinks by model.pendingLinks.collectAsStateWithLifecycle()
     var savedListVersion by rememberSaveable { mutableIntStateOf(0) }
+    val savedFinishedTab = rememberSaveable { mutableStateOf(false) }
     val playback by model.player.collectAsStateWithLifecycle()
     val preparation by model.preparation.collectAsStateWithLifecycle()
     val sleepTimer by model.sleepTimer.collectAsStateWithLifecycle()
@@ -128,8 +134,8 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
         }
     }
     LaunchedEffect(snapshot.revision, snapshot.owner, snapshot.catalogRevision, selectedSource, query, destination, reloadVersion) {
-        if (snapshot.live && snapshot.owner != null && selectedItemId == null &&
-            (selectedSource != null || destination == Destination.Following) && (selectedSource == null || selectedFeed != null)) {
+        // Following filters show names on this device, as on iOS; only a show's page searches its archive.
+        if (snapshot.live && snapshot.owner != null && selectedItemId == null && selectedSource != null && selectedFeed != null) {
             if (query.isNotBlank()) delay(300)
             model.searchLibrary(selectedSource, query)
         }
@@ -232,7 +238,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                 },
                 actions = {
                     if (selectedItem == null && selectedSource == null && destination == Destination.Following) {
-                        AddSourceButton(model, ::openItem) { showingSearch = false; query = "" }
+                        AddSourceButton(model, ::openItem, openSource = { selectedSource = it }) { showingSearch = false; query = "" }
                     }
                     if (selectedItem == null && selectedSource == null && destination == Destination.Saved) {
                         AddLinkButton(model) { savedListVersion++; showingSearch = false; query = "" }
@@ -285,17 +291,8 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                 selectedItem != null -> "Find in this page"
                 selectedSource != null -> "Search this show"
                 destination == Destination.Saved -> "Search saved articles"
-                else -> "Search your library"
+                else -> "Search your feeds"
             })
-            if (snapshot.live && destination != Destination.Settings && selectedItem == null) {
-                if (snapshot.loading || snapshot.searching) LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "Loading library" })
-                snapshot.error?.let { error ->
-                    Column(Modifier.padding(16.dp)) {
-                        Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                        TextButton(onClick = ::refresh) { Text("Try again") }
-                    }
-                }
-            }
             val screen: @Composable () -> Unit = { when {
                 selectedItem != null && snapshot.live && !selectedItem.textLoaded -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (loadingItem == selectedItem.id) { CircularProgressIndicator(); Text("Loading article…") }
@@ -304,14 +301,20 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                         TextButton(onClick = { model.openItem(selectedItem) }) { Text("Try again") }
                     }
                 }
-                selectedItem != null -> ArticleReader(selectedItem, query, followControl, chrome)
+                selectedItem != null -> ArticleReader(selectedItem, query, followControl, chrome,
+                    // The byline links to the show's page when it is one she follows.
+                    openFeed = snapshot.feeds.firstOrNull { it.id == selectedItem.sourceId }?.let { feed -> { selectedItemId = null; selectedSource = feed.id } })
                 selectedSource != null -> ItemList(if (snapshot.live) snapshot.feedResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.source == selectedSource }, saved, if (snapshot.live) "" else query, ::openItem, model::play, model::toggleSaved, source = selectedFeed?.title ?: selectedSource, live = snapshot.live,
-                    feedSources = selectedFeed?.sources.orEmpty(), feed = selectedFeed, model = model, loading = snapshot.loading || snapshot.searching || snapshot.error != null)
-                destination == Destination.Following -> Following(snapshot.feeds, if (snapshot.live) snapshot.searchResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library, query, { selectedSource = it }, ::openItem, pendingSources, model::removePendingSource, snapshot.live, snapshot.loading || snapshot.searching || snapshot.error != null, model, pendingNewsletterState)
-                destination == Destination.Latest -> ItemList(latestItems, saved, "", ::openItem, model::play, model::toggleSaved, emptyTitle = "You're caught up", loading = snapshot.loading || snapshot.error != null, model = model, newsletters = pendingNewsletterState, showContinuation = true)
+                    feedSources = selectedFeed?.sources.orEmpty(), feed = selectedFeed, model = model, loading = snapshot.loading || snapshot.searching,
+                    notice = snapshot.error, retry = ::refresh, searchText = query)
+                destination == Destination.Following -> Following(snapshot.feeds, query, { selectedSource = it }, pendingSources, model::removePendingSource,
+                    snapshot.live, snapshot.loading, snapshot.error, ::refresh, model)
+                destination == Destination.Latest -> ItemList(latestItems, saved, "", ::openItem, model::play, model::toggleSaved, live = snapshot.live, loading = snapshot.loading,
+                    model = model, newsletters = pendingNewsletterState, showContinuation = true, notice = snapshot.error, retry = ::refresh)
                 destination == Destination.Saved -> key(savedListVersion) {
                     ItemList(if (snapshot.live) snapshot.savedIds.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.id in saved && it.kind == ContentKind.Article }, saved, query, ::openItem, model::play, model::toggleSaved, savedOnly = true, finished = finished, finish = model::toggleFinished,
-                        pendingLinks = pendingLinks, removePendingLink = model::removePendingLink, live = snapshot.live, model = model, loading = snapshot.loading || snapshot.error != null)
+                        pendingLinks = pendingLinks, removePendingLink = model::removePendingLink, live = snapshot.live, model = model, loading = snapshot.loading,
+                        notice = snapshot.error, retry = ::refresh, finishedTab = savedFinishedTab)
                 }
                 else -> SettingsScreen(model, onShortcuts = { showingShortcuts = true }) { showingAccount = true }
             } }
@@ -335,7 +338,8 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     if (showingPlayer) ModalBottomSheet(onDismissRequest = { showingPlayer = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         FullPlayer(playback, preparation, model::toggle, model::skip, model::seek, model::speed,
             sleepTimer, model::startSleepTimer, model::cancelSleepTimer, close = { showingPlayer = false }) {
-            selectedItemId = playback.item?.id
+            // Load its text too: a restored player can hold an article that has not been opened yet.
+            playback.item?.let(::openItem)
             showingPlayer = false
         }
     }
@@ -375,14 +379,18 @@ private fun AppNavigation(selected: Destination, select: (Destination) -> Unit) 
     }
 }
 
+/** As on iOS: Following lists shows only, and its search filters their names on this device. */
 @Composable
-private fun Following(feeds: List<LibraryFeed>, items: List<LibraryItem>, query: String, openSource: (String) -> Unit, openItem: (LibraryItem) -> Unit, pendingSources: List<String>, removeSource: (String) -> Unit, live: Boolean = false, loading: Boolean = false, model: MagpieModel? = null, newsletters: NewsletterState? = null) {
+private fun Following(feeds: List<LibraryFeed>, query: String, openSource: (String) -> Unit, pendingSources: List<String>,
+    removeSource: (String) -> Unit, live: Boolean, loading: Boolean, notice: String?, retry: () -> Unit, model: MagpieModel) {
     val visiblePendingSources = pendingSources.filter { it.contains(query, ignoreCase = true) }
     val sources = feeds.filter { it.title.contains(query, ignoreCase = true) }
-    val results = if (query.isBlank()) emptyList() else if (live) items else items.filter { "${it.title} ${it.source}".contains(query, ignoreCase = true) }
+    if (live && feeds.isEmpty() && visiblePendingSources.isEmpty()) {
+        if (notice != null) return FailedState("Could not load what you follow", notice, retry)
+        if (loading) return LoadingState()
+    }
     LazyColumn(Modifier.fillMaxSize().testTag("following-list")) {
-        if (model != null && newsletters != null && query.isBlank()) pendingNewsletters(model, newsletters)
-        if (query.isNotBlank() && sources.isNotEmpty()) item { ListSection("In your library") }
+        notice?.let { item { NoticeRow(it) } }
         if (visiblePendingSources.isNotEmpty()) item { ListSection("Pending sources") }
         items(visiblePendingSources, key = { "pending-source:$it" }) { url ->
             PendingLinkRow(url, isSource = true) { removeSource(url) }
@@ -391,41 +399,98 @@ private fun Following(feeds: List<LibraryFeed>, items: List<LibraryItem>, query:
         items(sources, key = { it.id }) { source ->
             ListItem(
                 headlineContent = { Text(source.title, fontWeight = FontWeight.SemiBold) },
-                supportingContent = { Text("${source.count} ${if (source.articles) "posts" else "episodes"}") },
+                supportingContent = {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(source.countLabel())
+                        if (source.failing) Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Warning, null, Modifier.size(16.dp), tint = NotUpdatingOrange)
+                            Text("Not updating", style = MaterialTheme.typography.bodySmall, color = NotUpdatingOrange)
+                        }
+                    }
+                },
                 leadingContent = { SourceArtwork(source.title, Modifier.size(56.dp), source.imageUrl) },
                 modifier = Modifier.clickable(onClickLabel = "Open ${source.title}") { openSource(source.id) },
             )
             HorizontalDivider(Modifier.padding(start = 88.dp))
         }
-        if (results.isNotEmpty()) item { ListSection("Episodes in your library") }
-        items(results, key = { it.id }) { item ->
-            if (model != null) LibraryStoryRow(model, item, { openItem(item) }, { model.play(item) })
-            else StoryRow(item, { openItem(item) })
+        if (!loading && query.isBlank() && sources.isEmpty() && visiblePendingSources.isEmpty()) item {
+            EmptyState("Nothing followed yet", "Tap the plus to add a podcast or publication, or tap the microphone and say its name.") {
+                Button(onClick = { if (live) model.discovery.open() else model.beginSourceCapture() }) { Text("Add sources") }
+                OutlinedButton(onClick = { model.ask() }) { Text("Find something by voice") }
+            }
         }
-        if (!loading && query.isBlank() && sources.isEmpty() && visiblePendingSources.isEmpty()) item { EmptyState("No sources yet", "Add a feed address above to start following.") }
-        if (!loading && query.isNotBlank() && sources.isEmpty() && results.isEmpty() && visiblePendingSources.isEmpty()) item { EmptyState("Nothing found", "Try a different title or source.") }
+        if (query.isNotBlank() && sources.isEmpty() && visiblePendingSources.isEmpty()) item {
+            EmptyState("No results for “$query”", "Check the spelling or try a new search.")
+        }
+    }
+}
+
+private val NotUpdatingOrange = Color(0xFFFF9500)
+
+@Composable
+private fun LoadingState() {
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        CircularProgressIndicator(); Spacer(Modifier.height(12.dp)); Text("Loading…")
     }
 }
 
 @Composable
-private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String, open: (LibraryItem) -> Unit, play: (LibraryItem) -> Unit, save: (LibraryItem) -> Unit, source: String? = null, savedOnly: Boolean = false, finished: Set<String> = emptySet(), finish: (LibraryItem) -> Unit = {}, pendingLinks: List<String> = emptyList(), removePendingLink: (String) -> Unit = {}, emptyTitle: String = "Nothing here yet", live: Boolean = false, feedSources: List<String> = emptyList(), loading: Boolean = false, feed: LibraryFeed? = null, model: MagpieModel? = null, newsletters: NewsletterState? = null, showContinuation: Boolean = false) {
-    var showingFinished by rememberSaveable { mutableStateOf(false) }
+private fun FailedState(title: String, message: String, retry: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(Icons.Rounded.WifiOff, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(12.dp))
+        Text(title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+        Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        // Pull to refresh is not a gesture TalkBack can make, so the retry stays a button.
+        TextButton(onClick = retry) { Text("Try again") }
+    }
+}
+
+/** A quiet line above a list shown from this device's copy, as iOS does when offline. */
+@Composable
+private fun NoticeRow(message: String) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Rounded.WifiOff, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+    }
+}
+
+@Composable
+private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String, open: (LibraryItem) -> Unit, play: (LibraryItem) -> Unit, save: (LibraryItem) -> Unit, source: String? = null, savedOnly: Boolean = false, finished: Set<String> = emptySet(), finish: (LibraryItem) -> Unit = {}, pendingLinks: List<String> = emptyList(), removePendingLink: (String) -> Unit = {}, live: Boolean = false, feedSources: List<String> = emptyList(), loading: Boolean = false, feed: LibraryFeed? = null, model: MagpieModel? = null, newsletters: NewsletterState? = null, showContinuation: Boolean = false,
+    notice: String? = null, retry: () -> Unit = {}, searchText: String = query, finishedTab: MutableState<Boolean>? = null) {
+    val ownTab = rememberSaveable { mutableStateOf(false) }
+    // Hoisted for Saved, so adding a link does not flip the list back to "To read".
+    var showingFinished by (finishedTab ?: ownTab)
     val preparation = if (savedOnly && live) model?.savedPreparation?.state?.collectAsStateWithLifecycle()?.value else null
     val pending = if (!showingFinished) preparation?.pending.orEmpty().filter { it.url.contains(query, ignoreCase = true) } else emptyList()
-    val visible = items.filter { (!savedOnly || (it.id in finished) == showingFinished) && "${it.title} ${it.source}".contains(query, ignoreCase = true) }
+    // Saved searches titles and the link's site, as on iOS; other lists search titles and sources.
+    val visible = items.filter { (!savedOnly || (it.id in finished) == showingFinished) && (
+        if (savedOnly) it.title.contains(query, ignoreCase = true) || (it.originalUrl?.let { url -> runCatching { java.net.URI(url).host }.getOrNull() }?.contains(query, ignoreCase = true) == true)
+        else "${it.title} ${it.source}".contains(query, ignoreCase = true)) }
     val playback = model?.player?.collectAsStateWithLifecycle()?.value
     val started = if (showContinuation && model != null && playback != null) visible.filter { model.listeningPresentation(it, playback).started } else emptyList()
     val rest = if (started.isEmpty()) visible else visible.filterNot { row -> started.any { it.id == row.id } }
+    val list = if (savedOnly) RowList.Saved else if (source == null) RowList.Latest else RowList.Show
     fun LazyListScope.storyRows(rows: List<LibraryItem>) {
         items(rows, key = { it.id }) { item ->
-            if (model != null) LibraryStoryRow(model, item, { open(item) }, { play(item) }, allowsDismissal = source == null, savedList = savedOnly)
+            if (model != null) LibraryStoryRow(model, item, { open(item) }, { play(item) }, list)
             else StoryRow(item, { open(item) }, { play(item) })
             if (savedOnly && live && model != null && item.kind == ContentKind.Article) SavedArticlePreparation(item, model)
         }
     }
     val visibleLinks = if (savedOnly && !showingFinished) pendingLinks.filter { it.contains(query, ignoreCase = true) } else emptyList()
+    val waitingSenders = newsletters?.pending.orEmpty().isNotEmpty()
+    val nothing = visible.isEmpty() && visibleLinks.isEmpty() && pending.isEmpty() && !waitingSenders
+    if (live && source == null && items.isEmpty() && pending.isEmpty() && !waitingSenders) {
+        if (notice != null) return FailedState(if (savedOnly) "Could not load saved articles" else "Could not load episodes", notice, retry)
+        if (loading) return LoadingState()
+    }
     LazyColumn(Modifier.fillMaxSize().testTag("story-list")) {
         if (model != null && newsletters != null) pendingNewsletters(model, newsletters)
+        notice?.let { item { NoticeRow(it) } }
         if (savedOnly) item {
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 listOf("To read", "Finished").forEachIndexed { index, title ->
@@ -433,18 +498,26 @@ private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String
                 }
             }
         }
-        if (source != null && query.isBlank()) {
-            item { FeedHeader(source, feed?.let { "${it.count} ${if (it.articles) "posts" else "episodes"}" } ?: sourceCount(items), live, feedSources, feed, model) }
-            item { ListSection(if (items.all { it.kind == ContentKind.Article }) "Posts" else "Episodes") }
+        if (source != null) {
+            // The header stays while searching; the section becomes "Results", as on iOS.
+            item { FeedHeader(source, feed?.countLabel() ?: sourceCount(items), live, feedSources, feed, model) }
+            item { ListSection(if (searchText.isNotBlank()) "Results" else feed?.sectionTitle() ?: if (items.all { it.kind == ContentKind.Article }) "Posts" else "Episodes") }
         }
         if (preparation != null && model != null) item { SavedPreparationStatus(model) }
-        if (!loading && visible.isEmpty() && visibleLinks.isEmpty() && pending.isEmpty()) item { EmptyState(if (query.isNotBlank()) "Nothing found" else emptyTitle, if (query.isNotBlank()) "Try a different search." else if (savedOnly && showingFinished) "Articles you finish stay here." else if (savedOnly) "Add a link above to save it for later." else "New episodes from your shows will appear here.") }
+        if (!loading && nothing) item { when {
+            source != null && searchText.isNotBlank() -> EmptyState("Nothing found", "Nothing in $source matches “$searchText”.")
+            source != null -> Unit // an empty show says nothing, as on iOS
+            savedOnly -> EmptyState(if (query.isNotBlank()) "No results for “$query”" else "Nothing here yet",
+                if (query.isNotBlank()) "Check the spelling or try a new search." else if (showingFinished) "Articles you finish stay here."
+                else "Share a web page to Magpie, or add a link above.", Icons.Rounded.BookmarkBorder)
+            else -> EmptyState("You're caught up", "New episodes from your shows will appear here.", Icons.Rounded.CheckCircleOutline)
+        } }
         items(pending, key = { "account-pending:${it.id}" }) { if (model != null) SavedPendingRow(it, model) }
         items(visibleLinks, key = { "pending:$it" }) { url -> PendingLinkRow(url) { removePendingLink(url) } }
         if (started.isNotEmpty()) {
             item(key = "continue-heading") { ListSection("Continue listening") }
             storyRows(started)
-            if (rest.isNotEmpty()) item(key = "latest-heading") { ListSection("Latest") }
+            item(key = "latest-heading") { ListSection("Latest") } // shown whenever Continue listening is, as on iOS
         }
         storyRows(rest)
     }
@@ -464,6 +537,16 @@ private fun FeedHeader(source: String, count: String, live: Boolean = false, sou
             }
             if (live && feed != null && model != null) SourceManagementMenu(model, feed) else FeedManagementMenu(source, live, sources)
         }
+        feed?.description?.takeIf { it.isNotBlank() }?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (feed != null && model != null) {
+            val management by model.sourceManager.state.collectAsStateWithLifecycle()
+            management.error?.takeIf { management.feed?.id == feed.id && !management.showing }?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            }
+        }
+        // She cannot see the rule in her other inbox; without this she would expect the emails to stop.
+        if (feed?.forwarded == true) Text("This newsletter is forwarded from your own email. Unsubscribing here hides it in Magpie; to stop the emails, remove the forwarding rule there.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -492,7 +575,7 @@ private fun FeedManagementMenu(source: String, live: Boolean, sources: List<Stri
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Manage sources", Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleLarge)
-            IconButton(onClick = { managingSources = false }) { Icon(Icons.Rounded.Close, "Close source management") }
+            TextButton(onClick = { managingSources = false }) { Text("Done") }
         }
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp).testTag("feed-sources-list")) {
             item {
@@ -569,34 +652,41 @@ private fun StoryRow(item: LibraryItem, open: () -> Unit, play: (() -> Unit)? = 
     }
 }
 
-private data class StoryAction(val label: String, val icon: ImageVector, val perform: () -> Unit, val enabled: Boolean = true)
+private data class StoryAction(val label: String, val icon: ImageVector, val perform: () -> Unit, val enabled: Boolean = true,
+    /** The swipe background, as iOS tints each filing action. */
+    val tint: Color? = null)
 
+/** Which list a row is in decides what it can be filed as, as on iOS (EpisodeFiling.available). */
+enum class RowList { Latest, Saved, Show }
+
+private val DismissGrey = Color(0xFF8E8E93)
+private val RestoreBlue = Color(0xFF007AFF)
+
+/**
+ * iOS filing rules: a dismissed item offers only "Mark as unread/unplayed"; otherwise completion (or its
+ * inverse), plus "Dismiss" where dismissal is allowed. Dismissal is confined to Latest (and, in Saved,
+ * means removing the bookmark).
+ */
 @Composable
-private fun filingActions(model: MagpieModel, item: LibraryItem): List<StoryAction> {
+private fun filingActions(model: MagpieModel, item: LibraryItem, allowsDismissal: Boolean): List<StoryAction> {
     val finished by model.finished.collectAsStateWithLifecycle()
     val dismissed by model.dismissedFromLatest.collectAsStateWithLifecycle()
     val filing by model.itemFiling.state.collectAsStateWithLifecycle()
-    val complete = item.id in finished
     val read = item.kind == ContentKind.Article
-    return listOf(
-        StoryAction(if (complete) { if (read) "Mark as unread" else "Mark as unplayed" }
-            else { if (read) "Mark as read" else "Mark as played" }, Icons.Rounded.CheckCircleOutline,
-            { model.toggleFinished(item) }, !filing.busy),
-        if (item.dismissed || item.id in dismissed) StoryAction("Restore to Latest", Icons.Rounded.Restore,
-            { model.fileItem(item, ItemFilingAction.Restore) }, !filing.busy)
-        else StoryAction("Dismiss from Latest", Icons.Rounded.RemoveCircleOutline,
-            { model.fileItem(item, ItemFilingAction.Dismiss) }, !filing.busy),
-    )
+    val unplayed = if (read) "Mark as unread" else "Mark as unplayed"
+    if (item.dismissed || item.id in dismissed) return listOf(StoryAction(unplayed, Icons.Rounded.Restore,
+        { model.fileItem(item, ItemFilingAction.Restore) }, !filing.busy, RestoreBlue))
+    val completion = if (item.id in finished) StoryAction(unplayed, Icons.Rounded.Restore, { model.toggleFinished(item) }, !filing.busy, RestoreBlue)
+        else StoryAction(if (read) "Mark as read" else "Mark as played", Icons.Rounded.CheckCircleOutline,
+            { model.toggleFinished(item) }, !filing.busy, MaterialTheme.colorScheme.primary)
+    return listOfNotNull(completion, StoryAction("Dismiss", Icons.Rounded.HighlightOff,
+        { model.fileItem(item, ItemFilingAction.Dismiss) }, !filing.busy, DismissGrey).takeIf { allowsDismissal })
 }
 
 @Composable
-private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> Unit, play: () -> Unit, allowsDismissal: Boolean = false, savedList: Boolean = false) {
+private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> Unit, play: () -> Unit, list: RowList = RowList.Show) {
     val saved by model.saved.collectAsStateWithLifecycle()
-    val actions = filingActions(model, item)
-    val save = if (item.kind == ContentKind.Article) StoryAction(
-        if (item.id in saved) "Dismiss from Saved" else "Save article",
-        if (item.id in saved) Icons.Rounded.BookmarkRemove else Icons.Rounded.BookmarkAdd,
-        { model.toggleSaved(item) }) else null
+    val actions = filingActions(model, item, allowsDismissal = list == RowList.Latest)
     val playback by model.player.collectAsStateWithLifecycle()
     val preparation by model.preparation.collectAsStateWithLifecycle()
     val finished by model.finished.collectAsStateWithLifecycle()
@@ -605,18 +695,27 @@ private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> U
         else if (playback.item?.id != item.id) null else if (playback.buffering) "Preparing" else if (playback.playing) "Playing" else "Paused"
     val dismissed by model.dismissedFromLatest.collectAsStateWithLifecycle()
     val isDismissed = item.dismissed || item.id in dismissed
-    // Match iOS: leading dismisses on Latest/Saved; trailing completes or restores.
-    val leading = (if (savedList) save else actions.last()).takeIf { allowsDismissal && !isDismissed }
-    val trailing = if (isDismissed) actions.last() else actions.first()
+    // Leading edge removes (Latest: dismiss; Saved: the bookmark); trailing completes or restores.
+    val leading = when (list) {
+        RowList.Latest -> actions.firstOrNull { it.label == "Dismiss" }
+        RowList.Saved -> StoryAction("Dismiss", Icons.Rounded.HighlightOff, { model.toggleSaved(item) }, tint = DismissGrey).takeIf { !isDismissed }
+        RowList.Show -> null
+    }
+    val trailing = actions.first()
     // As on iOS, replacing a saved article's text is a menu action, not a button under every row.
     val context = LocalContext.current
     val live = model.libraryState.collectAsStateWithLifecycle().value.live
     val saving by model.savedPreparation.state.collectAsStateWithLifecycle()
-    val savedExtras = if (savedList && live && item.kind == ContentKind.Article && item.originalUrl != null) listOf(
-        StoryAction("Replace saved text", Icons.Rounded.Refresh, { model.savedPreparation.requestReplacement(item) }, !saving.busy),
-        StoryAction("Capture page", Icons.Rounded.Language, { captureSavedPage(context, item) }, !saving.busy),
-    ) else emptyList()
-    ActionStoryRow(item, open, play, listOfNotNull(actions.first(), save) + actions.drop(1) + savedExtras, leading, trailing, progress, currentLabel)
+    val menu = if (list == RowList.Saved) listOfNotNull(
+        StoryAction("Replace saved text", Icons.Rounded.Refresh, { model.savedPreparation.requestReplacement(item) }, !saving.busy)
+            .takeIf { live && item.kind == ContentKind.Article && item.originalUrl != null },
+        StoryAction("Capture page", Icons.Rounded.Language, { captureSavedPage(context, item) }, !saving.busy)
+            .takeIf { live && item.kind == ContentKind.Article && item.originalUrl != null },
+    ) + actions + StoryAction("Dismiss from Saved", Icons.Rounded.BookmarkRemove, { model.toggleSaved(item) })
+    else actions + listOfNotNull(if (item.kind == ContentKind.Article) StoryAction(
+        if (item.id in saved) "Dismiss from Saved" else "Save article",
+        if (item.id in saved) Icons.Rounded.BookmarkRemove else Icons.Rounded.BookmarkAdd, { model.toggleSaved(item) }) else null)
+    ActionStoryRow(item, open, play, menu, leading, trailing, progress, currentLabel)
 }
 
 @Composable
@@ -653,11 +752,13 @@ private fun ActionStoryRow(item: LibraryItem, open: () -> Unit, play: () -> Unit
         SwipeToDismissBox(state = swipe, enableDismissFromStartToEnd = leadingAction?.enabled == true, enableDismissFromEndToStart = trailingAction?.enabled == true,
             backgroundContent = {
                 val action = if (swipe.dismissDirection == SwipeToDismissBoxValue.StartToEnd) leadingAction else trailingAction
-                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.secondaryContainer).padding(16.dp),
+                val tint = action?.tint ?: MaterialTheme.colorScheme.secondaryContainer
+                Box(Modifier.fillMaxSize().background(tint).padding(16.dp),
                     contentAlignment = if (swipe.dismissDirection == SwipeToDismissBoxValue.StartToEnd) Alignment.CenterStart else Alignment.CenterEnd) {
                     if (action != null) Row(Modifier.clearAndSetSemantics {}, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(action.icon, null)
-                        Text(action.label)
+                        val onTint = if (action.tint != null) Color.White else MaterialTheme.colorScheme.onSecondaryContainer
+                        Icon(action.icon, null, tint = onTint)
+                        Text(action.label, color = onTint)
                     }
                 }
             }) {
@@ -672,7 +773,10 @@ private fun ActionStoryRow(item: LibraryItem, open: () -> Unit, play: () -> Unit
     }
 }
 
-private fun sourceCount(items: List<LibraryItem>): String = "${items.size} ${if (items.all { it.kind == ContentKind.Article }) "posts" else "episodes"}"
+private fun sourceCount(items: List<LibraryItem>): String {
+    val noun = if (items.all { it.kind == ContentKind.Article }) "post" else "episode"
+    return "${items.size} $noun${if (items.size == 1) "" else "s"}"
+}
 
 @Composable
 private fun ListSection(title: String) {
@@ -690,7 +794,7 @@ internal fun MiniPlayer(state: PlayerState, preparing: Boolean, open: () -> Unit
                 val expanded = maxWidth < 360.dp || LocalDensity.current.fontScale > 1.3f
                 val title: @Composable (Modifier) -> Unit = { modifier ->
                     Row(modifier.heightIn(min = 48.dp).testTag("mini-player-open")
-                        .clickable(onClickLabel = "Open player") { open() }.padding(8.dp),
+                        .clickable(onClickLabel = "open the player") { open() }.semantics { contentDescription = "Now playing: ${item.title}" }.padding(8.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         SourceArtwork(item.source, Modifier.size(32.dp), item.imageUrl)
                         Text(item.title, style = MaterialTheme.typography.titleSmall, maxLines = if (expanded) 2 else 1,
@@ -703,7 +807,7 @@ internal fun MiniPlayer(state: PlayerState, preparing: Boolean, open: () -> Unit
                     }
                     IconButton(onClick = toggle, enabled = state.connected && !preparing, modifier = Modifier.size(48.dp)) {
                         Icon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                            if (state.playing) "Pause playback" else "Resume playback", Modifier.size(28.dp))
+                            if (state.playing) "Pause" else "Play", Modifier.size(28.dp))
                     }
                     IconButton(onClick = dismiss, enabled = state.connected, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.Rounded.Close, "Stop and close player")
@@ -745,8 +849,11 @@ private fun FullPlayer(state: PlayerState, preparing: Preparation, toggle: () ->
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp).padding(bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
         IconButton(onClick = close, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Rounded.KeyboardArrowDown, "Close player") }
         SourceArtwork(item.source, Modifier.size(260.dp), item.imageUrl)
-        TextButton(onClick = read) {
-            Text(item.title, Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+        TextButton(onClick = read, modifier = Modifier.semantics(mergeDescendants = true) {
+            contentDescription = "Open ${if (item.kind == ContentKind.Article) "article" else "episode"}: ${item.title}"
+        }) {
+            Text(item.title, Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface, maxLines = 3, overflow = TextOverflow.Ellipsis)
             Icon(Icons.Rounded.ChevronRight, null)
         }
         if (state.buffering || preparing.message != null) Text(preparing.message ?: "Loading audio…", Modifier.semantics { liveRegion = LiveRegionMode.Polite })
@@ -758,16 +865,18 @@ private fun FullPlayer(state: PlayerState, preparing: Preparation, toggle: () ->
                 onValueChangeFinished = { scrub?.let { seek(it.toLong()) }; scrub = null },
                 valueRange = 0f..state.durationMs.toFloat().coerceAtLeast(1f),
                 enabled = state.durationMs > 0 && preparing.message == null,
-                modifier = Modifier.semantics { contentDescription = "Playback position" },
+                // Read as a time, as on iOS, rather than a percentage.
+                modifier = Modifier.semantics { contentDescription = "Playback position"
+                    stateDescription = "${spokenTime(state.positionMs)} of ${spokenTime(state.durationMs)}" },
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatTime(state.positionMs), style = MaterialTheme.typography.labelLarge)
-                Text("−" + formatTime(state.durationMs - state.positionMs), style = MaterialTheme.typography.labelLarge)
+                Text(formatTime(state.positionMs), style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("−" + formatTime(state.durationMs - state.positionMs), style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(horizontalArrangement = Arrangement.spacedBy(40.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { skip(-15) }, enabled = state.durationMs > 0 && preparing.message == null, modifier = Modifier.size(56.dp)) { SkipBack15() }
-            FilledIconButton(onClick = toggle, enabled = state.connected && preparing.message == null, modifier = Modifier.size(76.dp)) { Icon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (state.playing) "Pause" else "Play", Modifier.size(40.dp)) }
+            FilledIconButton(onClick = toggle, enabled = state.connected && preparing.message == null, modifier = Modifier.size(68.dp)) { Icon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (state.playing) "Pause" else "Play", Modifier.size(36.dp)) }
             IconButton(onClick = { skip(30) }, enabled = state.durationMs > 0 && preparing.message == null, modifier = Modifier.size(56.dp)) { Icon(Icons.Rounded.Forward30, "Forward 30 seconds", Modifier.size(32.dp)) }
         }
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -780,12 +889,13 @@ private fun FullPlayer(state: PlayerState, preparing: Preparation, toggle: () ->
 @Composable
 private fun SpeedPicker(current: Float, select: (Float) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
     Box {
         val spoken = if (current == 1f) "Normal speed" else "${speedLabel(current).dropLast(1)} times speed"
         OutlinedButton(onClick = { expanded = true }, modifier = Modifier.semantics { contentDescription = "Playback speed, $spoken" }) { Icon(Icons.Rounded.Speed, null); Spacer(Modifier.width(8.dp)); Text(speedLabel(current)) }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             playbackRates.forEach { speed ->
-                DropdownMenuItem(text = { Text(speedLabel(speed)) }, onClick = { select(speed); expanded = false }, trailingIcon = { if (speed == current) Icon(Icons.Rounded.Check, "Selected") })
+                DropdownMenuItem(text = { Text(speedLabel(speed)) }, onClick = { if (speed != current) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); select(speed); expanded = false }, trailingIcon = { if (speed == current) Icon(Icons.Rounded.Check, "Selected") })
             }
         }
     }
@@ -808,12 +918,18 @@ private fun SourceArtwork(source: String, modifier: Modifier = Modifier, url: St
 }
 
 @Composable
-private fun EmptyState(title: String, message: String) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(title, style = MaterialTheme.typography.titleLarge)
-        Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun EmptyState(title: String, message: String, icon: ImageVector? = null, actions: (@Composable ColumnScope.() -> Unit)? = null) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 48.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        icon?.let { Icon(it, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        Text(title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+        Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        actions?.invoke(this)
     }
 }
+
+@Composable
+private fun EmptyState(title: String, message: String, actions: @Composable ColumnScope.() -> Unit) = EmptyState(title, message, null, actions)
 
 /** Material has no "replay 15" icon; this matches Forward30 with the number inside the arrow, as iOS does. */
 @Composable
@@ -822,6 +938,15 @@ private fun SkipBack15() {
         Icon(Icons.Rounded.Replay, null, Modifier.size(32.dp))
         Text("15", fontSize = 8.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 3.dp).clearAndSetSemantics { })
     }
+}
+
+/** "3 minutes 5 seconds", for TalkBack. */
+private fun spokenTime(milliseconds: Long): String {
+    val seconds = milliseconds.coerceAtLeast(0) / 1000
+    val parts = listOfNotNull((seconds / 3600).takeIf { it > 0 }?.let { "$it ${if (it == 1L) "hour" else "hours"}" },
+        (seconds / 60 % 60).takeIf { it > 0 }?.let { "$it ${if (it == 1L) "minute" else "minutes"}" },
+        (seconds % 60).takeIf { it > 0 || seconds == 0L }?.let { "$it ${if (it == 1L) "second" else "seconds"}" })
+    return parts.joinToString(" ")
 }
 
 /** m:ss, or h:mm:ss from an hour, as on iOS. */

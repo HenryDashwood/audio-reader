@@ -98,9 +98,11 @@ class NewslettersTest {
         File(output, "$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
     }
     @Test fun followUpdatesLatestAndBlockingRequiresConfirmation() {
+        // Waiting senders are listed in Latest only, as on iOS.
+        compose.onNodeWithText("Latest").performClick()
+        compose.onNodeWithTag("story-list").performScrollToNode(hasContentDescription("Follow Morning news"))
         compose.onNodeWithContentDescription("Follow Morning news").performClick()
         compose.waitUntil(10_000) { api.approved && library.state.value.latestIds.isNotEmpty() }
-        compose.onNodeWithText("Latest").performClick()
         compose.onNodeWithTag("story-list").performScrollToNode(hasText("Today's news"))
         compose.onNodeWithText("Today's news").assertIsDisplayed()
         compose.onNodeWithTag("story-list").performScrollToNode(hasContentDescription("Block Garden notes"))
@@ -132,7 +134,7 @@ class NewslettersTest {
     @Test fun failedFeedDiscoveryOffersExplicitEmailSignupAndManualAddressCopy() {
         compose.onNodeWithContentDescription("Add sources").performClick()
         compose.onNodeWithTag("source-query").performTextInput("https://publisher.example")
-        compose.onNodeWithText("Find feeds").performClick()
+        compose.onNodeWithText("Open podcast or feed").performClick()
         compose.waitUntil(10_000) { model.discovery.state.value.error != null }
         assertEquals(0, api.signups)
         compose.onNodeWithText("Sign up by email").performClick()
@@ -169,7 +171,8 @@ class NewslettersTest {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) { MagpieTheme(darkTheme = true) { MagpieApp(model) } }
         } }
-        compose.onNodeWithTag("following-list").performScrollToNode(hasContentDescription("Follow Morning news"))
+        compose.onNodeWithText("Latest").performClick()
+        compose.onNodeWithTag("story-list").performScrollToNode(hasContentDescription("Follow Morning news"))
         compose.onNodeWithContentDescription("Follow Morning news").assertIsDisplayed()
         capture("newsletter-senders-large-dark")
         compose.onNodeWithText("Settings").performClick()

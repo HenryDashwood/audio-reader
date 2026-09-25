@@ -185,10 +185,11 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
 
 ## What works
 
-- Following, Latest, Saved, source detail, local library search, and a rich article reader.
+- Following, Latest, Saved, source detail, and a rich article reader. As on iOS,
+  Following's search filters show names on the device; Add sources searches episodes.
 - Article/episode toolbars with playback, original-page opening, Android sharing,
-  find, and an Ask Magpie entry point. Original-page opening requires a web URL;
-  samples share their text. Ask opens a conversation with microphone and typed input.
+  find, and an Ask Magpie entry point. Opening the original and sharing appear only
+  when the article has a web page, as on iOS. The byline links to a followed show.
 - The same Ask Magpie control is available on Following, Latest, Saved, Settings,
   and feed pages, including during search. Browser links use Material's Open in new icon.
 - Light/dark themes, scalable text, labelled controls, heading semantics, and
@@ -321,16 +322,20 @@ Manage sources lists primary and additional sources, their host or newsletter
 type, and any update failures. It combines other followed publications (including
 all their sources) and separates non-primary sources. The backend owns duplicate
 article selection and shared progress. Unsubscribe removes the whole publication
-from Following while preserving Saved, bookmarks, and active playback; subscribed
-previews also offer Unsubscribe. Forwarded newsletters explain how to stop their
+from Following while preserving Saved, bookmarks, and active playback. As on iOS it
+is in the show's menu (with progress on the menu button), not in Manage sources, which
+closes with Done; subscribed previews also offer Unsubscribe. Forwarded newsletters explain how to stop their
 forwarding rule. Source addresses display only their host, never private URL tokens.
 Signed-out samples retain the account-required explanation and fixed catalogue.
 Add sources searches podcasts and library episodes, discovers feeds from websites,
 and previews content before subscribing.
-Settings links to Sign-in Methods for Apple and Google sign-in, connected provider status,
-real account sign-out and deletion. Home screen and Quick Settings actions are
-available alongside assistant library browsing and newsletter management. AI Data Sharing
-can be reviewed, granted, or withdrawn in Settings.
+As on iOS, Settings' Account section holds Sign-in Methods (one section per provider,
+marked Connected or offering Continue), Sign Out, and Delete Account with confirmation.
+Home screen and Quick Settings actions are available alongside assistant library browsing
+and newsletter management. Settings offers "Turn Off AI Data Sharing" (with confirmation)
+or "Review AI Data Sharing", as on iOS. Without permission, the voice sheet says what still
+works and offers "Enable other voice requests"; a request needing AI is explained aloud
+rather than interrupted by a prompt. Requests handed over from outside still offer consent.
 
 ## Settings parity
 
@@ -363,7 +368,7 @@ player and resumes it only after speech ends; independent playback controls or a
 account change cancel speech without restarting audio. Leaving Settings stops the
 readout. Address speech never starts the microphone or requires AI permission.
 
-Pending senders appear in Following and Latest. Follow adds their messages to the
+Pending senders appear at the top of Latest, as on iOS. Follow adds their messages to the
 library; Block asks for confirmation before deleting their messages and dropping
 future emails. Requests are serialized and scoped to the current account session.
 Late refreshes cannot restore an approved sender, and failed writes keep the row
@@ -709,8 +714,11 @@ podcast directory and account episodes; pasting a website or feed address offers
 feed discovery. Multiple feeds require a choice, and a single feed opens its
 preview. Preview episodes can be read or played before subscribing. Subscribe
 updates Following only after server confirmation. Searching the web for a
-publication is a separate, explicit AI action with account consent. Settings
-provides review and withdrawal of that permission. Failed directory lookups keep
+publication is a separate, explicit AI action with account consent, offered (as on
+iOS) only when nothing else matched. Results arrive as you type, in the iOS order
+(library, its episodes, the podcast directory, the web), filtered by All, Sources or
+Episodes; a pasted address shows an "Open podcast or feed" row. Settings provides
+review and withdrawal of that permission. Failed directory lookups keep
 successful library matches available. Old queries, closed screens, and changed
 accounts cannot restore stale discovery results. While signed out, addresses
 stay in a separate local inbox and never become simulated subscriptions.

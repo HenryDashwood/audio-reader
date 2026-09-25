@@ -53,7 +53,7 @@ class SourceDiscoveryTest {
         override suspend fun changeSources(token: String, feedId: String, sourceId: String?, change: SourceChange) {
             assertEquals(SourceChange.Unsubscribe, change); followed = 0
         }
-        override suspend fun directory(token: String, query: String) = listOf(SourceResult("Fixture podcast", feed.url!!, "Fixture publisher", 1))
+        override suspend fun directory(token: String, query: String) = if (query == "unlisted") emptyList() else listOf(SourceResult("Fixture podcast", feed.url!!, "Fixture publisher", 1))
         override suspend fun discover(token: String, url: String) = listOf(SourceResult("Main feed", feed.url!!, primary = true), SourceResult("Comments feed", "https://fixture.example/comments"))
         override suspend fun preview(token: String, url: String): RemotePreview {
             previewed = url
@@ -116,10 +116,10 @@ class SourceDiscoveryTest {
             }
         }
         search("https://fixture.example")
-        compose.onNodeWithText("Find feeds").performClick()
+        compose.onNodeWithText("Open podcast or feed").performClick()
         compose.onNodeWithText("Choose a feed").assertIsDisplayed()
         assertNull(api.previewed)
-        compose.onNodeWithText("Recommended feed").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Recommended").assertIsDisplayed()
         capture("discovery-candidates-large-dark")
         compose.onNodeWithText("Comments feed").performClick()
         assertEquals("https://fixture.example/comments", api.previewed)
@@ -130,22 +130,26 @@ class SourceDiscoveryTest {
         assertEquals(0, api.followed)
     }
     @Test fun webSearchConsentCanBeDeclinedGrantedAndWithdrawnInSettings() {
-        search("fixture")
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("Fixture podcast").fetchSemanticsNodes().isNotEmpty() }
+        // Web search is offered only when nothing matched, as on iOS.
+        search("unlisted")
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("Search the web for a publication").fetchSemanticsNodes().isNotEmpty() }
         assertEquals(0, api.webCalls)
         compose.onNodeWithText("Search the web for a publication").performScrollTo().performClick()
         compose.onNodeWithText("Use AI for voice and web search?").assertIsDisplayed()
-        compose.onNodeWithText("Not now").performClick()
+        compose.onNodeWithText("Not Now").performClick()
         assertEquals(0, api.grants); assertEquals(0, api.webCalls)
         compose.onNodeWithText("Search the web for a publication").performScrollTo().performClick()
-        compose.onNodeWithText("Allow AI data sharing").performClick()
+        compose.onNodeWithContentDescription("Allow AI data sharing").performClick()
         compose.onNodeWithText("Web publication").performScrollTo().assertIsDisplayed()
         assertTrue(api.consent); assertEquals(1, api.webCalls)
         compose.onNodeWithText("Done").performClick()
         compose.onNodeWithText("Settings").performClick()
-        compose.onNodeWithTag("settings-list").performScrollToNode(hasText("Withdraw permission"))
-        compose.onNodeWithText("Withdraw permission").performClick()
-        compose.onNodeWithText("Off · Publication web search needs permission").assertIsDisplayed()
+        compose.onNodeWithTag("settings-list").performScrollToNode(hasText("Turn Off AI Data Sharing"))
+        compose.onNodeWithText("Turn Off AI Data Sharing").performClick()
+        compose.onNodeWithText("Turn off AI data sharing?").assertIsDisplayed() // asks first, as on iOS
+        compose.onNodeWithText("Turn Off").performClick()
+        compose.onNodeWithTag("settings-list").performScrollToNode(hasText("Review AI Data Sharing"))
+        compose.onNodeWithText("Review AI Data Sharing").assertIsDisplayed()
         assertFalse(api.consent)
     }
     @Test fun accountChangeClosesDiscoveryAndDiscardsItsPreview() {

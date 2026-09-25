@@ -86,7 +86,7 @@ class SourceManagementTest {
         compose.onNodeWithContentDescription("Separate Other publication, Email newsletter").performScrollTo().performClick()
         compose.onNodeWithContentDescription("Combine Other publication with Main publication").performScrollTo().assertIsDisplayed()
         assertEquals(2, api.writes)
-        compose.onNodeWithContentDescription("Close source management").performClick()
+        compose.onNodeWithText("Done").performClick()
         compose.onNodeWithText("Saved").performClick()
         compose.onNodeWithText("Saved stays here").assertIsDisplayed()
     }
@@ -107,7 +107,7 @@ class SourceManagementTest {
         compose.waitUntil(15_000) { model.player.value.playing }
         openMenu(); compose.onNodeWithText("Unsubscribe").performClick()
         compose.waitUntil(10_000) { library.state.value.feeds.isEmpty() }
-        compose.onNodeWithText("No sources yet").assertIsDisplayed()
+        compose.onNodeWithText("Nothing followed yet").assertIsDisplayed()
         assertTrue(model.player.value.playing); assertEquals(10, model.player.value.item?.episodeId)
         compose.onNodeWithText("Saved").performClick(); compose.onNodeWithText("Saved stays here").assertIsDisplayed()
     }
@@ -123,9 +123,10 @@ class SourceManagementTest {
         directory.mkdirs()
         val bitmap = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
         File(directory, "source-management-large-dark.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-        compose.onNodeWithContentDescription("Unsubscribe from Main publication").performScrollTo().assertIsDisplayed()
+        // As on iOS, unsubscribing lives in the show's menu, not in Manage sources.
+        compose.onNodeWithContentDescription("Unsubscribe from Main publication").assertDoesNotExist()
         runBlocking(Dispatchers.Main) { library.changeSession(null) }
-        compose.onNodeWithContentDescription("Close source management").assertDoesNotExist()
+        compose.onNodeWithText("Sources in Main publication").assertDoesNotExist()
         compose.onNodeWithText("Field notes").assertIsDisplayed()
     }
     @Test fun wireMetadataIncludesSourceIdentityPrimaryStatusAndForwarding() {

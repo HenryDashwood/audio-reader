@@ -48,7 +48,7 @@ class FileLibraryCache(private val directory: File) : LibraryCache {
         .put("episode_id", it.episodeId).put("content_id", it.contentId).put("source_id", it.sourceId)
         .put("audio", it.audioUrl).put("words", it.wordCount).put("loaded", it.textLoaded)
         .put("position", it.remotePositionMs).put("completed", it.completed).put("dismissed", it.dismissed)
-        .put("published_at", it.publishedAt).put("image_url", it.imageUrl)
+        .put("published_at", it.publishedAt).put("image_url", it.imageUrl).put("author", it.author)
         .put("capture_error", it.captureError).put("duration", it.durationSeconds).put("progress_revision", it.progressRevision)
         .put("article_bookmark", it.articleBookmark?.let(::bookmark))
         .put("article_progress", it.articleProgress?.let { progress -> JSONObject()
@@ -56,7 +56,7 @@ class FileLibraryCache(private val directory: File) : LibraryCache {
             .put("bookmark", progress.bookmark?.let(::bookmark)) })
     private fun feed(it: LibraryFeed) = JSONObject().put("id", it.id).put("title", it.title).put("count", it.count)
         .put("articles", it.articles).put("url", it.url).put("sources", JSONArray(it.sources)).put("description", it.description)
-        .put("image_url", it.imageUrl).put("forwarded", it.forwarded).put("details", JSONArray().apply { it.sourceDetails.forEach { source ->
+        .put("image_url", it.imageUrl).put("forwarded", it.forwarded).put("failing", it.failing).put("newsletter", it.newsletter).put("details", JSONArray().apply { it.sourceDetails.forEach { source ->
             put(JSONObject().put("id", source.id).put("title", source.title).put("url", source.url).put("type", source.type)
                 .put("primary", source.primary).put("failing", source.failing))
         } })
@@ -72,7 +72,7 @@ class FileLibraryCache(private val directory: File) : LibraryCache {
                 wordCount = item.intOrNull("words"), textLoaded = item.getBoolean("loaded"), remotePositionMs = item.getLong("position"),
                 completed = item.getBoolean("completed"), dismissed = item.getBoolean("dismissed"),
                 captureError = item.stringOrNull("capture_error"), durationSeconds = item.intOrNull("duration"),
-                progressRevision = item.stringOrNull("progress_revision"), publishedAt = item.stringOrNull("published_at"), imageUrl = item.stringOrNull("image_url"),
+                progressRevision = item.stringOrNull("progress_revision"), publishedAt = item.stringOrNull("published_at"), imageUrl = item.stringOrNull("image_url"), author = item.stringOrNull("author"),
                 articleBookmark = item.optJSONObject("article_bookmark")?.let(::decodeBookmark),
                 articleProgress = item.optJSONObject("article_progress")?.let { progress ->
                     ArticleProgressState(progress.getString("text_version"), progress.intOrNull("content"), progress.getString("revision"),
@@ -82,7 +82,7 @@ class FileLibraryCache(private val directory: File) : LibraryCache {
                 feed.stringOrNull("url"), feed.getJSONArray("sources").strings(), feed.stringOrNull("description"),
                 feed.getJSONArray("details").objects().map { source -> FeedSource(source.getString("id"), source.getString("title"),
                     source.getString("url"), source.getString("type"), source.getBoolean("primary"), source.getBoolean("failing")) },
-                feed.getBoolean("forwarded"), feed.stringOrNull("image_url"))
+                feed.getBoolean("forwarded"), feed.stringOrNull("image_url"), feed.optBoolean("failing"), feed.optBoolean("newsletter"))
         }, row.getJSONArray("latest").strings(), row.getJSONArray("saved").strings(),
             listings.keys().asSequence().associateWith { listings.getJSONArray(it).strings() })
     }

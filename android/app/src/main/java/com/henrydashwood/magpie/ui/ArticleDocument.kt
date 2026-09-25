@@ -135,10 +135,18 @@ object ArticleDocument {
 
     private fun escape(value: String) = Entities.escape(value)
 
+    /** Opens the show's page from the byline; handled by the reader, never navigated. */
+    const val FEED_LINK = "magpie-feed:open"
+
     fun page(item: LibraryItem, body: String, fontSize: Float, ink: String, background: String,
-        quiet: String, rule: String, link: String, dark: Boolean): String {
+        quiet: String, rule: String, link: String, dark: Boolean, feedLink: Boolean = false): String {
         val nonce = UUID.randomUUID().toString()
-        val date = publicationDate(item.publishedAt)?.let { " · <time>${escape(it)}</time>" }.orEmpty()
+        // As on iOS: the publication (a link to its page), the author unless it repeats the
+        // publication, and the long date.
+        val publication = item.source.trim().takeIf { it.isNotEmpty() }?.let { if (feedLink) "<a href=\"$FEED_LINK\">${escape(it)}</a>" else escape(it) }
+        val author = item.author?.trim()?.takeIf { it.isNotEmpty() && !it.equals(item.source.trim(), ignoreCase = true) }?.let(::escape)
+        val date = com.henrydashwood.magpie.data.longPublicationDate(item.publishedAt)?.let { "<time>${escape(it)}</time>" }
+        val byline = listOfNotNull(publication, author, date).joinToString(" · ")
         return """
             <!doctype html><html><head><meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -167,7 +175,7 @@ object ArticleDocument {
             table { border-collapse: collapse; } th, td { border: 1px solid $rule; padding: .4em .6em; text-align: start; }
             a { color: $link; } hr { border: 0; border-top: 1px solid $rule; margin: 2em 0; }
             </style></head><body><div class="page">
-            <header><h1>${escape(item.title)}</h1><p class="byline">${escape(item.source)}$date</p></header>
+            <header><h1>${escape(item.title)}</h1>${if (byline.isEmpty()) "" else "<p class=\"byline\">$byline</p>"}</header>
             <main>$body</main></div></body></html>
         """.trimIndent()
     }

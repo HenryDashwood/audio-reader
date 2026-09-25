@@ -63,7 +63,8 @@ class SourceManagerTest {
         val repo = Repository().apply { failWrite = true }; val notices = mutableListOf<String>()
         val model = SourceManager(backgroundScope, repo, notices::add)
         model.unsubscribe(root.copy(forwarded = true), 1); runCurrent()
-        assertTrue(model.state.value.showing); assertNotNull(model.state.value.error); assertTrue(notices.isEmpty())
+        // As on iOS, unsubscribing from the menu never opens Manage sources; the show page shows the error.
+        assertFalse(model.state.value.showing); assertNotNull(model.state.value.error); assertTrue(notices.isEmpty())
         repo.failWrite = false; model.unsubscribe(root.copy(forwarded = true), 1); runCurrent()
         assertFalse(model.state.value.showing); assertTrue(notices.single().contains("forwarding rule"))
     }

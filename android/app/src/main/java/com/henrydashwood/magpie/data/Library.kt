@@ -30,6 +30,8 @@ data class LibraryItem(
     val articleProgress: ArticleProgressState? = null,
     val publishedAt: String? = null,
     val imageUrl: String? = null,
+    /** Named in the reader's byline unless it repeats the publication, as on iOS. */
+    val author: String? = null,
 )
 
 interface LibraryRepository {

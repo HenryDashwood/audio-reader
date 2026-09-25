@@ -5,6 +5,7 @@ import androidx.core.net.toUri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -47,13 +48,18 @@ fun SavedPreparationStatus(model: MagpieModel) {
 @Composable
 fun SavedPendingRow(article: PendingArticle, model: MagpieModel) {
     val state by model.savedPreparation.state.collectAsStateWithLifecycle()
-    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(URI(article.url).host, style = MaterialTheme.typography.titleMedium)
-        Text(article.url)
-        Text("Saved on this device · Waiting to sync", style = MaterialTheme.typography.bodySmall)
-        TextButton(onClick = { model.savedPreparation.remove(article) }, enabled = !state.busy,
-            modifier = Modifier.semantics { contentDescription = "Remove saved link ${article.url}" }) { Text("Remove saved link") }
+    var expanded by remember(article.id) { mutableStateOf(false) }
+    // As on iOS: the page's title (or site), a quiet status, and removal in the long-press menu.
+    Box {
+        ListItem(headlineContent = { Text(article.title?.takeIf { it.isNotBlank() } ?: runCatching { URI(article.url).host }.getOrNull() ?: "Saved link") },
+            supportingContent = { Text("Saved on this device · Waiting to sync", style = MaterialTheme.typography.bodySmall) },
+            modifier = Modifier.combinedClickable(onClick = {}, onLongClick = { if (!state.busy) expanded = true }, onLongClickLabel = "Saved link actions")
+                .semantics { if (!state.busy) customActions = listOf(CustomAccessibilityAction("Remove saved link") { model.savedPreparation.remove(article); true }) })
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("Remove saved link", color = MaterialTheme.colorScheme.error) }, onClick = { expanded = false; model.savedPreparation.remove(article) })
+        }
     }
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
 }
 
 @Composable

@@ -72,13 +72,6 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
                 trailingContent = { Icon(Icons.Rounded.ChevronRight, null) },
                 modifier = Modifier.clickable(onClickLabel = "Choose voice") { showingVoices = true }.testTag("voice-setting"))
         }
-        item {
-            ListItem(headlineContent = { Text(if (voices.previewing) "Stop voice preview" else "Listen to voice") },
-                leadingContent = { Icon(if (voices.previewing) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, null) },
-                modifier = Modifier.clickable(enabled = !voices.loading && voices.voices.isNotEmpty()) {
-                    if (voices.previewing) model.stopVoicePreview() else model.previewVoice()
-                })
-        }
         if (voices.error != null) item { SettingsFootnote(voices.error!!, error = true) }
         item {
             SettingsAction("Download voices", Icons.Rounded.Download) {
@@ -91,9 +84,9 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
         item { HorizontalDivider(); SettingsHeading("Conversation") }
         item { ListItem(headlineContent = { Text("Keep listening after replies") }, supportingContent = { Text("Continue the conversation after Magpie answers.") },
             trailingContent = { Switch(conversation.keepListening, { model.setConversationPreferences(conversation.copy(keepListening = it)) }, Modifier.semantics { contentDescription = "Keep listening after replies" }) }) }
-        item { ListItem(headlineContent = { Text("Wait for a reply") }, trailingContent = { Text("${conversation.followUpSeconds} seconds") },
+        if (conversation.keepListening) item { ListItem(headlineContent = { Text("Wait for a reply") }, trailingContent = { Text("${conversation.followUpSeconds} seconds") },
             modifier = Modifier.clickable { showingWait = true }.testTag("conversation-wait")) }
-        item { SettingsFootnote("Say ‘that’s all’ to finish. With TalkBack, double-tap the microphone for each turn when announcements have finished.") }
+        item { SettingsFootnote("After Magpie answers, wait for the listening sound and speak again. Silence ends listening; say “That’s all” to close the conversation. Starting playback also ends listening. With TalkBack, double-tap the microphone for each turn.") }
         item { HorizontalDivider(); SettingsHeading("Assistant and Shortcuts") }
         item { SettingsAction("Home screen and Quick Settings", Icons.Rounded.AppShortcut, onShortcuts) }
         if (library.live) {
@@ -111,11 +104,12 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
         item { SettingsAction("Privacy Policy", Icons.AutoMirrored.Rounded.OpenInNew) { open(Intent(Intent.ACTION_VIEW, "https://audio-reader-production.up.railway.app/privacy".toUri())) } }
         item { SettingsAction("Email Support", Icons.Rounded.Email) { open(Intent(Intent.ACTION_SENDTO, "mailto:hcndashwood@gmail.com".toUri())) } }
         item { AISharingSettings(model) }
-        item { SettingsFootnote("Speech recognition, narration, and spoken replies run on this device. Library voice requests and publication web search use OpenAI only with your account permission.") }
+        item { SettingsFootnote("Voice requests use OpenAI only after you allow it. Turning it off leaves the rest of Magpie available.") }
+        if (linkError != null) item { SettingsFootnote(linkError!!, error = true) }
         item { HorizontalDivider(); SettingsHeading("Account") }
         item { SettingsAction("Sign-in Methods", Icons.Rounded.AccountCircle, onAccount) }
-        if (linkError != null) item { SettingsFootnote(linkError!!, error = true) }
-        item { SettingsFootnote(if (library.live) "Connected account library" else "Android preview · Sample library") }
+        // As on iOS, signing out and deleting the account live here rather than a level deeper.
+        item { AccountActions() }
     }
     if (showingWait) AlertDialog(onDismissRequest = { showingWait = false }, title = { Text("Wait for a reply") },
         text = { LazyColumn { items(com.henrydashwood.magpie.voice.ConversationPreferences.waitOptions) { seconds ->
@@ -130,11 +124,11 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
         }
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 440.dp).testTag("voice-list")) {
             item {
-                VoiceChoice("Automatic · English", "Choose the best installed English voice", preferences.voiceId == null) { model.selectVoice(null); showingVoices = false }
+                VoiceChoice("Automatic · English", "Choose the best installed English voice", preferences.voiceId == null) { model.selectVoice(null); model.previewVoice(); showingVoices = false }
             }
             if (voices.loading) item { SettingsFootnote("Loading installed voices…") }
             items(voices.voices, key = { it.id }) { voice ->
-                VoiceChoice(voice.label, voice.quality, preferences.voiceId == voice.id) { model.selectVoice(voice.id); showingVoices = false }
+                VoiceChoice(voice.label, voice.quality, preferences.voiceId == voice.id) { model.selectVoice(voice.id); model.previewVoice(); showingVoices = false }
             }
             if (voices.error != null) item { SettingsFootnote(voices.error!!, error = true) }
         }
@@ -179,4 +173,28 @@ private fun SettingsHeading(title: String) {
 private fun SettingsFootnote(text: String, error: Boolean = false) {
     Text(text, Modifier.padding(horizontal = 16.dp, vertical = 12.dp).semantics { if (error) liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall,
         color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun AccountActions(model: com.henrydashwood.magpie.auth.AccountModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
+    val state by model.state.collectAsStateWithLifecycle()
+    AccountActions(state, model::signOut, model::delete)
+}
+
+@Composable
+internal fun AccountActions(state: com.henrydashwood.magpie.auth.AccountState, signOut: () -> Unit, delete: () -> Unit) {
+    var confirmingDelete by rememberSaveable { mutableStateOf(false) }
+    Column {
+        ListItem(headlineContent = { Text("Sign Out", color = MaterialTheme.colorScheme.error) },
+            modifier = Modifier.clickable(enabled = !state.busy, onClickLabel = "sign out and return to the sign-in screen") { signOut() })
+        ListItem(headlineContent = { Text("Delete Account", color = MaterialTheme.colorScheme.error) },
+            modifier = Modifier.clickable(enabled = !state.busy) { confirmingDelete = true })
+        if (state.busy) SettingsFootnote("Updating account…")
+        state.error?.let { SettingsFootnote(it, error = true) }
+    }
+    if (confirmingDelete) AlertDialog(onDismissRequest = { confirmingDelete = false },
+        title = { Text("Delete your account?") },
+        text = { Text("This removes your account, the shows you follow, and your place in every episode. It cannot be undone.") },
+        confirmButton = { TextButton(onClick = { confirmingDelete = false; delete() }) { Text("Delete Account", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") } })
 }

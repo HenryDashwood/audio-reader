@@ -194,10 +194,11 @@ class VoiceConversationTest {
 
     @Test fun declinedAIRequestIsNeverSentAndLocalPauseStillWorks() {
         play(); api.allowed = false
-        ask("Find a new show")
-        compose.onNodeWithText("Use AI for voice and web search?").assertIsDisplayed()
+        ask("Find a new show"); idle()
+        // As on iOS: explained aloud, with no permission prompt in the middle of the conversation.
+        compose.onNodeWithText("Use AI for voice and web search?").assertDoesNotExist()
+        assertTrue(output.said.last().startsWith("Playback commands work on this device."))
         assertTrue(api.requests.isEmpty()); assertEquals(0, api.grants)
-        compose.onNodeWithText("Not now").performClick()
         ask("Pause"); idle()
         // As on iOS, the exchange ends but the sheet stays open.
         compose.waitUntil(5_000) { !model.player.value.playing && model.voice.state.value.phase == VoicePhase.Idle }
@@ -208,8 +209,11 @@ class VoiceConversationTest {
         api.allowed = false
         compose.onNodeWithText("Latest").performClick()
         compose.onNode(hasText(api.podcast.title) and !hasTestTag("mini-player-open")).performClick()
-        ask("What is this about?")
-        compose.onNodeWithText("Allow AI data sharing").performClick(); idle()
+        compose.onNodeWithContentDescription("Ask Magpie").performClick()
+        compose.onNodeWithText("Enable other voice requests").performClick()
+        compose.onNodeWithContentDescription("Allow AI data sharing").performClick()
+        compose.waitUntil(5_000) { api.grants == 1 }
+        ask("What is this about?"); idle()
         assertEquals(1, api.grants); assertEquals(1, api.requests.single().viewedEpisodeId)
         assertEquals("What is this about?", api.requests.single().transcript)
         assertEquals(1, model.voice.state.value.turns.count { it.speaker == "her" })
@@ -394,6 +398,8 @@ class VoiceConversationTest {
 
     @Test fun conversationPreferencesPersistAndLargeTextScreenRemainsUsable() {
         compose.onNodeWithText("Settings").performClick()
+        // "Wait for a reply" only applies, and only shows, while Keep listening is on (as on iOS).
+        compose.onNodeWithContentDescription("Keep listening after replies").performClick()
         compose.onNodeWithTag("settings-list").performScrollToNode(hasTestTag("conversation-wait"))
         compose.onNodeWithTag("conversation-wait").performClick()
         compose.onNodeWithText("20 seconds").performClick()

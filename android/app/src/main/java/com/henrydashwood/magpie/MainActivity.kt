@@ -30,7 +30,7 @@ class MainActivity : ComponentActivity() {
         // Signed out, the sign-in screen finishes an Apple return itself; opening Sign-in Methods
         // afterwards would be a detour.
         if (intent?.action == Intent.ACTION_VIEW && intent.data?.scheme == BuildConfig.APPLICATION_ID + ".auth" &&
-            intent.data?.host == "apple-sign-in" && (application as MagpieApplication).accounts.state.value.signedIn) appleReturn++
+            intent.data?.host == "apple-sign-in" && (application as MagpieApplication).let { !it.requiresSignIn || it.accounts.state.value.signedIn }) appleReturn++
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

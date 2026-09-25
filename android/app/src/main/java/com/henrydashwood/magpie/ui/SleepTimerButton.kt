@@ -18,7 +18,6 @@ import com.henrydashwood.magpie.playback.SleepTimerState
 @Composable
 fun SleepTimerButton(timer: SleepTimerState, enabled: Boolean, start: (Int) -> Unit, cancel: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    val haptic = LocalHapticFeedback.current
     Box {
         OutlinedButton(onClick = { expanded = true }, enabled = enabled,
             colors = ButtonDefaults.outlinedButtonColors(containerColor = if (timer.running) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
@@ -26,25 +25,17 @@ fun SleepTimerButton(timer: SleepTimerState, enabled: Boolean, start: (Int) -> U
                 contentDescription = "Sleep timer"
                 stateDescription = timer.remainingMinutes?.let { "Stopping in $it ${if (it == 1) "minute" else "minutes"}" } ?: "Off"
             }) {
+            // As on iOS: just the moon when off, the minutes left when running.
             Icon(Icons.Rounded.Bedtime, null)
-            Spacer(Modifier.width(8.dp))
-            Text(timer.remainingMinutes?.let { "$it min" } ?: "Sleep")
+            timer.remainingMinutes?.let { Spacer(Modifier.width(8.dp)); Text("$it min") }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             SleepTimer.options.forEach { minutes ->
-                DropdownMenuItem(text = { Text("$minutes minutes") }, onClick = {
-                    start(minutes)
-                    expanded = false
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                })
+                DropdownMenuItem(text = { Text("$minutes minutes") }, onClick = { start(minutes); expanded = false })
             }
             if (timer.running) {
                 HorizontalDivider()
-                DropdownMenuItem(text = { Text("Turn off sleep timer") }, onClick = {
-                    cancel()
-                    expanded = false
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                })
+                DropdownMenuItem(text = { Text("Turn off sleep timer", color = MaterialTheme.colorScheme.error) }, onClick = { cancel(); expanded = false })
             }
         }
     }

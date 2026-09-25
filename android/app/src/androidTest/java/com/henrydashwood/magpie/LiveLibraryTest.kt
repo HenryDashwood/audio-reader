@@ -78,7 +78,7 @@ class LiveLibraryTest {
         app.libraryOverride = repository
         launch()
         compose.onNodeWithText("Could not connect to Magpie. Check your connection and try again.").assertIsDisplayed()
-        compose.onNodeWithText("No sources yet").assertDoesNotExist()
+        compose.onNodeWithText("Nothing followed yet").assertDoesNotExist()
         compose.onNodeWithText("Field notes").assertDoesNotExist()
         api.failing = false
         compose.onNodeWithText("Try again").performClick()
@@ -105,7 +105,9 @@ class LiveLibraryTest {
         compose.onNodeWithText("Account publication").assertIsDisplayed()
         compose.onNodeWithText("Empty publication").assertIsDisplayed().performClick()
         compose.waitUntil(10_000) { api.requestedFeed == "20" }
-        compose.onNodeWithText("Nothing here yet").assertIsDisplayed()
+        // An empty show says nothing, as on iOS.
+        compose.onAllNodes(hasText("Empty publication") and isHeading()).onFirst().assertIsDisplayed()
+        compose.onNodeWithText("Nothing here yet").assertDoesNotExist()
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithText("Saved").performClick()
         compose.onNodeWithText("A saved account article").assertIsDisplayed().performClick()

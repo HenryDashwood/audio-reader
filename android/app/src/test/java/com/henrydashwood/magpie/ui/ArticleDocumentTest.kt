@@ -132,4 +132,15 @@ class ArticleDocumentTest {
         assertEquals(null, ArticleDocument.webUrl("javascript:alert(1)"))
         assertEquals(null, ArticleDocument.webUrl("https://user:password@example.org/"))
     }
+    @Test fun bylineMatchesIOSWithTheShowLinkedAuthorUnlessRepeatedAndTheLongDate() {
+        val item = RichArticleSample.item.copy(source = "Economic Forces", author = "Brian Albrecht", publishedAt = "2026-09-24T12:00:00Z")
+        val byline = { value: com.henrydashwood.magpie.data.LibraryItem, link: Boolean ->
+            Jsoup.parse(ArticleDocument.page(value, "<p>Body</p>", 17f, "#000", "#fff", "#555", "#ccc", "#00f", false, link)).selectFirst("p.byline")!!
+        }
+        val linked = byline(item, true)
+        assertEquals(ArticleDocument.FEED_LINK, linked.selectFirst("a")!!.attr("href"))
+        assertEquals("Economic Forces · Brian Albrecht · 24 September 2026", linked.text())
+        assertNull(byline(item, false).selectFirst("a"))
+        assertEquals("Economic Forces · 24 September 2026", byline(item.copy(author = "economic forces"), false).text())
+    }
 }

@@ -23,7 +23,11 @@ fun SourceManagementMenu(model: MagpieModel, feed: LibraryFeed) {
     val state by model.sourceManager.state.collectAsStateWithLifecycle()
     var expanded by remember(feed.id) { mutableStateOf(false) }
     Box {
-        FilledTonalIconButton(enabled = !state.busy, onClick = { expanded = true }) { Icon(Icons.Rounded.MoreVert, "Manage ${feed.title}") }
+        val unsubscribing = state.busy && !state.showing && state.feed?.id == feed.id
+        FilledTonalIconButton(enabled = !state.busy, onClick = { expanded = true }) {
+            if (unsubscribing) CircularProgressIndicator(Modifier.size(20.dp).semantics { contentDescription = "Unsubscribing from ${feed.title}" }, strokeWidth = 2.dp)
+            else Icon(Icons.Rounded.MoreVert, "Manage ${feed.title}")
+        }
         DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("Manage sources") }, leadingIcon = { Icon(Icons.Rounded.Link, null) },
                 onClick = { expanded = false; model.sourceManager.open(feed, library.revision) })
@@ -44,7 +48,7 @@ fun SourceManagementDialog(model: MagpieModel) {
     if (!state.showing) return
     Dialog(onDismissRequest = manager::close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Scaffold(topBar = { TopAppBar(title = { Text("Manage sources") }, actions = {
-            IconButton(enabled = !state.busy, onClick = manager::close) { Icon(Icons.Rounded.Close, "Close source management") }
+            TextButton(enabled = !state.busy, onClick = manager::close) { Text("Done") }
         }) }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding)) {
                 if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "Updating sources" })
@@ -79,14 +83,8 @@ fun SourceManagementDialog(model: MagpieModel) {
                             }
                         }
                     }
+                    // Unsubscribing is in the show's menu, as on iOS, not here.
                     item { Text("To use another feed, subscribe to it first. Combining a publication includes all its sources.") }
-                    item {
-                        HorizontalDivider()
-                        if (state.sources.size > 1 || feed.sourceDetails.size > 1) Text("Unsubscribing from this publication stops following all its sources.", Modifier.padding(top = 12.dp))
-                        if (feed.forwarded) Text("This newsletter is forwarded from your email. Unsubscribing hides it in Magpie; remove the forwarding rule in your email account to stop the emails.", Modifier.padding(top = 12.dp))
-                        TextButton(enabled = !state.busy, onClick = { manager.unsubscribe(feed, state.sessionRevision) },
-                            modifier = Modifier.semantics { contentDescription = "Unsubscribe from ${feed.title}" }) { Text("Unsubscribe", color = MaterialTheme.colorScheme.error) }
-                    }
                 }
             }
         }

@@ -30,6 +30,9 @@ class LinkCaptureTest {
             compose.onNodeWithText("Web address").assertTextContains(url)
             compose.onNodeWithText("Save").performClick()
             compose.waitUntil(5_000) { model.pendingLinks.value.contains(url) && !model.linkCapture.value.showing }
+            // Saving keeps the chosen segment, as on iOS; pending links are listed under To read.
+            compose.onNodeWithText(url).assertDoesNotExist()
+            compose.onNodeWithText("To read").performClick()
             compose.onNodeWithText(url).assertIsDisplayed()
             assertTrue(inbox.links().contains(url))
             compose.onNodeWithContentDescription("Add link").performClick()
@@ -41,7 +44,7 @@ class LinkCaptureTest {
             compose.onNodeWithText(url).assertIsDisplayed()
             compose.onNodeWithContentDescription("Search").performClick()
             compose.onNodeWithText("Search saved articles").performTextInput("unmatched-capture-query")
-            compose.onNodeWithText("Nothing found").assertIsDisplayed()
+            compose.onNodeWithText("No results for", substring = true).assertIsDisplayed()
             compose.onNodeWithText("Search saved articles").performTextReplacement("magpie-capture-test")
             compose.onNodeWithText(url).assertIsDisplayed()
             compose.onNodeWithText("Finished").performClick()

@@ -57,3 +57,12 @@ fun shortPublicationDate(value: String?, zone: ZoneId = ZoneId.systemDefault(), 
     val months = if (locale.language == "en") Locale.US else locale
     return DateTimeFormatter.ofPattern(pattern, months).format(instant.atZone(zone))
 }
+
+/** The reader's byline date, as on iOS: "12 March 2026". */
+fun longPublicationDate(value: String?, zone: ZoneId = ZoneId.systemDefault(), locale: Locale = Locale.getDefault()): String? {
+    if (value == null) return null
+    val instant = runCatching { Instant.parse(value) }.getOrElse {
+        runCatching { LocalDateTime.parse(value).toInstant(ZoneOffset.UTC) }.getOrNull() ?: return null
+    }
+    return DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG).withLocale(locale).format(instant.atZone(zone))
+}

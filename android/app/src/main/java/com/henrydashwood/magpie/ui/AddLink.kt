@@ -31,14 +31,14 @@ fun AddLinkButton(model: MagpieModel, onSaved: () -> Unit) {
 }
 
 @Composable
-fun AddSourceButton(model: MagpieModel, openItem: (com.henrydashwood.magpie.data.LibraryItem) -> Unit, onSaved: () -> Unit) {
+fun AddSourceButton(model: MagpieModel, openItem: (com.henrydashwood.magpie.data.LibraryItem) -> Unit, openSource: (String) -> Unit = {}, onSaved: () -> Unit) {
     val library by model.libraryState.collectAsStateWithLifecycle()
     val capture by model.sourceCapture.collectAsStateWithLifecycle()
     LaunchedEffect(capture.savedUrl) {
         if (capture.savedUrl != null) { onSaved(); model.acknowledgeSavedSource() }
     }
     IconButton(onClick = { if (library.live) model.discovery.open() else model.beginSourceCapture() }) { Icon(Icons.Rounded.Add, "Add sources") }
-    SourceDiscoveryDialog(model, openItem)
+    SourceDiscoveryDialog(model, openItem, openSource)
 
     AddressCaptureDialog(capture, "Add sources", "Feed or website address", "https://example.com/feed.xml",
         "The address is saved on this device. Finding feeds, searching by name, and subscribing will be available when your account is connected.",

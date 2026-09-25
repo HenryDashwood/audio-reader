@@ -203,15 +203,17 @@ class VoiceSessionTest {
         assertFalse(host.ends.last()); host.gate!!.complete(Unit); runCurrent(); assertTrue(host.applied.isEmpty())
     }
 
-    @Test fun consentMustBeExplicitAndDecliningDoesNotSendOrStoreARemoteRequest() = runTest {
+    @Test fun withoutConsentARequestIsExplainedAloudAndNeverSent() = runTest {
         val host = Host().apply { allowed = false }
-        val session = VoiceSession(this, host, Input(), {}, { ConversationPreferences(false) })
+        val said = mutableListOf<String>()
+        val session = VoiceSession(this, host, Input(), { said += it }, { ConversationPreferences(false) })
         session.open(3); session.submit("Find a new podcast"); runCurrent()
-        assertEquals(VoicePhase.Consent, session.state.value.phase); assertTrue(host.requests.isEmpty()); assertEquals(0, host.grants)
-        session.declineAI(); runCurrent(); assertTrue(host.requests.isEmpty())
-        session.submit("Find a new podcast"); runCurrent(); session.allowAI(); runCurrent()
-        assertEquals(1, host.grants); assertEquals("Find a new podcast", host.requests.single().transcript)
-        assertEquals(1, session.state.value.turns.count { it.speaker == "her" })
+        // As on iOS: no permission prompt mid-conversation, just what still works.
+        assertNotEquals(VoicePhase.Consent, session.state.value.phase); assertTrue(host.requests.isEmpty()); assertEquals(0, host.grants)
+        assertEquals(listOf("Playback commands work on this device. Other requests need a connection and your AI data-sharing permission."), said)
+        host.allowed = true; session.submit("Find a new podcast"); runCurrent()
+        assertEquals("Find a new podcast", host.requests.single().transcript)
+        assertEquals(3, host.requests.single().viewedEpisodeId)
     }
 
     @Test fun localCommandsWorkWithoutSignInOrConsentAndPauseEndsSilentlyWithTheSheetOpen() = runTest {

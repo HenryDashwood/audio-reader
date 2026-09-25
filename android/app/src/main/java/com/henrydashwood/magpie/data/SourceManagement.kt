@@ -53,9 +53,10 @@ class SourceManager(private val scope: CoroutineScope, private val repository: S
         if (source.primary || state.value.sources.none { it.id == source.id && !it.primary }) return
         change(source.id, SourceChange.Separate)
     }
+    /** From the show's menu, as on iOS: the menu button shows progress and the page closes on success. */
     fun unsubscribe(feed: LibraryFeed, sessionRevision: Int) {
         if (state.value.busy) return
-        reset(); mutable.value = ManagementState(feed, sessionRevision, showing = true)
+        reset(); mutable.value = ManagementState(feed, sessionRevision, showing = false)
         change(null, SourceChange.Unsubscribe)
     }
     private fun change(sourceId: String?, change: SourceChange) = run {

@@ -31,20 +31,21 @@ fun ReaderToolbarActions(item: LibraryItem, playing: Boolean, searching: Boolean
     IconButton(onClick = togglePlayback) {
         Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Pause" else "Listen")
     }
-    IconButton(enabled = original != null, onClick = { original?.let { launch(Intent(Intent.ACTION_VIEW, it)) } },
-        modifier = Modifier.semantics { if (original == null) stateDescription = "This sample has no original web page" }) {
-        Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open the original")
-    }
-    IconButton(onClick = {
-        val share = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, item.title)
-            putExtra(Intent.EXTRA_TITLE, item.title)
-            // Bundled original samples have no public URL. Share their text without inventing a link.
-            putExtra(Intent.EXTRA_TEXT, original?.toString() ?: "${item.title}\n${item.source} · Magpie sample\n\n${item.text}")
+    // As on iOS, both need a web page, so an article without one shows neither.
+    if (original != null) {
+        IconButton(onClick = { launch(Intent(Intent.ACTION_VIEW, original)) }) {
+            Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open the original")
         }
-        launch(Intent.createChooser(share, null))
-    }) { Icon(Icons.Rounded.Share, if (original == null) "Share sample text" else "Share link") }
+        IconButton(onClick = {
+            val share = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_SUBJECT, item.title)
+                putExtra(Intent.EXTRA_TITLE, item.title)
+                putExtra(Intent.EXTRA_TEXT, original.toString())
+            }
+            launch(Intent.createChooser(share, item.title))
+        }) { Icon(Icons.Rounded.Share, "Share article") }
+    }
     IconButton(onClick = toggleFind) {
         Icon(if (searching) Icons.Rounded.Close else Icons.Rounded.Search, if (searching) "Close search" else "Find in this page")
     }

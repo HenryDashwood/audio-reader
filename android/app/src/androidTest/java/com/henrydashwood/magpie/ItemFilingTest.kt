@@ -111,13 +111,14 @@ class ItemFilingTest {
     private fun row(id: Int) = library.state.value.items.first { it.episodeId == id }
     @Test fun latestDismissAndFeedRestorationUseVisibleMenus() {
         compose.onNodeWithText("Latest").performClick()
-        actions("A garden article"); compose.onNodeWithText("Dismiss from Latest").performClick(); settled()
+        actions("A garden article"); compose.onNodeWithText("Dismiss").performClick(); settled()
         assertFalse(row(2).completed); assertTrue(row(2).dismissed)
         compose.onNodeWithText("A garden article").assertDoesNotExist()
         compose.onNodeWithText("Following").performClick(); compose.onNodeWithText("Garden notes").performClick()
         // Wait for the publication fetch before opening its transient menu.
         compose.waitUntil(10_000) { !model.libraryState.value.searching && model.libraryState.value.feedResults.isNotEmpty() }
-        actions("A garden article"); compose.onNodeWithText("Restore to Latest").performClick(); settled()
+        // As on iOS, a dismissed item's only action is to mark it unread, which returns it to Latest.
+        actions("A garden article"); compose.onNodeWithText("Mark as unread").performClick(); settled()
         assertFalse(row(2).dismissed)
         compose.onNodeWithContentDescription("Back").performClick(); compose.onNodeWithText("Latest").performClick()
         compose.onNodeWithText("A garden article").assertIsDisplayed()
@@ -185,7 +186,7 @@ class ItemFilingTest {
         launch()
         // The fresh snapshot knows it was filed. The old request remains in
         // Ask Magpie, so check it instead of creating a second filing action.
-        compose.runOnUiThread { model.ask() }
+        compose.runOnUiThread { model.reviewSavedRequests() }
         compose.waitUntil(10_000) { model.voice.state.value.recoveryRequests.isNotEmpty() }
         val pending = model.voice.state.value.recoveryRequests.single()
         assertEquals(requestId, pending.requestId)
@@ -238,13 +239,11 @@ class ItemFilingTest {
                 MagpieTheme(darkTheme = true) { MagpieApp(model) }
             }
         } }
-        compose.onNodeWithContentDescription("Search").performClick()
-        compose.onNodeWithText("Search your library").performTextInput("garden")
-        compose.waitUntil(10_000) { library.state.value.searchResults.size == 2 }
-        compose.onNodeWithTag("following-list").performScrollToNode(hasText("A garden podcast"))
+        compose.onNodeWithText("Latest").performClick()
+        compose.onNodeWithTag("story-list").performScrollToNode(hasText("A garden podcast"))
         actions("A garden podcast")
         compose.onNodeWithText("Mark as played").assertIsDisplayed()
-        compose.onNodeWithText("Dismiss from Latest").assertIsDisplayed()
+        compose.onNodeWithText("Dismiss").assertIsDisplayed()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
         val output = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")?.let(::File) ?: File(app.filesDir, "screenshots")

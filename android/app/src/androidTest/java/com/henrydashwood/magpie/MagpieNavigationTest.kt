@@ -35,8 +35,8 @@ class MagpieNavigationTest {
     @Test fun sourceOpensArticleAndBackReturnsToSource() {
         compose.onNodeWithText("Field notes").performClick()
         compose.onNodeWithText(article.title).performClick()
-        compose.onNodeWithContentDescription("Open the original").assertIsDisplayed().assertIsNotEnabled()
-        compose.onNodeWithContentDescription("Share sample text").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Open the original").assertDoesNotExist() // samples have no web page
+        compose.onNodeWithContentDescription("Share article").assertDoesNotExist()
         compose.onNodeWithContentDescription("Ask Magpie").assertIsDisplayed()
         compose.onNodeWithContentDescription("More options for ${article.title}").assertDoesNotExist()
         compose.onNodeWithTag("article-webview").assertIsDisplayed()
@@ -59,7 +59,7 @@ class MagpieNavigationTest {
         compose.onNodeWithText("Sources in Field notes").assertIsDisplayed()
         compose.onNodeWithText("Bundled sample content").assertIsDisplayed()
         compose.activityRule.scenario.recreate()
-        compose.onNodeWithContentDescription("Close source management").performClick()
+        compose.onNodeWithText("Done").performClick()
         compose.onNodeWithText(article.title).assertIsDisplayed()
         compose.onNodeWithContentDescription("Search").performClick()
         compose.onNodeWithText("Search this show").performTextInput("blackbird")
@@ -70,8 +70,8 @@ class MagpieNavigationTest {
 
     @Test fun navigationAndToolbarSearchAreUsable() {
         compose.onNodeWithContentDescription("Search").performClick()
-        compose.onNodeWithText("Search your library").performTextInput("not a real story")
-        compose.onNodeWithText("Nothing found").assertIsDisplayed()
+        compose.onNodeWithText("Search your feeds").performTextInput("not a real story")
+        compose.onNodeWithText("No results for", substring = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("Close search").performClick()
         compose.onNodeWithText("Field notes").assertIsDisplayed()
         compose.onNodeWithText("Latest").performClick()
@@ -83,7 +83,7 @@ class MagpieNavigationTest {
         compose.onNodeWithText("Saved").performClick()
         compose.onNodeWithContentDescription("Search").performClick()
         compose.onNodeWithText("Search saved articles").performTextInput("not a real story")
-        compose.onNodeWithText("Nothing found").assertIsDisplayed()
+        compose.onNodeWithText("No results for", substring = true).assertIsDisplayed()
     }
 
     @Test fun eachTabKeepsItsPlaceAndChoosingItAgainReturnsToItsTop() {

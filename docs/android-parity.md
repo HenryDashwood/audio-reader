@@ -655,7 +655,7 @@ senders, approval/blocking and explicit website signup. Settings offers accessib
 word-by-word and spelled addresses, copying with visible/haptic feedback, sharing,
 and offline speech coordinated with the playback service. Speech has no microphone
 path, shares conversation ownership, and respects independent controls and account
-changes. Pending senders appear in Following and Latest; blocking requires a
+changes. Pending senders appear in Latest (originally also Following; changed to match iOS); blocking requires a
 confirmation explaining deletion and future filtering. Discovery offers email
 signup after failure and preserves the backend's submitted/manual outcome.
 

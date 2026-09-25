@@ -115,7 +115,8 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
     fun submit(text: String) { if (text.isNotBlank()) start(text.trim(), autoFollowUp = false) }
     fun continueRequest(request: VoiceHandoffs.Request) {
         open(null)
-        if (request.recovering) retry() else submit(request.transcript)
+        // A request handed over from outside has no sheet line to point at, so it may ask for consent.
+        if (request.recovering) retry() else if (request.transcript.isNotBlank()) start(request.transcript.trim(), autoFollowUp = false, offerConsent = true)
     }
     fun retry() = start("try again", autoFollowUp = false)
     fun retryRequest(id: String) = start("try again", autoFollowUp = false, recoveryId = id)
@@ -146,7 +147,7 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         mutable.update { it.copy(visible = false, phase = VoicePhase.Idle, heard = "", reply = "", launchListening = null) }
     }
 
-    private fun start(text: String?, autoFollowUp: Boolean, accessible: Boolean = false, allowConsent: Boolean = false, recoveryId: String? = null, dismissId: String? = null, selectedOptionId: String? = null) {
+    private fun start(text: String?, autoFollowUp: Boolean, accessible: Boolean = false, allowConsent: Boolean = false, offerConsent: Boolean = false, recoveryId: String? = null, dismissId: String? = null, selectedOptionId: String? = null) {
         if (!state.value.visible) return
         if (text != null && text.length > 2_000) {
             mutable.update { it.copy(error = "Please ask in a shorter sentence.") }; return
@@ -242,9 +243,17 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                         val typedRecovery = recovering && conversation.pending?.let { conversation.structured(it.requestId) } != null
                         val undo = command == LocalCommand.Undo
                         if (!typedRecovery && !undo && !host.consent()) {
-                            checkTurn(); deferredTranscript = heard
+                            checkTurn()
                             attempt?.outcome = VoiceOutcome.ConsentRequired
-                            mutable.update { it.copy(phase = VoicePhase.Consent) }; break
+                            if (offerConsent) {
+                                deferredTranscript = heard
+                                mutable.update { it.copy(phase = VoicePhase.Consent) }; break
+                            }
+                            // As on iOS: say why, without interrupting with a permission prompt; the
+                            // sheet offers "Enable other voice requests".
+                            conversation.userSaid(heard); publish()
+                            say("Playback commands work on this device. Other requests need a connection and your AI data-sharing permission.", ::checkTurn)
+                            break
                         }
                         checkTurn()
                         val request = if (undo) conversation.unfinished("undo")?.also { conversation.selectRecovery(it.requestId) }

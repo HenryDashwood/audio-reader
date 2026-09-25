@@ -127,6 +127,12 @@ fun AskConversation(model: MagpieModel) {
             if (touchExploration) "Double tap to say what you would like" else "Tap anywhere and say what you would like"
         }
     }
+    // As on iOS: without AI data sharing, the sheet says what still works and offers to enable the rest.
+    var aiAllowed by remember { mutableStateOf<Boolean?>(null) }
+    var reviewingAI by remember { mutableStateOf(false) }
+    var savingAI by remember { mutableStateOf(false) }
+    val library by model.libraryState.collectAsStateWithLifecycle()
+    LaunchedEffect(library.revision) { aiAllowed = if (library.live) runCatching { model.aiConsent() }.getOrNull() else false }
     val sheet = rememberModalBottomSheetState()
     // Choices and unfinished requests need an answer, and at half height they sit below the fold.
     val needsRoom = state.clarification != null || (state.reviewing && state.recoveryRequests.isNotEmpty() && !state.busy)
@@ -141,6 +147,11 @@ fun AskConversation(model: MagpieModel) {
         Box(Modifier.fillMaxWidth().fillMaxHeight().testTag("ask-sheet").semantics { isTraversalGroup = true }) {
             Column(Modifier.fillMaxSize().padding(top = 40.dp).verticalScroll(rememberScrollState()).testTag("ask-content"),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                if (aiAllowed == false && library.live) {
+                    Text("Playback commands work on this device.", style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { reviewingAI = true }) { Text("Enable other voice requests") }
+                }
                 // One control for the whole area, so she can tap without aiming and TalkBack can find it.
                 Column(Modifier.fillMaxWidth().heightIn(min = 240.dp).testTag("ask-microphone")
                     .clickable(enabled = microphoneUsable, role = Role.Button,
@@ -234,6 +245,10 @@ fun AskConversation(model: MagpieModel) {
             dismissButton = { TextButton(onClick = { dismissRequest = null }) { Text("Keep request") } })
     }
     if (state.phase == VoicePhase.Consent) AIConsentDialog(false, state.error, model.voice::allowAI, model.voice::declineAI)
+    if (reviewingAI) AIConsentDialog(savingAI, null, {
+        savingAI = true
+        scope.launch { aiAllowed = runCatching { model.setAIConsent(true) }.getOrNull() ?: aiAllowed; savingAI = false; reviewingAI = false }
+    }, { reviewingAI = false })
 }
 
 /** Plain named turns, newest at the bottom: what she said, what Magpie heard, and what it answered. */

@@ -22,7 +22,7 @@ import org.junit.runner.RunWith
 class AccountScreenTest {
     @get:Rule val compose = createComposeRule()
     private fun show(state: AccountState = AccountState(), configured: Boolean = true, delete: () -> Unit = {}) {
-        compose.setContent { MagpieTheme { AccountContent(state, configured, {}, {}, {}, {}, {}, delete) } }
+        compose.setContent { MagpieTheme { AccountContent(state, configured, {}, {}, {}, {}) } }
     }
     // LazyColumn does not compose every off-screen item on smaller phones.
     private fun scrollTo(text: String): SemanticsNodeInteraction {
@@ -37,32 +37,33 @@ class AccountScreenTest {
     }
     @Test fun bothConnectedProvidersAreVisible() {
         show(AccountState(signedIn = true, providers = setOf("apple", "google")))
-        scrollTo("Apple · Connected").assertIsDisplayed()
-        scrollTo("Google · Connected").assertIsDisplayed()
-        compose.onNodeWithText("Sign in with Google").assertDoesNotExist()
+        // As on iOS: a section per provider, each marked Connected.
+        compose.onAllNodesWithText("Connected").assertCountEquals(2)
+        compose.onNodeWithText("Continue with Google").assertDoesNotExist()
     }
     @Test fun linkConflictLeavesTheExistingProviderVisible() {
         show(AccountState(signedIn = true, providers = setOf("apple"), error = "Already linked to another account"))
-        scrollTo("Apple · Connected").assertIsDisplayed()
-        scrollTo("Sign in with Google").assertIsEnabled()
+        scrollTo("Connected").assertIsDisplayed()
+        scrollTo("Continue with Google").assertIsEnabled()
         scrollTo("Already linked to another account").assertIsDisplayed()
     }
     @Test fun deletionRequiresExplicitConfirmationAndCanBeCancelled() {
         var deletions = 0
-        show(AccountState(signedIn = true, providers = setOf("google")), delete = { deletions++ })
-        scrollTo("Delete Account").performClick()
+        // As on iOS, Sign Out and Delete Account are in Settings' Account section.
+        compose.setContent { MagpieTheme { com.henrydashwood.magpie.ui.AccountActions(AccountState(signedIn = true), {}, { deletions++ }) } }
+        compose.onNodeWithText("Delete Account").performClick()
         compose.onNodeWithText("Delete your account?").assertIsDisplayed()
         assertEquals(0, deletions)
         compose.onNodeWithText("Cancel").performClick()
         assertEquals(0, deletions)
-        scrollTo("Delete Account").performClick()
+        compose.onNodeWithText("Delete Account").performClick()
         compose.onNode(hasText("Delete Account") and hasAnyAncestor(isDialog())).performClick()
         compose.runOnIdle { assertEquals(1, deletions) }
     }
     @Test fun appleIsAvailableWithoutGoogleConfiguration() {
         var clicked = false
         compose.setContent { MagpieTheme {
-            AccountContent(AccountState(), false, {}, {}, {}, {}, {}, {}, appleConfigured = true,
+            AccountContent(AccountState(), false, {}, {}, {}, {}, appleConfigured = true,
                 signInApple = { clicked = true })
         } }
         scrollTo("Sign in with Apple").assertIsEnabled().performClick()
@@ -73,16 +74,16 @@ class AccountScreenTest {
         var linked = false
         compose.setContent { MagpieTheme {
             AccountContent(AccountState(signedIn = true, providers = setOf("google")), true,
-                {}, {}, {}, {}, {}, {}, appleConfigured = true, linkApple = { linked = true })
+                {}, {}, {}, {}, appleConfigured = true, linkApple = { linked = true })
         } }
         scrollTo("Connect your Apple account").assertIsDisplayed()
-        scrollTo("Sign in with Apple").performClick()
+        scrollTo("Continue with Apple").performClick()
         compose.runOnIdle { assertTrue(linked) }
     }
     @Test fun pendingBrowserSignInCanBeCancelledAndPreventsAnotherProvider() {
         var cancelled = false
         compose.setContent { MagpieTheme {
-            AccountContent(AccountState(applePending = true, busy = true), true, {}, {}, {}, {}, {}, {},
+            AccountContent(AccountState(applePending = true, busy = true), true, {}, {}, {}, {},
                 appleConfigured = true, cancelApple = { cancelled = true })
         } }
         scrollTo("Sign in with Apple").assertIsNotEnabled()
@@ -99,7 +100,7 @@ class AccountScreenTest {
         var checks = 0
         compose.runOnUiThread { owner.registry.currentState = Lifecycle.State.RESUMED }
         compose.setContent { CompositionLocalProvider(LocalLifecycleOwner provides owner) {
-            MagpieTheme { AccountContent(state.value, true, {}, {}, {}, {}, {}, {},
+            MagpieTheme { AccountContent(state.value, true, {}, {}, {}, {},
                 appleConfigured = true, resumeApple = { checks++ }) }
         } }
         compose.runOnIdle {

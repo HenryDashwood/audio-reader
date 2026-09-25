@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.core.net.toUri
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -87,7 +88,16 @@ fun SubscriptionImportDialog(model: MagpieModel, onFollowing: () -> Unit) {
                         item { Button(onClick = ::chooseFile, enabled = !state.busy && !reading, modifier = Modifier.testTag("choose-opml")) { Text("Choose OPML file") } }
                         item { Text("This imports subscriptions. Reading and listening history aren’t included.") }
                         item { TextButton(onClick = { help = !help }) { Text("How to export from your app") }
-                            if (help) Text("In your podcast or RSS reader app, look for Export subscriptions or Export OPML. Save the file, then choose it here.\n\nPocket Casts: Profile → Settings → Import & Export OPML → Save file.\n\nFeedly: Export OPML in the web app.\n\nReadwise Reader: Account → Export Feeds as OPML.") }
+                            // As on iOS: the steps, then each app's own instructions.
+                            if (help) Column {
+                                Text("In your podcast or RSS reader app, look for Export subscriptions or Export OPML. Save the file, then choose it here.")
+                                for ((name, url) in listOf(
+                                    "Pocket Casts instructions" to "https://support.pocketcasts.com/knowledge-base/opml-export/",
+                                    "Feedly instructions" to "https://docs.feedly.com/article/52-how-can-i-export-my-sources-and-feeds-through-opml",
+                                    "Readwise Reader instructions" to "https://docs.readwise.io/reader/docs/faqs/exporting")) {
+                                    TextButton(onClick = { runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, url.toUri())) } }) { Text(name) }
+                                }
+                            } }
                     }
                     job.draft -> {
                         if (job.items.size > 20) item { OutlinedTextField(query, { query = it }, label = { Text("Search subscriptions") }) }
@@ -116,8 +126,11 @@ fun SubscriptionImportDialog(model: MagpieModel, onFollowing: () -> Unit) {
                     }
                     else -> {
                         item { Text(job.title, Modifier.semantics { liveRegion = LiveRegionMode.Polite; heading() }) }
-                        item { Text("${job.added} added\n${job.alreadyFollowing} already following\n${job.failed} couldn’t import" +
-                            if (job.notImported > 0) "\n${job.notImported} not imported" else "") }
+                        // Labelled rows, and only the counts that apply, as on iOS.
+                        item { ImportCount("Added", job.added) }
+                        item { ImportCount("Already following", job.alreadyFollowing) }
+                        if (job.failed > 0) item { ImportCount("Couldn’t import", job.failed) }
+                        if (job.notImported > 0) item { ImportCount("Not imported", job.notImported) }
                         item { Button(onClick = { controller.close(); onFollowing() }) { Text("Go to Following") } }
                         if (job.items.any { it.status == "failed" && it.retryable }) item { TextButton(onClick = controller::retry, enabled = !state.busy) { Text("Retry failed") } }
                         items(job.items.filter { it.status == "failed" }, key = { it.id }) { row ->
@@ -141,4 +154,10 @@ internal fun java.io.InputStream.readBytesBounded(limit: Int): ByteArray {
     }
     require(output.size() > 0)
     return output.toByteArray()
+}
+
+@Composable
+private fun ImportCount(label: String, count: Int) {
+    ListItem(headlineContent = { Text(label) }, trailingContent = { Text("$count") },
+        modifier = Modifier.semantics(mergeDescendants = true) { })
 }
