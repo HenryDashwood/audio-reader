@@ -93,7 +93,7 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
             trailingContent = { Switch(conversation.keepListening, { model.setConversationPreferences(conversation.copy(keepListening = it)) }, Modifier.semantics { contentDescription = "Keep listening after replies" }) }) }
         item { ListItem(headlineContent = { Text("Wait for a reply") }, trailingContent = { Text("${conversation.followUpSeconds} seconds") },
             modifier = Modifier.clickable { showingWait = true }.testTag("conversation-wait")) }
-        item { SettingsFootnote("Say ‘that’s all’ to finish. With TalkBack, tap Listen for each turn when announcements have finished.") }
+        item { SettingsFootnote("Say ‘that’s all’ to finish. With TalkBack, double-tap the microphone for each turn when announcements have finished.") }
         item { HorizontalDivider(); SettingsHeading("Assistant and Shortcuts") }
         item { SettingsAction("Home screen and Quick Settings", Icons.Rounded.AppShortcut, onShortcuts) }
         if (library.live) {
@@ -163,7 +163,7 @@ private fun SpeedSetting(title: String, current: Float, select: (Float) -> Unit)
         }, confirmButton = { TextButton(onClick = { expanded = false }) { Text("Cancel") } })
 }
 
-private fun speedLabel(speed: Float) = "${if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()}×"
+internal fun speedLabel(speed: Float) = "${if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()}×"
 
 @Composable
 private fun SettingsAction(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, action: () -> Unit) {

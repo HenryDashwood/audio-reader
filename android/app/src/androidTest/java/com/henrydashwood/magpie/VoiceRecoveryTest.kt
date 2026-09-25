@@ -133,7 +133,8 @@ class VoiceRecoveryTest {
         scenario = ActivityScenario.launch(MainActivity::class.java)
         scenario!!.onActivity { model = ViewModelProvider(it)[MagpieModel::class.java] }
         compose.waitUntil(10_000) { model.player.value.connected }
-        compose.onNodeWithContentDescription("Ask Magpie").performClick()
+        // Unfinished requests are reviewed through "Check saved requests", never the microphone sheet.
+        compose.runOnUiThread { model.reviewSavedRequests() }
         compose.waitUntil(10_000) { model.voice.state.value.recoveryRequests.size == 2 }
     }
     @After fun cleanup() {
@@ -190,7 +191,7 @@ class VoiceRecoveryTest {
         compose.runOnUiThread {
             library.voiceConversation.activate(null)
             library.voiceConversation.activate("${library.state.value.revision}:$owner:true")
-            model.voice.open(null)
+            model.reviewSavedRequests()
         }
         compose.waitUntil(10_000) { model.voice.state.value.recoveryRequests == entries.asReversed().map { it.request } }
     }

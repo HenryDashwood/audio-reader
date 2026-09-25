@@ -10,6 +10,7 @@ import com.henrydashwood.magpie.shortcuts.MagpieShortcuts
 import com.henrydashwood.magpie.shortcuts.ShortcutRequest
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.henrydashwood.magpie.ui.MagpieApp
@@ -26,8 +27,10 @@ class MainActivity : ComponentActivity() {
         }
         if (intent?.getBooleanExtra("open_signin", false) == true) { appleReturn++; intent.removeExtra("open_signin") }
         if (intent?.getBooleanExtra("open_saved", false) == true) { savedReturn++; intent.removeExtra("open_saved") }
+        // Signed out, the sign-in screen finishes an Apple return itself; opening Sign-in Methods
+        // afterwards would be a detour.
         if (intent?.action == Intent.ACTION_VIEW && intent.data?.scheme == BuildConfig.APPLICATION_ID + ".auth" &&
-            intent.data?.host == "apple-sign-in") appleReturn++
+            intent.data?.host == "apple-sign-in" && (application as MagpieApplication).accounts.state.value.signedIn) appleReturn++
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -39,6 +42,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         runCatching { MagpieShortcuts.publish(this) }
         handleReturn(intent, acceptShortcut = savedInstanceState == null)
-        setContent { MagpieTheme { MagpieApp(viewModel(), appleReturn, savedReturn, shortcut) { shortcut = null } } }
+        val app = application as MagpieApplication
+        setContent { MagpieTheme {
+            val account by app.accounts.state.collectAsStateWithLifecycle()
+            if (app.requiresSignIn && !account.signedIn) com.henrydashwood.magpie.auth.SignInScreen()
+            else MagpieApp(viewModel(), appleReturn, savedReturn, shortcut) { shortcut = null }
+        } }
     }
 }

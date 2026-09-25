@@ -55,3 +55,10 @@ fun articleNarrationChunks(text: String, limit: Int = 500): List<TextChunk> {
     }
     return result
 }
+
+/** As on iOS: a few seconds in is the start, and so are an episode's last seconds (its outro). */
+fun resumeFrom(savedMs: Long, durationMs: Long?): Long = when {
+    savedMs <= 5_000 -> 0
+    durationMs != null && durationMs > 0 && savedMs >= durationMs - 10_000 -> 0
+    else -> savedMs
+}

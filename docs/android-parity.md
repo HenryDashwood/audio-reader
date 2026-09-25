@@ -128,8 +128,9 @@ was later removed to match iOS.
 
 Item 15 was implemented independently while the sign-in choice for item 1 was
 pending. `PlaybackService` owns completion so it also works in the background.
-The existing timer sound is shared through `PlaybackFeedback`; finishing clears
-the sleep timer to avoid a later duplicate signal. The UI refreshes the persisted
+The existing timer sound is shared through `PlaybackFeedback`. Finishing
+originally cleared the sleep timer; it now keeps counting as on iOS, and an expiry
+with nothing playing makes no sound. The UI refreshes the persisted
 finished set when it observes/polls service state.
 
 `PlaybackCompletionTest` covers real podcast completion in the background,

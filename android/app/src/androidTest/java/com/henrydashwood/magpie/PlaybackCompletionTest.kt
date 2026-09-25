@@ -79,7 +79,9 @@ class PlaybackCompletionTest {
         assertTrue("Completed podcast should be recorded", "welcome" in store.finished)
         assertEquals(0L, store.position("welcome"))
         assertNull(store.lastItem)
-        assertFalse(PlaybackStatus.sleepTimer.value.running)
+        // As on iOS, finishing leaves the sleep timer counting; it does nothing with nothing playing.
+        assertTrue(PlaybackStatus.sleepTimer.value.running)
+        command(PlaybackService.CANCEL_SLEEP_TIMER, Bundle.EMPTY)
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         compose.activityRule.scenario.recreate()
         compose.onNodeWithTag("mini-player").assertDoesNotExist()

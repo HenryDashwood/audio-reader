@@ -44,7 +44,9 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
             LocalCommand.Resume -> { control(token, "resume"); LocalVoiceResult(end = true) }
             is LocalCommand.Seek -> { control(token, "seek") { putLong("delta_ms", (command.seconds * 1000).toLong()) }; LocalVoiceResult(end = true) }
             is LocalCommand.Speed -> LocalVoiceResult(speed(token, command.rate))
-            is LocalCommand.AdjustSpeed -> LocalVoiceResult(speed(token, (store.speed(playbackKind()) + command.delta).coerceIn(.5f, 3f)))
+            // As on iOS: quarter steps, "faster" stops at 2× and "slower" at 0.5×.
+            is LocalCommand.AdjustSpeed -> LocalVoiceResult(speed(token, (store.speed(playbackKind()) + command.delta).let {
+                if (command.delta > 0) it.coerceAtMost(2f) else it.coerceAtLeast(.5f) }))
             is LocalCommand.Sleep -> {
                 control(token, "sleep") { putLong(PlaybackService.SLEEP_DURATION_MS, command.minutes * 60_000L) }
                 LocalVoiceResult("I will stop in ${command.minutes} ${if (command.minutes == 1) "minute" else "minutes"}.")

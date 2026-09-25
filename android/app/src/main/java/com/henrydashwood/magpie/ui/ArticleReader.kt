@@ -43,22 +43,28 @@ import com.henrydashwood.magpie.R
 import java.io.ByteArrayInputStream
 
 @Composable
-fun ArticleReader(item: LibraryItem, query: String, followControl: ArticleFollowControl? = null) {
+fun ArticleReader(item: LibraryItem, query: String, followControl: ArticleFollowControl? = null, chrome: ReaderChrome = ReaderChrome()) {
     val position by PlaybackStatus.readingPosition.collectAsStateWithLifecycle()
-    ArticleReader(item, query, position, followControl)
+    ArticleReader(item, query, position, followControl, chrome)
+}
+
+/** How the page sits under the app's bars, and whether dragging it may fade them (as on iOS). */
+data class ReaderChrome(val top: Float = 0f, val bottom: Float = 0f, val fades: Boolean = false,
+    val hidden: Boolean = false, val onHidden: (Boolean) -> Unit = {})
+
+@Composable
+fun ArticleReader(item: LibraryItem, query: String, position: ArticleReadingPosition?, followControl: ArticleFollowControl? = null,
+    chrome: ReaderChrome = ReaderChrome()) {
+    key(item.id) { ArticleReaderContent(item, query, position, followControl, chrome) }
 }
 
 @Composable
-fun ArticleReader(item: LibraryItem, query: String, position: ArticleReadingPosition?, followControl: ArticleFollowControl? = null) {
-    key(item.id) { ArticleReaderContent(item, query, position, followControl) }
-}
-
-@Composable
-private fun ArticleReaderContent(item: LibraryItem, query: String, position: ArticleReadingPosition?, followControl: ArticleFollowControl?) {
+private fun ArticleReaderContent(item: LibraryItem, query: String, position: ArticleReadingPosition?, followControl: ArticleFollowControl?,
+    chrome: ReaderChrome) {
     val colors = MaterialTheme.colorScheme
     val reading = position?.takeIf { it.itemId == item.id && it.contentVersion == item.contentVersion }
     var following by rememberSaveable(item.id) { mutableStateOf(true) }
-    val fontSize = 20f * LocalDensity.current.fontScale
+    val fontSize = 17f * LocalDensity.current.fontScale // iOS body text: 17pt at the default size
     // Keyed on the displayed fields only. Playback saves progress into the item every few
     // seconds; rebuilding the page then minted a new CSP nonce and reloaded the WebView,
     // briefly showing the top of the article.
@@ -110,6 +116,7 @@ private fun ArticleReaderContent(item: LibraryItem, query: String, position: Art
                 }
             },
             update = { view ->
+                view.setChrome(chrome)
                 view.readingMarker.update(reading, colors.primary.toArgb(), following)
                 view.display(document, query, scrollY, item.text)
             },
@@ -141,6 +148,22 @@ class ArticleWebView(context: Context) : WebView(context) {
     private var speechText = ""
     private var search = ""
     private var restoreY = 0
+    private var chrome = ReaderChrome()
+    private val chromeTracker = ArticleChromeTracker()
+    private var downY = 0f
+    private val accessibility = context.getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+
+    fun setChrome(value: ReaderChrome) {
+        val moved = value.top != chrome.top || value.bottom != chrome.bottom
+        chrome = value
+        if (moved && ready) applyInsets()
+    }
+
+    /** CSS pixels match dp here (width=device-width), so the bar heights pass straight through. */
+    private fun applyInsets() {
+        evaluateJavascript("document.documentElement.style.setProperty('--magpie-top','${chrome.top}px');" +
+            "document.documentElement.style.setProperty('--magpie-bottom','${chrome.bottom}px');", null)
+    }
     private var generation = 0L
     private var released = false
 
@@ -170,6 +193,7 @@ class ArticleWebView(context: Context) : WebView(context) {
                         readingMarker.configure(speechText) {
                             if (released || requestId != generation) return@configure
                             ready = true
+                            applyInsets()
                             scrollTo(0, restoreY)
                             applySearch()
                         }
@@ -233,6 +257,16 @@ class ArticleWebView(context: Context) : WebView(context) {
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         readingMarker.touch(event)
+        // Only her own drags move the bars; the reading follow scroll never does. Under TalkBack
+        // nothing hides, because the gesture that brings them back is not one she would make.
+        if (chrome.fades && accessibility?.isTouchExplorationEnabled != true) {
+            val density = resources.displayMetrics.density
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downY = event.rawY; chromeTracker.began(0f, chrome.hidden) }
+                MotionEvent.ACTION_MOVE -> chromeTracker.changed((event.rawY - downY) / density, scrollY / density)?.let(chrome.onHidden)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> chromeTracker.ended()
+            }
+        }
         return super.dispatchTouchEvent(event)
     }
 

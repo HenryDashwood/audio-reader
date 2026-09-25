@@ -135,11 +135,13 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     fun setDiagnosticsEnabled(enabled: Boolean) = (getApplication<Application>() as MagpieApplication).setDiagnosticsEnabled(enabled)
     val conversationSettings = mutableConversationSettings.asStateFlow()
     fun setConversationPreferences(value: ConversationPreferences) { store.conversation = value; mutableConversationSettings.value = value }
+    val voiceFeedback by lazy { com.henrydashwood.magpie.voice.VoiceFeedback(getApplication()) }
     val voice by lazy {
         VoiceSession(viewModelScope, PlaybackVoiceHost(repository, store, { player.value.item }, {
             contentJob?.cancel(); voiceCatalog.stop(); voiceRefresh?.cancel()
         }, ::voiceCommand), speechInput,
-            (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, { store.conversation }, repository.voiceConversation, com.henrydashwood.magpie.telemetry.LibraryVoiceTelemetry(repository))
+            (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, { store.conversation }, repository.voiceConversation, com.henrydashwood.magpie.telemetry.LibraryVoiceTelemetry(repository),
+            voiceFeedback)
     }
     val newsletterSpeech by lazy {
         com.henrydashwood.magpie.voice.SpokenInformation(viewModelScope,
@@ -326,6 +328,8 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     }
     /** The microphone buttons open straight into listening, as on iOS. */
     fun ask(viewedEpisodeId: Int? = null, listen: Boolean = true) { cancelShortcut(); voice.open(viewedEpisodeId, listenOnOpen = listen) }
+    /** Unfinished requests are reviewed on purpose, not shown every time she opens the microphone. */
+    fun reviewSavedRequests() { cancelShortcut(); voice.open(null, reviewing = true) }
     suspend fun searchLibrary(feedId: String?, query: String) {
         if (libraryState.value.live && libraryState.value.owner != null) repository.search(feedId, query)
     }

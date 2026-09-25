@@ -185,8 +185,9 @@ class VoiceConversationTest {
         compose.onNodeWithContentDescription("Close").performClick()
         compose.waitUntil(5_000) { model.player.value.playing }; assertEquals(1, model.player.value.item?.episodeId)
         output.gate = null
+        // As on iOS, asking "did that work?" checks the interrupted request.
+        compose.runOnUiThread { input.words.trySend("Did that work?") }
         compose.onNodeWithContentDescription("Ask Magpie").performClick()
-        compose.onNodeWithText("Check previous request").performClick()
         compose.waitUntil(10_000) { model.player.value.item?.episodeId == 2 && model.player.value.playing }
         assertEquals(request, api.requests.last()); assertFalse(model.voice.state.value.visible)
     }
@@ -198,7 +199,8 @@ class VoiceConversationTest {
         assertTrue(api.requests.isEmpty()); assertEquals(0, api.grants)
         compose.onNodeWithText("Not now").performClick()
         ask("Pause"); idle()
-        compose.waitUntil(5_000) { !model.player.value.playing && !model.voice.state.value.visible }
+        // As on iOS, the exchange ends but the sheet stays open.
+        compose.waitUntil(5_000) { !model.player.value.playing && model.voice.state.value.phase == VoicePhase.Idle }
         assertTrue(api.requests.isEmpty())
     }
 

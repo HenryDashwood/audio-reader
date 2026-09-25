@@ -29,9 +29,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
@@ -53,7 +51,6 @@ fun AskConversation(model: MagpieModel) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
-    val haptic = LocalHapticFeedback.current
     val accessibility = context.getSystemService(AccessibilityManager::class.java)
     var dismissRequest by remember { mutableStateOf<VoiceRequest?>(null) }
     LaunchedEffect(state.recoveryRequests) {
@@ -114,7 +111,8 @@ fun AskConversation(model: MagpieModel) {
         onDispose { lifecycle.removeObserver(observer); model.voice.background() }
     }
     LaunchedEffect(Unit) { checkRecognition() }
-    LaunchedEffect(state.phase) { if (state.phase == VoicePhase.Listening) haptic.performHapticFeedback(HapticFeedbackType.LongPress) }
+    // The sheet coming up is the one change she cannot see (iOS plays the same tick).
+    LaunchedEffect(Unit) { model.voiceFeedback(VoiceCue.Opened) }
     val touchExploration = accessibility?.isTouchExplorationEnabled == true
     val microphoneUsable = !downloading && availability !in setOf(RecognitionAvailability.Unavailable,
         RecognitionAvailability.DownloadNeeded, RecognitionAvailability.Downloading)
@@ -131,7 +129,7 @@ fun AskConversation(model: MagpieModel) {
     }
     val sheet = rememberModalBottomSheetState()
     // Choices and unfinished requests need an answer, and at half height they sit below the fold.
-    val needsRoom = state.clarification != null || (state.recoveryRequests.isNotEmpty() && !state.busy)
+    val needsRoom = state.clarification != null || (state.reviewing && state.recoveryRequests.isNotEmpty() && !state.busy)
     LaunchedEffect(needsRoom) {
         if (!needsRoom) return@LaunchedEffect
         // Expanding during the opening slide is cancelled by it, so wait until the sheet is up.
@@ -169,7 +167,7 @@ fun AskConversation(model: MagpieModel) {
                 }
                 if (state.turns.isNotEmpty() || state.heard.isNotBlank()) Transcript(state.turns, state.heard)
                 if (!state.busy || state.phase == VoicePhase.Listening) state.clarification?.choices?.forEach { choice ->
-                    OutlinedButton(onClick = { model.voice.choose(choice) }, modifier = Modifier.padding(horizontal = 24.dp)) { Text(choice.label) }
+                    OutlinedButton(onClick = { model.voice.choose(choice, accessible = touchExploration) }, modifier = Modifier.padding(horizontal = 24.dp)) { Text(choice.label) }
                 }
                 listOfNotNull(state.error, permissionError, capabilityError).forEach { error ->
                     Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center,
@@ -203,8 +201,10 @@ fun AskConversation(model: MagpieModel) {
                         }
                     }) { Text(if (downloading) "Downloading…" else "Download recognition language") }
                 }
-                if (state.recoverable && !state.busy) TextButton(onClick = model.voice::retry) { Text("Check previous request") }
-                if (state.recoveryRequests.isNotEmpty() && !state.busy) Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)
+                // Recovery belongs to "Check saved requests"; the microphone sheet stays as on iOS.
+                // Saying "did that work?" still checks the last request.
+                if (state.reviewing && state.recoverable && !state.busy) TextButton(onClick = model.voice::retry) { Text("Check previous request") }
+                if (state.reviewing && state.recoveryRequests.isNotEmpty() && !state.busy) Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)
                     .testTag("recovery-requests"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Unfinished requests", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
                     Text("These stay on this device until resolved or dismissed. Signing out removes them.")

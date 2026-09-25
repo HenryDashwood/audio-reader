@@ -5,7 +5,8 @@ import android.annotation.SuppressLint
 import androidx.core.content.edit
 import com.henrydashwood.magpie.playback.ArticleBookmark
 
-val playbackRates = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f)
+/** The choices iOS offers. Stored speeds may still range 0.5–3×, as there. */
+val playbackRates = listOf(0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
 
 /** Local preview state only. This is deliberately not the backend's position_seconds contract. */
 class PreviewStore(context: Context) {

@@ -52,7 +52,7 @@ class AndroidReplySpeaker(private val context: Context, private val selectedVoic
                 .setAudioAttributes(attributes).setOnAudioFocusChangeListener({ change ->
                     if (change < 0 && !closed) {
                         interrupted = true
-                        active?.let { finish(it.first, "Audio was interrupted. Tap Listen when you are ready.") }
+                        active?.let { finish(it.first, "Audio was interrupted. Tap the microphone when you are ready.") }
                         tts.stop()
                     }
                 }, main).build()

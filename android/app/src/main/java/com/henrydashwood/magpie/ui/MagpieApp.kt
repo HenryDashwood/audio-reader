@@ -17,6 +17,13 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.*
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -100,11 +107,24 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     val selectedItem = snapshot.items.find { it.id == selectedItemId }
     val selectedFeed = snapshot.feeds.find { it.id == selectedSource }
     fun openItem(item: LibraryItem) { selectedItemId = item.id; model.openItem(item) }
+    // Each tab keeps its place, as on iOS: leaving a tab and coming back returns to the open
+    // show or article. Choosing the tab you are already on goes back to its top level.
+    var tabPlaces by rememberSaveable { mutableStateOf(hashMapOf<String, String>()) }
+    fun switchTab(tab: Destination) {
+        if (tab == destination) { selectedItemId = null; selectedSource = null; return }
+        tabPlaces = HashMap(tabPlaces).apply {
+            remove("${destination.name}:item"); remove("${destination.name}:source")
+            selectedItemId?.let { put("${destination.name}:item", it) }
+            selectedSource?.let { put("${destination.name}:source", it) }
+        }
+        destination = tab
+        selectedItemId = tabPlaces["${tab.name}:item"]; selectedSource = tabPlaces["${tab.name}:source"]
+    }
     var displayedRevision by rememberSaveable { mutableIntStateOf(snapshot.revision) }
     LaunchedEffect(snapshot.revision) {
         if (displayedRevision != snapshot.revision) {
             displayedRevision = snapshot.revision
-            selectedItemId = null; selectedSource = null; showingPlayer = false; query = ""
+            selectedItemId = null; selectedSource = null; showingPlayer = false; query = ""; tabPlaces = hashMapOf()
         }
     }
     LaunchedEffect(snapshot.revision, snapshot.owner, snapshot.catalogRevision, selectedSource, query, destination, reloadVersion) {
@@ -186,9 +206,21 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     val refreshable = snapshot.live && selectedItem == null && destination != Destination.Settings
     fun refresh() { if (!snapshot.loading && !snapshot.searching) { model.refreshLibrary(); reloadVersion++ } }
     val refreshActions = if (refreshable) listOf(CustomAccessibilityAction("Refresh library") { refresh(); true }) else emptyList()
+    // As on iOS, an article runs under the bars, which fade while she reads down the page and
+    // return when she scrolls back up. Anything shown above the article keeps them in place.
+    val filing by model.itemFiling.state.collectAsStateWithLifecycle()
+    val readingArticle = selectedItem != null && !(snapshot.live && !selectedItem.textLoaded)
+    val underBars = readingArticle && !showingSearch && shortcutWorking == null && !filing.busy && filing.error == null
+    var chromeHidden by remember(selectedItemId) { mutableStateOf(false) }
+    LaunchedEffect(underBars) { if (!underBars) chromeHidden = false }
+    val chromeAlpha by animateFloatAsState(if (chromeHidden && underBars) 0f else 1f, tween(250, easing = FastOutSlowInEasing), label = "reader bars")
+    // Faded bars leave the layout, so a touch there reaches the page rather than an invisible button.
+    val chromeShown = chromeAlpha > 0.01f
+    var barInsets by remember { mutableStateOf(0.dp to 0.dp) }
     Scaffold(
         topBar = {
-            TopAppBar(
+            if (chromeShown) TopAppBar(
+                modifier = Modifier.graphicsLayer { alpha = chromeAlpha },
                 title = {
                     if (selectedItem == null && selectedSource == null)
                         Text(destination.label, Modifier.semantics { heading(); customActions = refreshActions })
@@ -224,17 +256,24 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
             )
         },
         bottomBar = {
-            Column {
+            if (chromeShown) Column(Modifier.graphicsLayer { alpha = chromeAlpha }) {
                 if (preparation.message != null) PreparationBar(preparation, model::cancelPreparation)
                 if (playback.item != null) MiniPlayer(playback, preparation.message != null, { showingPlayer = true }, model::toggle, model::dismissPlayer, followControl.actionFor(playback.item?.id))
-                AppNavigation(destination) { tab ->
-                    destination = tab; selectedItemId = null; selectedSource = null
-                }
+                AppNavigation(destination, ::switchTab)
             }
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        val layoutDirection = LocalLayoutDirection.current
+        SideEffect { if (chromeShown) barInsets = padding.calculateTopPadding() to padding.calculateBottomPadding() }
+        val chrome = if (!underBars) ReaderChrome() else ReaderChrome(barInsets.first.value, barInsets.second.value,
+            fades = true, hidden = chromeHidden, onHidden = { chromeHidden = it })
+        Box(Modifier.fillMaxSize()) {
+        // The status bar keeps a background of its own, so text never runs under the clock.
+        if (underBars) Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars)
+            .background(MaterialTheme.colorScheme.surface).zIndex(1f))
+        Column(Modifier.fillMaxSize().padding(if (!underBars) padding else PaddingValues(
+            start = padding.calculateStartPadding(layoutDirection), end = padding.calculateEndPadding(layoutDirection)))) {
             ItemFilingStatus(model)
             shortcutWorking?.let { action ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -265,7 +304,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                         TextButton(onClick = { model.openItem(selectedItem) }) { Text("Try again") }
                     }
                 }
-                selectedItem != null -> ArticleReader(selectedItem, query, followControl)
+                selectedItem != null -> ArticleReader(selectedItem, query, followControl, chrome)
                 selectedSource != null -> ItemList(if (snapshot.live) snapshot.feedResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.source == selectedSource }, saved, if (snapshot.live) "" else query, ::openItem, model::play, model::toggleSaved, source = selectedFeed?.title ?: selectedSource, live = snapshot.live,
                     feedSources = selectedFeed?.sources.orEmpty(), feed = selectedFeed, model = model, loading = snapshot.loading || snapshot.searching || snapshot.error != null)
                 destination == Destination.Following -> Following(snapshot.feeds, if (snapshot.live) snapshot.searchResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library, query, { selectedSource = it }, ::openItem, pendingSources, model::removePendingSource, snapshot.live, snapshot.loading || snapshot.searching || snapshot.error != null, model, pendingNewsletterState)
@@ -280,6 +319,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                 PullToRefreshBox(isRefreshing = snapshot.loading || snapshot.searching, onRefresh = ::refresh,
                     modifier = Modifier.fillMaxSize().testTag("pull-to-refresh")) { screen() }
             } else screen()
+        }
         }
     }
     SubscriptionImportDialog(model) {
@@ -553,7 +593,7 @@ private fun ItemFilingStatus(model: MagpieModel) {
             color = if (state.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
         if (state.error != null) {
             TextButton(onClick = model.itemFiling::retry) { Text("Retry change") }
-            TextButton(onClick = { model.ask(listen = false) }) { Text("Check saved requests") }
+            TextButton(onClick = model::reviewSavedRequests) { Text("Check saved requests") }
             TextButton(onClick = model.itemFiling::dismissError) { Text("Close message") }
         }
     }
@@ -692,7 +732,7 @@ private fun FullPlayer(state: PlayerState, preparing: Preparation, toggle: () ->
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(24.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { skip(-15) }, enabled = state.durationMs > 0 && preparing.message == null, modifier = Modifier.size(56.dp)) { Icon(Icons.Rounded.Replay, "Back 15 seconds", Modifier.size(32.dp)) }
+            IconButton(onClick = { skip(-15) }, enabled = state.durationMs > 0 && preparing.message == null, modifier = Modifier.size(56.dp)) { SkipBack15() }
             FilledIconButton(onClick = toggle, enabled = state.connected && preparing.message == null, modifier = Modifier.size(76.dp)) { Icon(if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (state.playing) "Pause" else "Play", Modifier.size(40.dp)) }
             IconButton(onClick = { skip(30) }, enabled = state.durationMs > 0 && preparing.message == null, modifier = Modifier.size(56.dp)) { Icon(Icons.Rounded.Forward30, "Forward 30 seconds", Modifier.size(32.dp)) }
         }
@@ -707,10 +747,11 @@ private fun FullPlayer(state: PlayerState, preparing: Preparation, toggle: () ->
 private fun SpeedPicker(current: Float, select: (Float) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.semantics { contentDescription = "Playback speed, $current times" }) { Icon(Icons.Rounded.Speed, null); Spacer(Modifier.width(8.dp)); Text("${current}×") }
+        val spoken = if (current == 1f) "Normal speed" else "${speedLabel(current).dropLast(1)} times speed"
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.semantics { contentDescription = "Playback speed, $spoken" }) { Icon(Icons.Rounded.Speed, null); Spacer(Modifier.width(8.dp)); Text(speedLabel(current)) }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             playbackRates.forEach { speed ->
-                DropdownMenuItem(text = { Text("${speed}×") }, onClick = { select(speed); expanded = false }, trailingIcon = { if (speed == current) Icon(Icons.Rounded.Check, "Selected") })
+                DropdownMenuItem(text = { Text(speedLabel(speed)) }, onClick = { select(speed); expanded = false }, trailingIcon = { if (speed == current) Icon(Icons.Rounded.Check, "Selected") })
             }
         }
     }
@@ -742,7 +783,18 @@ private fun EmptyState(title: String, message: String) {
     }
 }
 
-private fun formatTime(milliseconds: Long): String {
+/** Material has no "replay 15" icon; this matches Forward30 with the number inside the arrow, as iOS does. */
+@Composable
+private fun SkipBack15() {
+    Box(Modifier.size(32.dp).semantics(mergeDescendants = true) { contentDescription = "Back 15 seconds" }, contentAlignment = Alignment.Center) {
+        Icon(Icons.Rounded.Replay, null, Modifier.size(32.dp))
+        Text("15", fontSize = 8.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 3.dp).clearAndSetSemantics { })
+    }
+}
+
+/** m:ss, or h:mm:ss from an hour, as on iOS. */
+internal fun formatTime(milliseconds: Long): String {
     val seconds = milliseconds.coerceAtLeast(0) / 1000
-    return "%d:%02d".format(seconds / 60, seconds % 60)
+    return if (seconds >= 3600) "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
+    else "%d:%02d".format(seconds / 60, seconds % 60)
 }

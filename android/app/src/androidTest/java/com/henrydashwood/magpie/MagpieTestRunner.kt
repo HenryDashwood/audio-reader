@@ -15,6 +15,9 @@ class MagpieTestApplication : MagpieApplication() {
     override fun voiceOutput(selected: () -> String?) = voiceOutputOverride ?: super.voiceOutput(selected)
     override val articleInbox by lazy { com.henrydashwood.magpie.data.ArticleInboxStore(this, "magpie_test_account_captures") }
     override val deviceLinkInbox by lazy { com.henrydashwood.magpie.data.LinkInbox(this, "magpie_test_device_links") }
+    /** Most UI tests use the sample library; a test about the sign-in gate turns this on. */
+    var requireSignIn = false
+    override val requiresSignIn get() = requireSignIn
     var libraryOverride: com.henrydashwood.magpie.data.AccountLibrary? = null
     override val library get() = libraryOverride ?: super.library
     override val accounts by lazy {

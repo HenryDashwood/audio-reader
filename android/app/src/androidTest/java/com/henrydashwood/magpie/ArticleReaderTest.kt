@@ -211,7 +211,7 @@ class ArticleReaderTest {
             pageFits: document.documentElement.scrollWidth <= window.innerWidth,
             tableOverflows: [...document.querySelectorAll('.table-scroll')].some(x => x.scrollWidth > x.clientWidth)
         })""")
-        assertEquals("40px", result.getString("font"))
+        assertEquals("34px", result.getString("font")) // 17 (the iOS body size) at 200% text
         assertEquals("rgb(17, 19, 24)", result.getString("background"))
         assertTrue(result.getBoolean("pageFits"))
         assertTrue(result.getBoolean("tableOverflows"))

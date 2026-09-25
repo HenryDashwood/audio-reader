@@ -81,10 +81,10 @@ fun ShortcutsScreen(model: MagpieModel, onBack: () -> Unit) {
             item { OutlinedButton(enabled = canPin && library.feeds.isNotEmpty() && !library.loading,
                 onClick = { selection = ShortcutAction.PlayFeed }) { Text("Add a show’s latest shortcut") } }
             item { HorizontalDivider(); Text("Quick Settings", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }) }
-            item { Text("Open Ask Magpie or continue listening from the panel above your notifications. Unlock your device first. The Ask shortcut and tile start listening when Magpie opens, with your microphone permission. With TalkBack, tap Listen when you are ready.") }
+            item { Text("Open Ask Magpie or continue listening from the panel above your notifications. Unlock your device first. The Ask shortcut and tile start listening when Magpie opens, with your microphone permission. With TalkBack, double-tap the microphone when you are ready.") }
             item { OutlinedButton(onClick = { tile(ShortcutAction.Ask) }) { Text("Add Ask Magpie tile") } }
             item { OutlinedButton(onClick = { tile(ShortcutAction.Continue) }) { Text("Add Continue listening tile") } }
-            item { Text("Your system media controls already support pause, resume, and seeking. Assistant library search and structured automation are still being connected.", style = MaterialTheme.typography.bodySmall) }
+            item { Text("Your system media controls already support pause, resume, and seeking. Google’s assistant cannot yet control Magpie directly.", style = MaterialTheme.typography.bodySmall) }
             message?.let { item { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }
         }
     }

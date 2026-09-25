@@ -129,7 +129,7 @@ class PlaybackService : MediaLibraryService() {
             }
         }
     }
-    private val feedback = PlaybackFeedback(scope)
+    private val feedback = PlaybackFeedback(this, scope)
     private val sleepTimer = SleepTimer(SystemClock::elapsedRealtime,
         changed = { PlaybackStatus.mutableSleepTimer.value = it }, expired = ::expireSleepTimer)
 
@@ -637,11 +637,13 @@ class PlaybackService : MediaLibraryService() {
         (if (item.articleProgress != null) item.articleBookmark?.let { ArticleBookmark(it.textVersion, it.offsetUtf16) }
         else store.bookmark(item.id))?.takeIf { it.contentVersion == item.contentVersion }?.offsetUtf16 ?: 0
 
-    private fun resumePosition(item: LibraryItem, audio: RenderedArticle?): Long =
-        if (item.completed) 0 else if (audio != null) resumeAt(audio.chunks, if (item.articleProgress != null) item.articleBookmark?.let {
+    private fun resumePosition(item: LibraryItem, audio: RenderedArticle?): Long {
+        val saved = if (item.completed) 0 else if (audio != null) resumeAt(audio.chunks, if (item.articleProgress != null) item.articleBookmark?.let {
             ArticleBookmark(it.textVersion, it.offsetUtf16)
         } else store.bookmark(item.id), item.contentVersion)
         else if (item.episodeId != null) localPodcastPositions[item.id] ?: item.remotePositionMs else store.position(item.id)
+        return resumeFrom(saved, if (audio == null) item.durationSeconds?.let { it * 1000L } else null)
+    }
 
     private fun adopt(item: LibraryItem, audio: RenderedArticle?): MediaItem {
         persist()
@@ -757,7 +759,8 @@ class PlaybackService : MediaLibraryService() {
         // Keep each item's bookmark, but forget what to restore into the mini player.
         persist(completed = player.playbackState == Player.STATE_ENDED)
         rendering?.cancel()
-        cancelSleepTimer()
+        // As on iOS, finishing or closing leaves a running sleep timer counting; if nothing is
+        // playing when it expires, it does nothing.
         PlaybackStatus.mutable.value = Preparation()
         current = null
         store.lastItem = null

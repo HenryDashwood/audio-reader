@@ -147,7 +147,7 @@ object ArticleDocument {
             <style nonce="$nonce">
             :root { color-scheme: ${if (dark) "dark" else "light"}; }
             * { box-sizing: border-box; }
-            body { margin: 0; padding: 16px 20px 48px; background: $background; color: $ink;
+            body { margin: 0; padding: calc(16px + var(--magpie-top, 0px)) 20px calc(48px + var(--magpie-bottom, 0px)); background: $background; color: $ink;
               font: ${fontSize}px/1.55 system-ui, sans-serif; overflow-wrap: break-word; -webkit-text-size-adjust: none; }
             .page { overflow-x: clip; }
             h1 { font-size: 1.5em; line-height: 1.25; margin: 0 0 .2em; }

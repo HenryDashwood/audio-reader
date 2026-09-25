@@ -86,6 +86,19 @@ class MagpieNavigationTest {
         compose.onNodeWithText("Nothing found").assertIsDisplayed()
     }
 
+    @Test fun eachTabKeepsItsPlaceAndChoosingItAgainReturnsToItsTop() {
+        compose.onNodeWithText("Field notes").performClick()
+        compose.onNodeWithText("Search this show").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Back").assertIsDisplayed()
+        compose.onNodeWithText("Latest").performClick()
+        compose.onNodeWithContentDescription("Back").assertDoesNotExist()
+        compose.onNodeWithText("Following").performClick()
+        compose.onNodeWithContentDescription("Back").assertIsDisplayed() // still in Field notes
+        compose.onNodeWithText("Following").performClick()
+        compose.onNodeWithContentDescription("Back").assertDoesNotExist()
+        compose.onNodeWithText("Magpie journal").assertIsDisplayed()
+    }
+
     @Test fun askMagpieIsAvailableAcrossTabsFeedAndSearch() {
         for (tab in listOf("Following", "Latest", "Saved", "Settings")) {
             if (tab != "Following") compose.onNodeWithText(tab).performClick()

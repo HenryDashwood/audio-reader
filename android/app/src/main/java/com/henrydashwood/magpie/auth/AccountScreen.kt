@@ -104,7 +104,7 @@ fun AccountContent(state: AccountState, configured: Boolean, onBack: () -> Unit,
 
 
 @Composable
-private fun AppleSignInButton(enabled: Boolean, action: () -> Unit) {
+internal fun AppleSignInButton(enabled: Boolean, action: () -> Unit) {
     Button(onClick = action, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
         colors = ButtonDefaults.buttonColors(containerColor = Color.Black, contentColor = Color.White,
             disabledContainerColor = Color.Black, disabledContentColor = Color.White.copy(alpha = 0.38f))) {

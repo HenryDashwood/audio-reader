@@ -82,12 +82,12 @@ class PlaybackTest {
                 assertEquals(paused, PlaybackStatus.readingPosition.value)
                 compose.onNodeWithText("Field notes").performClick()
                 compose.onNode(hasText("Before the rest of the day begins") and hasAnyAncestor(hasTestTag("story-list"))).performClick()
-                compose.onNodeWithTag("article-webview").performTouchInput { swipeDown() }
+                compose.onNodeWithTag("article-webview").performTouchInput { swipeDown(startY = centerY - 300f, endY = centerY + 300f) }
                 compose.onNode(hasContentDescription("Follow reading position") and hasAnyAncestor(hasTestTag("mini-player"))).assertIsDisplayed()
                 compose.onNodeWithContentDescription("Back").performClick()
                 compose.onNodeWithContentDescription("Follow reading position").assertDoesNotExist()
                 compose.onNode(hasText("Before the rest of the day begins") and hasAnyAncestor(hasTestTag("story-list"))).performClick()
-                compose.onNodeWithTag("article-webview").performTouchInput { swipeDown() }
+                compose.onNodeWithTag("article-webview").performTouchInput { swipeDown(startY = centerY - 300f, endY = centerY + 300f) }
                 compose.activityRule.scenario.recreate()
                 assertEquals(paused, PlaybackStatus.readingPosition.value)
                 compose.onNodeWithContentDescription("Follow reading position").assertIsDisplayed()

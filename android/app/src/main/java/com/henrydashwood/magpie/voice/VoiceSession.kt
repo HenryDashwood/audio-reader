@@ -35,7 +35,9 @@ enum class VoicePhase { Idle, Preparing, Listening, Thinking, Speaking, Consent 
 data class VoiceSessionState(val visible: Boolean = false, val phase: VoicePhase = VoicePhase.Idle,
     val turns: List<ConversationTurn> = emptyList(), val heard: String = "", val reply: String = "",
     val error: String? = null, val recoverable: Boolean = false, val launchListening: String? = null,
-    val recoveryRequests: List<VoiceRequest> = emptyList(), val clarification: VoiceClarification? = null) {
+    val recoveryRequests: List<VoiceRequest> = emptyList(), val clarification: VoiceClarification? = null,
+    /** Opened to review unfinished requests, rather than to speak. Only then are they listed. */
+    val reviewing: Boolean = false) {
     val busy: Boolean get() = phase in setOf(VoicePhase.Preparing, VoicePhase.Listening, VoicePhase.Thinking, VoicePhase.Speaking)
 }
 
@@ -44,7 +46,8 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
     private val input: VoiceInput, private val output: VoiceOutput,
     private val preferences: () -> ConversationPreferences,
     private val conversation: Conversation = Conversation(),
-    private val telemetry: VoiceTelemetry = VoiceTelemetry.NONE) {
+    private val telemetry: VoiceTelemetry = VoiceTelemetry.NONE,
+    private val cues: (VoiceCue) -> Unit = {}) {
     private val mutable = MutableStateFlow(VoiceSessionState())
     val state = mutable.asStateFlow()
     private var job: Job? = null
@@ -65,26 +68,22 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         accountKey = key; conversation.activate(key); deferredTranscript = null
         mutable.value = VoiceSessionState()
     }
-    /** Opening to speak is itself the request to listen, unless unfinished requests need review
-     * first: restoring them never starts the microphone. */
-    fun open(viewedEpisodeId: Int?, listenOnOpen: Boolean = false) {
+    /** Opening to speak is itself the request to listen, as on iOS. Reviewing unfinished requests is a
+     * separate, explicit entry point that never starts the microphone. */
+    fun open(viewedEpisodeId: Int?, listenOnOpen: Boolean = false, reviewing: Boolean = false) {
         close()
         activate(); viewedId = viewedEpisodeId; conversation.forgetIfStale()
-        val launch = if (listenOnOpen) UUID.randomUUID().toString() else null
         val account = host.account()
         val restoring = conversation.durable && account.live && account.owner != null
         mutable.value = VoiceSessionState(visible = true, turns = conversation.turns, recoverable = conversation.pending != null,
-            launchListening = launch?.takeIf { !restoring && conversation.recoveryRequests.isEmpty() },
-            recoveryRequests = conversation.recoveryRequests, clarification = conversation.clarification)
+            launchListening = if (listenOnOpen && !reviewing) UUID.randomUUID().toString() else null,
+            recoveryRequests = conversation.recoveryRequests, clarification = conversation.clarification, reviewing = reviewing)
         if (restoring) {
             val id = version
             restoreJob = scope.launch {
                 try {
                     conversation.restore(account.owner)
-                    if (id == version && state.value.visible) {
-                        publish()
-                        if (launch != null && conversation.recoveryRequests.isEmpty()) mutable.update { it.copy(launchListening = launch) }
-                    }
+                    if (id == version && state.value.visible) publish()
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
                     if (id == version) mutable.update { it.copy(error = "Saved requests could not be read. Playback controls still work.") }
@@ -108,9 +107,10 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
             outcome = VoiceOutcome.PermissionDenied; finish()
         } }
     }
-    fun choose(choice: ClarificationChoice) {
+    /** Answering by tap keeps the conversation going, as answering aloud does (and as on iOS). */
+    fun choose(choice: ClarificationChoice, accessible: Boolean = false) {
         if ((state.value.busy && state.value.phase != VoicePhase.Listening) || conversation.clarification?.choices?.contains(choice) != true) return
-        start(choice.label, autoFollowUp = false, selectedOptionId = choice.id)
+        start(choice.label, autoFollowUp = true, accessible = accessible, selectedOptionId = choice.id)
     }
     fun submit(text: String) { if (text.isNotBlank()) start(text.trim(), autoFollowUp = false) }
     fun continueRequest(request: VoiceHandoffs.Request) {
@@ -187,13 +187,23 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                 }
                 var supplied = text
                 var followUp = false
+                // Clarifying questions in a row. A request not understood by the fourth attempt will not
+                // be, and being handed back the screen beats being asked again (iOS maxFollowUps).
+                var clarifications = 0
                 while (true) {
                     if (followUp) attempt = beginAttempt()
                     mutable.update { it.copy(phase = VoicePhase.Preparing, heard = "", reply = "") }
-                    if (supplied == null) attempt?.listening()
+                    // On a follow-up the question she was just asked is the acknowledgement.
+                    if (!followUp) cues(VoiceCue.Acknowledged)
+                    val spoken = supplied == null
+                    if (spoken) attempt?.listening()
+                    var announced = false
                     val heard = (supplied ?: input.listen(
                         firstWordsMs = if (followUp) preferences().followUpSeconds * 1_000L else if (accessible) 15_000 else 8_000,
-                        onReady = { checkTurn(); mutable.update { it.copy(phase = VoicePhase.Listening) } },
+                        onReady = {
+                            checkTurn(); mutable.update { it.copy(phase = VoicePhase.Listening) }
+                            if (!announced) { announced = true; cues(VoiceCue.Listening) }
+                        },
                         onPartial = { caption -> checkTurn(); mutable.update { it.copy(heard = caption) } },
                     )).orEmpty().trim()
                     supplied = null
@@ -201,12 +211,15 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                     checkTurn()
                     if (heard.isEmpty()) {
                         attempt?.outcome = VoiceOutcome.NoSpeech
-                        if (!followUp) mutable.update { it.copy(error = "I did not hear anything. Tap Listen to try again.") }
+                        if (followUp) cues(VoiceCue.ListeningEnded)
+                        else fail("I did not hear anything. Tap and try again.", ::checkTurn)
                         break
                     }
+                    if (spoken) cues(VoiceCue.Processing)
                     mutable.update { it.copy(phase = VoicePhase.Thinking, heard = heard) }
                     val command = if (selectedOptionId == null) LocalCommand.match(heard) else null
                     if (command == LocalCommand.EndConversation) {
+                        cues(VoiceCue.ListeningEnded)
                         conversation.abandonClarification()
                         attempt?.local(command)
                         conversation.userSaid(heard); publish(); mutable.update { it.copy(visible = false) }; break
@@ -218,7 +231,8 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                         attempt?.local(checkNotNull(command)); attempt?.answered()
                         conversation.userSaid(heard); publish()
                         say(local.reply, ::checkTurn)
-                        if (local.end) { mutable.update { it.copy(visible = false) }; break }
+                        // Pause, resume and skip end the exchange but leave the sheet open, as on iOS.
+                        if (local.end) break
                     } else {
                         if (!account.live) throw VoiceFailure("Sign in to ask about your library. Playback and sleep commands work without an account.")
                         val owner = checkNotNull(account.owner)
@@ -244,8 +258,12 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                             val operation = host.operation(request, account.revision)
                             active.operation = operation
                             attempt?.sent(request.requestId)
-                            operation.response { delta -> checkTurn(); mutable.update { it.copy(reply = it.reply + delta) } }
-                                .also { conversation.confirmed(request, accountKey, it) }
+                            // A long wait gets a sound, so silence never means the request was lost.
+                            val working = scope.launch { delay(8_000); cues(VoiceCue.Working) }
+                            try {
+                                operation.response { delta -> checkTurn(); mutable.update { it.copy(reply = it.reply + delta) } }
+                                    .also { conversation.confirmed(request, accountKey, it) }
+                            } finally { working.cancel() }
                         }
                         active.operation = null; checkTurn(); attempt?.answered()
                         conversation.persist(owner); checkTurn()
@@ -265,18 +283,20 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                         attempt?.outcome = if (playing) VoiceOutcome.Played else VoiceOutcome.Spoken
                         if (playing) { mutable.update { it.copy(visible = false) }; break }
                     }
-                    if (!autoFollowUp || accessible || (!preferences().keepListening && !expectsReply)) break
+                    if (!autoFollowUp || accessible) break
+                    if (expectsReply) { if (clarifications >= MAX_FOLLOW_UPS) break; clarifications++ }
+                    else { if (!preferences().keepListening) break; clarifications = 0 }
                     attempt?.finish(); attempt = null
                     followUp = true
                 }
             } catch (_: TimeoutCancellationException) {
                 attempt?.outcome = VoiceOutcome.Timeout
-                if (id == version) mutable.update { it.copy(error = "That request took too long. Please try again to check its result.") }
+                if (id == version) fail("That request took too long. Please try again to check its result.") {}
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
                 attempt?.outcome = if (failure is VoiceFailure && failure.code == "permission_denied") VoiceOutcome.PermissionDenied else VoiceOutcome.Error
-                if (id == version) mutable.update { it.copy(error = failure.message ?: "That request could not finish. Please try again.") }
+                if (id == version) fail(failure.message ?: "That request could not finish. Please try again.") {}
             } finally {
                 attempt?.finish()
                 if (turn === active) turn = null
@@ -290,6 +310,13 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         }
     }
 
+    /** Failures are spoken as well as shown: without TalkBack, a line on screen is silence. */
+    private suspend fun fail(text: String, checkTurn: () -> Unit) {
+        cues(VoiceCue.Failed)
+        mutable.update { it.copy(error = text) }
+        runCatching { say(text, checkTurn) }.onFailure { if (it is CancellationException) throw it }
+    }
+
     private suspend fun say(text: String, checkTurn: () -> Unit) {
         if (text.isBlank()) return
         conversation.appSaid(text); publish()
@@ -297,4 +324,5 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         output.speak(text); checkTurn()
     }
     private fun publish() { mutable.update { it.copy(turns = conversation.turns, heard = if (it.phase == VoicePhase.Consent) it.heard else "", recoverable = conversation.pending != null, recoveryRequests = conversation.recoveryRequests, clarification = conversation.clarification) } }
+    companion object { const val MAX_FOLLOW_UPS = 3 }
 }

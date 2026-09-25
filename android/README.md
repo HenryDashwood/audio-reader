@@ -1,8 +1,10 @@
 # Magpie for Android
 
-A native Kotlin / Jetpack Compose client. Signed-in builds load the account
-library; signed-out builds provide a separate sample library without a backend
-or network connection. Open this `android/` directory in Android Studio.
+A native Kotlin / Jetpack Compose client. As on iOS, the app opens to sign-in
+until a session exists, then loads the account library. The built-in sample
+library remains only for instrumentation tests (`MagpieTestApplication`), which
+use it without a backend or network connection; a test can set `requireSignIn`
+to exercise the sign-in gate. Open this `android/` directory in Android Studio.
 The app is labelled **Magpie Preview** and debug installs use
 `com.henrydashwood.magpie.dev`.
 
@@ -200,7 +202,8 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   update the backend; signed-out sample changes remain local.
 - Reaching the end of a podcast or narrated article records it as finished (on
   the backend when signed in),
-  plays a quiet completion tone, and clears the player and sleep timer. Saved
+  plays a quiet completion tone with a short vibration, and clears the player. As on
+  iOS, a running sleep timer keeps counting and does nothing if nothing is playing. Saved
   articles move to Finished without reopening the screen. The completed player
   stays closed after recreation/relaunch; explicitly playing the item starts over.
 - Clear Latest uses a confirmation dialog and updates the account cursor while
@@ -231,7 +234,7 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   stops/clears session media, and forgets the last item so the bar stays dismissed
   after recreation/relaunch. Explicit Play brings it back from the saved position.
 - A bundled original sample recording, a mini player and full player, seek,
-  pause/resume, and playback speed from 0.5× to 3×.
+  pause/resume, and playback speed from 0.75× to 2× (as on iOS; spoken requests may still set 0.5–3×).
 - A sleep timer beside playback speed, with the iOS choices of 5, 10, 15, 30,
   45, and 60 minutes, a rounded-up countdown, replacement, and cancellation.
   The playback service owns its monotonic deadline, so closing the player or
@@ -345,8 +348,8 @@ Voice previews use transient audio focus and stop when Settings leaves the
 foreground. Voice downloads return to a refreshed catalogue.
 
 Conversation settings persist Keep listening after replies and a 10, 15, 20, or
-30-second follow-up wait. With TalkBack, each turn requires an explicit Listen tap
-so spoken announcements cannot enter an automatically opened microphone.
+30-second follow-up wait. With TalkBack, each turn requires an explicit double tap
+on the microphone so spoken announcements cannot enter an automatically opened microphone.
 Assistant browsing and automation depend on compatible Android system services,
 as described below. Siri itself is iOS-only. Privacy/support links use the same destinations
 as the Swift client.
@@ -547,8 +550,15 @@ area is one control, with a status caption and the conversation beneath it. The
 in-app microphone buttons open it straight into listening; tapping again finishes
 speaking or interrupts. There is no typed input. TalkBack users start each turn
 with a double tap, untrusted shortcuts never start the microphone, and unfinished
-requests are shown instead of listening. Speech-model, permission and recovery
+requests are reviewed separately. Speech-model, permission and recovery
 controls appear only when relevant.
+
+As on iOS, each moment has a cue: a tick when the sheet opens, a tone and click when
+a request starts, a distinct tone with a strong vibration once the microphone is live,
+a tone when speech is captured, a tone if a reply takes over 8 seconds, a tone when a
+follow-up ends quietly, and an error vibration. Failures are spoken as well as shown.
+Clarifying questions allow at most three follow-ups; answering one by tap keeps the
+conversation going. Pause, resume and skip end the exchange but leave the sheet open.
 
 Opening asks for microphone permission and uses Android's on-device recognition
 service, with an English (United Kingdom) model. Capability checks distinguish
@@ -565,7 +575,7 @@ clears across accounts. Unfinished free-form requests retain their original text
 ID, target, recent context and any confirmed receipt in private storage excluded
 from backup. They are saved before dispatch and before local reconciliation.
 
-Ask Magpie lists each unfinished request after a restart. Check this request uses
+"Check saved requests" (offered when a change could not be confirmed) lists each unfinished request, including after a restart; the microphone sheet itself does not, as on iOS. Saying "did that work?" checks the last one. Check this request uses
 the original ID/body; an already-saved receipt needs no repeated command. Recovery
 refreshes current library state rather than applying an old filing receipt over
 newer changes, and reports historical playback results without restarting audio or

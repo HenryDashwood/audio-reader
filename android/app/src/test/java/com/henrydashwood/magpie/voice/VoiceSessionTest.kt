@@ -214,13 +214,63 @@ class VoiceSessionTest {
         assertEquals(1, session.state.value.turns.count { it.speaker == "her" })
     }
 
-    @Test fun localCommandsWorkWithoutSignInOrConsentAndPauseClosesSilently() = runTest {
+    @Test fun localCommandsWorkWithoutSignInOrConsentAndPauseEndsSilentlyWithTheSheetOpen() = runTest {
         val host = Host().apply { allowed = false; account = VoiceAccount(null, 1, false, null) }
         var spoken = 0
         val session = VoiceSession(this, host, Input(), { spoken++ }, { ConversationPreferences() })
         session.open(null); session.submit("Pause"); runCurrent()
-        assertEquals(listOf(LocalCommand.Pause), host.locals); assertFalse(session.state.value.visible)
+        // As on iOS: the exchange ends, the sheet stays.
+        assertEquals(listOf(LocalCommand.Pause), host.locals); assertTrue(session.state.value.visible)
+        assertEquals(VoicePhase.Idle, session.state.value.phase)
         assertEquals(0, spoken); assertTrue(host.requests.isEmpty())
+    }
+
+    @Test fun cuesMarkEachMomentAndAFollowUpIsNotAcknowledgedAgain() = runTest {
+        val host = Host(); val input = Input(); val cues = mutableListOf<VoiceCue>()
+        val session = VoiceSession(this, host, input, {}, { ConversationPreferences(false, 30) }, cues = { cues += it })
+        session.open(null); input.words.trySend("Find a show"); input.words.trySend(null); session.listen(); runCurrent()
+        assertEquals(listOf(VoiceCue.Acknowledged, VoiceCue.Listening, VoiceCue.Processing,
+            VoiceCue.Listening, VoiceCue.ListeningEnded), cues)
+    }
+
+    @Test fun aSlowReplyGetsAWorkingSound() = runTest {
+        val host = Host().apply { gate = CompletableDeferred(); response = VoiceResponse(VoiceAction.Unknown, "Done.") }
+        val cues = mutableListOf<VoiceCue>()
+        val session = VoiceSession(this, host, Input(), {}, { ConversationPreferences(false) }, cues = { cues += it })
+        session.open(null); session.submit("Find a show"); runCurrent()
+        advanceTimeBy(7_999); runCurrent(); assertFalse(VoiceCue.Working in cues)
+        advanceTimeBy(2); runCurrent(); assertTrue(VoiceCue.Working in cues)
+        host.gate!!.complete(Unit); runCurrent()
+    }
+
+    @Test fun failuresAreSpokenAsWellAsShown() = runTest {
+        val host = Host(); val input = Input(); val said = mutableListOf<String>(); val cues = mutableListOf<VoiceCue>()
+        val session = VoiceSession(this, host, input, { said += it }, { ConversationPreferences() }, cues = { cues += it })
+        session.open(null); input.words.trySend(null); session.listen(); runCurrent()
+        assertEquals("I did not hear anything. Tap and try again.", session.state.value.error)
+        assertEquals(listOf("I did not hear anything. Tap and try again."), said); assertTrue(VoiceCue.Failed in cues)
+        host.fail = true; session.submit("Find a show"); runCurrent()
+        assertEquals("Disconnected", said.last())
+    }
+
+    @Test fun clarifyingQuestionsStopAfterThreeFollowUps() = runTest {
+        val host = Host(); val input = Input()
+        val session = VoiceSession(this, host, input, {}, { ConversationPreferences(false, 30) })
+        session.open(null); repeat(6) { input.words.trySend("Something unclear $it") }; session.listen(); runCurrent()
+        assertEquals(4, input.waits.size); assertFalse(input.active)
+    }
+
+    @Test fun answeringAQuestionByTapKeepsTheConversationGoing() = runTest {
+        val question = VoiceClarification("q", "History or Politics?", listOf(ClarificationChoice("1", "History")), "2099-01-01T00:00:00Z")
+        val host = Host().apply { response = VoiceResponse(VoiceAction.Unknown, "History or Politics?", expectsReply = true, clarification = question) }
+        val input = Input()
+        val session = VoiceSession(this, host, input, {}, { ConversationPreferences(false, 30) })
+        session.open(null); session.submit("Unsubscribe from The Rest Is"); runCurrent()
+        assertFalse(input.active)
+        host.response = VoiceResponse(VoiceAction.Unknown, "Anything else?", expectsReply = true)
+        session.choose(question.choices.single()); runCurrent()
+        assertTrue(input.active)
+        session.close(); runCurrent()
     }
 
     @Test fun replyQuestionsAllowFollowUpButTalkBackAndTypedRequestsRequireAnExplicitTap() = runTest {
