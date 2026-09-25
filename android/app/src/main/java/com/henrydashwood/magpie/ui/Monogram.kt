@@ -5,7 +5,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
+import com.henrydashwood.magpie.data.publisherArtwork
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,5 +50,21 @@ fun Monogram(title: String, modifier: Modifier = Modifier) {
         val size = with(LocalDensity.current) { (maxWidth * 0.38f).toSp() }
         Text(MonogramStyle.initials(title), color = Color.White, fontSize = size, fontWeight = FontWeight.SemiBold,
             maxLines = 1, overflow = TextOverflow.Clip)
+    }
+}
+
+/**
+ * A show's artwork, or its monogram until (or unless) the artwork loads. As on iOS the image
+ * replaces the monogram rather than covering it, so transparent artwork is not drawn over initials.
+ * Corners are 14% of the size.
+ */
+@Composable
+fun ArtworkOrMonogram(title: String, url: String?, modifier: Modifier = Modifier) {
+    val image = publisherArtwork(url)
+    var loaded by remember(image) { mutableStateOf(false) }
+    Box(modifier.clip(RoundedCornerShape(percent = 14)), contentAlignment = Alignment.Center) {
+        if (!loaded) Monogram(title, Modifier.fillMaxSize())
+        if (image != null) AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(), onSuccess = { loaded = true }, onError = { loaded = false })
     }
 }

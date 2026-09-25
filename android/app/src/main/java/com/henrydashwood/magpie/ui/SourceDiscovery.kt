@@ -96,12 +96,7 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, o
                             item {
                                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Top) {
-                                        Box(Modifier.size(88.dp).clip(RoundedCornerShape(percent = 14))) {
-                                            Monogram(preview.feed.title, Modifier.fillMaxSize())
-                                            com.henrydashwood.magpie.data.publisherArtwork(preview.feed.imageUrl ?: state.selected?.imageUrl)?.let {
-                                                coil3.compose.AsyncImage(model = it, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                                            }
-                                        }
+                                        ArtworkOrMonogram(preview.feed.title, preview.feed.imageUrl ?: state.selected?.imageUrl, Modifier.size(88.dp))
                                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                             Text(preview.feed.title, style = MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
                                             state.selected?.publisher?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -316,12 +311,7 @@ fun AISharingSettings(model: MagpieModel) {
 
 @Composable
 private fun DiscoveryArtwork(title: String, url: String?) {
-    Box(Modifier.size(48.dp).clip(RoundedCornerShape(percent = 14))) {
-        Monogram(title, Modifier.fillMaxSize())
-        com.henrydashwood.magpie.data.publisherArtwork(url)?.let {
-            coil3.compose.AsyncImage(model = it, contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        }
-    }
+    ArtworkOrMonogram(title, url, Modifier.size(48.dp))
 }
 
 /** As on iOS: a type icon, the title with a Recommended mark, format and count, and the latest item. */

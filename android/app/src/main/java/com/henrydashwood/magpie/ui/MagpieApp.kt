@@ -908,13 +908,7 @@ private fun SearchField(query: String, change: (String) -> Unit, hint: String) {
 
 @Composable
 private fun SourceArtwork(source: String, modifier: Modifier = Modifier, url: String? = null) {
-    // As on iOS: the show's monogram until (or unless) its artwork loads, with corners at 14% of the size.
-    Box(modifier.clip(RoundedCornerShape(percent = 14)), contentAlignment = Alignment.Center) {
-        Monogram(source, Modifier.fillMaxSize())
-        publisherArtwork(url)?.let { image ->
-            AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        }
-    }
+    ArtworkOrMonogram(source, url, modifier)
 }
 
 @Composable
