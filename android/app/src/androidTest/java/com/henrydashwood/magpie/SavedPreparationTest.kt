@@ -88,7 +88,12 @@ class SavedPreparationTest {
         app.libraryOverride = null
     }
     private fun savedItem() = library.state.value.items.first { it.episodeId == 2 }
-    private fun requestReplace() { compose.onNodeWithContentDescription("Replace saved text for Saved article").performScrollTo().performClick() }
+    // As on iOS, Replace saved text is in the row's long-press menu, not under every article.
+    private fun requestReplace() {
+        compose.onNode(hasText("Saved article") and SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsActions.OnLongClick))
+            .performScrollTo().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnLongClick)
+        compose.onNodeWithText("Replace saved text").performClick()
+    }
     private fun awaitIdle() { compose.waitUntil(10_000) { !model.savedPreparation.state.value.busy } }
     @Test fun offlineLinkSurvivesRecreationAndSyncsOnlyAfterSuccess() {
         api.offline = true

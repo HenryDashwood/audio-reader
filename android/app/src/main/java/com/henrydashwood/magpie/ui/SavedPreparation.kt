@@ -72,17 +72,20 @@ fun SavedArticlePreparation(item: LibraryItem, model: MagpieModel) {
                 try { context.startActivity(Intent(Intent.ACTION_VIEW, item.originalUrl.toUri())) }
                 catch (_: android.content.ActivityNotFoundException) { openError = "No browser is available to open the original page." }
             }) { Text("Open original") }
+            // Recovery only when the server could not read the page; otherwise it lives in the row's menu.
+            if (item.originalUrl != null) TextButton(onClick = { captureSavedPage(context, item) }, enabled = !state.busy,
+                modifier = Modifier.semantics { contentDescription = "Capture page for ${item.title}" }) { Text("Capture page") }
         }
         openError?.let { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
-        if (item.originalUrl != null) TextButton(onClick = {
-            context.startActivity(Intent(context, com.henrydashwood.magpie.sharing.ShareActivity::class.java).apply {
-                action = Intent.ACTION_SEND; type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, item.originalUrl); putExtra(Intent.EXTRA_SUBJECT, item.title)
-            })
-        }, enabled = !state.busy, modifier = Modifier.semantics { contentDescription = "Capture page for ${item.title}" }) { Text("Capture page") }
-        if (item.originalUrl != null) TextButton(onClick = { model.savedPreparation.requestReplacement(item) }, enabled = !state.busy,
-            modifier = Modifier.semantics { contentDescription = "Replace saved text for ${item.title}" }) { Text("Replace saved text") }
     }
+}
+
+/** Opens the page inside Magpie, so she can sign in to the site and save the visible article. */
+fun captureSavedPage(context: android.content.Context, item: LibraryItem) {
+    context.startActivity(Intent(context, com.henrydashwood.magpie.sharing.ShareActivity::class.java).apply {
+        action = Intent.ACTION_SEND; type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, item.originalUrl); putExtra(Intent.EXTRA_SUBJECT, item.title)
+    })
 }
 
 @Composable

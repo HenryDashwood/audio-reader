@@ -106,7 +106,7 @@ class ListeningMetadataTest {
         compose.onNodeWithText("Continue listening").assertIsDisplayed()
         compose.onNodeWithText("8 min left").assertIsDisplayed()
         compose.onAllNodesWithText("Continue podcast").assertCountEquals(1)
-        compose.onNodeWithText(publicationDate("2026-09-16T12:00:00Z")!!).assertIsDisplayed()
+        compose.onNodeWithText(shortPublicationDate("2026-09-16T12:00:00Z")!!).assertIsDisplayed()
         compose.onNodeWithText("Dismissed podcast").assertDoesNotExist()
         compose.onNodeWithText("Finished article").assertDoesNotExist()
         scenario!!.recreate()
@@ -122,20 +122,23 @@ class ListeningMetadataTest {
         compose.onNodeWithText("Latest").performClick()
         compose.onNodeWithContentDescription("Play Continue podcast").performClick()
         compose.waitUntil(15_000) { model.player.value.playing && model.player.value.durationMs == 300_000L }
-        compose.onNodeWithText("Playing · 3 min left").assertIsDisplayed()
+        // As on iOS: the row says how long is left; the speaker marks the current item.
+        compose.onNodeWithText("3 min left").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Playing Continue podcast").assertIsDisplayed()
         compose.runOnUiThread { model.seek(195_000); model.pause() }
         compose.waitUntil(10_000) { !model.player.value.playing && model.player.value.positionMs >= 195_000 }
-        compose.onNodeWithText("Paused · 2 min left").assertIsDisplayed()
+        compose.onNodeWithText("2 min left").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Playing Continue podcast").assertIsDisplayed() // still current while paused
         compose.onAllNodes(hasText("Continue podcast") and hasAnyAncestor(hasTestTag("story-list"))).assertCountEquals(1)
         val item = library.state.value.items.first { it.episodeId == 1 }
         assertEquals(api.cover, MediaLibraryCatalog.media(item).mediaMetadata.artworkUri.toString())
     }
     @Test fun feedShowsReadAndDismissedLabelsAndAccountChangeRemovesMetadata() {
         compose.onNodeWithText("Garden notes").performClick()
-        compose.onNodeWithTag("story-list").performScrollToNode(hasText("Read"))
-        compose.onNodeWithText("Read").assertIsDisplayed()
-        compose.onNodeWithTag("story-list").performScrollToNode(hasText("8 min left · Dismissed"))
-        compose.onNodeWithText("8 min left · Dismissed").assertIsDisplayed()
+        compose.onNodeWithTag("story-list").performScrollToNode(hasText("Played"))
+        compose.onNodeWithText("Played").assertIsDisplayed()
+        compose.onNodeWithTag("story-list").performScrollToNode(hasText("Not in Latest"))
+        compose.onNode(hasText("Not in Latest") and hasText("8 min left")).assertIsDisplayed()
         runBlocking(Dispatchers.Main) { library.changeSession(null) }
         compose.onNodeWithText("Garden notes").assertDoesNotExist()
         compose.onNodeWithText("Continue podcast").assertDoesNotExist()

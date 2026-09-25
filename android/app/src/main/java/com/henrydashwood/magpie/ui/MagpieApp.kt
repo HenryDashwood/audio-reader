@@ -24,6 +24,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.clip
+import com.henrydashwood.magpie.data.shortPublicationDate
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -109,14 +112,11 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     fun openItem(item: LibraryItem) { selectedItemId = item.id; model.openItem(item) }
     // Each tab keeps its place, as on iOS: leaving a tab and coming back returns to the open
     // show or article. Choosing the tab you are already on goes back to its top level.
-    var tabPlaces by rememberSaveable { mutableStateOf(hashMapOf<String, String>()) }
+    var tabPlaces by rememberSaveable { mutableStateOf<Map<String, String>>(emptyMap()) }
     fun switchTab(tab: Destination) {
         if (tab == destination) { selectedItemId = null; selectedSource = null; return }
-        tabPlaces = HashMap(tabPlaces).apply {
-            remove("${destination.name}:item"); remove("${destination.name}:source")
-            selectedItemId?.let { put("${destination.name}:item", it) }
-            selectedSource?.let { put("${destination.name}:source", it) }
-        }
+        tabPlaces = tabPlaces - "${destination.name}:item" - "${destination.name}:source" +
+            listOfNotNull(selectedItemId?.let { "${destination.name}:item" to it }, selectedSource?.let { "${destination.name}:source" to it })
         destination = tab
         selectedItemId = tabPlaces["${tab.name}:item"]; selectedSource = tabPlaces["${tab.name}:source"]
     }
@@ -124,7 +124,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     LaunchedEffect(snapshot.revision) {
         if (displayedRevision != snapshot.revision) {
             displayedRevision = snapshot.revision
-            selectedItemId = null; selectedSource = null; showingPlayer = false; query = ""; tabPlaces = hashMapOf()
+            selectedItemId = null; selectedSource = null; showingPlayer = false; query = ""; tabPlaces = emptyMap()
         }
     }
     LaunchedEffect(snapshot.revision, snapshot.owner, snapshot.catalogRevision, selectedSource, query, destination, reloadVersion) {
@@ -509,25 +509,49 @@ private fun FeedManagementMenu(source: String, live: Boolean, sources: List<Stri
     }
 }
 
+/**
+ * One line, as on iOS: "25 Sep · 367 words · 8 min left · Not in Latest". Fields wrap whole
+ * rather than breaking inside, for large text.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun StoryMetadata(item: LibraryItem, progress: ListeningPresentation?) {
+    val words = if (item.kind == ContentKind.Article)
+        (item.wordCount ?: if (item.textLoaded && item.text.isNotBlank()) item.text.trim().split(Regex("\\s+")).size else null)?.takeIf { it > 0 } else null
+    val length = if (item.kind == ContentKind.Article) words?.let { "$it ${if (it == 1) "word" else "words"}" }
+        else item.durationSeconds?.takeIf { it > 0 }?.let { "${maxOf(1, Math.round(it / 60.0).toInt())} min" }
+    val secondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val fields = listOfNotNull(
+        shortPublicationDate(item.publishedAt)?.let { it to secondary },
+        length?.let { it to secondary },
+        progress?.label?.let { it to if (it == "Played") secondary else MaterialTheme.colorScheme.primary },
+        "Not in Latest".takeIf { item.dismissed }?.let { it to secondary },
+    )
+    if (fields.isEmpty()) return
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.semantics(mergeDescendants = true) { }) {
+        fields.forEachIndexed { index, (text, color) ->
+            if (index > 0) Text("·", style = MaterialTheme.typography.bodySmall, color = secondary, modifier = Modifier.clearAndSetSemantics { })
+            Text(text, style = MaterialTheme.typography.bodySmall, color = color, maxLines = 1)
+        }
+    }
+}
+
 @Composable
 private fun StoryRow(item: LibraryItem, open: () -> Unit, play: (() -> Unit)? = null, actions: List<StoryAction> = emptyList(), showActions: (() -> Unit)? = null, progress: ListeningPresentation? = null, currentLabel: String? = null) {
     val largeText = LocalDensity.current.fontScale > 1.3f
     Column {
     Row(Modifier.fillMaxWidth().padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         ListItem(
-            headlineContent = { Text(item.title, maxLines = if (largeText) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis) },
+            // The current item's title is bolder, as on iOS; its play button says the rest.
+            headlineContent = { Text(item.title, maxLines = if (largeText) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis,
+                fontWeight = if (currentLabel != null) FontWeight.SemiBold else null) },
             supportingContent = {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(item.source, maxLines = if (largeText) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis)
-                    Text(if (item.kind == ContentKind.Article) (item.wordCount ?: if (item.textLoaded) item.text.split(Regex("\\s+")).size else null)?.let { "$it words" } ?: "Article" else item.durationLabel, style = MaterialTheme.typography.bodySmall)
-                    publicationDate(item.publishedAt)?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                    listOfNotNull(currentLabel, progress?.label, "Dismissed".takeIf { item.dismissed }).takeIf { it.isNotEmpty() }?.let {
-                        Text(it.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                    }
-                    progress?.fraction?.takeIf { it > 0 && it < 1 }?.let { fraction ->
-                        LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().clearAndSetSemantics { })
-                    }
-                    Text(item.description, style = MaterialTheme.typography.bodySmall, maxLines = if (largeText) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
+                    StoryMetadata(item, progress)
+                    // No summary, no line: an empty Text still takes a line's height.
+                    if (item.description.isNotBlank()) Text(item.description, style = MaterialTheme.typography.bodySmall,
+                        maxLines = if (largeText) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
                 }
             },
             leadingContent = { SourceArtwork(item.source, Modifier.size(56.dp), item.imageUrl) },
@@ -536,7 +560,9 @@ private fun StoryRow(item: LibraryItem, open: () -> Unit, play: (() -> Unit)? = 
                 .semantics { customActions = actions.filter { it.enabled }.map { action -> CustomAccessibilityAction(action.label) { action.perform(); true } } },
         )
         if (play != null) IconButton(onClick = play, modifier = Modifier.size(48.dp)) {
-            Icon(if (currentLabel == "Playing") Icons.AutoMirrored.Rounded.VolumeUp else Icons.Rounded.PlayCircleOutline, "Play ${item.title}")
+            // As on iOS, the current item shows the speaker whether playing or paused.
+            if (currentLabel != null) Icon(Icons.AutoMirrored.Rounded.VolumeUp, "Playing ${item.title}", tint = MaterialTheme.colorScheme.primary)
+            else Icon(Icons.Rounded.PlayCircleOutline, "Play ${item.title}")
         }
     }
     HorizontalDivider(Modifier.padding(start = 88.dp))
@@ -582,7 +608,15 @@ private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> U
     // Match iOS: leading dismisses on Latest/Saved; trailing completes or restores.
     val leading = (if (savedList) save else actions.last()).takeIf { allowsDismissal && !isDismissed }
     val trailing = if (isDismissed) actions.last() else actions.first()
-    ActionStoryRow(item, open, play, listOfNotNull(actions.first(), save) + actions.drop(1), leading, trailing, progress, currentLabel)
+    // As on iOS, replacing a saved article's text is a menu action, not a button under every row.
+    val context = LocalContext.current
+    val live = model.libraryState.collectAsStateWithLifecycle().value.live
+    val saving by model.savedPreparation.state.collectAsStateWithLifecycle()
+    val savedExtras = if (savedList && live && item.kind == ContentKind.Article && item.originalUrl != null) listOf(
+        StoryAction("Replace saved text", Icons.Rounded.Refresh, { model.savedPreparation.requestReplacement(item) }, !saving.busy),
+        StoryAction("Capture page", Icons.Rounded.Language, { captureSavedPage(context, item) }, !saving.busy),
+    ) else emptyList()
+    ActionStoryRow(item, open, play, listOfNotNull(actions.first(), save) + actions.drop(1) + savedExtras, leading, trailing, progress, currentLabel)
 }
 
 @Composable
@@ -764,13 +798,11 @@ private fun SearchField(query: String, change: (String) -> Unit, hint: String) {
 
 @Composable
 private fun SourceArtwork(source: String, modifier: Modifier = Modifier, url: String? = null) {
-    val placeholder = rememberVectorPainter(if (source == "Field notes") Icons.Rounded.Park else Icons.Rounded.GraphicEq)
-    Surface(modifier, shape = RoundedCornerShape(8.dp), color = if (source == "Field notes") MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer) {
-        Box(contentAlignment = Alignment.Center) {
-            val image = publisherArtwork(url)
-            if (image == null) Icon(if (source == "Field notes") Icons.Rounded.Park else Icons.Rounded.GraphicEq, null, Modifier.fillMaxSize(0.5f))
-            else AsyncImage(model = image, contentDescription = null, placeholder = placeholder, error = placeholder,
-                contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+    // As on iOS: the show's monogram until (or unless) its artwork loads, with corners at 14% of the size.
+    Box(modifier.clip(RoundedCornerShape(percent = 14)), contentAlignment = Alignment.Center) {
+        Monogram(source, Modifier.fillMaxSize())
+        publisherArtwork(url)?.let { image ->
+            AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
     }
 }

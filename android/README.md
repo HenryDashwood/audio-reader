@@ -223,7 +223,8 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   website if needed, and previews the visible article before saving. The same
   pinned Readability script used by iOS is bundled at build time. Original-browser
   cookies are not imported; JavaScript has no native bridge or app credentials.
-  Saved articles also offer Capture page to recover pages the server cannot read.
+  Saved articles offer Capture page and Replace saved text in their long-press menu
+  (as iOS does for Replace), and Capture page beside Retry when the server cannot read a page.
   Open Magpie prepares confirmed captures; Done returns to the sharing app.
 - Separate persisted podcast/article speeds, an installed offline voice chooser,
   voice previews, and links to voice downloads, privacy, and email support.
