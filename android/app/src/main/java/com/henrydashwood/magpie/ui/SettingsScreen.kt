@@ -5,19 +5,28 @@ import android.content.Intent
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
@@ -61,62 +70,73 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
     }
     val selectedVoice = if (preferences.voiceId == null) "Automatic · English"
         else voices.voices.find { it.id == preferences.voiceId }?.label ?: if (voices.loading) "Loading voice…" else "Selected voice unavailable"
-    LazyColumn(Modifier.fillMaxSize().testTag("settings-list")) {
-        item { SettingsHeading("Playback Speed") }
-        item { SpeedSetting("Podcasts", preferences.podcastSpeed) { model.setSpeed(ContentKind.Podcast, it) } }
-        item { SpeedSetting("Articles", preferences.articleSpeed) { model.setSpeed(ContentKind.Article, it) } }
-        item { SettingsFootnote("Magpie remembers separate speeds for podcasts and articles. Article speed also applies to spoken replies and newsletter addresses.") }
-        item { HorizontalDivider(); SettingsHeading("Voice") }
+    LazyColumn(Modifier.fillMaxSize().testTag("settings-list"), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
-            ListItem(headlineContent = { Text("Voice") }, supportingContent = { Text(if (voices.loading) "Loading installed voices…" else selectedVoice) },
-                trailingContent = { Icon(Icons.Rounded.ChevronRight, null) },
-                modifier = Modifier.clickable(onClickLabel = "Choose voice") { showingVoices = true }.testTag("voice-setting"))
-        }
-        if (voices.error != null) item { SettingsFootnote(voices.error!!, error = true) }
-        item {
-            SettingsAction("Download voices", Icons.Rounded.Download) {
-                try { context.startActivity(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).setPackage(SpeechVoices.ENGINE)) }
-                catch (_: ActivityNotFoundException) { open(Intent(Settings.ACTION_SETTINGS)) }
+            SettingsSection("Playback Speed", top = 8.dp, footer = "Magpie remembers separate speeds for podcasts and articles. Article speed also applies to spoken replies and newsletter addresses.") {
+                SpeedSetting("Podcasts", preferences.podcastSpeed) { model.setSpeed(ContentKind.Podcast, it) }
+                SpeedSetting("Articles", preferences.articleSpeed) { model.setSpeed(ContentKind.Article, it) }
             }
         }
-        item { SettingsAction("Refresh voices", Icons.Rounded.Refresh, model::refreshVoices) }
-        item { SettingsFootnote("Choose from installed offline Google voices. Download more voices in Android’s text-to-speech settings. A voice change applies the next time you start an article.") }
-        item { HorizontalDivider(); SettingsHeading("Conversation") }
-        item { ListItem(headlineContent = { Text("Keep listening after replies") }, supportingContent = { Text("Continue the conversation after Magpie answers.") },
-            trailingContent = { Switch(conversation.keepListening, { model.setConversationPreferences(conversation.copy(keepListening = it)) }, Modifier.semantics { contentDescription = "Keep listening after replies" }) }) }
-        if (conversation.keepListening) item { ListItem(headlineContent = { Text("Wait for a reply") }, trailingContent = { Text("${conversation.followUpSeconds} seconds") },
-            modifier = Modifier.clickable { showingWait = true }.testTag("conversation-wait")) }
-        item { SettingsFootnote("After Magpie answers, wait for the listening sound and speak again. Silence ends listening; say “That’s all” to close the conversation. Starting playback also ends listening. With TalkBack, double-tap the microphone for each turn.") }
-        item { HorizontalDivider(); SettingsHeading("Assistant and Shortcuts") }
-        item { SettingsAction("Home screen and Quick Settings", Icons.Rounded.AppShortcut, onShortcuts) }
-        if (library.live) {
-            item { HorizontalDivider(); SettingsHeading("Library") }
-            item { SettingsAction("Import subscriptions", Icons.Rounded.FileOpen, model.subscriptionImport::open) }
-            item { SettingsAction("Export subscriptions", Icons.Rounded.FileUpload) { showingExport = true } }
+        item {
+            SettingsSection("Voice", "Choose from installed offline Google voices. Download more voices in Android’s text-to-speech settings. A voice change applies the next time you start an article.") {
+                ListItem(headlineContent = { Text("Voice") }, supportingContent = { Text(if (voices.loading) "Loading installed voices…" else selectedVoice) },
+                    trailingContent = { Icon(Icons.Rounded.ChevronRight, null) },
+                    modifier = Modifier.clickable(onClickLabel = "Choose voice") { showingVoices = true }.testTag("voice-setting"))
+                voices.error?.let { SettingsFootnote(it, error = true) }
+                SettingsAction("Download voices", Icons.Rounded.Download) {
+                    try { context.startActivity(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).setPackage(SpeechVoices.ENGINE)) }
+                    catch (_: ActivityNotFoundException) { open(Intent(Settings.ACTION_SETTINGS)) }
+                }
+                SettingsAction("Refresh voices", Icons.Rounded.Refresh, model::refreshVoices)
+            }
         }
-        item { HorizontalDivider(); SettingsHeading("Newsletters") }
-        item { NewsletterAddressSection(model) }
-        item { HorizontalDivider(); SettingsHeading("Privacy & Support") }
-        item { ListItem(headlineContent = { Text("Share app diagnostics") },
-            supportingContent = { Text("Send voice-request outcomes and crash or freeze summaries. Never your words or audio.") },
-            trailingContent = { Switch(diagnostics, model::setDiagnosticsEnabled,
-                Modifier.semantics { contentDescription = "Share app diagnostics" }) }) }
-        item { SettingsAction("Privacy Policy", Icons.AutoMirrored.Rounded.OpenInNew) { open(Intent(Intent.ACTION_VIEW, "https://audio-reader-production.up.railway.app/privacy".toUri())) } }
-        item { SettingsAction("Email Support", Icons.Rounded.Email) { open(Intent(Intent.ACTION_SENDTO, "mailto:hcndashwood@gmail.com".toUri())) } }
-        item { AISharingSettings(model) }
-        item { SettingsFootnote("Voice requests use OpenAI only after you allow it. Turning it off leaves the rest of Magpie available.") }
-        if (linkError != null) item { SettingsFootnote(linkError!!, error = true) }
-        item { HorizontalDivider(); SettingsHeading("Account") }
-        item { SettingsAction("Sign-in Methods", Icons.Rounded.AccountCircle, onAccount) }
-        // As on iOS, signing out and deleting the account live here rather than a level deeper.
-        item { AccountActions() }
+        item {
+            SettingsSection("Conversation", "After Magpie answers, wait for the listening sound and speak again. Silence ends listening; say “That’s all” to close the conversation. Starting playback also ends listening. With TalkBack, double-tap the microphone for each turn.") {
+                ListItem(headlineContent = { Text("Keep listening after replies") }, supportingContent = { Text("Continue the conversation after Magpie answers.") },
+                    trailingContent = { Switch(conversation.keepListening, { model.setConversationPreferences(conversation.copy(keepListening = it)) }, Modifier.semantics { contentDescription = "Keep listening after replies" }) })
+                if (conversation.keepListening) ListItem(headlineContent = { Text("Wait for a reply") },
+                    trailingContent = { Text("${conversation.followUpSeconds} seconds", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyLarge) },
+                    modifier = Modifier.clickable { showingWait = true }.testTag("conversation-wait"))
+            }
+        }
+        item {
+            SettingsSection("Assistant and Shortcuts") {
+                SettingsAction("Home screen and Quick Settings", Icons.Rounded.AppShortcut, onShortcuts)
+            }
+        }
+        if (library.live) item {
+            SettingsSection("Library") {
+                SettingsAction("Import subscriptions", Icons.Rounded.FileOpen, model.subscriptionImport::open)
+                SettingsAction("Export subscriptions", Icons.Rounded.FileUpload) { showingExport = true }
+            }
+        }
+        item {
+            SettingsSection("Newsletters", if (library.live) "Give this address to a newsletter instead of your own email. The first time a sender writes, Magpie asks whether to follow them before anything is read to you." else null) {
+                NewsletterAddressSection(model)
+            }
+        }
+        item {
+            SettingsSection("Privacy & Support", "Voice requests use OpenAI only after you allow it. Turning it off leaves the rest of Magpie available.") {
+                ListItem(headlineContent = { Text("Share app diagnostics") },
+                    supportingContent = { Text("Send voice-request outcomes and crash or freeze summaries. Never your words or audio.") },
+                    trailingContent = { Switch(diagnostics, model::setDiagnosticsEnabled,
+                        Modifier.semantics { contentDescription = "Share app diagnostics" }) })
+                SettingsAction("Privacy Policy", Icons.AutoMirrored.Rounded.OpenInNew) { open(Intent(Intent.ACTION_VIEW, "https://audio-reader-production.up.railway.app/privacy".toUri())) }
+                SettingsAction("Email Support", Icons.Rounded.Email) { open(Intent(Intent.ACTION_SENDTO, "mailto:hcndashwood@gmail.com".toUri())) }
+                AISharingSettings(model)
+                linkError?.let { SettingsFootnote(it, error = true) }
+            }
+        }
+        item {
+            // As on iOS, signing out and deleting the account live here rather than a level deeper.
+            SettingsSection("Account") {
+                SettingsAction("Sign-in Methods", Icons.Rounded.AccountCircle, onAccount)
+                AccountActions()
+            }
+        }
     }
-    if (showingWait) AlertDialog(onDismissRequest = { showingWait = false }, title = { Text("Wait for a reply") },
-        text = { LazyColumn { items(com.henrydashwood.magpie.voice.ConversationPreferences.waitOptions) { seconds ->
-            VoiceChoice("$seconds seconds", "", conversation.followUpSeconds == seconds) {
-                model.setConversationPreferences(conversation.copy(followUpSeconds = seconds)); showingWait = false
-            }
-        } } }, confirmButton = { TextButton(onClick = { showingWait = false }) { Text("Close") } })
+    if (showingWait) ChoiceDialog("Wait for a reply", com.henrydashwood.magpie.voice.ConversationPreferences.waitOptions, conversation.followUpSeconds,
+        { "$it seconds" }, { model.setConversationPreferences(conversation.copy(followUpSeconds = it)) }) { showingWait = false }
     if (showingVoices) ModalBottomSheet(onDismissRequest = { showingVoices = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Voice", Modifier.padding(vertical = 12.dp).semantics { heading() }, style = MaterialTheme.typography.titleLarge)
@@ -137,24 +157,36 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
 
 @Composable
 private fun VoiceChoice(title: String, detail: String, selected: Boolean, choose: () -> Unit) {
-    ListItem(headlineContent = { Text(title) }, supportingContent = { Text(detail) },
-        trailingContent = { RadioButton(selected, onClick = null) },
+    ListItem(headlineContent = { Text(title) }, supportingContent = detail.takeIf { it.isNotBlank() }?.let { { Text(it) } },
+        trailingContent = { RadioButton(selected, onClick = null) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier.clickable(role = Role.RadioButton, onClick = choose).semantics { this.selected = selected })
 }
 
 @Composable
 private fun SpeedSetting(title: String, current: Float, select: (Float) -> Unit) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    ListItem(headlineContent = { Text(title) }, trailingContent = { Text(speedLabel(current), color = MaterialTheme.colorScheme.primary) },
+    ListItem(headlineContent = { Text(title) }, trailingContent = { Text(speedLabel(current), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyLarge) },
         modifier = Modifier.clickable(onClickLabel = "Change $title speed") { expanded = true }.testTag("speed-$title"))
-    if (expanded) AlertDialog(onDismissRequest = { expanded = false }, title = { Text("$title speed") },
+    if (expanded) ChoiceDialog("$title speed", playbackRates, current, ::speedLabel, select) { expanded = false }
+}
+
+/** Android's single-choice dialog: radio buttons on the left; choosing closes it. */
+@Composable
+private fun <T> ChoiceDialog(title: String, options: List<T>, selected: T, label: (T) -> String, choose: (T) -> Unit, dismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = dismiss, title = { Text(title) },
         text = {
-            LazyColumn {
-                items(playbackRates) { rate ->
-                    VoiceChoice(speedLabel(rate), "", current == rate) { select(rate); expanded = false }
+            Column(Modifier.selectableGroup().verticalScroll(rememberScrollState())) {
+                options.forEach { option ->
+                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
+                            .selectable(option == selected, role = Role.RadioButton) { choose(option); dismiss() }
+                            .padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        RadioButton(option == selected, onClick = null)
+                        Text(label(option), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                    }
                 }
             }
-        }, confirmButton = { TextButton(onClick = { expanded = false }) { Text("Cancel") } })
+        }, confirmButton = { TextButton(onClick = dismiss) { Text("Cancel") } })
 }
 
 internal fun speedLabel(speed: Float) = "${if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()}×"
@@ -164,9 +196,22 @@ private fun SettingsAction(title: String, icon: androidx.compose.ui.graphics.vec
     ListItem(headlineContent = { Text(title, color = MaterialTheme.colorScheme.primary) }, leadingContent = { Icon(icon, null) }, modifier = Modifier.clickable(onClick = action))
 }
 
+/**
+ * A titled group of rows on a card, with its explanation underneath, like Android's own
+ * Settings and iOS's grouped lists. The heading is larger than the rows so the page scans.
+ */
 @Composable
-private fun SettingsHeading(title: String) {
-    Text(title, Modifier.padding(horizontal = 16.dp, vertical = 12.dp).semantics { heading() }, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun SettingsSection(title: String, footer: String? = null, top: androidx.compose.ui.unit.Dp = 24.dp, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = top)) {
+        Text(title, Modifier.padding(start = 16.dp, bottom = 8.dp).semantics { heading() },
+            style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+        val colors = MaterialTheme.colorScheme
+        Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = colors.surfaceContainer) {
+            // Rows draw on the card's colour rather than the page's.
+            MaterialTheme(colorScheme = colors.copy(surface = colors.surfaceContainer)) { Column(Modifier.padding(vertical = 4.dp), content = content) }
+        }
+        footer?.let { Text(it, Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
+    }
 }
 
 @Composable

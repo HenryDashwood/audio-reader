@@ -28,7 +28,7 @@ fun NewsletterAddressSection(model: MagpieModel) {
     LaunchedEffect(library.revision, library.live, state.revision) {
         if (library.live && state.revision == library.revision) model.newsletters.loadAddress()
     }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (!library.live) Text("Sign in to get your Magpie newsletter address.")
         else if (state.revision == library.revision) {
             if (state.loadingAddress) Text("Getting your newsletter address…", Modifier.semantics { liveRegion = LiveRegionMode.Polite })
@@ -46,7 +46,6 @@ fun NewsletterAddressSection(model: MagpieModel) {
                 TextButton(onClick = { model.readNewsletterAddress(true) }, enabled = !speaking) { Text("Spell address") }
                 if (speaking) TextButton(onClick = { model.newsletterSpeech.stop() }) { Text("Stop reading address") }
                 NewsletterAddressActions(address.address) { model.libraryState.value.live && model.libraryState.value.revision == state.revision }
-                Text("Give this address to a newsletter instead of your own email. The first time a sender writes, Magpie asks whether to follow them before anything is read to you.", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
