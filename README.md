@@ -361,9 +361,11 @@ checks. GitHub Actions also owns TestFlight releases.
 
 ### Releasing to TestFlight
 
-`.github/workflows/testflight.yml` runs the tests, archives, and uploads. It is
-not on every push to `main` — a build goes out when a `v*` tag is pushed, or on
-demand:
+`.github/workflows/testflight.yml` runs the tests, archives, and uploads. It
+skips the tests when main CI already passed them on the same iOS sources
+([scripts/ios_ci_coverage.py](scripts/ios_ci_coverage.py)), so tag after main CI
+finishes. It is not on every push to `main` — a build goes out when a `v*` tag
+is pushed, or on demand:
 
 ```bash
 git tag v1.1.0 && git push origin v1.1.0

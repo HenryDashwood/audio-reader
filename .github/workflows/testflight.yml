@@ -48,6 +48,10 @@ jobs:
     if: inputs.distribute_build == ''
     runs-on: xcode-27
     timeout-minutes: 90
+    permissions:
+      contents: read
+      # Reads main CI results to avoid repeating iOS tests it already passed.
+      actions: read
     outputs:
       build: ${{ steps.version.outputs.build }}
 
@@ -59,6 +63,15 @@ jobs:
 
       - name: Validate the App Store listing
         run: python3 scripts/app_store_sync.py validate
+
+      # Main CI runs the same two suites. When it passed them on this commit,
+      # or on an ancestor with identical iOS inputs, they are not repeated.
+      # Anything unproven, including a manual run from another branch, tests.
+      - name: Check whether main CI already tested these sources
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ios_ci_coverage.py --sha "$GITHUB_SHA"
 
       - name: Select Xcode
         run: |
@@ -72,14 +85,17 @@ jobs:
           xcodebuild -version
 
       - name: Install released simulator runtimes
+        if: steps.ci.outputs.covered != 'true'
         id: simulators
         run: bash scripts/prepare-ios-simulators.sh
 
       - name: Run the iOS 27 tests
         # Both supported OS generations must pass before signing or uploading.
+        if: steps.ci.outputs.covered != 'true'
         run: make ios-test
 
       - name: Run the iOS 26 compatibility tests
+        if: steps.ci.outputs.covered != 'true'
         run: make ios-test-compatibility
 
       - name: Retain iOS diagnostics
