@@ -231,7 +231,8 @@ Local tests use a single incremental build-and-test invocation and print its
 elapsed time. Unformatted Xcode output is retained in `build/ios-logs/` and
 printed on failure so the formatter cannot hide compiler crashes. CI and
 TestFlight retain those logs and compiler crash reproducers for 14 days, as the
-`ios-diagnostics-27` and `ios-diagnostics-26` artifacts. To reproduce CI's phased run, use
+`ios-diagnostics-27-attempt<n>` and `ios-diagnostics-26-attempt<n>` artifacts, which
+also hold a CPU sample every 30 seconds (`cpu-samples.log`). To reproduce CI's phased run, use
 `IOS_TEST_PREBOOT=1 IOS_COMPILATION_CACHE=1 make ios-test`. This boots the selected
 simulator while building for testing, waits for both to succeed, then tests
 those freshly built products. The log reports build time, simulator boot
