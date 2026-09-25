@@ -75,6 +75,7 @@ jobs:
               - 'app-store/**'
               - 'scripts/ios-dev.sh'
               - 'scripts/prepare-ios-simulators.sh'
+              - '.github/workflows/ios-tests.yml'
 
   android:
     name: Android checks
@@ -132,83 +133,29 @@ jobs:
       - name: Validate the App Store listing
         run: make app-store-validate
 
-  ios:
-    name: iOS tests
+  # Both iOS generations, in parallel, from the workflow TestFlight also uses.
+  ios-simulator:
+    name: iOS
     needs: changes
     if: needs.changes.outputs.ios == 'true'
-    # macos-latest still ships Xcode 26; request the Xcode 27 image explicitly.
-    runs-on: xcode-27
-    timeout-minutes: 60
+    uses: ./.github/workflows/ios-tests.yml
 
+  # A single "iOS tests" result for the staging gate, production promotion and
+  # TestFlight's check of what CI already tested, however many generations the
+  # matrix covers. Skipped, like the matrix, when the app is unchanged.
+  ios:
+    name: iOS tests
+    needs: [changes, ios-simulator]
+    if: ${{ !cancelled() && needs.changes.outputs.ios == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Select Xcode
-        id: xcode
-        run: |
-          set -euo pipefail
-          xcode=/Applications/Xcode_27.0.app
-          if [[ ! -d "$xcode" ]]; then
-            echo "::error::The runner must provide released Xcode 27.0 at $xcode"
-            exit 1
-          fi
-          sudo xcode-select -s "$xcode"
-          xcodebuild -version
-          echo "build=$(xcodebuild -version | awk '/Build version/ { print $3 }')" >> "$GITHUB_OUTPUT"
-          echo "macos=$(sw_vers -buildVersion)" >> "$GITHUB_OUTPUT"
-
-      - name: Install released simulator runtimes
-        id: simulators
-        run: bash scripts/prepare-ios-simulators.sh
-
-      # Cache compiler outputs, not a previous test result or build database.
-      # Xcode validates inputs on every build; the full suite always runs.
-      - name: Cache iOS compilations
-        uses: actions/cache@v6
-        with:
-          path: build/DerivedData/CompilationCache.noindex
-          key: ios-compilation-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.macos }}-${{ steps.xcode.outputs.build }}-${{ hashFiles('ios/**', 'scripts/ios-dev.sh', '.github/workflows/ci.yml') }}
-          restore-keys: |
-            ios-compilation-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.macos }}-${{ steps.xcode.outputs.build }}-
-
-      - name: Verify the iOS toolchain
-        run: make ios-doctor
-
-      - name: Run the iOS 27 tests
+      - name: Require every iOS generation to pass
         env:
-          IOS_COMPILATION_CACHE: '1'
-          IOS_TEST_PREBOOT: '1'
-        run: make ios-test
-
-      # Hosted macOS runners are small. With the iOS 27 simulator still
-      # booted, the freshly created iOS 26 one has taken over six minutes to
-      # launch WebKit's processes, stalling every web-view test.
-      - name: Shut down the iOS 27 simulator
-        if: ${{ !cancelled() && steps.simulators.outcome == 'success' }}
+          RESULT: ${{ needs.ios-simulator.result }}
         run: |
-          echo "CPUs: $(sysctl -n hw.ncpu), memory: $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
-          memory_pressure -Q || true
-          xcrun simctl shutdown all
-          memory_pressure -Q || true
-
-      - name: Run the iOS 26 compatibility tests
-        if: ${{ !cancelled() && steps.simulators.outcome == 'success' }}
-        env:
-          IOS_COMPILATION_CACHE: '1'
-          IOS_TEST_PREBOOT: '1'
-        run: make ios-test-compatibility
-
-      - name: Retain iOS diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ios-diagnostics
-          path: |
-            build/ios-logs/
-            build/DerivedData/Build/Intermediates.noindex/**/swbuild.tmp.*/Data.noindex/**
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 14
+          echo "iOS simulator tests: $RESULT"
+          [[ "$RESULT" == success ]]
 
   compatibility:
     name: Released iOS client compatibility

@@ -59,13 +59,13 @@ fi
 """,
     )
 
-    def run(initial, *, downloads=None, devices=None, status=0, create_status=0):
+    def run(initial, *, downloads=None, devices=None, status=0, create_status=0, versions=()):
         (tmp_path / "runtimes.json").write_text(json.dumps({"runtimes": initial}))
         (tmp_path / "devices.json").write_text(json.dumps({"devices": devices or {}}))
         for version, inventory in (downloads or {}).items():
             (tmp_path / f"download-{version}.json").write_text(json.dumps({"runtimes": inventory}))
         result = subprocess.run(
-            ["/bin/bash", Path(__file__).resolve().parents[1] / "prepare-ios-simulators.sh"],
+            ["/bin/bash", Path(__file__).resolve().parents[1] / "prepare-ios-simulators.sh", *versions],
             env=os.environ
             | {
                 "PATH": f"{tools}:/usr/bin:/bin",
@@ -129,3 +129,20 @@ def test_device_creation_failure_is_not_hidden(prepare):
     result, calls = prepare([runtime("27.0"), runtime("26.5")], create_status=42)
     assert result.returncode == 42
     assert calls == ["create com.apple.CoreSimulator.SimRuntime.iOS-27-0"]
+
+
+def test_a_requested_version_prepares_only_that_runtime(prepare):
+    initial = [runtime("27.0")]
+    installed = initial + [runtime("26.5")]
+    result, calls = prepare(initial, downloads={"26.5": installed}, versions=["26.5"])
+    assert result.returncode == 0, result.stderr
+    assert calls == ["download 26.5", "create com.apple.CoreSimulator.SimRuntime.iOS-26-5"]
+    assert result.stdout.count("Ready:") == 1
+
+
+def test_requesting_ios27_does_not_download_ios26(prepare):
+    initial = [runtime("27.0")]
+    result, calls = prepare(initial, devices=phones(initial), versions=["27.0"])
+    assert result.returncode == 0, result.stderr
+    assert calls == []
+    assert result.stdout.count("Ready:") == 1

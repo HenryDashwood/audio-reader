@@ -14,7 +14,13 @@ available_runtime() {
   '
 }
 
-for version in 27.0 26.5; do
+# Prepares both released runtimes by default. CI's parallel jobs each pass the
+# one version they test, so neither downloads a runtime it will not use.
+if (( $# == 0 )); then
+  set -- 27.0 26.5
+fi
+
+for version in "$@"; do
   runtime_id="$(available_runtime "$version")"
   if [[ -z "$runtime_id" ]]; then
     download_status=0

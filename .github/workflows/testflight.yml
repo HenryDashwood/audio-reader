@@ -44,14 +44,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  testflight:
+  # Main CI runs the same suites. When it passed them on this commit, or on an
+  # ancestor with identical iOS inputs, they are not repeated. Anything
+  # unproven, including a manual run from another branch, tests.
+  ci-coverage:
+    name: Check what main CI already tested
     if: inputs.distribute_build == ''
-    runs-on: xcode-27
-    timeout-minutes: 90
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
-      # Reads main CI results to avoid repeating iOS tests it already passed.
       actions: read
+    outputs:
+      covered: ${{ steps.ci.outputs.covered }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check whether main CI already tested these sources
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ios_ci_coverage.py --sha "$GITHUB_SHA"
+
+  ios-tests:
+    name: iOS
+    needs: ci-coverage
+    if: needs.ci-coverage.outputs.covered != 'true'
+    uses: ./.github/workflows/ios-tests.yml
+    permissions:
+      contents: read
+
+  testflight:
+    needs: [ci-coverage, ios-tests]
+    # Both supported iOS generations must pass before signing or uploading,
+    # here or, for identical sources, in main CI.
+    if: >-
+      !cancelled()
+      && inputs.distribute_build == ''
+      && needs.ci-coverage.result == 'success'
+      && (needs.ios-tests.result == 'success'
+          || (needs.ios-tests.result == 'skipped' && needs.ci-coverage.outputs.covered == 'true'))
+    runs-on: xcode-27
+    timeout-minutes: 45
+    permissions:
+      contents: read
     outputs:
       build: ${{ steps.version.outputs.build }}
 
@@ -64,15 +99,6 @@ jobs:
       - name: Validate the App Store listing
         run: python3 scripts/app_store_sync.py validate
 
-      # Main CI runs the same two suites. When it passed them on this commit,
-      # or on an ancestor with identical iOS inputs, they are not repeated.
-      # Anything unproven, including a manual run from another branch, tests.
-      - name: Check whether main CI already tested these sources
-        id: ci
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ios_ci_coverage.py --sha "$GITHUB_SHA"
-
       - name: Select Xcode
         run: |
           set -euo pipefail
@@ -83,43 +109,6 @@ jobs:
           fi
           sudo xcode-select -s "$xcode"
           xcodebuild -version
-
-      - name: Install released simulator runtimes
-        if: steps.ci.outputs.covered != 'true'
-        id: simulators
-        run: bash scripts/prepare-ios-simulators.sh
-
-      - name: Run the iOS 27 tests
-        # Both supported OS generations must pass before signing or uploading.
-        if: steps.ci.outputs.covered != 'true'
-        run: make ios-test
-
-      # Hosted macOS runners are small. With the iOS 27 simulator still
-      # booted, the freshly created iOS 26 one has taken over six minutes to
-      # launch WebKit's processes, stalling every web-view test.
-      - name: Shut down the iOS 27 simulator
-        if: steps.ci.outputs.covered != 'true'
-        run: |
-          echo "CPUs: $(sysctl -n hw.ncpu), memory: $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
-          memory_pressure -Q || true
-          xcrun simctl shutdown all
-          memory_pressure -Q || true
-
-      - name: Run the iOS 26 compatibility tests
-        if: steps.ci.outputs.covered != 'true'
-        run: make ios-test-compatibility
-
-      - name: Retain iOS diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ios-diagnostics
-          path: |
-            build/ios-logs/
-            build/DerivedData/Build/Intermediates.noindex/**/swbuild.tmp.*/Data.noindex/**
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Work out the version numbers
         id: version
@@ -325,9 +314,13 @@ jobs:
   # runner idle for twenty minutes to do that would be wasteful.
   distribute:
     needs: testflight
-    # `skipped` is the distribute-an-existing-build case, where the build job
-    # never ran. Without always() the whole job would be skipped with it.
-    if: always() && contains(fromJSON('["success", "skipped"]'), needs.testflight.result)
+    # A skipped build job means distribute-an-existing-build only when one was
+    # asked for; otherwise it was skipped because tests failed or were cancelled.
+    # Without always() the whole job would be skipped with it.
+    if: >-
+      always()
+      && (needs.testflight.result == 'success'
+          || (needs.testflight.result == 'skipped' && inputs.distribute_build != ''))
     runs-on: ubuntu-latest
     timeout-minutes: 45
 

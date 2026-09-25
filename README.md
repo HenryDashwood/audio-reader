@@ -194,10 +194,13 @@ be advanced deliberately after public releases; installing a newer beta does
 not change the default. If the required runtime is missing, the command fails
 with installation guidance instead of silently testing a different version.
 
-CI and TestFlight build validation run the complete suite on iOS 27 first and
-then on the oldest installed released iOS 26 runtime. The workflows request the
-Xcode 27 runner image, require released Xcode 27.0, and install released iOS
-27.0 and 26.5 runtimes through `scripts/prepare-ios-simulators.sh`. Setup reuses
+CI and TestFlight build validation run the complete suite on iOS 27 and on the
+oldest installed released iOS 26 runtime, as parallel jobs on separate runners
+from the shared `.github/workflows/ios-tests.yml`. CI summarises them as one
+`iOS tests` check. The workflows request
+the Xcode 27 runner image, require released Xcode 27.0, and install released iOS
+27.0 and 26.5 runtimes through `scripts/prepare-ios-simulators.sh`, which takes
+the versions to prepare as arguments and defaults to both. Setup reuses
 available released runtimes and iPhone simulators, and verifies availability
 after any download, including when Xcode reports a nonzero exit status. Both
 checks must pass. Magpie still supports iOS 26.
@@ -227,8 +230,8 @@ with the same DerivedData path before repeating the build or test.
 Local tests use a single incremental build-and-test invocation and print its
 elapsed time. Unformatted Xcode output is retained in `build/ios-logs/` and
 printed on failure so the formatter cannot hide compiler crashes. CI and
-TestFlight retain those logs and compiler crash reproducers as the
-`ios-diagnostics` artifact for 14 days. To reproduce CI's phased run, use
+TestFlight retain those logs and compiler crash reproducers for 14 days, as the
+`ios-diagnostics-27` and `ios-diagnostics-26` artifacts. To reproduce CI's phased run, use
 `IOS_TEST_PREBOOT=1 IOS_COMPILATION_CACHE=1 make ios-test`. This boots the selected
 simulator while building for testing, waits for both to succeed, then tests
 those freshly built products. The log reports build time, simulator boot
