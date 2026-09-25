@@ -1,4 +1,5 @@
 import AVFoundation
+import MediaPlayer
 import Testing
 
 @testable import Hearful
@@ -97,7 +98,8 @@ struct PlaybackRecoveryTests {
         coordinator.clear()
     }
 
-    @Test func manualPauseCancelsThePendingRetry() async throws {
+    @Test(arguments: [false, true])
+    func pauseCancelsThePendingRetry(remote: Bool) async throws {
         let session = Session()
         session.available = false
         let url = try silentAudio()
@@ -106,13 +108,49 @@ struct PlaybackRecoveryTests {
         let coordinator = PlaybackCoordinator(audio: audio, article: ArticlePlayer())
         coordinator.restore(podcast(url: url))
         coordinator.resume()
-        coordinator.pause()
+        if remote {
+            #expect(coordinator.handleRemotePause() == .success)
+        } else {
+            coordinator.pause()
+        }
 
         try? await Task.sleep(for: .seconds(1.2))
 
         #expect(session.attempts == 1)
         #expect(!coordinator.isPlaying)
         coordinator.clear()
+    }
+
+    @Test(arguments: [false, true])
+    func siriPauseSucceedsWhileInterruptedAndPreventsResume(shouldResume: Bool) throws {
+        let session = Session()
+        // Keep the transport deterministically silent, as it is when Siri
+        // owns the session, while recording the user's request to play.
+        session.available = false
+        let url = try silentAudio()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let audio = AudioPlayer(defaults: .standard, activateAudioSession: session.activate)
+        let coordinator = PlaybackCoordinator(audio: audio, article: ArticlePlayer())
+        defer { coordinator.clear() }
+        #expect(coordinator.handleRemotePause() == .noActionableNowPlayingItem)
+        coordinator.restore(podcast(url: url))
+        coordinator.seek(to: 0.5)
+        coordinator.resume()
+        coordinator.handle(.interrupted)
+        #expect(!coordinator.isPlaying)
+        #expect(session.attempts == 1)
+
+        #expect(coordinator.handleRemotePause() == .success)
+        #expect(coordinator.handleRemotePause() == .success)
+        coordinator.handle(.interruptionEnded(shouldResume: shouldResume))
+
+        #expect(session.attempts == 1)
+        #expect(!coordinator.isPlaying)
+        #expect(!audio.isStuckAfterPlayRequest)
+        #expect(coordinator.currentEpisode?.id == 900)
+        #expect(coordinator.currentTime == 0.5)
+        coordinator.clear()
+        #expect(coordinator.handleRemotePause() == .noActionableNowPlayingItem)
     }
 
     @Test func articleResumesOnAFreshEngineAndIgnoresRetiredCallbacks() async throws {

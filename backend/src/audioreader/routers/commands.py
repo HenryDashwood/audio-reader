@@ -73,7 +73,7 @@ def check_rate_limit(user: CurrentUser) -> None:
             continue
         decision = window.check(str(user.id))
         if not decision.allowed:
-            logger.warning("rate limited user %s (window=%ss)", user.id, window.window_seconds)
+            logger.warning("rate limited telemetry %s (window=%ss)", user.telemetry_id, window.window_seconds)
             raise HTTPException(
                 status_code=429,
                 detail={"spoken_response": spoken},

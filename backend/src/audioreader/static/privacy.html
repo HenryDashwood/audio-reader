@@ -30,29 +30,34 @@
 <body>
 
 <h1>Magpie — Privacy Policy</h1>
-<p class="updated">Last updated 17 September 2026</p>
+<p class="updated">Last updated 25 September 2026</p>
 
 <p>
   Magpie is a podcast and article player. All features can be operated on
   screen or by voice. Because voice control is a primary interface designed
   for people who cannot easily use a screen, this policy explains how
   microphone access and voice requests are handled. Written articles are read
-  aloud on your device by Apple's system voices; no outside service is
-  involved in producing that audio.
+  aloud on your device — by Apple's system voices on iPhone and iPad, and by
+  offline voices from Google's Speech Recognition &amp; Synthesis app on
+  Android. No outside service is involved in producing that audio. This policy
+  covers Magpie for iOS and Magpie for Android.
 </p>
 
 <h2>The short version</h2>
 <ul>
-  <li>We keep your email address, the shows you follow, and how far through each episode you are.</li>
-  <li>Voice is transcribed by Apple's speech recognisers. Magpie and OpenAI do not receive or store the live microphone audio.</li>
+  <li>We keep your email address, the shows and newsletters you follow, and how far through each episode you are.</li>
+  <li>Voice is transcribed by Apple's speech recognisers on iPhone and iPad, and by your phone's on-device speech recognition on Android. Magpie and OpenAI do not receive or store the live microphone audio.</li>
   <li>The recognised text and relevant library details are sent directly to OpenAI so Magpie can understand the request, carry it out, or ask a short clarification.</li>
   <li>That request is sent along with a list of recent episodes from the shows you follow, so the AI has something to choose between.</li>
   <li>OpenAI does not use API data to train its models. By default, it may keep content in abuse-monitoring logs for up to 30 days.</li>
   <li>A record of each request, including the words you said, is kept for 30 days so that mistakes can be found and put right.</li>
   <li>The app also reports how well its own microphone and speech recognition worked, so that times it could not hear you can be found and fixed. That report contains timings only — never your words, and never any audio.</li>
-  <li>Diagnostic records use a random code instead of your account identifier. Deleting your account destroys the only mapping to that code.</li>
+  <li>Voice-request and app diagnostic records use a random code instead of your account identifier. Deleting your account destroys the only mapping to that code.</li>
+  <li>Words you type into search can appear in our server's operational logs, which are deleted after 30 days.</li>
+  <li>If you use newsletters, we keep the emails sent to your private Magpie newsletter address so they can be read aloud. They are private to your account and deleted with it.</li>
+  <li>OpenAI, our hosting and diagnostics providers, and Cloudflare (which receives newsletter email) process data only on our behalf, to run Magpie.</li>
   <li>There is no advertising, no cross-app tracking, and nothing is sold or shared with data brokers.</li>
-  <li>You can delete your account, and everything in it, from inside the app.</li>
+  <li>You can delete your account, and everything in it, from inside the app, or by following <a href="/delete-account">these steps</a> if you cannot use the app.</li>
 </ul>
 
 <h2>Who is responsible for your data</h2>
@@ -67,6 +72,8 @@
     <strong>Your email address and sign-in provider identifiers.</strong> These
     come from Apple or Google when you sign in or connect a sign-in method.
     If you hide your email with Apple, we only see Apple's private relay address.
+    On Android, Google sign-in uses Android's Credential Manager, and Apple
+    sign-in opens in your browser.
     We use provider identifiers to recognise your account. Connecting Apple and
     Google requires signing in with the additional provider while already signed
     in to Magpie; matching email addresses alone do not connect accounts.
@@ -99,6 +106,10 @@
     your account and is different from your account identifier. The mapping
     exists only in your account row and is deleted with the account.
   </li>
+  <li>
+    <strong>Newsletters, if you use them.</strong> Your newsletter address and
+    the emails sent to it. See <a href="#newsletters">Newsletters</a> below.
+  </li>
 </ul>
 
 <h2>When you use voice or AI web search</h2>
@@ -120,6 +131,15 @@
   Magpie does not store the recording.
 </p>
 <p>
+  On Android, Magpie uses only Android's on-device speech recogniser, provided
+  by the speech service installed on your phone. It asks the recogniser to
+  work offline and does not use a cloud recogniser; if on-device recognition
+  or its language is not installed, the microphone is unavailable until you
+  install it. Magpie does not keep the microphone audio. Android asks your
+  permission before Magpie can use the microphone, and the microphone is used
+  only while you are asking Magpie something.
+</p>
+<p>
   Apple's older recogniser prefers processing on your device; when Apple
   processes audio on its servers, that is handled under
   <a href="https://www.apple.com/legal/privacy/">Apple's privacy policy</a>.
@@ -131,8 +151,12 @@
   To understand and carry out a voice request, our server sends the recognised
   text directly to OpenAI's Responses API. Alongside your words, we send the
   recent conversation, the shows you follow, and relevant episode or article
-  titles, show names, publication dates, and short description extracts. The
-  model can search the web or the public podcast directory when it needs to
+  titles, show names, publication dates, and short description extracts. If you
+  follow newsletters, their issues are part of that library: the sender's name
+  stands in for the show name and the email's subject for the title. The names
+  of newsletter senders waiting for your answer, and the subject of each one's
+  latest email, are also sent, so that you can follow or block them by voice.
+  The full text of newsletter emails is not sent. The model can search the web or the public podcast directory when it needs to
   resolve a show or publication, and can call only the specific Magpie actions
   our server makes available. A typed web search sends the publication name
   and the addresses already checked; it does not send your listening library.
@@ -146,6 +170,9 @@
   recognise, the name you said is also used to search the web for its feed.
 </p>
 <p>
+  OpenAI acts as our service provider: it processes these requests on our
+  behalf so that Magpie can answer them, under its API terms rather than as
+  part of a consumer product such as ChatGPT.
   OpenAI says data sent through its API is not used to train its models unless
   the API customer explicitly opts in; we do not opt in. By default, OpenAI
   may retain customer content in abuse-monitoring logs for up to 30 days. Its
@@ -172,6 +199,20 @@
   is removed before the record leaves our server. It is deleted after 30 days.
 </p>
 <p>
+  Logfire also holds our server's ordinary operational logs, for the same 30
+  days. They record the address of each request the app makes to our server,
+  and of each request our server makes to other services. Some of those
+  addresses contain what you typed into search: searching your library or a
+  show's episodes, and searching the podcast directory, put your search words
+  in the address, and our server passes directory searches on to Apple's
+  podcast directory in the same way. So <strong>your search terms can appear in
+  these logs</strong>. They are used only to find and fix problems. A few log
+  lines about newsletter delivery and rate limits also include the same random
+  code used for diagnostics (not your account identifier, name or email address), and newsletter log
+  lines can include a newsletter's name or the subject of a sign-up
+  confirmation email. These are deleted after 30 days like the rest.
+</p>
+<p>
   The app on your phone sends a short record of its own each time you use the
   microphone — including the times it went wrong, which our server would
   otherwise never hear about at all. If the app cannot hear you, no voice
@@ -180,7 +221,7 @@
 </p>
 <p>
   That record says how long the app listened, whether the microphone started
-  working, which speech recogniser it used, whether VoiceOver was running, and
+  working, which speech recogniser it used, whether VoiceOver or TalkBack was running, and
   what kind of thing you asked for — playing something, pausing, setting a
   sleep timer. <strong>It never contains your words and never any audio.</strong>
   If your phone is offline it is kept on the device and sent later. That queue
@@ -200,7 +241,8 @@
   titles. Reports are sent only for the signed-in account that experienced them.
 </p>
 <p>
-  In Magpie for Android, you can turn off <em>Share app diagnostics</em> under
+  In Magpie for Android, these diagnostics are on unless you switch them off.
+  You can turn off <em>Share app diagnostics</em> under
   Settings → Privacy &amp; Support. This stops both voice-request diagnostics
   and crash or freeze reports and clears their pending on-device records.
   The retry queue holds at most 50 recent reports per account for up to 30 days,
@@ -208,25 +250,134 @@
   this off does not affect playback, recognition or your library.
 </p>
 <p>
+  Magpie for iOS has no equivalent in-app switch. Its crash and freeze reports
+  follow iOS's <em>Share With App Developers</em> setting described above; its
+  word-free voice-request diagnostics are always sent. You can object to them
+  by writing to us (see <a href="#rights">Your rights</a>).
+</p>
+<p>
   It is used to fix the app and for nothing else. It does not build a profile of
   you, it is not shared onward, and no advertising or cross-app tracking is
   involved in it.
 </p>
 
+<h2 id="newsletters">Newsletters</h2>
+<p>
+  Newsletters are optional. Magpie can read aloud newsletters that are only
+  sent by email. To do that, it gives you a private newsletter address made of
+  three random words at <strong>magpieinbox.com</strong>, created the first
+  time you ask for it, for example by opening
+  <strong>Settings → Newsletters</strong> or asking Magpie to sign you up to a
+  newsletter. You give this address to newsletters instead of your
+  own email address. Anyone who learns it can send mail to it, which is why new
+  senders need your approval (below).
+</p>
+<p>
+  <strong>How the email arrives.</strong> Mail for magpieinbox.com is received
+  by Cloudflare Email Routing, and a small Cloudflare program passes each
+  message, complete and unaltered, straight on to our server. Magpie does not
+  ask Cloudflare to keep the messages; Cloudflare's delivery logs record the
+  address each message was sent to and whether it was delivered. Mail to an
+  address that does not belong to a Magpie account is refused.
+</p>
+<p>
+  <strong>What we keep.</strong> From each email, we keep the sender's name
+  and email address, the subject, the date it was sent, the newsletter's
+  content converted into an article (text, links and pictures' web
+  addresses), a one-line preview, a link to the web version if the email has
+  one, and the newsletter's unsubscribe address. Separately, apart from mail
+  from a sender you have blocked, the complete original email, including all
+  its headers, addresses and any attachments, is kept for up to 7 days so that
+  a message that could not be processed can be tried again, and is then
+  deleted. An email can contain whatever its sender put in it; if you forward
+  mail from your own inbox, that can include your own email address.
+</p>
+<p>
+  <strong>Private to you.</strong> Your newsletter emails are private to your
+  account. They are never added to Magpie's shared catalogue or shown to
+  anyone else. When you follow a newsletter, Magpie may look for the same
+  publication's public web feed on its own website and show that feed's
+  archive and artwork beside your emails; that public feed is shared like any
+  other show, but your emails are not.
+</p>
+<p>
+  <strong>New senders wait for your answer.</strong> The first email from a
+  sender appears under <em>Waiting for your answer</em>, not in your library,
+  until you choose <strong>Follow</strong> or <strong>Block</strong>. A sender
+  you have not answered is deleted, with its emails, 30 days after its latest
+  email. Choosing Block deletes that sender's emails at once and asks the
+  sender to stop, using the unsubscribe address in its email. Later emails from
+  it are discarded without being stored. We keep the blocked sender's name and
+  email address, so that the block keeps working, until you delete your
+  account. If you stop following a newsletter, Magpie asks the sender to stop
+  in the same way (and asks again, at most daily, until the sender accepts) and
+  keeps its emails for 30 days in case you change your mind; then they are
+  deleted. Magpie does not unsubscribe a newsletter you forward from another
+  inbox, because that subscription belongs to the other inbox.
+</p>
+<p>
+  <strong>Signing up for you.</strong> If you give Magpie a newsletter's web
+  address and ask it to sign you up, our server opens that web page and submits
+  your newsletter address to the publisher's own sign-up form or mailing
+  service (such as Substack, Ghost or Mailchimp), just as pressing its
+  subscribe button would. It sends only your newsletter address, together with
+  whatever the form itself supplies. It never sends your own email address or
+  name, and because our server makes the request, the publisher does not see
+  your device's IP address. For a first Substack newsletter, Magpie also asks
+  Substack to send a sign-in email that verifies the address. When a
+  confirmation email arrives, Magpie follows its confirmation link for you, and
+  it likewise accepts Gmail's request to confirm a forwarding rule you set up
+  to your newsletter address. Magpie never completes a CAPTCHA; sites that need
+  an account or a CAPTCHA are left for you to sign up to by hand. We keep a
+  record of each sign-up request (the website, publication and mailing
+  service) for 30 days, so that the first email can be recognised.
+</p>
+<p>
+  Once a newsletter is received, it is handled like any other article: it can
+  be read aloud on your device, and its title and sender are part of the
+  library details used for voice requests described above.
+</p>
+<p>
+  <strong>Deleting newsletter data.</strong> You can block a sender or stop
+  following a newsletter at any time, as above. Deleting your account deletes
+  your newsletter address, every newsletter, issue and original email, your
+  blocked senders and your sign-up records; mail sent to the address after that
+  is refused. An issue you added to Saved is kept with your saved articles, as
+  described below, until you delete your account.
+</p>
+
 <h2>What other companies can see</h2>
+<p>
+  OpenAI, Railway, Pydantic Logfire and Cloudflare are service providers: they
+  process data on our behalf, to run Magpie, and we do not share your data with
+  anyone for their own use. Apple, Google and publishers are described below.
+</p>
 <ul>
   <li>
-    <strong>Apple</strong> — sign-in, and speech recognition where it falls
-    back to Apple's servers.
+    <strong>Apple</strong> — sign-in, and speech recognition on iPhone and iPad
+    where it falls back to Apple's servers. Podcast directory searches, typed
+    or spoken, are sent by our server (not your device) to Apple's public
+    podcast directory, so Apple receives the search words but not who you are.
   </li>
   <li>
     <strong>Google</strong> — authentication when you choose Google sign-in.
-    See <a href="https://policies.google.com/privacy">Google's privacy policy</a>.
+    On Android, articles and spoken replies are read by offline voices from
+    Google's Speech Recognition &amp; Synthesis app on your phone, and speech
+    recognition uses the on-device recognition service installed on your
+    phone, which is usually Google's. Magpie itself does not send your words or audio
+    to Google's servers; those apps are covered by
+    <a href="https://policies.google.com/privacy">Google's privacy policy</a>.
   </li>
   <li>
     <strong>OpenAI</strong> — your spoken requests as text and the relevant
     library details described above, and the publication name from an explicit
-    web search. OpenAI does not receive microphone audio.
+    web search. OpenAI does not receive microphone audio or the text of your
+    newsletters.
+  </li>
+  <li>
+    <strong>Cloudflare</strong> — receives email sent to your newsletter
+    address and passes it straight to our server. See
+    <a href="#newsletters">Newsletters</a>.
   </li>
   <li>
     <strong>Railway</strong> — our hosting provider, which runs the servers and
@@ -237,7 +388,8 @@
   </li>
   <li>
     <strong>Pydantic Logfire</strong> — our diagnostics service, which holds the
-    record of each request described above for 30 days.
+    record of each request and the operational logs described above for 30
+    days.
   </li>
   <li>
     <strong>Podcast publishers and their hosts</strong> — episode audio,
@@ -246,6 +398,13 @@
     address, exactly as they would in a browser or podcast app. Article text
     and podcast search are fetched by our server instead. Article pictures use
     a temporary, non-persistent browser data store in Magpie.
+  </li>
+  <li>
+    <strong>Newsletter publishers</strong> — when you ask Magpie to sign you up
+    to a newsletter, or stop following or block one, our server contacts that
+    publisher's website or mailing service as described under
+    <a href="#newsletters">Newsletters</a>. They see your newsletter address,
+    not your own email address.
   </li>
 </ul>
 
@@ -274,8 +433,16 @@
   Your account, subscriptions and playback positions are kept until you delete
   your account. Sign-in tokens expire after 180 days without use. Shows that
   nobody subscribes to and nobody has listened to are removed from our catalogue
-  after 30 days. The diagnostic records described above are deleted after 30
-  days.
+  after 30 days. The diagnostic records and operational logs described above
+  are deleted after 30 days.
+</p>
+<p>
+  Newsletters you follow are kept until you stop following them (then for 30
+  days more) or delete your account. Complete original emails are deleted
+  after 7 days, senders you have not answered 30 days after their latest email,
+  and sign-up records after 30 days. Blocked senders are remembered until you
+  delete your account. The details are under
+  <a href="#newsletters">Newsletters</a>.
 </p>
 <p>
   Turning off AI data sharing prevents new AI requests. It does not rewrite
@@ -292,10 +459,13 @@
 
 <h2>Deleting your account</h2>
 <p>
-  Open <strong>Settings</strong> in the app and choose
-  <strong>Delete Account</strong>.
+  Open the <strong>Settings</strong> tab in the app, choose
+  <strong>Delete Account</strong> in the Account section, and confirm. If you
+  cannot use the app, <a href="/delete-account">follow these steps</a>
+  instead.
   This permanently removes your account, your subscriptions and your place in
-  every episode, and all linked sign-in identities. When an Apple connection is
+  every episode, your saved articles, your newsletter address and every
+  newsletter email received through it, and all linked sign-in identities. When an Apple connection is
   present, Magpie also asks Apple to revoke it. Deletion applies to the same
   account on both iOS and Android. It
   also deletes the only mapping between your account and its random diagnostic
@@ -305,10 +475,13 @@
   the old mapping until that backup's 30-day expiry, but backups are used only
   to restore the service. Because a spoken transcript is free text, its own
   words could still identify you if you chose to say identifying information.
+  Operational logs, including any search terms and the few lines that carry
+  your random diagnostic code, are not rewritten either; they expire under
+  the same 30-day limit.
   It cannot be undone. You do not need to contact us or wait for us to act.
 </p>
 
-<h2>Your rights</h2>
+<h2 id="rights">Your rights</h2>
 <p>
   If you are in the UK or the EU, you have the right to access your data, to
   correct it, to have it deleted, to object to how it is used, and to receive a
@@ -319,15 +492,17 @@
 </p>
 <p>
   We use different lawful bases for different purposes. Account, library,
-  playback and the processing needed to answer a voice or web-search request
-  are necessary to provide the service you ask for. We separately require the explicit
+  playback, newsletters you choose to receive, and the processing needed to
+  answer a voice or web-search request are necessary to provide the service you ask for. We separately require the explicit
   in-app permission described above before sharing a request with third-party
   AI, and you can withdraw that permission at any time. Limited security,
-  reliability and accessibility diagnostics are used for our legitimate
+  reliability and accessibility diagnostics, and the operational logs
+  described above, are used for our legitimate
   interest in keeping Magpie safe and usable: they are pseudonymised, kept for
   30 days, never used for advertising or profiling, and you may object by
   contacting us. Crash diagnostics are also controlled by iOS's
-  <em>Share With App Developers</em> setting.
+  <em>Share With App Developers</em> setting, and on Android by Magpie's
+  <em>Share app diagnostics</em> setting.
 </p>
 
 <h2>Children</h2>

@@ -55,7 +55,7 @@ android {
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"$googleClient\"")
         buildConfigField("String", "ACCOUNT_API_URL", "\"$accountServer\"")
         versionCode = 1
-        versionName = "0.1.0-prototype"
+        versionName = "1.0.0"
         testInstrumentationRunner = "com.henrydashwood.magpie.MagpieTestRunner"
     }
     signingConfigs {
@@ -73,6 +73,10 @@ android {
             require(releaseGoogleClient.matches(Regex("[A-Za-z0-9._-]*")))
             require(releaseServer.isEmpty() || releaseServer.matches(Regex("https://[A-Za-z0-9.-]+(:[0-9]+)?/?")))
             signingConfig = signingConfigs.getByName("release")
+            // R8 shrinks and optimises the store build; keep rules live in proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"$releaseGoogleClient\"")
             buildConfigField("String", "ACCOUNT_API_URL", "\"$releaseServer\"")
         }

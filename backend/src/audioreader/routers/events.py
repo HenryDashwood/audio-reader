@@ -39,7 +39,7 @@ def check_rate_limit(user: CurrentUser) -> None:
     if _limit.limit <= 0:
         return
     if not _limit.check(str(user.id)).allowed:
-        logger.warning("event rate limited user %s", user.id)
+        logger.warning("event rate limited telemetry %s", user.telemetry_id)
         raise HTTPException(status_code=429, detail="too many events")
     _limit.prune()
 

@@ -1,0 +1,26 @@
+Magpie is a podcast and article player that can be controlled by voice.
+
+Podcasts, blogs and newsletters are organised in a single library. Podcast episodes play as standard audio. Written articles are read aloud using an offline voice installed on your phone, with the same playback controls as a podcast: notification and lock-screen controls, headphone buttons, adjustable speed, a sleep timer and saved listening positions. You do not need screen-reader gestures or a separate reading mode to listen to an article.
+
+Tap the microphone and make a request, such as "play the latest In Our Time", "subscribe to Astral Codex Ten" or "play the one about Agincourt". An AI model interprets your request, so you can search by topic, title, show, guest or position instead of remembering exact names.
+
+• Find, follow and play shows by voice
+• Ask by topic, title, show, guest or position
+• Pause, resume, skip, change speed and set a sleep timer by voice
+• Hear articles read aloud in the offline voice you choose
+• Share articles from your browser to Magpie, or add a link, to read and listen later
+• Follow email newsletters with a newsletter address of your own
+• Keep one playback speed for podcasts and another for articles
+• Continue from where you stopped, on this phone or another device
+• Start Ask Magpie or Continue listening from a home-screen shortcut or a Quick Settings tile
+• Browse and play everything on screen if you prefer
+
+Newsletters that only exist as email can be followed too. Magpie gives you a newsletter address of your own to hand over instead of your inbox, or signs you up itself when you paste in a newsletter's web address. The first time a sender writes, Magpie asks whether to follow it. Follow one and each issue is read aloud like any article, without the unsubscribe links and footers that emails carry, and Latest lists the issues alongside your podcasts and blog posts.
+
+Magpie supports open podcast and RSS feeds, and every article includes a direct link to the original web page.
+
+The app can be used entirely without looking at the screen. It is designed for blind and partially sighted users, as well as sighted users. It uses standard Android controls, supports TalkBack and large text, and gives spoken, audible or vibration feedback when an action completes.
+
+Speech is converted to text on your phone by Android's on-device speech recognition. Magpie never receives or stores audio recordings of your voice. Before any spoken request or explicit AI web search is sent to an AI provider, the app explains what data will be shared and asks for your permission. You can withdraw this permission at any time in Settings.
+
+Sign in with Google or Apple to sync your library and listening positions across devices, including Magpie on iPhone. Connect both in Settings → Sign-in Methods to use either with the same library. You can delete your account and its data from Settings.

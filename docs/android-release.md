@@ -39,6 +39,13 @@ well as the local certificate if distributing locally signed APKs. See
 [Google's signing documentation](https://developer.android.com/studio/publish/app-signing).
 Never reuse the debug key as a release key.
 
+- Release builds are shrunk and optimised by R8 (`app/proguard-rules.pro`). Upload
+  `app/build/outputs/mapping/release/mapping.txt` with each bundle so Play can
+  de-obfuscate crash reports. R8 only runs on release, so the debug test suite does
+  not cover it: sign in and exercise playback, voice and saving on the
+  internal-testing build before promoting it.
+- Store graphics (512px icon, 1024×500 feature graphic) are in `play-store/graphics/`.
+
 ## Remaining release gates
 
 - [ ] Create the Play Console account and Magpie app under the intended owner.
@@ -58,7 +65,13 @@ Never reuse the debug key as a release key.
   linked-provider sign-in on an internal-test build signed by Google Play.
 - [ ] Choose the release version/code, prepare screenshots/listing, privacy policy,
   data safety/account deletion disclosures, content rating and permission review.
-  Recheck current Play requirements in the Console before submission.
+  Recheck current Play requirements in the Console before submission. Drafts are in
+  [`play-store/`](../play-store/README.md): listing text and
+  [release notes](../play-store/release_notes/en-GB.txt),
+  [Data safety](../play-store/data_safety.md), and the other
+  [App content answers](../play-store/app_content.md) (access, content rating,
+  foreground service, permissions, account deletion). Resolve their owner
+  questions first.
 - [ ] Build/inspect the signed APK/AAB, upload to internal testing, then obtain
   explicit release approval before publishing to users.
 

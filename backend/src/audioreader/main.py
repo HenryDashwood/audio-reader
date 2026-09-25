@@ -137,6 +137,15 @@ def create_app() -> FastAPI:
         """Public help and contact details for the App Store listing."""
         return FileResponse(STATIC_DIR / "support.html", media_type="text/html")
 
+    @app.get("/delete-account", include_in_schema=False)
+    async def delete_account() -> FileResponse:
+        """How to delete an account, reachable without the app.
+
+        Google Play requires a public page that explains deletion to people who
+        may no longer have the app installed; the in-app route stays primary.
+        """
+        return FileResponse(STATIC_DIR / "delete-account.html", media_type="text/html")
+
     from audioreader.routers import apple_browser
 
     app.include_router(apple_browser.router)

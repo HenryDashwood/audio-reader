@@ -322,8 +322,8 @@ async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
     )
     await session.commit()
     logger.info(
-        "signed user %s up to %s via %s%s",
-        user.id,
+        "signed telemetry %s up to %s via %s%s",
+        user.telemetry_id,
         plan.publication,
         plan.platform,
         " (sign-in email requested)" if sign_in_requested else "",
@@ -477,7 +477,7 @@ async def receive(session: AsyncSession, user: User, raw: bytes, recipient: str 
         record.error = str(exc)[:500]
         session.add(record)
         await session.commit()
-        logger.warning("could not parse an inbound email for user %s: %s", user.id, exc)
+        logger.warning("could not parse an inbound email for telemetry %s: %s", user.telemetry_id, exc)
         return Delivery(FAILED)
     record.message_id = message.message_id
 
@@ -489,7 +489,7 @@ async def receive(session: AsyncSession, user: User, raw: bytes, recipient: str 
             record.error = "forwarding confirmation followed; not an issue"
             session.add(record)
             await session.commit()
-            logger.info("confirmed a forwarding rule to user %s's address", user.id)
+            logger.info("confirmed a forwarding rule to telemetry %s's address", user.telemetry_id)
             return Delivery(CONFIRMED)
         # Left for her, code in the subject, as it would be in any inbox.
 
@@ -504,7 +504,7 @@ async def receive(session: AsyncSession, user: User, raw: bytes, recipient: str 
             record.error = "confirmation link followed; not an issue"
             session.add(record)
             await session.commit()
-            logger.info("confirmed the %s signup for user %s", signup.publication, user.id)
+            logger.info("confirmed the %s signup for telemetry %s", signup.publication, user.telemetry_id)
             return Delivery(CONFIRMED)
     if signup is not None and _SUBSCRIPTION_NOTICE.match(message.subject):
         record.error = "subscription notice; not an issue"

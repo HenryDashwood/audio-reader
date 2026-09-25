@@ -461,8 +461,8 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         // `isEnabled` declares that the app supports a command, not that the
         // command is the next valid state transition. Keep both directions
         // supported while this app owns Now Playing so iOS can carry the
-        // resumable session into the background; the handlers below reject a
-        // duplicate event that does not fit the current state.
+        // resumable session into the background. A pause remains valid when
+        // an interruption has already silenced the transport.
         centre.playCommand.isEnabled = true
         centre.pauseCommand.isEnabled = true
         centre.togglePlayPauseCommand.isEnabled = true
@@ -511,8 +511,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     }
 
     /// Internal so tests can deliver the same events as the system controls
-    /// without relying on a lock screen. A stale duplicate is a failure, not a
-    /// successful second state transition.
+    /// without relying on a lock screen.
     func handleRemotePlay() -> MPRemoteCommandHandlerStatus {
         guard currentEpisode != nil else { return .noActionableNowPlayingItem }
         guard !isPlaying else { return .commandFailed }
@@ -522,7 +521,9 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
 
     func handleRemotePause() -> MPRemoteCommandHandlerStatus {
         guard currentEpisode != nil else { return .noActionableNowPlayingItem }
-        guard isPlaying else { return .commandFailed }
+        // Siri can interrupt playback before delivering its pause command.
+        // Already silent is still success, and pause() must run to cancel
+        // interruption recovery and pending play retries.
         pause()
         return .success
     }

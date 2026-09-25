@@ -68,3 +68,23 @@ async def test_privacy_policy_covers_what_the_phone_itself_reports():
     # audio ever starts leaving the phone in that report, this is the line that
     # has to change first.
     assert "never your words" in body
+
+
+async def test_account_deletion_page_is_public():
+    # Google Play needs a deletion link that works without the app or a login.
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/delete-account")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "Delete Account" in response.text
+    assert "Magpie" in response.text
+    assert "mailto:" in response.text
+
+
+async def test_privacy_and_support_link_to_account_deletion():
+    transport = ASGITransport(app=create_app())
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for path in ("/privacy", "/support"):
+            body = (await client.get(path)).text
+            assert 'href="/delete-account"' in body, f"{path} no longer links to account deletion"
