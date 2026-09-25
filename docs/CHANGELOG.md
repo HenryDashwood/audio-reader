@@ -10,6 +10,21 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.6.1
+
+This update is mostly fixes. Magpie should understand you better when a
+request could mean more than one thing, and follow the conversation more
+closely when you ask a follow-up question. Asking Siri to control Magpie
+should work more reliably.
+
+Saved articles should open properly, more articles should be read in full
+without stray page text, and more of the app should keep working when your
+connection drops. When you finish listening, Magpie should hand audio back to
+your other apps cleanly. The message about syncing has gone.
+
+Please tell us if Magpie misunderstands a request, if a saved article reads
+wrongly, or if anything stops working while you are offline.
+
 ## 1.6.0
 
 Bring the podcasts and publications you follow into Magpie. Export an OPML
