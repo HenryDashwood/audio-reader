@@ -25,6 +25,7 @@ IOS_TEST_INPUTS = (
     "app-store/",
     "scripts/ios-dev.sh",
     "scripts/prepare-ios-simulators.sh",
+    ".github/workflows/ios-tests.yml",
 )
 # GitHub's compare API lists at most 300 files; beyond that the list is partial.
 COMPARE_FILE_LIMIT = 300
