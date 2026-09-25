@@ -1,4 +1,4 @@
-# audio-reader
+# Magpie
 
 **Magpie** is an iOS podcast and RSS reader. It plays audio podcast episodes
 and reads written articles aloud using iOS system voices through a single
