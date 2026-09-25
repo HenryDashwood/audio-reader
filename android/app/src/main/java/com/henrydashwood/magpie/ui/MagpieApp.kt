@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -56,6 +57,9 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     Saved("Saved", Icons.Rounded.BookmarkBorder),
     Settings("Settings", Icons.Rounded.Settings),
 }
+
+/** The pull-to-refresh action for TalkBack, attached to a screen's heading. */
+private val LocalRefreshActions = compositionLocalOf<List<CustomAccessibilityAction>> { emptyList() }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -177,19 +181,24 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
         if (selectedItem != null) selectedItemId = null else selectedSource = null
     }
 
+    // Pull to refresh, as on iOS. TalkBack cannot perform the pull, so the screen's heading
+    // carries the same refresh as a custom action.
+    val refreshable = snapshot.live && selectedItem == null && destination != Destination.Settings
+    fun refresh() { if (!snapshot.loading && !snapshot.searching) { model.refreshLibrary(); reloadVersion++ } }
+    val refreshActions = if (refreshable) listOf(CustomAccessibilityAction("Refresh library") { refresh(); true }) else emptyList()
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { if (selectedItem == null && selectedSource == null) Text(destination.label) },
+                title = {
+                    if (selectedItem == null && selectedSource == null)
+                        Text(destination.label, Modifier.semantics { heading(); customActions = refreshActions })
+                },
                 navigationIcon = {
                     if (selectedItem != null || selectedSource != null) IconButton(onClick = {
                         if (selectedItem != null) selectedItemId = null else selectedSource = null
                     }) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
                 },
                 actions = {
-                    if (snapshot.live && selectedItem == null && destination != Destination.Settings) IconButton(
-                        enabled = !snapshot.loading && !snapshot.searching,
-                        onClick = { model.refreshLibrary(); reloadVersion++ }) { Icon(Icons.Rounded.Refresh, "Refresh library") }
                     if (selectedItem == null && selectedSource == null && destination == Destination.Following) {
                         AddSourceButton(model, ::openItem) { showingSearch = false; query = "" }
                     }
@@ -245,11 +254,11 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                 snapshot.error?.let { error ->
                     Column(Modifier.padding(16.dp)) {
                         Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                        TextButton(onClick = { model.refreshLibrary(); reloadVersion++ }) { Text("Try again") }
+                        TextButton(onClick = ::refresh) { Text("Try again") }
                     }
                 }
             }
-            when {
+            val screen: @Composable () -> Unit = { when {
                 selectedItem != null && snapshot.live && !selectedItem.textLoaded -> Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (loadingItem == selectedItem.id) { CircularProgressIndicator(); Text("Loading article…") }
                     else {
@@ -267,7 +276,11 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                         pendingLinks = pendingLinks, removePendingLink = model::removePendingLink, live = snapshot.live, model = model, loading = snapshot.loading || snapshot.error != null)
                 }
                 else -> SettingsScreen(model, onShortcuts = { showingShortcuts = true }) { showingAccount = true }
-            }
+            } }
+            if (refreshable) CompositionLocalProvider(LocalRefreshActions provides refreshActions) {
+                PullToRefreshBox(isRefreshing = snapshot.loading || snapshot.searching, onRefresh = ::refresh,
+                    modifier = Modifier.fillMaxSize().testTag("pull-to-refresh")) { screen() }
+            } else screen()
         }
     }
     SubscriptionImportDialog(model) {
@@ -406,7 +419,8 @@ private fun FeedHeader(source: String, count: String, live: Boolean = false, sou
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Top) {
             if (!largeText) SourceArtwork(source, Modifier.size(88.dp), feed?.imageUrl)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(source, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading() })
+                val refreshActions = LocalRefreshActions.current
+                Text(source, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { heading(); customActions = refreshActions })
                 Text(count, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (live && feed != null && model != null) SourceManagementMenu(model, feed) else FeedManagementMenu(source, live, sources)

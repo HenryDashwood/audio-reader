@@ -28,11 +28,13 @@ class LiveLibraryTest {
         var requestedFeed: String? = null
         var requestedContent: Int? = null
         var reported = 0
+        var feedLoads = 0
         val article = RemoteEpisode(2, "A saved account article", contentId = 77, wordCount = 4)
         val podcast = RemoteEpisode(1, "Account podcast", source = "Account publication", audioUrl = "asset:///welcome.wav", positionSeconds = 15.0)
         override suspend fun userId(token: String) = "test-account"
         override suspend fun feeds(token: String): List<LibraryFeed> {
             if (failing) throw java.io.IOException()
+            feedLoads++
             return listOf(LibraryFeed("10", "Account publication", 12, false), LibraryFeed("20", "Empty publication", 0, true))
         }
         override suspend fun latest(token: String): List<RemoteEpisode> { if (failing) throw java.io.IOException(); return listOf(podcast) }
@@ -82,6 +84,20 @@ class LiveLibraryTest {
         compose.onNodeWithText("Try again").performClick()
         compose.waitUntil(10_000) { repository.state.value.feeds.isNotEmpty() }
         compose.onNodeWithText("Account publication").assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun pullDownAndTheTalkBackHeadingActionBothRefreshTheLibrary() {
+        launch()
+        compose.onNodeWithText("Account publication").assertIsDisplayed()
+        compose.waitUntil(10_000) { !repository.state.value.loading }
+        val initial = api.feedLoads
+        compose.onNodeWithTag("following-list").performTouchInput { swipeDown() }
+        compose.waitUntil(10_000) { api.feedLoads > initial && !repository.state.value.loading }
+        val pulled = api.feedLoads
+        compose.onNode(hasText("Following") and isHeading()).performCustomAccessibilityActionWithLabel("Refresh library")
+        compose.waitUntil(10_000) { api.feedLoads > pulled && !repository.state.value.loading }
+        compose.onNodeWithContentDescription("Refresh library").assertDoesNotExist()
     }
 
     @Test fun accountFeedsSavedTextAndLogoutReplaceTheSampleLibrary() {
