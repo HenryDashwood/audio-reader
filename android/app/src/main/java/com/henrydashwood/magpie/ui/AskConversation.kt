@@ -9,6 +9,20 @@ import android.view.accessibility.AccessibilityManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.MicNone
+import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.clickable
+import android.net.Uri
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -18,17 +32,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
-import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -49,7 +55,6 @@ fun AskConversation(model: MagpieModel) {
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val accessibility = context.getSystemService(AccessibilityManager::class.java)
-    var typed by remember { mutableStateOf("") }
     var dismissRequest by remember { mutableStateOf<VoiceRequest?>(null) }
     LaunchedEffect(state.recoveryRequests) {
         if (state.recoveryRequests.none { it.requestId == dismissRequest?.requestId }) dismissRequest = null
@@ -78,7 +83,7 @@ fun AskConversation(model: MagpieModel) {
             if (granted) approvedPermission = request
             else {
                 model.voice.microphoneDenied(accessibility?.isTouchExplorationEnabled == true)
-                permissionError = "Microphone access is off. Allow it in Android app settings to speak, or type your request below."
+                permissionError = "Microphone access is off. Allow it in Android settings to speak to Magpie."
             }
         }
     }
@@ -110,109 +115,107 @@ fun AskConversation(model: MagpieModel) {
     }
     LaunchedEffect(Unit) { checkRecognition() }
     LaunchedEffect(state.phase) { if (state.phase == VoicePhase.Listening) haptic.performHapticFeedback(HapticFeedbackType.LongPress) }
-    val history = rememberLazyListState()
-    LaunchedEffect(state.turns.size) { if (state.turns.isNotEmpty()) history.animateScrollToItem(state.turns.lastIndex) }
-    Dialog(onDismissRequest = { model.voice.close() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        val keyboard = LocalSoftwareKeyboardController.current
-        val focus = LocalFocusManager.current
-        val view = LocalView.current
-        val window = (view.parent as? DialogWindowProvider)?.window
-        val dark = MaterialTheme.colorScheme.surface.luminance() < .5f
-        DisposableEffect(window, dark) {
-            val bars = window?.let { WindowCompat.getInsetsController(it, view) }
-            val oldStatus = bars?.isAppearanceLightStatusBars
-            val oldNavigation = bars?.isAppearanceLightNavigationBars
-            bars?.isAppearanceLightStatusBars = !dark
-            bars?.isAppearanceLightNavigationBars = !dark
-            onDispose {
-                oldStatus?.let { bars.isAppearanceLightStatusBars = it }
-                oldNavigation?.let { bars.isAppearanceLightNavigationBars = it }
-            }
+    val touchExploration = accessibility?.isTouchExplorationEnabled == true
+    val microphoneUsable = !downloading && availability !in setOf(RecognitionAvailability.Unavailable,
+        RecognitionAvailability.DownloadNeeded, RecognitionAvailability.Downloading)
+    val caption = when (state.phase) {
+        VoicePhase.Preparing -> "Getting ready…"
+        VoicePhase.Listening -> "Listening…"
+        VoicePhase.Thinking -> "Thinking…"
+        VoicePhase.Speaking -> state.reply.ifBlank { "Magpie is speaking…" }
+        VoicePhase.Consent -> "Review AI data sharing to continue."
+        // TalkBack takes over the tap; telling her to tap anywhere would describe the wrong gesture.
+        VoicePhase.Idle -> state.reply.ifBlank {
+            if (touchExploration) "Double tap to say what you would like" else "Tap anywhere and say what you would like"
         }
-        Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
-                TopAppBar(title = { Text("Ask Magpie", Modifier.semantics { heading() }) },
-                    actions = { TextButton(onClick = { model.voice.close() }) { Text("Close") } })
-                LazyColumn(state = history, modifier = Modifier.weight(1f).fillMaxWidth().testTag("conversation-history"),
-                    contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    itemsIndexed(state.turns) { _, turn ->
-                        Column { Text(if (turn.speaker == "her") "You" else "Magpie", style = MaterialTheme.typography.labelLarge)
-                            Text(turn.text) }
+    }
+    val sheet = rememberModalBottomSheetState()
+    // Matches the iOS voice sheet: half height, one large target, and only what the moment needs.
+    ModalBottomSheet(onDismissRequest = { model.voice.close() }, sheetState = sheet, dragHandle = null) {
+        Box(Modifier.fillMaxWidth().fillMaxHeight().testTag("ask-sheet").semantics { isTraversalGroup = true }) {
+            Column(Modifier.fillMaxSize().padding(top = 40.dp).verticalScroll(rememberScrollState()).testTag("ask-content"),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                // One control for the whole area, so she can tap without aiming and TalkBack can find it.
+                Column(Modifier.fillMaxWidth().heightIn(min = 240.dp).testTag("ask-microphone")
+                    .clickable(enabled = microphoneUsable, role = Role.Button,
+                        onClickLabel = if (state.phase == VoicePhase.Listening) "finish speaking" else "speak") { requestListening() }
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "Speak to Magpie"
+                        stateDescription = caption
+                        if (state.phase != VoicePhase.Speaking) liveRegion = LiveRegionMode.Polite
                     }
-                    if (!state.busy || state.phase == VoicePhase.Listening) state.clarification?.choices?.forEach { choice -> item {
-                        TextButton(onClick = { model.voice.choose(choice) }, modifier = Modifier.fillMaxWidth()) {
-                            Text(choice.label)
-                        }
-                    } }
-                    if (state.turns.isEmpty()) item {
-                        Text("Tap Listen, then ask Magpie to find something, read an article, or control playback. You can also type a request.")
-                    }
-                    item { Text(when (state.phase) {
-                        VoicePhase.Preparing -> "Getting ready…"
-                        VoicePhase.Listening -> "Listening…"
-                        VoicePhase.Thinking -> "Working on your request…"
-                        VoicePhase.Speaking -> "Magpie is speaking…"
-                        VoicePhase.Consent -> "Review AI data sharing to continue."
-                        VoicePhase.Idle -> "Ready when you are."
-                    }, Modifier.semantics { if (state.phase != VoicePhase.Speaking) liveRegion = LiveRegionMode.Polite }) }
-                    if (state.heard.isNotBlank()) item { Text("Hearing: ${state.heard}") }
-                    if (state.reply.isNotBlank()) item { Text(state.reply) }
-                    listOfNotNull(state.error, permissionError, capabilityError).forEach { error -> item {
-                        Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                    } }
-                    if (availability == RecognitionAvailability.Unavailable) item {
-                        Text("On-device speech recognition is unavailable. Install an offline recognition service and an English (United Kingdom) language model in Android settings. You can still type a request.")
-                    }
-                    if (availability in setOf(RecognitionAvailability.DownloadNeeded, RecognitionAvailability.Downloading)) item {
-                        Text(if (availability == RecognitionAvailability.Downloading) "The offline recognition language is downloading." else "Download the English (United Kingdom) recognition language to use the microphone offline.")
-                        TextButton(enabled = !downloading, onClick = {
-                            downloading = true
-                            scope.launch {
-                                try { model.speechInput.requestModelDownload(); checkRecognition() }
-                                catch (cancelled: CancellationException) { throw cancelled }
-                                catch (failure: Exception) { capabilityError = failure.message }
-                                finally { downloading = false }
-                            }
-                        }) { Text(if (downloading) "Downloading…" else "Download recognition language") }
-                    }
-                    item {
-                        TextButton(onClick = { scope.launch { checkRecognition() } }) { Text("Check speech availability") }
-                        TextButton(onClick = {
-                            runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
-                                .onFailure { capabilityError = "Android settings could not open." }
-                        }) { Text("Android speech settings") }
-                    }
-                    if (state.recoveryRequests.isNotEmpty() && !state.busy) {
-                        item {
-                            Text("Unfinished requests", Modifier.semantics { heading() })
-                            Text("These stay on this device until resolved or dismissed. Signing out removes them.")
-                        }
-                        items(state.recoveryRequests.size) { index ->
-                            val request = state.recoveryRequests[index]
-                            Column {
-                                Text(request.transcript)
-                                TextButton(onClick = { model.voice.retryRequest(request.requestId) },
-                                    modifier = Modifier.semantics { contentDescription = "Check request: ${request.transcript}" }) { Text("Check this request") }
-                                TextButton(onClick = { dismissRequest = request },
-                                    modifier = Modifier.semantics { contentDescription = "Dismiss request: ${request.transcript}" }) { Text("Dismiss request") }
-                            }
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(112.dp)) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(when (state.phase) {
+                                VoicePhase.Preparing -> Icons.Rounded.MicNone
+                                VoicePhase.Listening -> Icons.Rounded.GraphicEq
+                                VoicePhase.Thinking, VoicePhase.Consent -> Icons.Rounded.MoreHoriz
+                                VoicePhase.Speaking -> Icons.AutoMirrored.Rounded.VolumeUp
+                                VoicePhase.Idle -> Icons.Rounded.Mic
+                            }, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
-                    item { Text("Recognition and spoken replies run on this device. Library requests share recognised words and relevant library context only with your account’s AI permission.", style = MaterialTheme.typography.bodySmall) }
+                    Text(caption, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
                 }
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = typed, onValueChange = { typed = it.take(2_000) }, label = { Text("Type a request") },
-                        modifier = Modifier.fillMaxWidth(), maxLines = 3)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(modifier = Modifier.weight(1f), onClick = {
-                            requestListening()
-                        }, enabled = !downloading && availability !in setOf(RecognitionAvailability.Unavailable, RecognitionAvailability.DownloadNeeded, RecognitionAvailability.Downloading)) {
-                            Text(if (state.phase == VoicePhase.Listening) "Done speaking" else if (state.busy) "Ask again" else "Listen")
-                        }
-                        OutlinedButton(modifier = Modifier.weight(1f), enabled = typed.isNotBlank(), onClick = { focus.clearFocus(); keyboard?.hide(); model.voice.submit(typed); typed = "" }) { Text("Send") }
-                    }
-                    if (state.recoverable && !state.busy) TextButton(onClick = model.voice::retry) { Text("Check previous request") }
+                if (state.turns.isNotEmpty() || state.heard.isNotBlank()) Transcript(state.turns, state.heard)
+                if (!state.busy || state.phase == VoicePhase.Listening) state.clarification?.choices?.forEach { choice ->
+                    OutlinedButton(onClick = { model.voice.choose(choice) }, modifier = Modifier.padding(horizontal = 24.dp)) { Text(choice.label) }
                 }
+                listOfNotNull(state.error, permissionError, capabilityError).forEach { error ->
+                    Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 24.dp).semantics { liveRegion = LiveRegionMode.Polite })
+                }
+                // Only when listening has been refused: otherwise the trip to settings is a hunt.
+                if (permissionError != null) Button(onClick = {
+                    runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", context.packageName, null))) }
+                        .onFailure { capabilityError = "Android settings could not open." }
+                }) { Text("Open settings") }
+                if (availability == RecognitionAvailability.Unavailable) {
+                    Text("On-device speech recognition is unavailable. Install an offline recognition service and an English (United Kingdom) language model in Android settings.",
+                        textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
+                    TextButton(onClick = {
+                        runCatching { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                            .onFailure { capabilityError = "Android settings could not open." }
+                    }) { Text("Android speech settings") }
+                }
+                if (availability in setOf(RecognitionAvailability.DownloadNeeded, RecognitionAvailability.Downloading)) {
+                    Text(if (availability == RecognitionAvailability.Downloading) "The offline recognition language is downloading."
+                        else "Download the English (United Kingdom) recognition language to use the microphone offline.",
+                        textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
+                    TextButton(enabled = !downloading, onClick = {
+                        downloading = true
+                        scope.launch {
+                            try { model.speechInput.requestModelDownload(); checkRecognition() }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (failure: Exception) { capabilityError = failure.message }
+                            finally { downloading = false }
+                        }
+                    }) { Text(if (downloading) "Downloading…" else "Download recognition language") }
+                }
+                if (state.recoverable && !state.busy) TextButton(onClick = model.voice::retry) { Text("Check previous request") }
+                if (state.recoveryRequests.isNotEmpty() && !state.busy) Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp)
+                    .testTag("recovery-requests"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Unfinished requests", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+                    Text("These stay on this device until resolved or dismissed. Signing out removes them.")
+                    state.recoveryRequests.forEach { request ->
+                        Column {
+                            Text(request.transcript)
+                            TextButton(onClick = { model.voice.retryRequest(request.requestId) },
+                                modifier = Modifier.semantics { contentDescription = "Check request: ${request.transcript}" }) { Text("Check this request") }
+                            TextButton(onClick = { dismissRequest = request },
+                                modifier = Modifier.semantics { contentDescription = "Dismiss request: ${request.transcript}" }) { Text("Dismiss request") }
+                        }
+                    }
+                }
+                Spacer(Modifier.navigationBarsPadding().height(16.dp))
+            }
+            // Last in reading order: it is the escape hatch, not the purpose of the sheet.
+            IconButton(onClick = { model.voice.close() }, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                .semantics { traversalIndex = 1f }) {
+                Icon(Icons.Rounded.KeyboardArrowDown, "Close")
             }
         }
     }
@@ -223,4 +226,30 @@ fun AskConversation(model: MagpieModel) {
             dismissButton = { TextButton(onClick = { dismissRequest = null }) { Text("Keep request") } })
     }
     if (state.phase == VoicePhase.Consent) AIConsentDialog(false, state.error, model.voice::allowAI, model.voice::declineAI)
+}
+
+/** Plain named turns, newest at the bottom: what she said, what Magpie heard, and what it answered. */
+@Composable
+private fun Transcript(turns: List<ConversationTurn>, heard: String) {
+    val history = rememberLazyListState()
+    val count = turns.size + if (heard.isNotBlank()) 1 else 0
+    LaunchedEffect(count) { if (count > 0) history.animateScrollToItem(count - 1) }
+    LazyColumn(state = history, modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp).testTag("conversation-history")
+        .semantics { contentDescription = "Conversation" }, contentPadding = PaddingValues(horizontal = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        itemsIndexed(turns) { _, turn ->
+            val name = if (turn.speaker == "her") "You" else "Magpie"
+            Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = "$name said: ${turn.text}" }) {
+                Text(name, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(turn.text, color = if (turn.speaker == "her") MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        // Partial words change constantly; TalkBack reads the final turn once instead.
+        if (heard.isNotBlank()) item {
+            Column(Modifier.fillMaxWidth().clearAndSetSemantics { }) {
+                Text("You", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(heard)
+            }
+        }
+    }
 }

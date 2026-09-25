@@ -317,9 +317,10 @@ captions and completed turns, requests microphone permission explicitly, and
 provides recognition capability checks and model downloads. AI permission is
 required before sending library requests; local playback and timer controls
 work without it. Follow-up capture begins only after spoken audio finishes and
-honours Keep listening and the selected 10/15/20/30-second wait. Typed requests
-and TalkBack use manual turns. Closing, backgrounding, and recreation stop the
-microphone; returning requires another explicit Listen tap.
+honours Keep listening and the selected 10/15/20/30-second wait. TalkBack uses
+manual turns. Closing, backgrounding, and recreation stop the microphone;
+returning requires another explicit tap on the microphone. (The screen was later
+redesigned to match the iOS voice sheet, without typed input.)
 
 The playback service owns each conversation's pause/resume decision. Explicit
 media controls, account changes, unplugging audio, and sleep expiry invalidate
@@ -374,8 +375,8 @@ TalkBack, Bluetooth, microphone, and assistant acceptance remain separate.
 The second milestone connects trusted Ask launcher/pin/tile launches to the
 microphone. A private installation proof distinguishes these launches from forged
 exported intents; only the foreground, unlocked conversation can request Android
-permission and start listening. TalkBack retains manual Listen. The launch is
-consumed once and does not survive backgrounding, recreation, closing, typing a
+permission and start listening. TalkBack retains a manual tap. The launch is
+consumed once and does not survive backgrounding, recreation, closing, starting a
 new request, or account changes. Delayed permission replies cannot activate a
 different conversation. Repeated disposal cannot reverse a service decision to
 keep playback paused after an explicit interruption.

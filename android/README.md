@@ -416,11 +416,11 @@ can show the native Add tile prompt from Settings; Android 12 users can add them
 with Quick Settings → Edit. Tiles request device unlock before opening the app.
 The Ask launcher shortcut, home-screen pin, and tile start listening once Magpie
 is in the foreground and unlocked. Android microphone permission is still required;
-denial leaves typed input available. TalkBack keeps the explicit Listen tap.
+denial offers Open settings. TalkBack keeps an explicit tap on the microphone.
 An installation-specific random proof, stored privately and excluded from backup,
 is published only to the Android shortcut host and permission-protected tile.
 Ordinary exported intents cannot authorize recording, even if they request it.
-The launch is consumed once; backgrounding, recreation, closing, typing another
+The launch is consumed once; backgrounding, recreation, closing, starting another
 request, and account changes invalidate pending permission replies. Returning to
 the app never reopens the microphone automatically. Missing offline recognition
 still produces the existing capability explanation without a network fallback.
@@ -542,12 +542,19 @@ Gemini support or phone acceptance.
 
 ## Ask Magpie
 
-Listen (or an Ask shortcut) asks for microphone permission and uses Android's on-device recognition
+Ask Magpie matches the iOS voice sheet: a half-height sheet whose large microphone
+area is one control, with a status caption and the conversation beneath it. The
+in-app microphone buttons open it straight into listening; tapping again finishes
+speaking or interrupts. There is no typed input. TalkBack users start each turn
+with a double tap, untrusted shortcuts never start the microphone, and unfinished
+requests are shown instead of listening. Speech-model, permission and recovery
+controls appear only when relevant.
+
+Opening asks for microphone permission and uses Android's on-device recognition
 service, with an English (United Kingdom) model. Capability checks distinguish
 missing, downloadable, and pending models; downloads require an explicit action.
 There is no network recognition fallback. Recognition, spoken replies, and article
-narration remain on device. Audio recordings are not retained. Typed requests are
-available when the microphone or offline model is unavailable.
+narration remain on device. Audio recordings are not retained.
 
 Local playback, speed, undo-speed, sleep-timer, and end-conversation commands work
 without an account or AI permission. Free-form library requests use the existing account

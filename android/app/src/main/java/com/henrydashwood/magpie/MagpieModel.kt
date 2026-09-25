@@ -324,7 +324,8 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
             } finally { if (version == shortcutVersion) mutableShortcutWorking.value = null }
         }
     }
-    fun ask(viewedEpisodeId: Int? = null) { cancelShortcut(); voice.open(viewedEpisodeId) }
+    /** The microphone buttons open straight into listening, as on iOS. */
+    fun ask(viewedEpisodeId: Int? = null, listen: Boolean = true) { cancelShortcut(); voice.open(viewedEpisodeId, listenOnOpen = listen) }
     suspend fun searchLibrary(feedId: String?, query: String) {
         if (libraryState.value.live && libraryState.value.owner != null) repository.search(feedId, query)
     }

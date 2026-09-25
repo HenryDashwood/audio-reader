@@ -144,7 +144,7 @@ class VoiceRecoveryTest {
     }
     @Test fun checkOlderReceiptPreservesNewerFilingAndReleasesItsDurableProgressGuard() {
         assertTrue(api.requests.isEmpty())
-        compose.onNodeWithTag("conversation-history").performScrollToNode(hasContentDescription("Check request: ${first.transcript}"))
+        compose.onNodeWithTag("ask-content").performScrollToNode(hasContentDescription("Check request: ${first.transcript}"))
         compose.onNodeWithContentDescription("Check request: ${first.transcript}").performClick()
         compose.waitUntil(10_000) { !model.voice.state.value.busy && model.voice.state.value.recoveryRequests.size == 1 }
         assertTrue(api.requests.isEmpty()); assertFalse(library.state.value.items.first { it.episodeId == 1 }.completed)
@@ -156,7 +156,7 @@ class VoiceRecoveryTest {
         assertEquals(second, runBlocking { FileConversationStore(directory).read(owner).single().request })
     }
     @Test fun unknownOutcomeUsesExactOriginalRequestAndSignoutClearsRemainingPrivateRecovery() {
-        compose.onNodeWithTag("conversation-history").performScrollToNode(hasContentDescription("Check request: ${second.transcript}"))
+        compose.onNodeWithTag("ask-content").performScrollToNode(hasContentDescription("Check request: ${second.transcript}"))
         compose.onNodeWithContentDescription("Check request: ${second.transcript}").performClick()
         compose.waitUntil(10_000) { !model.voice.state.value.busy && api.requests.size == 1 }
         assertEquals(second, api.requests.single())
@@ -169,7 +169,7 @@ class VoiceRecoveryTest {
     @Test fun dismissalRequiresConfirmationAndCancelsOnlyTheSelectedOriginalRequest() {
         api.allowed = false
         fun openDismiss() {
-            compose.onNodeWithTag("conversation-history").performScrollToNode(hasContentDescription("Dismiss request: ${first.transcript}"))
+            compose.onNodeWithTag("ask-content").performScrollToNode(hasContentDescription("Dismiss request: ${first.transcript}"))
             compose.onNodeWithContentDescription("Dismiss request: ${first.transcript}").performClick()
         }
         openDismiss(); compose.onNodeWithText("Keep request").performClick()
@@ -200,13 +200,13 @@ class VoiceRecoveryTest {
         val undo = VoiceRequest("Undo the last library change", "typed-original-undo")
         replaceRecovery(listOf(RecoverableVoiceRequest(filing, structured = StructuredLibraryRequest("mark_played", 1, true)),
             RecoverableVoiceRequest(undo, structured = StructuredLibraryRequest("undo", null))))
-        compose.onNodeWithTag("conversation-history").performScrollToNode(hasContentDescription("Check request: ${filing.transcript}"))
+        compose.onNodeWithTag("ask-content").performScrollToNode(hasContentDescription("Check request: ${filing.transcript}"))
         compose.onNodeWithContentDescription("Check request: ${filing.transcript}").performClick()
         compose.waitUntil(10_000) { !model.voice.state.value.busy && model.voice.state.value.recoveryRequests.size == 1 }
         assertEquals(listOf(Triple("mark_played", 1, filing.requestId)), api.typedRequests)
         assertTrue(api.requests.isEmpty()); assertEquals(0, api.grants)
         assertFalse(library.state.value.items.first { it.episodeId == 1 }.completed)
-        compose.onNodeWithTag("conversation-history").performScrollToNode(hasContentDescription("Dismiss request: ${undo.transcript}"))
+        compose.onNodeWithTag("ask-content").performScrollToNode(hasContentDescription("Dismiss request: ${undo.transcript}"))
         compose.onNodeWithContentDescription("Dismiss request: ${undo.transcript}").performClick()
         compose.onNode(hasText("Dismiss request") and hasAnyAncestor(isDialog() and hasAnyDescendant(hasText("Stop checking this request?")))).performClick()
         compose.waitUntil(10_000) { !model.voice.state.value.busy && model.voice.state.value.recoveryRequests.isEmpty() }
@@ -218,7 +218,7 @@ class VoiceRecoveryTest {
         val undo = VoiceRequest("Undo the last library change", "saved-undo-receipt")
         replaceRecovery(listOf(RecoverableVoiceRequest(undo,
             VoiceResponse(VoiceAction.Restore, "Restored the first podcast.", api.podcast), StructuredLibraryRequest("undo", null))))
-        compose.onNodeWithTag("conversation-history").performScrollToNode(hasContentDescription("Check request: ${undo.transcript}"))
+        compose.onNodeWithTag("ask-content").performScrollToNode(hasContentDescription("Check request: ${undo.transcript}"))
         compose.onNodeWithContentDescription("Check request: ${undo.transcript}").performClick()
         compose.waitUntil(10_000) { !model.voice.state.value.busy && model.voice.state.value.recoveryRequests.isEmpty() }
         assertTrue(api.typedRequests.isEmpty())
@@ -235,15 +235,15 @@ class VoiceRecoveryTest {
                 MagpieTheme(darkTheme = true) { MagpieApp(model) }
             }
         } }
-        compose.onNodeWithTag("conversation-history").performScrollToNode(hasContentDescription("Check request: ${first.transcript}"))
+        compose.onNodeWithTag("ask-content").performScrollToNode(hasContentDescription("Check request: ${first.transcript}"))
         compose.onNodeWithContentDescription("Check request: ${first.transcript}").assertIsDisplayed()
-        compose.onNodeWithText("Close").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close").assertIsDisplayed()
         val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
         val directory = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("additionalTestOutputDir") ?: app.filesDir.path
         val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
         File(directory, "voice-recovery-large-dark.png").outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         screenshot.recycle()
-        compose.onNodeWithTag("conversation-history").performScrollToNode(hasContentDescription("Dismiss request: ${first.transcript}"))
+        compose.onNodeWithTag("ask-content").performScrollToNode(hasContentDescription("Dismiss request: ${first.transcript}"))
         compose.onNodeWithContentDescription("Dismiss request: ${first.transcript}").assertIsDisplayed().performClick()
         compose.onNodeWithText("Keep request").assertIsDisplayed().performClick()
         assertTrue(api.requests.isEmpty()); assertTrue(api.cancellations.isEmpty())

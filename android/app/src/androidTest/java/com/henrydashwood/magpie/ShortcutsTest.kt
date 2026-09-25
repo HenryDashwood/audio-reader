@@ -167,11 +167,11 @@ class ShortcutsTest {
         assertEquals(4, shortcuts.size)
         assertEquals(MagpieShortcuts.basics.toSet(), shortcuts.map { MagpieShortcuts.take(app, Intent(checkNotNull(it.intent)))!!.action }.toSet())
         deliver(ShortcutRequest(ShortcutAction.Ask))
-        compose.onNodeWithText("Type a request").assertIsDisplayed()
+        compose.onNodeWithTag("ask-microphone").assertIsDisplayed()
         assertEquals(0, listens)
         scenario!!.recreate(); scenario!!.onActivity { model = ViewModelProvider(it)[MagpieModel::class.java] }
-        compose.onNodeWithText("Type a request").assertIsDisplayed(); assertEquals(0, listens)
-        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithTag("ask-microphone").assertIsDisplayed(); assertEquals(0, listens)
+        compose.onNodeWithContentDescription("Close").performClick()
         deliver(ShortcutRequest(ShortcutAction.Saved))
         compose.onNodeWithContentDescription("Add link").assertExists()
     }
@@ -186,12 +186,12 @@ class ShortcutsTest {
         assertFalse(scenarioIntentHasProof())
         scenario!!.recreate(); scenario!!.onActivity { model = ViewModelProvider(it)[MagpieModel::class.java] }
         compose.waitUntil(5_000) { !microphoneActive }
-        compose.onNodeWithText("Listen").assertIsDisplayed(); assertEquals(1, listens)
+        compose.onNodeWithTag("ask-microphone").assertIsDisplayed(); assertEquals(1, listens)
         launch(); compose.waitUntil(10_000) { listens == 2 && microphoneActive }
         scenario!!.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
         compose.waitUntil(5_000) { !microphoneActive }
         scenario!!.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
-        compose.onNodeWithText("Listen").assertIsDisplayed(); assertEquals(2, listens)
+        compose.onNodeWithTag("ask-microphone").assertIsDisplayed(); assertEquals(2, listens)
     }
 
     private fun scenarioIntentHasProof(): Boolean {
@@ -205,7 +205,7 @@ class ShortcutsTest {
             .putExtra("shortcut_microphone", "0".repeat(64)).putExtra("listenOnOpen", true)
         assertFalse(checkNotNull(MagpieShortcuts.take(app, Intent(forged))).listenOnOpen)
         scenario!!.onActivity { it.startActivity(forged.addCategory(Intent.CATEGORY_LAUNCHER)) }
-        compose.onNodeWithText("Listen").assertIsDisplayed(); assertEquals(0, listens)
+        compose.onNodeWithTag("ask-microphone").assertIsDisplayed(); assertEquals(0, listens)
         val published = app.getSystemService(ShortcutManager::class.java).dynamicShortcuts.first { it.id == "magpie-ask" }
         val copied = Intent(checkNotNull(published.intent))
         assertTrue(checkNotNull(MagpieShortcuts.take(app, copied)).listenOnOpen)
@@ -241,15 +241,15 @@ class ShortcutsTest {
         compose.waitUntil(5_000) { requests == 1 }; assertEquals(0, listens)
         compose.runOnUiThread { registry.dispatchResult(permissionCode, false) }
         compose.onNodeWithText("Microphone access is off.", substring = true).assertExists(); assertEquals(0, listens)
-        compose.onNodeWithText("Listen").performClick()
+        compose.onNodeWithTag("ask-microphone").performClick()
         compose.waitUntil(5_000) { requests == 2 }
         compose.runOnUiThread {
             model.voice.background(); model.voice.open(null)
             permissionGranted = true; registry.dispatchResult(permissionCode, true)
         }
-        compose.onNodeWithText("Listen").assertIsDisplayed(); assertEquals(0, listens)
+        compose.onNodeWithTag("ask-microphone").assertIsDisplayed(); assertEquals(0, listens)
         compose.runOnUiThread { permissionGranted = false }
-        compose.onNodeWithText("Listen").performClick()
+        compose.onNodeWithTag("ask-microphone").performClick()
         compose.waitUntil(5_000) { requests == 3 }
         compose.runOnUiThread { permissionGranted = true; registry.dispatchResult(permissionCode, true) }
         compose.waitUntil(10_000) { listens == 1 && microphoneActive }
@@ -458,7 +458,7 @@ class ShortcutsTest {
             compose.waitUntil(10_000) { shell("dumpsys activity services ${app.packageName}").contains("AskMagpieTile") }
             shell("cmd statusbar click-tile ${component.flattenToString()}")
             compose.waitUntil(10_000) { model.voice.state.value.visible }
-            compose.onNodeWithText("Type a request").assertIsDisplayed()
+            compose.onNodeWithTag("ask-microphone").assertIsDisplayed()
             compose.waitUntil(10_000) { listens == 1 && microphoneActive }
         } finally {
             shell("cmd statusbar collapse")

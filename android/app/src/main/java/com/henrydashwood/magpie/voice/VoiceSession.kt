@@ -65,18 +65,26 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         accountKey = key; conversation.activate(key); deferredTranscript = null
         mutable.value = VoiceSessionState()
     }
+    /** Opening to speak is itself the request to listen, unless unfinished requests need review
+     * first: restoring them never starts the microphone. */
     fun open(viewedEpisodeId: Int?, listenOnOpen: Boolean = false) {
         close()
         activate(); viewedId = viewedEpisodeId; conversation.forgetIfStale()
-        mutable.value = VoiceSessionState(visible = true, turns = conversation.turns, recoverable = conversation.pending != null,
-            launchListening = if (listenOnOpen) UUID.randomUUID().toString() else null, recoveryRequests = conversation.recoveryRequests, clarification = conversation.clarification)
+        val launch = if (listenOnOpen) UUID.randomUUID().toString() else null
         val account = host.account()
-        if (conversation.durable && account.live && account.owner != null) {
+        val restoring = conversation.durable && account.live && account.owner != null
+        mutable.value = VoiceSessionState(visible = true, turns = conversation.turns, recoverable = conversation.pending != null,
+            launchListening = launch?.takeIf { !restoring && conversation.recoveryRequests.isEmpty() },
+            recoveryRequests = conversation.recoveryRequests, clarification = conversation.clarification)
+        if (restoring) {
             val id = version
             restoreJob = scope.launch {
                 try {
                     conversation.restore(account.owner)
-                    if (id == version && state.value.visible) publish()
+                    if (id == version && state.value.visible) {
+                        publish()
+                        if (launch != null && conversation.recoveryRequests.isEmpty()) mutable.update { it.copy(launchListening = launch) }
+                    }
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) {
                     if (id == version) mutable.update { it.copy(error = "Saved requests could not be read. Playback controls still work.") }

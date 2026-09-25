@@ -148,8 +148,8 @@ class VoiceConversationTest {
     }
     private fun ask(text: String) {
         if (!model.voice.state.value.visible) compose.onNodeWithContentDescription("Ask Magpie").performClick()
-        compose.onNodeWithText("Type a request").performTextInput(text)
-        compose.onNodeWithText("Send").performClick()
+        // Opening listens straight away; a submitted request replaces that turn.
+        compose.runOnUiThread { model.voice.submit(text) }
     }
     private fun idle() {
         try { compose.waitUntil(10_000) { !model.voice.state.value.busy } }
@@ -182,7 +182,7 @@ class VoiceConversationTest {
         compose.waitUntil(10_000) { model.voice.state.value.phase == VoicePhase.Speaking && !model.player.value.playing }
         assertEquals(1, model.player.value.item?.episodeId)
         val request = api.requests.single()
-        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("Close").performClick()
         compose.waitUntil(5_000) { model.player.value.playing }; assertEquals(1, model.player.value.item?.episodeId)
         output.gate = null
         compose.onNodeWithContentDescription("Ask Magpie").performClick()
@@ -215,7 +215,6 @@ class VoiceConversationTest {
 
     @Test fun explicitPauseFromAnotherControlStopsCaptureAndPreventsResume() {
         play(); compose.onNodeWithContentDescription("Ask Magpie").performClick()
-        compose.onNodeWithText("Listen", substring = false).performClick()
         compose.waitUntil(5_000) { input.active && !model.player.value.playing }
         compose.runOnUiThread { model.pause() }
         compose.waitUntil(5_000) { !input.active && !model.voice.state.value.visible }
@@ -230,7 +229,7 @@ class VoiceConversationTest {
         assertEquals(30, PlaybackStatus.sleepTimer.value.remainingMinutes)
         ask("Cancel sleep timer"); idle(); assertFalse(PlaybackStatus.sleepTimer.value.running)
         assertTrue(api.requests.isEmpty())
-        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("Close").performClick()
         compose.waitUntil(5_000) { model.player.value.playing }
     }
 
@@ -243,7 +242,7 @@ class VoiceConversationTest {
         catch (failure: ComposeTimeoutException) {
             throw AssertionError("Filed item remained loaded: player=${model.player.value}, voice=${model.voice.state.value}, preparation=${PlaybackStatus.state.value}", failure)
         }
-        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("Close").performClick()
         assertFalse(model.player.value.playing); assertTrue(api.writesAfterFiling.isEmpty())
         assertTrue(library.state.value.items.first { it.episodeId == 1 }.completed)
     }
@@ -258,11 +257,11 @@ class VoiceConversationTest {
             throw AssertionError("Filing confirmation: voice=${model.voice.state.value}, player=${model.player.value}, " +
                 "requests=${api.requests.size}, filed=${api.filed}, spoken=${output.said}", failure)
         }
-        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("Close").performClick()
         assertFalse(model.player.value.playing); assertTrue(api.writesAfterFiling.isEmpty())
         output.gate = null; api.response = VoiceResponse(VoiceAction.Restore, "Restored your episode.", api.podcast)
         ask("Undo that"); idle(); assertNull(model.voice.state.value.error); assertEquals(1, api.typedUndoRequests)
-        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("Close").performClick()
         play()
         assertTrue(model.player.value.positionMs >= 12_000); assertTrue(model.player.value.positionMs < 20_000)
     }
@@ -310,7 +309,6 @@ class VoiceConversationTest {
         play(); output.gate = CompletableDeferred()
         compose.runOnUiThread { model.setConversationPreferences(ConversationPreferences(false, 30)); input.words.trySend("Find a show") }
         compose.onNodeWithContentDescription("Ask Magpie").performClick()
-        compose.onNodeWithText("Listen").performClick()
         compose.waitUntil(5_000) { model.voice.state.value.phase == VoicePhase.Speaking }
         assertFalse(input.active); assertEquals(listOf(8_000L), input.waits)
         compose.runOnUiThread { output.gate!!.complete(Unit) }
@@ -354,7 +352,7 @@ class VoiceConversationTest {
                     Bundle().apply { putLong(PlaybackService.SLEEP_DURATION_MS, 8_000) })
             }.get(10, TimeUnit.SECONDS)
             assertEquals(0, result.resultCode)
-            compose.onNodeWithContentDescription("Ask Magpie").performClick(); compose.onNodeWithText("Listen").performClick()
+            compose.onNodeWithContentDescription("Ask Magpie").performClick()
             compose.waitUntil(5_000) { input.active }
             try { compose.waitUntil(12_000) { !PlaybackStatus.sleepTimer.value.running && !input.active && !model.voice.state.value.visible } }
             catch (failure: ComposeTimeoutException) {
@@ -406,13 +404,13 @@ class VoiceConversationTest {
         assertEquals(20, model.conversationSettings.value.followUpSeconds)
         api.response = VoiceResponse(VoiceAction.Unknown, "You can ask for a podcast, save an article, or change the listening speed. What would you like to hear?")
         ask("What can I ask?"); idle()
-        compose.onNodeWithText("Type a request").assertIsDisplayed(); compose.onNodeWithText("Listen").assertIsDisplayed()
-        compose.waitUntil(5_000) { compose.onNodeWithText("Close").isDisplayed() }
+        compose.onNodeWithTag("ask-microphone").assertIsDisplayed()
+        compose.waitUntil(5_000) { compose.onNodeWithContentDescription("Close").isDisplayed() }
         val outputDir = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir") ?: app.filesDir.path
         val screenshot = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
         File(outputDir, "voice-conversation-large-dark.png").outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-        compose.onNodeWithText("Close").assertIsDisplayed()
-        scenario!!.recreate(); compose.onNodeWithText("Type a request").assertIsDisplayed()
-        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("Close").assertIsDisplayed()
+        scenario!!.recreate(); compose.onNodeWithTag("ask-microphone").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close").performClick()
     }
 }

@@ -18,6 +18,9 @@ class MagpieNavigationTest {
     private val article = SampleLibrary().items.first { it.id == "walking" }
     private lateinit var originalSaved: Set<String>
     @Before fun seedSavedArticle() {
+        // Ask Magpie opens straight into listening; without this, Android's permission prompt covers the sheet.
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
+            .grantRuntimePermission(compose.activity.packageName, android.Manifest.permission.RECORD_AUDIO)
         val store = com.henrydashwood.magpie.data.PreviewStore(compose.activity)
         originalSaved = store.saved
         val model = compose.runOnUiThread { androidx.lifecycle.ViewModelProvider(compose.activity)[MagpieModel::class.java] }
@@ -88,16 +91,16 @@ class MagpieNavigationTest {
             if (tab != "Following") compose.onNodeWithText(tab).performClick()
             compose.onAllNodesWithContentDescription("Ask Magpie").assertCountEquals(1)
             compose.onNodeWithContentDescription("Ask Magpie").performClick()
-            compose.onNodeWithText("Type a request").assertIsDisplayed()
+            compose.onNodeWithTag("ask-microphone").assertIsDisplayed()
             if (tab == "Settings") compose.activityRule.scenario.recreate()
-            compose.onNodeWithText("Close").performClick()
+            compose.onNodeWithContentDescription("Close").performClick()
         }
         compose.onNodeWithText("Following").performClick()
         compose.onNodeWithText("Field notes").performClick()
         compose.onNodeWithContentDescription("Search").performClick()
         compose.onNodeWithText("Search this show").performTextInput("pleasure")
         compose.onNodeWithContentDescription("Ask Magpie").performClick()
-        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("Close").performClick()
         compose.onNodeWithText("Search this show").assertTextContains("pleasure")
         compose.onNodeWithContentDescription("Close search").performClick()
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasContentDescription("Manage Field notes"))

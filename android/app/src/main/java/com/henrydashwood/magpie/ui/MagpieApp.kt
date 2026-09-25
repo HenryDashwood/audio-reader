@@ -552,7 +552,7 @@ private fun ItemFilingStatus(model: MagpieModel) {
             color = if (state.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
         if (state.error != null) {
             TextButton(onClick = model.itemFiling::retry) { Text("Retry change") }
-            TextButton(onClick = { model.ask() }) { Text("Check saved requests") }
+            TextButton(onClick = { model.ask(listen = false) }) { Text("Check saved requests") }
             TextButton(onClick = model.itemFiling::dismissError) { Text("Close message") }
         }
     }
