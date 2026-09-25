@@ -232,6 +232,18 @@ class ArticleReaderTest {
         compose.onNodeWithText("Find in this page").assertTextContains("precisely")
         compose.waitUntil(10_000) { compose.onAllNodesWithText("1 of 1 matches").fetchSemanticsNodes().isNotEmpty() }
     }
+    @Test fun progressUpdatesDoNotReloadTheArticle() {
+        val item = mutableStateOf(RichArticleSample.item)
+        compose.runOnUiThread { compose.activity.setContent { MagpieTheme { ArticleReader(item.value, "", position = null) } } }
+        val view = browser()
+        inspect(view, "(window.magpieProbe = 1, {})")
+        repeat(3) { save ->
+            compose.runOnIdle { item.value = item.value.copy(remotePositionMs = 3_000L * (save + 1), progressRevision = "r$save") }
+            compose.waitForIdle()
+        }
+        assertEquals(1, inspect(view, "({probe: window.magpieProbe || 0})").getInt("probe"))
+    }
+
     @Test fun readingMarkerAlignsAfterRichContentAndManualScrollingRequiresFollow() {
         val item = RichArticleSample.item
         val offset = item.text.indexOf("The end of the field guide")

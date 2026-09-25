@@ -163,3 +163,69 @@ def test_release_commands_build_without_installing_or_contacting_a_device(
     assert "adb " not in calls
     for task in tasks:
         assert f"arg={task}\n" in calls
+
+
+@pytest.mark.parametrize(
+    "target", ["android-phone", "android-phone-screenshot", "android-phone-logs"]
+)
+def test_phone_commands_reject_an_explicit_emulator(android_runner, target):
+    result, calls = android_runner(target, ANDROID_SERIAL="emulator-5554")
+    assert result.returncode != 0
+    assert "only target physical devices" in result.stderr
+    assert not calls
+
+
+@pytest.mark.parametrize(
+    ("devices", "message"),
+    [
+        ("emulator-5554 device", "ANDROID_SERIAL"),
+        ("pixel-a device\npixel-b device", "ANDROID_SERIAL"),
+        ("pixel-physical unauthorized", "Allow USB debugging"),
+    ],
+)
+def test_missing_ambiguous_or_unauthorised_phone_never_installs(
+    android_runner, devices, message
+):
+    result, calls = android_runner("android-phone", DEVICES=devices)
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert "gradle" not in calls
+    assert "install" not in calls
+
+
+def test_phone_updates_existing_install_and_ignores_emulators(android_runner):
+    result, calls = android_runner(
+        "android-phone",
+        DEVICES="List of devices attached\nemulator-5554 device\npixel-physical device",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "arg=assembleDebug\n" in calls
+    assert "MAGPIE_ACCOUNT_API_URL" not in calls
+    assert "adb -s pixel-physical install -r " in calls
+    assert "adb -s pixel-physical shell am start -W" in calls
+    assert "emulator-5554 install" not in calls
+    assert "uninstall" not in calls
+
+
+@pytest.mark.parametrize(
+    ("target", "server"),
+    [
+        ("android-phone-staging", "https://audio-reader-staging.up.railway.app"),
+        ("android-phone-production", "https://audio-reader-production.up.railway.app"),
+    ],
+)
+def test_phone_backend_choice_reaches_gradle(android_runner, target, server):
+    result, calls = android_runner(target, ANDROID_SERIAL="pixel-physical")
+    assert result.returncode == 0, result.stderr
+    assert f"arg=-PMAGPIE_ACCOUNT_API_URL={server}\n" in calls
+    assert "adb -s pixel-physical install -r " in calls
+    assert "uninstall" not in calls
+
+
+def test_phone_screenshot_is_saved_from_the_phone(android_runner):
+    result, calls = android_runner(
+        "android-phone-screenshot", DEVICES="pixel-physical device"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "screen-pixel-physical-" in result.stdout
+    assert "adb -s pixel-physical exec-out screencap -p" in calls

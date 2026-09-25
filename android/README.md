@@ -40,8 +40,23 @@ make android-logs     # save logs from the running Magpie process there
 ```
 
 Select a particular emulator with `ANDROID_SERIAL=emulator-5554`. These scripts
-refuse physical-device installs. Use Android Studio for an intentional phone
-install when the Pixel arrives. They never uninstall the app or erase its data.
+refuse physical-device installs. They never uninstall the app or erase its data.
+
+A USB-connected phone with USB debugging enabled has its own commands, which never
+select an emulator:
+
+```sh
+make android-phone            # build debug, update the existing install, launch
+make android-phone-staging    # the same, explicitly against staging (the debug default)
+make android-phone-production # the same debug build against production
+make android-phone-screenshot # save a phone PNG under build/android-artifacts/
+make android-phone-logs       # save logs from Magpie on the phone there
+```
+
+They choose the only connected phone, or `ANDROID_SERIAL=serial` from `adb devices`.
+Installs update in place, so the account and data survive. Sessions are bound to
+their server, so switching backend signs the app out. Production sign-in needs a
+production deployment that includes Android sign-in; see [sign-in](../docs/sign-in.md).
 
 The wrapper launches using Android Studio's bundled Java on macOS, unless
 `JAVA_HOME` is set. Gradle itself runs on **Java 21**, matching CI. The committed

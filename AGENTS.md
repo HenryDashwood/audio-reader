@@ -63,7 +63,7 @@
 - The local device bridge, Gradle services, and CLI cache may need execution
   outside an agent sandbox. Treat socket/cache permission errors as environment
   failures; do not change application code or disable sandboxing to hide them.
-- Keep physical-device work intentional: the helper commands target emulators.
-  Do not uninstall, clear app data, wipe AVDs, or alter release signing as a
-  routine development step. Report emulator coverage separately from phone,
+- Keep physical-device work intentional: the emulator commands refuse phones, and
+  only the `make android-phone*` commands target one. Do not uninstall, clear app
+  data, wipe AVDs, or alter release signing as a routine development step. Report emulator coverage separately from phone,
   TalkBack, Bluetooth, and offline voice quality checks.
