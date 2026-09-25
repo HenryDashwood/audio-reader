@@ -180,6 +180,17 @@ jobs:
           IOS_TEST_PREBOOT: '1'
         run: make ios-test
 
+      # Hosted macOS runners are small. With the iOS 27 simulator still
+      # booted, the freshly created iOS 26 one has taken over six minutes to
+      # launch WebKit's processes, stalling every web-view test.
+      - name: Shut down the iOS 27 simulator
+        if: ${{ !cancelled() && steps.simulators.outcome == 'success' }}
+        run: |
+          echo "CPUs: $(sysctl -n hw.ncpu), memory: $(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
+          memory_pressure -Q || true
+          xcrun simctl shutdown all
+          memory_pressure -Q || true
+
       - name: Run the iOS 26 compatibility tests
         if: ${{ !cancelled() && steps.simulators.outcome == 'success' }}
         env:
