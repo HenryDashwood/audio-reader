@@ -195,12 +195,17 @@ not change the default. If the required runtime is missing, the command fails
 with installation guidance instead of silently testing a different version.
 
 CI and TestFlight build validation run the complete suite on iOS 27 and on the
-oldest installed released iOS 26 runtime, as parallel jobs on separate runners
-from the shared `.github/workflows/ios-tests.yml`. CI summarises them as one
-`iOS tests` check. The workflows request
-the Xcode 27 runner image, require released Xcode 27.0, and install released iOS
-27.0 and 26.5 runtimes through `scripts/prepare-ios-simulators.sh`, which takes
-the versions to prepare as arguments and defaults to both. Setup reuses
+oldest installed released iOS 26 runtime, as separate jobs from the shared
+`.github/workflows/ios-tests.yml`. CI summarises them as one `iOS tests` check.
+The jobs run on the maintainer's Mac, registered as a self-hosted runner with
+the `magpie-ios` label (in `~/actions-runner`, started as a login service), so
+they wait while that Mac is asleep or offline. GitHub's `xcode-27` image has no
+iOS 26 simulator, and a freshly created one starved its three CPUs on first
+boot. Because the runner executes workflow code, pull requests from forks need
+approval before any workflow runs. The jobs require released Xcode 27.0,
+selected through `DEVELOPER_DIR` rather than `xcode-select`, and install released
+iOS 27.0 and 26.5 runtimes through `scripts/prepare-ios-simulators.sh`, which
+takes the versions to prepare as arguments and defaults to both. Setup reuses
 available released runtimes and iPhone simulators, and verifies availability
 after any download, including when Xcode reports a nonzero exit status. Both
 checks must pass. Magpie still supports iOS 26.
