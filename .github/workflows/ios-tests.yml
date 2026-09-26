@@ -1,9 +1,12 @@
 name: iOS tests
 
 # The complete suite on every supported iOS generation, shared by CI and
-# TestFlight. Each generation tests on its own runner, in parallel. One
-# simulator per runner also avoids the memory starvation that stalled WebKit
-# when iOS 26 ran beside a still-booted iOS 27 simulator.
+# TestFlight. It runs on the maintainer's Mac, registered as a self-hosted
+# runner with the `magpie-ios` label: GitHub's xcode-27 image has no iOS 26
+# simulator, and a freshly created one starved its three CPUs for 20-30
+# minutes on first boot. The Mac keeps both simulators warm. Fork pull
+# requests need the maintainer's approval before any workflow runs, because
+# their code would run on that Mac.
 on:
   workflow_call:
 
@@ -13,8 +16,7 @@ permissions:
 jobs:
   ios:
     name: iOS ${{ matrix.ios }} tests
-    # macos-latest still ships Xcode 26; request the Xcode 27 image explicitly.
-    runs-on: xcode-27
+    runs-on: [self-hosted, macOS, ARM64, magpie-ios]
     timeout-minutes: 60
     strategy:
       # Report both generations even when one fails.
@@ -31,16 +33,26 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # DEVELOPER_DIR rather than `sudo xcode-select`: the self-hosted runner
+      # has no password-less sudo, and must not change the Mac's own selection.
       - name: Select Xcode
         id: xcode
         run: |
           set -euo pipefail
-          xcode=/Applications/Xcode_27.0.app
-          if [[ ! -d "$xcode" ]]; then
-            echo "::error::The runner must provide released Xcode 27.0 at $xcode"
+          xcode=""
+          for candidate in /Applications/Xcode_27.0.app /Applications/Xcode.app; do
+            if [[ -d "$candidate" ]] \
+              && [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$candidate/Contents/Info.plist")" == "27.0" ]]; then
+              xcode="$candidate"
+              break
+            fi
+          done
+          if [[ -z "$xcode" ]]; then
+            echo "::error::The runner must provide released Xcode 27.0"
             exit 1
           fi
-          sudo xcode-select -s "$xcode"
+          export DEVELOPER_DIR="$xcode/Contents/Developer"
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
           xcodebuild -version
           echo "build=$(xcodebuild -version | awk '/Build version/ { print $3 }')" >> "$GITHUB_OUTPUT"
           echo "macos=$(sw_vers -buildVersion)" >> "$GITHUB_OUTPUT"
