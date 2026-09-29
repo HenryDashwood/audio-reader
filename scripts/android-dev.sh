@@ -141,7 +141,15 @@ case "${1:-doctor}" in
         args=(connectedDebugAndroidTest)
         [[ -z "${TEST:-}" ]] || args+=("-Pandroid.testInstrumentationRunnerArguments.class=$TEST")
         # Restrict connected tests to the selected emulator, including when a phone is attached.
+        results="$root/android/app/build/outputs/androidTest-results/connected/debug"
+        started="$(mktemp)"
         ANDROID_SERIAL="$ANDROID_SERIAL" gradle "${args[@]}"
+        # Gradle reports success when the APK fails to install (for example, a full emulator)
+        # and no test runs at all. Only fresh results with at least one test count as a pass.
+        fresh="$(find "$results" -name 'TEST-*.xml' -newer "$started" 2>/dev/null | head -1 || true)"
+        rm -f "$started"
+        [[ -n "$fresh" ]] || fail 'No instrumentation results were written; the test APK may not have installed. Check the Gradle output above (for example, INSTALL_FAILED_INSUFFICIENT_STORAGE).'
+        ! grep -q '<testsuites tests="0"' "$fresh" || fail 'No instrumentation tests ran. Check the TEST filter and the Gradle output above.'
         ;;
     run) select_emulator; install_debug ;;
     screenshot) select_emulator; screenshot ;;
