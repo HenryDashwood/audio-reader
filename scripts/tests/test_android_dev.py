@@ -28,7 +28,11 @@ def android_runner(tmp_path: Path):
         repo / "android/gradlew",
         'printf "gradle serial=%s\\n" "${ANDROID_SERIAL:-}" >> "$CALLS"\n'
         'printf "arg=%s\\n" "$@" >> "$CALLS"\n'
-        'env | grep "^ORG_GRADLE_PROJECT_" | sort | sed "s/^/env=/" >> "$CALLS" || true\n',
+        'env | grep "^ORG_GRADLE_PROJECT_" | sort | sed "s/^/env=/" >> "$CALLS" || true\n'
+        'if [[ " $* " == *" connectedDebugAndroidTest "* && -z "${NO_RESULTS:-}" ]]; then\n'
+        '    out="$(dirname "$0")/app/build/outputs/androidTest-results/connected/debug"\n'
+        '    mkdir -p "$out"; printf \'<testsuites tests="%s">\' "${TEST_COUNT:-1}" > "$out/TEST-device.xml"\n'
+        'fi\n',
     )
     executable(
         sdk / "platform-tools/adb",
@@ -258,3 +262,13 @@ def test_debug_commands_do_not_load_release_signing_values(android_runner, tmp_p
     result, calls = android_runner("android-build", MAGPIE_RELEASE_PROPERTIES=str(properties))
     assert result.returncode == 0
     assert "secret" not in calls
+
+
+@pytest.mark.parametrize(("overrides", "message"), [
+    ({"NO_RESULTS": "1"}, "No instrumentation results were written"),
+    ({"TEST_COUNT": "0"}, "No instrumentation tests ran"),
+])
+def test_instrumentation_without_results_fails_even_when_gradle_succeeds(android_runner, overrides, message):
+    result, _ = android_runner("android-test", ANDROID_SERIAL="emulator-5556", **overrides)
+    assert result.returncode != 0
+    assert message in result.stderr
