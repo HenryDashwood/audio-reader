@@ -54,8 +54,8 @@ android {
         require(accountServer.isEmpty() || accountServer.matches(Regex("https://[A-Za-z0-9.-]+(:[0-9]+)?/?")))
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"$googleClient\"")
         buildConfigField("String", "ACCOUNT_API_URL", "\"$accountServer\"")
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
         testInstrumentationRunner = "com.henrydashwood.magpie.MagpieTestRunner"
     }
     signingConfigs {

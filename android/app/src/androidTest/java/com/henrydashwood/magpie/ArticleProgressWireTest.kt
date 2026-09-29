@@ -56,4 +56,21 @@ class ArticleProgressWireTest {
         assertTrue(runCatching { ArticleProgressReport(version, version, null, -1, false) }.isFailure)
         assertTrue(runCatching { ArticleProgressState(version, null, version, RemoteArticleBookmark("b".repeat(64), 0)) }.isFailure)
     }
+    @Test fun sharedPageSavesWhenNotYetSavedButAMissingReplaceRouteStillFails() = runBlocking {
+        val connections = mutableListOf<Connection>()
+        var refusal = """{"detail":"Save this article before replacing its text."}"""
+        val api = HttpLibraryApi("https://saved.invalid", connect = { url ->
+            (if (url.path == "/saved/replace") Connection(url, refusal, 404)
+            else Connection(url, """{"id":7,"title":"Shared"}""", 200)).also { connections += it }
+        })
+        val shared = PendingArticle(url = "https://example.org/a", html = "<p>Private text</p>", replaceExisting = true)
+        assertEquals(7, api.capture("session", shared).id)
+        assertEquals(listOf("/saved/replace", "/saved"), connections.map { it.url.path })
+        assertEquals(connections[0].body.toString("UTF-8"), connections[1].body.toString("UTF-8"))
+        assertEquals("Bearer session", connections[1].getRequestProperty("Authorization"))
+        // An older server without the route answers 404 with FastAPI's generic detail: never fall back.
+        connections.clear(); refusal = """{"detail":"Not Found"}"""
+        assertEquals(404, (runCatching { api.capture("session", shared) }.exceptionOrNull() as AccountFailure).status)
+        assertEquals(listOf("/saved/replace"), connections.map { it.url.path })
+    }
 }

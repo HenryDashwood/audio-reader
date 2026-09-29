@@ -35,6 +35,10 @@ works independently of the browser configuration.
 | Android debug Google client | `102154849961-ail49srpfbg4g7kchpq8eo87vqk1uk1n.apps.googleusercontent.com` |
 | Debug package | `com.henrydashwood.magpie.dev` |
 | Registered debug SHA-1 | `34:61:3E:7B:CB:1F:29:15:05:90:66:58:F1:FE:15:7E:10:10:37:7C` |
+| Release package | `com.henrydashwood.magpie` |
+| Android release Google clients | "Magpie Android (Play)" (`102154849961-rmms…`) and "Magpie Android (upload key)" (`102154849961-f1d4…`) |
+| Play app-signing SHA-1 | `B9:33:0A:6F:4F:DB:1B:05:A9:8F:22:22:9C:DC:2C:A1:45:E4:F7:BD` (Google-generated key, verified from a Play install) |
+| Upload key SHA-1 | `CE:90:4F:A8:8F:31:06:AB:98:54:6C:FD:4E:E4:61:3A:BA:68:7B:40` |
 
 Apple's saved website configuration includes both Railway domains and these
 exact return URLs:
@@ -54,8 +58,13 @@ user. Branding uses Magpie, that support/contact address, the existing productio
 `/support` and `/privacy` pages, and the authorised domain
 `audio-reader-production.up.railway.app`. The consent scopes are limited to
 `openid`, email, and profile. No mobile app uses a Google client
-secret. Android release registration awaits an actual release signing certificate;
-none existed when configuration was performed. Other development machines need
+secret. Android release clients were registered on 28–29 September 2026 and Google
+sign-in was confirmed on an internal-testing install from Play. Play Console's
+App signing page also lists a post-quantum key; its fingerprint is not the one
+installs are signed with. When in doubt, read the certificate from an installed
+build: `adb shell pm path com.henrydashwood.magpie`, pull `base.apk`, then
+`apksigner verify --print-certs`. A wrong SHA-1 shows only as the account chooser
+closing with "[16] Cancelled by user" in logcat. Other development machines need
 their own debug certificate registered.
 
 ### Apple on Android

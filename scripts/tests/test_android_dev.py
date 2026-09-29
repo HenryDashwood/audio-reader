@@ -27,7 +27,8 @@ def android_runner(tmp_path: Path):
     executable(
         repo / "android/gradlew",
         'printf "gradle serial=%s\\n" "${ANDROID_SERIAL:-}" >> "$CALLS"\n'
-        'printf "arg=%s\\n" "$@" >> "$CALLS"\n',
+        'printf "arg=%s\\n" "$@" >> "$CALLS"\n'
+        'env | grep "^ORG_GRADLE_PROJECT_" | sort | sed "s/^/env=/" >> "$CALLS" || true\n',
     )
     executable(
         sdk / "platform-tools/adb",
@@ -44,6 +45,7 @@ fi
     )
 
     def run(target, **overrides):
+        overrides.setdefault("MAGPIE_RELEASE_PROPERTIES", str(tmp_path / "no-release.properties"))
         env = {
             key: value
             for key, value in os.environ.items()
@@ -229,3 +231,30 @@ def test_phone_screenshot_is_saved_from_the_phone(android_runner):
     assert result.returncode == 0, result.stderr
     assert "screen-pixel-physical-" in result.stdout
     assert "adb -s pixel-physical exec-out screencap -p" in calls
+
+
+def test_release_signing_values_reach_gradle_from_the_private_properties_file(android_runner, tmp_path):
+    properties = tmp_path / "gradle.properties"
+    properties.write_text(
+        "# private\n"
+        "org.gradle.jvmargs=-Xmx4g\n"
+        "MAGPIE_RELEASE_KEY_ALIAS=magpie-upload\n"
+        "MAGPIE_RELEASE_STORE_PASSWORD=pa=ss word\r\n"
+        "MAGPIE_RELEASE_OAUTH_SHA1=AB:CD"
+    )
+    result, calls = android_runner("android-release-check", MAGPIE_RELEASE_PROPERTIES=str(properties))
+    assert result.returncode == 0
+    assert "env=ORG_GRADLE_PROJECT_MAGPIE_RELEASE_KEY_ALIAS=magpie-upload\n" in calls
+    assert "env=ORG_GRADLE_PROJECT_MAGPIE_RELEASE_STORE_PASSWORD=pa=ss word\n" in calls
+    assert "env=ORG_GRADLE_PROJECT_MAGPIE_RELEASE_OAUTH_SHA1=AB:CD\n" in calls
+    assert "jvmargs" not in calls
+    # Secrets travel in the environment, never as visible command-line arguments.
+    assert "pa=ss" not in "".join(line for line in calls.splitlines(True) if line.startswith("arg="))
+
+
+def test_debug_commands_do_not_load_release_signing_values(android_runner, tmp_path):
+    properties = tmp_path / "gradle.properties"
+    properties.write_text("MAGPIE_RELEASE_STORE_PASSWORD=secret\n")
+    result, calls = android_runner("android-build", MAGPIE_RELEASE_PROPERTIES=str(properties))
+    assert result.returncode == 0
+    assert "secret" not in calls

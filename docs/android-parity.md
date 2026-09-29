@@ -30,7 +30,7 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   unchanged replacements preserve the current copy. Queue syncing runs in the
   foreground when Saved opens, on refresh, or on explicit retry.
 - [x] **6. Incoming sharing.** Receive one shared web link and optional HTML with
-  a confirmation preview. Capture page opens an HTTPS page inside Magpie and
+  a confirmation preview with one Save, as on iOS. Capture page (from Saved) opens an HTTPS page inside Magpie and
   extracts its visible article using the same pinned Readability script as iOS.
   Confirmed captures persist in the account queue, preserve offline content, and
   update existing copies through the established replacement contract. Android
@@ -233,7 +233,8 @@ keeps its unconfirmed preview available while the user opens Magpie to sign in.
 A changed account requires fresh review. Opening Magpie after a save starts
 foreground preparation in Saved; closing the share keeps accepted content on disk.
 
-Capture page is available from the share preview and saved articles. It opens
+Capture page is available from saved articles, not the share preview, which
+offers only Save as on iOS (Chrome shares a link, not the rendered page). It opens
 HTTPS pages inside Magpie, allowing website sign-in before the user requests
 extraction. The build bundles the existing iOS Readability asset and license,
 including hidden-content removal, canonical identity checks, and link fallback

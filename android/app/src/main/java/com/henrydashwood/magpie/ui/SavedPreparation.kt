@@ -88,7 +88,7 @@ fun SavedArticlePreparation(item: LibraryItem, model: MagpieModel) {
 
 /** Opens the page inside Magpie, so she can sign in to the site and save the visible article. */
 fun captureSavedPage(context: android.content.Context, item: LibraryItem) {
-    context.startActivity(Intent(context, com.henrydashwood.magpie.sharing.ShareActivity::class.java).apply {
+    context.startActivity(Intent().setClassName(context, com.henrydashwood.magpie.sharing.ShareActivity.CAPTURE_PAGE).apply {
         action = Intent.ACTION_SEND; type = "text/plain"
         putExtra(Intent.EXTRA_TEXT, item.originalUrl); putExtra(Intent.EXTRA_SUBJECT, item.title)
     })

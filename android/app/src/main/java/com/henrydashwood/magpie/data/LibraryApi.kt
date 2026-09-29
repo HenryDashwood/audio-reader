@@ -101,7 +101,18 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
     }
     override suspend fun save(token: String, episodeId: Int?, url: String?) = decodeEpisode(obj(token, "saved", "POST",
         JSONObject().put("episode_id", episodeId).put("url", url)))
-    override suspend fun capture(token: String, article: PendingArticle) = decodeEpisode(obj(token, if (article.replaceExisting) "saved/replace" else "saved", "POST", captureBody(article)))
+    override suspend fun capture(token: String, article: PendingArticle): RemoteEpisode {
+        val body = captureBody(article)
+        if (!article.replaceExisting) return decodeEpisode(obj(token, "saved", "POST", body))
+        return try { decodeEpisode(obj(token, "saved/replace", "POST", body)) }
+        catch (failure: AccountFailure) {
+            // As on iOS: a shared page replaces the saved text, or saves it if it isn't saved yet. Only
+            // this explicit refusal permits creating it; a missing route on an older server still fails.
+            // The token is this call's own, so the text can't reach an account signed in meanwhile.
+            if (failure.status != 404 || failure.detail != SAVE_BEFORE_REPLACE) throw failure
+            decodeEpisode(obj(token, "saved", "POST", body))
+        }
+    }
     override suspend fun retrySaved(token: String, episodeId: Int) = decodeEpisode(obj(token, "saved/$episodeId/retry", "POST"))
     override suspend fun replaceSaved(token: String, episodeId: Int) = decodeEpisode(obj(token, "saved/replace", "POST", JSONObject().put("episode_id", episodeId)))
     override suspend fun remove(token: String, episodeId: Int) { request(token, "saved/$episodeId", "DELETE") }
@@ -219,13 +230,16 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
             val result = bytes.toString(Charsets.UTF_8)
             if (status !in 200..299) {
                 if (status == 401) withContext(Dispatchers.Main) { unauthorized(token) }
-                val message = runCatching { JSONObject(result).optJSONObject("detail")?.optionalString("spoken_response") }.getOrNull()
-                throw AccountFailure(status, message ?: if (status == 401) "Please sign in again to load your library." else if (status == 404 && path == "feeds/export") "Subscription export is unavailable on this server." else if (status == 404 && path.startsWith("subscription-imports")) "Subscription import is unavailable on this server, or this import has expired." else "Your library could not be updated. Please try again.")
+                val json = runCatching { JSONObject(result) }.getOrNull()
+                val message = runCatching { json?.optJSONObject("detail")?.optionalString("spoken_response") }.getOrNull()
+                val detail = json?.opt("detail") as? String
+                throw AccountFailure(status, message ?: if (status == 401) "Please sign in again to load your library." else if (status == 404 && path == "feeds/export") "Subscription export is unavailable on this server." else if (status == 404 && path.startsWith("subscription-imports")) "Subscription import is unavailable on this server, or this import has expired." else "Your library could not be updated. Please try again.", detail)
             }
             result
         } finally { connection.disconnect() }
     }
     companion object {
+        const val SAVE_BEFORE_REPLACE = "Save this article before replacing its text."
         fun captureBody(article: PendingArticle) = JSONObject().put("url", article.url).put("saved_at", article.savedAt)
             .put("title", article.title).put("html", article.html).put("content_format", article.contentFormat)
         private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")

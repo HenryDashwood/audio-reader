@@ -12,7 +12,8 @@ import com.henrydashwood.magpie.BuildConfig
 // Provider credentials are exchanged for a Magpie session; email is never an account key.
 data class AccountUser(val id: String, val displayName: String?)
 data class AccountLogin(val token: String, val user: AccountUser)
-class AccountFailure(val status: Int, override val message: String) : Exception(message)
+/** [detail] is the server's plain-text `detail`, for matching specific refusals; never shown. */
+class AccountFailure(val status: Int, override val message: String, val detail: String? = null) : Exception(message)
 
 interface AccountApi {
     suspend fun startApple(challenge: String, session: String?): AppleBrowserStart = throw AccountFailure(503, "Apple sign-in is unavailable.")

@@ -219,8 +219,10 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
   Review device links offers an explicit, confirmed import into the current account.
 - Magpie appears in the Android share sheet for one web link, including browser
   text containing a link and optional shared HTML. A scrollable preview requires
-  confirmation and sign-in before writing to that account's durable queue.
-  Capture page opens an HTTPS page inside Magpie, lets the user sign in to the
+  confirmation and sign-in before writing to that account's durable queue. As on
+  iOS, the preview offers only Save; a shared article that isn't saved yet is
+  created when the replace route answers "Save this article before replacing its text."
+  Capture page (from Saved, via the non-exported `CapturePage` alias) opens an HTTPS page inside Magpie, lets the user sign in to the
   website if needed, and previews the visible article before saving. The same
   pinned Readability script used by iOS is bundled at build time. Original-browser
   cookies are not imported; JavaScript has no native bridge or app credentials.
