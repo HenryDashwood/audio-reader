@@ -46,6 +46,32 @@ Never reuse the debug key as a release key.
   internal-testing build before promoting it.
 - Store graphics (512px icon, 1024×500 feature graphic) are in `play-store/graphics/`.
 
+## Uploading to Google Play
+
+`make android-upload` sends the bundle from `make android-release` to Play in one
+edit: the bundle, the R8 mapping file, the notes in
+`play-store/release_notes/<language>.txt` and the track assignment, committed only
+if every step succeeds. It defaults to internal testing; `TRACK=alpha` is closed
+testing, and production additionally needs `PLAY_ARGS=--confirm-production`
+(with `--rollout 0.2` for a staged rollout). `DRAFT=1` leaves the release as a
+draft to review in Play Console. Bump `versionCode` in `android/app/build.gradle.kts`
+and update the release notes before each upload.
+
+One-time setup, done by the account owner:
+
+1. In Google Cloud Console (project `magpie-508316`), enable the **Google Play
+   Android Developer API**.
+2. Create a service account with no project roles, and download a JSON key.
+   Store it outside Git, for example `~/.config/magpie/play-service-account.json`
+   (the default path), and back it up in the password manager.
+3. In Play Console → Users and permissions, invite the service account's email
+   with access to Magpie only: view app information, and release to testing
+   tracks (add production release when ready).
+
+The key path can instead be given as `MAGPIE_PLAY_SERVICE_ACCOUNT` in the
+environment or in `~/.gradle/gradle.properties`; CI can pass the key's contents
+in `MAGPIE_PLAY_SERVICE_ACCOUNT_JSON`.
+
 ## Remaining release gates
 
 - [ ] Create the Play Console account and Magpie app under the intended owner.
