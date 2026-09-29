@@ -476,9 +476,11 @@ private fun ItemList(items: List<LibraryItem>, saved: Set<String>, query: String
     val list = if (savedOnly) RowList.Saved else if (source == null) RowList.Latest else RowList.Show
     fun LazyListScope.storyRows(rows: List<LibraryItem>) {
         items(rows, key = { it.id }) { item ->
-            if (model != null) LibraryStoryRow(model, item, { open(item) }, { play(item) }, list)
+            // A saved article's preparation status belongs to its row, so it swipes and long-presses with it.
+            val status: (@Composable () -> Unit)? = if (savedOnly && live && model != null && item.kind == ContentKind.Article)
+                { { SavedArticlePreparation(item, model) } } else null
+            if (model != null) LibraryStoryRow(model, item, { open(item) }, { play(item) }, list, status)
             else StoryRow(item, { open(item) }, { play(item) })
-            if (savedOnly && live && model != null && item.kind == ContentKind.Article) SavedArticlePreparation(item, model)
         }
     }
     val visibleLinks = if (savedOnly && !showingFinished) pendingLinks.filter { it.contains(query, ignoreCase = true) } else emptyList()
@@ -684,7 +686,8 @@ private fun filingActions(model: MagpieModel, item: LibraryItem, allowsDismissal
 }
 
 @Composable
-private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> Unit, play: () -> Unit, list: RowList = RowList.Show) {
+private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> Unit, play: () -> Unit, list: RowList = RowList.Show,
+    below: (@Composable () -> Unit)? = null) {
     val saved by model.saved.collectAsStateWithLifecycle()
     val actions = filingActions(model, item, allowsDismissal = list == RowList.Latest)
     val playback by model.player.collectAsStateWithLifecycle()
@@ -715,7 +718,7 @@ private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> U
     else actions + listOfNotNull(if (item.kind == ContentKind.Article) StoryAction(
         if (item.id in saved) "Dismiss from Saved" else "Save article",
         if (item.id in saved) Icons.Rounded.BookmarkRemove else Icons.Rounded.BookmarkAdd, { model.toggleSaved(item) }) else null)
-    ActionStoryRow(item, open, play, menu, leading, trailing, progress, currentLabel)
+    ActionStoryRow(item, open, play, menu, leading, trailing, progress, currentLabel, below)
 }
 
 @Composable
@@ -735,7 +738,8 @@ private fun ItemFilingStatus(model: MagpieModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ActionStoryRow(item: LibraryItem, open: () -> Unit, play: () -> Unit,
-    actions: List<StoryAction>, leadingAction: StoryAction?, trailingAction: StoryAction?, progress: ListeningPresentation, currentLabel: String?) {
+    actions: List<StoryAction>, leadingAction: StoryAction?, trailingAction: StoryAction?, progress: ListeningPresentation, currentLabel: String?,
+    below: (@Composable () -> Unit)? = null) {
     var expanded by remember(item.id) { mutableStateOf(false) }
     val currentLeading by rememberUpdatedState(leadingAction)
     val currentTrailing by rememberUpdatedState(trailingAction)
@@ -762,7 +766,7 @@ private fun ActionStoryRow(item: LibraryItem, open: () -> Unit, play: () -> Unit
                     }
                 }
             }) {
-            Surface { StoryRow(item, open, play, actions, { expanded = true }, progress, currentLabel) }
+            Surface { Column { StoryRow(item, open, play, actions, { expanded = true }, progress, currentLabel); below?.invoke() } }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             actions.forEach { action ->
