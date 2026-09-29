@@ -24,11 +24,11 @@ class ShareActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        model.receive(intent, savedInstanceState?.getBoolean("saved") == true)
+        model.receive(intent, savedInstanceState?.getBoolean("saved") == true, capture = capturing(intent))
         setContent { MagpieTheme { ShareScreen(model, ::finish, ::openMagpie) } }
     }
     override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent); setIntent(intent); model.receive(intent, fresh = true)
+        super.onNewIntent(intent); setIntent(intent); model.receive(intent, fresh = true, capture = capturing(intent))
     }
     override fun onSaveInstanceState(outState: Bundle) {
         // Never put page HTML in the activity bundle. After process death, an unconfirmed
@@ -36,6 +36,8 @@ class ShareActivity : ComponentActivity() {
         outState.putBoolean("saved", model.state.value.saved)
         super.onSaveInstanceState(outState)
     }
+    private fun capturing(intent: Intent) = intent.component?.className == CAPTURE_PAGE
+    companion object { const val CAPTURE_PAGE = "com.henrydashwood.magpie.sharing.CapturePage" }
     private fun openMagpie() {
         startActivity(Intent(this, MainActivity::class.java).putExtra("open_saved", true)
             .putExtra("open_signin", !model.library.value.live)
@@ -65,9 +67,9 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
                 Text(article.url)
                 article.preview?.let { Text(it, Modifier.semantics { contentDescription = "Article begins: $it" }) }
                 if (!state.saved) {
-                    Text(if (article.html != null) "The shared page content will be saved to your current Magpie account."
-                        else "Save this link, or open the page in Magpie to capture the article you can see.")
-                    Text("Already saved? This updates your copy. If the text changes, listening starts from the beginning. If preparation fails, your current copy is kept.")
+                    // As on iOS: one Save. If Magpie can't fetch the page, Saved offers "Capture page".
+                    Text("Ready to read or listen to later.")
+                    Text("Already saved? This updates your copy. If the text changes, listening starts from the beginning.")
                 }
             }
             when {
@@ -87,10 +89,6 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
                         Button(onClick = openMagpie, enabled = !state.busy) { Text("Open Magpie") }
                     } else if (state.article != null) {
                         Button(onClick = model::save, enabled = !state.busy) { Text("Save article") }
-                    }
-                    if (state.article?.url?.startsWith("https://", true) == true) {
-                        OutlinedButton(onClick = model::openBrowser, enabled = !state.busy) { Text("Capture page") }
-                        Text("The page opens inside Magpie. You may need to sign in to the website here.", style = MaterialTheme.typography.bodySmall)
                     }
                     TextButton(onClick = close, enabled = !state.busy) { Text("Cancel") }
                 }

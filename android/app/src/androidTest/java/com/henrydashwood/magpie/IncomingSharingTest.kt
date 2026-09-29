@@ -71,8 +71,9 @@ class IncomingSharingTest {
         runBlocking { library.state.value.owner?.let { owner -> app.articleInbox.pending(owner).forEach { app.articleInbox.remove(owner, it.id) } } }
         app.libraryOverride = null
     }
-    private fun launch(text: String = "https://example.com/story", html: String? = null) {
-        scenario = ActivityScenario.launch(Intent(app, ShareActivity::class.java).apply {
+    private fun launch(text: String = "https://example.com/story", html: String? = null, capture: Boolean = false) {
+        val target = Intent().setClassName(app, if (capture) ShareActivity.CAPTURE_PAGE else ShareActivity::class.java.name)
+        scenario = ActivityScenario.launch(target.apply {
             action = Intent.ACTION_SEND; type = if (html == null) "text/plain" else "text/html"
             putExtra(Intent.EXTRA_TEXT, text); putExtra(Intent.EXTRA_SUBJECT, "Shared story")
             if (html != null) putExtra(Intent.EXTRA_HTML_TEXT, html)
@@ -191,9 +192,14 @@ class IncomingSharingTest {
         app.articleInbox.add(owner, PendingArticle(url = first.url))
         assertEquals(newer.id, app.articleInbox.pending(owner).single().id)
     }
-    @Test fun browserExtractsVisibleArticleForReviewWithoutUploadingAndRejectsStaleIdentity() {
+    @Test fun ordinaryShareOffersNoPageCapture() {
         launch("https://capture-fixture.invalid/article")
-        compose.onNodeWithText("Capture page").performScrollTo().performClick()
+        compose.onNodeWithText("Capture page").assertDoesNotExist()
+        assertFalse(model.state.value.browser)
+    }
+    @Test fun browserExtractsVisibleArticleForReviewWithoutUploadingAndRejectsStaleIdentity() {
+        // Saved's "Capture page" opens the page directly; an ordinary share offers only Save, as on iOS.
+        launch("https://capture-fixture.invalid/article", capture = true)
         compose.onNodeWithText("Preview article").assertExists()
         compose.waitForIdle()
         val prose = "This is a complete article about a quiet walk through the garden. The trees provide shade and the birds sing in the branches. ".repeat(12)

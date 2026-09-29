@@ -41,7 +41,8 @@ class ShareModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    fun receive(intent: Intent, saved: Boolean = false, fresh: Boolean = false) {
+    /** [capture]: opened from Saved's "Capture page", so go straight to the in-app page. */
+    fun receive(intent: Intent, saved: Boolean = false, fresh: Boolean = false, capture: Boolean = false) {
         if (started && !fresh) return
         started = true; generation++; work?.cancel()
         if (saved) { mutable.value = ShareState(saved = true); return }
@@ -50,13 +51,12 @@ class ShareModel(application: Application) : AndroidViewModel(application) {
         work = viewModelScope.launch {
             try {
                 val article = withContext(Dispatchers.Default) { SharedArticles.fromIntent(intent) }
-                if (version == generation) mutable.value = ShareState(article)
+                if (version == generation) mutable.value = ShareState(article, browser = capture && article.url.startsWith("https://", true))
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { if (version == generation) mutable.value = ShareState(error = failure.message ?: "This share could not be opened.") }
         }
     }
     fun reviewAccount() { mutable.value = state.value.copy(accountChanged = false, error = null) }
-    fun openBrowser() { if (!state.value.busy && !state.value.accountChanged) mutable.value = state.value.copy(browser = true, error = null) }
     fun closeBrowser() { mutable.value = state.value.copy(browser = false) }
     fun captured(article: SharedArticle) {
         if (state.value.browser && !state.value.accountChanged) mutable.value = state.value.copy(article = article, browser = false, error = null)

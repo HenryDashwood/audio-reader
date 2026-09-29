@@ -43,6 +43,10 @@
                 <data android:mimeType="text/html" />
             </intent-filter>
         </activity>
+        <!-- Saved's "Capture page" opens the share screen straight into page capture. Not exported,
+             so no other app can skip the review step and open a page inside Magpie directly. -->
+        <activity-alias android:name=".sharing.CapturePage" android:exported="false"
+            android:targetActivity=".sharing.ShareActivity" />
         <service android:name=".shortcuts.AskMagpieTile" android:exported="true"
             android:label="Ask Magpie" android:icon="@drawable/ic_shortcut_mic"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
