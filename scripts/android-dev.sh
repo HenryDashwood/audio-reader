@@ -28,6 +28,18 @@ android_cli() {
 }
 
 gradle() { "$root/android/gradlew" -p "$root/android" --console=plain "$@"; }
+# GRADLE_USER_HOME is repo-local, so Gradle never reads ~/.gradle/gradle.properties.
+# Release signing values live there (outside Git); pass only the MAGPIE_* entries on as
+# ORG_GRADLE_PROJECT_ environment variables, which keeps passwords off the command line.
+load_release_properties() {
+    local file="${MAGPIE_RELEASE_PROPERTIES:-$HOME/.gradle/gradle.properties}" key value
+    [[ -f "$file" ]] || return 0
+    while IFS='=' read -r key value || [[ -n "$key" ]]; do
+        key="${key//[[:space:]]/}"
+        [[ "$key" == MAGPIE_* ]] || continue
+        export "ORG_GRADLE_PROJECT_$key=${value%$'\r'}"
+    done < "$file"
+}
 select_emulator() {
     require_adb
     if [[ -n "${ANDROID_SERIAL:-}" ]]; then
@@ -106,8 +118,8 @@ case "${1:-doctor}" in
         echo 'Android build toolchain is ready. A booted emulator is required for android-test and android-run.'
         ;;
     build) gradle assembleDebug ;;
-    release-check) gradle :app:validateReleaseSetup ;;
-    release) gradle :app:assembleRelease :app:bundleRelease ;;
+    release-check) load_release_properties; gradle :app:validateReleaseSetup ;;
+    release) load_release_properties; gradle :app:assembleRelease :app:bundleRelease ;;
     check) gradle assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug ;;
     unit-test)
         args=(testDebugUnitTest)
