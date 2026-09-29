@@ -19,7 +19,7 @@ Release preparation and remaining gates are in
 | `listings/en-GB/title.txt` | Grow users → Store presence → Main store listing → App name | 30 characters |
 | `listings/en-GB/short_description.txt` | Main store listing → Short description | 80 characters |
 | `listings/en-GB/full_description.txt` | Main store listing → Full description | 4,000 characters |
-| `release_notes/en-GB.txt` | Test and release → (track) → Create release → Release notes, inside `<en-GB>` … `</en-GB>` | 500 characters per language |
+| `release_notes/en-GB.txt` | Sent by `make android-upload` with each bundle (or pasted into Create release → Release notes, inside `<en-GB>` … `</en-GB>`). Update it before each upload. | 500 characters per language |
 | `data_safety.md` | Policy and programmes → App content → Data safety | Questionnaire draft |
 | `app_content.md` | Policy and programmes → App content: privacy policy, app access and reviewer instructions, ads, advertising ID, content rating, target audience, news apps, government/financial/health, foreground service, data deletion; also permission justifications | Questionnaire drafts |
 
