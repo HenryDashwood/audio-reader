@@ -72,6 +72,55 @@ The key path can instead be given as `MAGPIE_PLAY_SERVICE_ACCOUNT` in the
 environment or in `~/.gradle/gradle.properties`; CI can pass the key's contents
 in `MAGPIE_PLAY_SERVICE_ACCOUNT_JSON`.
 
+## Releasing from CI
+
+`.github/workflows/play-release.yml` is Android's counterpart to `testflight.yml`.
+Pushing an `android-v*` tag (or running it manually, choosing `internal` or
+`alpha`) runs `make android-check`, builds the signed bundle with the commit
+count as `versionCode` and the tag as `versionName`, and uploads it with
+`play_upload.py`. It cannot release to production. Google Cloud trusts the
+repository through workload identity federation, so no Play key exists.
+
+Once CI has released a commit-count version code (hundreds), a locally built
+bundle with the Gradle fallback code is lower and Play will refuse it. Release
+through CI from then on, or pass `-PMAGPIE_VERSION_CODE` higher than CI's.
+
+One-time setup (account owner; project `magpie-508316`, number `102154849961`):
+
+```bash
+gcloud services enable iamcredentials.googleapis.com sts.googleapis.com --project=magpie-508316
+gcloud iam workload-identity-pools create github --project=magpie-508316 \
+  --location=global --display-name="GitHub Actions"
+gcloud iam workload-identity-pools providers create-oidc audio-reader --project=magpie-508316 \
+  --location=global --workload-identity-pool=github --display-name="audio-reader" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
+  --attribute-condition="assertion.repository=='HenryDashwood/audio-reader' && (assertion.ref=='refs/heads/main' || assertion.ref.startsWith('refs/tags/android-v'))"
+gcloud iam service-accounts add-iam-policy-binding \
+  play-uploader@magpie-508316.iam.gserviceaccount.com --project=magpie-508316 \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/projects/102154849961/locations/global/workloadIdentityPools/github/attribute.repository/HenryDashwood/audio-reader"
+```
+
+In Play Console → Users and permissions, invite the service account with
+"View app information" and "Release to testing tracks" for Magpie only.
+
+In GitHub, create the environment `play-release`, limited to `main` and
+`android-v*` tags, holding:
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Secret | `MAGPIE_UPLOAD_KEYSTORE_BASE64` | `base64 -i ~/magpie-upload.jks` |
+| Secret | `MAGPIE_RELEASE_STORE_PASSWORD` | Upload keystore password |
+| Secret | `MAGPIE_RELEASE_KEY_PASSWORD` | Upload key password (the same, for this PKCS12 keystore) |
+| Variable | `MAGPIE_RELEASE_KEY_ALIAS` | `magpie-upload` |
+| Variable | `MAGPIE_RELEASE_OAUTH_SHA1` | `CE:90:4F:A8:8F:31:06:AB:98:54:6C:FD:4E:E4:61:3A:BA:68:7B:40` |
+| Variable | `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/102154849961/locations/global/workloadIdentityPools/github/providers/audio-reader` |
+| Variable | `PLAY_SERVICE_ACCOUNT` | `play-uploader@magpie-508316.iam.gserviceaccount.com` |
+
+Until Magpie's first review Play treats it as a draft app; run the workflow
+with "draft" ticked and roll the release out in Play Console.
+
 ## Remaining release gates
 
 - [ ] Create the Play Console account and Magpie app under the intended owner.

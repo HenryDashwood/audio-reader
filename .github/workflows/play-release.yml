@@ -1,0 +1,165 @@
+name: Google Play
+
+# Android's counterpart to testflight.yml. A build goes to Google Play when an
+# `android-v*` tag is pushed, or when someone asks for one:
+#
+#     git tag android-v1.0.3 && git push origin android-v1.0.3
+#     gh workflow run play-release.yml --ref main -f track=alpha
+#
+# Nothing here can reach production: the track choices stop at closed testing,
+# and the service account is only allowed to release to testing tracks.
+# Google Cloud trusts this repository through workload identity federation, so
+# no Play key is stored anywhere. Setup is in docs/android-release.md.
+on:
+  push:
+    tags:
+      - "android-v*"
+  workflow_dispatch:
+    inputs:
+      track:
+        description: Internal testing, or closed testing ("alpha").
+        type: choice
+        options: [internal, alpha]
+        default: internal
+      draft:
+        description: >-
+          Leave the release as a draft to roll out in Play Console. Needed
+          until Magpie's first review, while Play treats it as a draft app.
+        type: boolean
+        default: false
+
+# Two uploads racing each other would take the same version code.
+concurrency:
+  group: play-release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Android checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+      - name: Cache Android dependencies
+        uses: actions/cache@v6
+        with:
+          path: build/android-gradle
+          key: android-gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle/gradle-daemon-jvm.properties') }}
+          restore-keys: android-gradle-${{ runner.os }}-
+      - name: Build, unit tests, and lint
+        run: make android-check
+
+  release:
+    name: Build, sign and upload
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Holds the upload-key secrets; restrict it to main and android-v* tags.
+    environment: play-release
+    permissions:
+      contents: read
+      id-token: write # workload identity federation with Google Cloud
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The version code is the commit count, so the whole history matters.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+      - name: Cache Android dependencies
+        uses: actions/cache@v6
+        with:
+          path: build/android-gradle
+          key: android-gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle/gradle-daemon-jvm.properties') }}
+          restore-keys: android-gradle-${{ runner.os }}-
+
+      - name: Work out the version numbers
+        run: |
+          set -euo pipefail
+          # Play rejects a version code it has seen before. The commit count is
+          # unique and always increasing, as TestFlight's build number is.
+          echo "ORG_GRADLE_PROJECT_MAGPIE_VERSION_CODE=$(git rev-list --count HEAD)" >> "$GITHUB_ENV"
+          # An android-v tag sets the user-visible version. A manual run inherits
+          # the highest one reachable, and before the first tag the Gradle
+          # fallback applies.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            name="${GITHUB_REF_NAME#android-v}"
+          else
+            tag=$(git tag --merged HEAD --list 'android-v[0-9]*' --sort=-version:refname | sed -n '1p')
+            name="${tag#android-v}"
+          fi
+          if [ -n "$name" ]; then
+            echo "ORG_GRADLE_PROJECT_MAGPIE_VERSION_NAME=$name" >> "$GITHUB_ENV"
+          fi
+
+      - name: Write the upload key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MAGPIE_UPLOAD_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Set the MAGPIE_UPLOAD_KEYSTORE_BASE64 secret in the play-release environment."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+
+      - name: Build the signed bundle
+        env:
+          ORG_GRADLE_PROJECT_MAGPIE_RELEASE_STORE_FILE: ${{ runner.temp }}/upload.jks
+          ORG_GRADLE_PROJECT_MAGPIE_RELEASE_STORE_PASSWORD: ${{ secrets.MAGPIE_RELEASE_STORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_MAGPIE_RELEASE_KEY_ALIAS: ${{ vars.MAGPIE_RELEASE_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_MAGPIE_RELEASE_KEY_PASSWORD: ${{ secrets.MAGPIE_RELEASE_KEY_PASSWORD }}
+          ORG_GRADLE_PROJECT_MAGPIE_RELEASE_OAUTH_SHA1: ${{ vars.MAGPIE_RELEASE_OAUTH_SHA1 }}
+          # No private properties file on a runner; the environment carries everything.
+          MAGPIE_RELEASE_PROPERTIES: /nonexistent
+        run: ./scripts/android-dev.sh release
+
+      - name: Remove the upload key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks"
+
+      - name: Authenticate to Google Play
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.PLAY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+          create_credentials_file: false
+
+      - uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Upload to Google Play
+        env:
+          MAGPIE_PLAY_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          TRACK: ${{ inputs.track || 'internal' }}
+          DRAFT: ${{ inputs.draft && '--draft' || '' }}
+        # DRAFT is unquoted on purpose: empty means "roll out".
+        run: uv run scripts/play_upload.py --track "$TRACK" $DRAFT
+
+      - name: Keep the bundle and R8 mapping
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: play-release-${{ github.run_number }}
+          path: |
+            android/app/build/outputs/bundle/release/app-release.aab
+            android/app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: ignore
+          retention-days: 30

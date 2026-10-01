@@ -1,1 +1,1 @@
-Fixes podcasts that would not play, such as In Our Time, and lets the whole saved-article row be swiped.
+Fixes podcasts that would not play, such as In Our Time. Saved articles that could not be fetched now show their options on one line, and the whole row can be swiped.

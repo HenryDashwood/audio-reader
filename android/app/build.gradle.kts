@@ -54,8 +54,10 @@ android {
         require(accountServer.isEmpty() || accountServer.matches(Regex("https://[A-Za-z0-9.-]+(:[0-9]+)?/?")))
         buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"$googleClient\"")
         buildConfigField("String", "ACCOUNT_API_URL", "\"$accountServer\"")
-        versionCode = 3
-        versionName = "1.0.2"
+        // Release CI passes the commit count and the android-v* tag, as TestFlight does for iOS;
+        // these literals are the fallback for local builds.
+        versionCode = providers.gradleProperty("MAGPIE_VERSION_CODE").orNull?.toInt() ?: 3
+        versionName = providers.gradleProperty("MAGPIE_VERSION_NAME").orNull ?: "1.0.2"
         testInstrumentationRunner = "com.henrydashwood.magpie.MagpieTestRunner"
     }
     signingConfigs {

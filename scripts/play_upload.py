@@ -19,8 +19,10 @@ Production needs `--confirm-production`; nothing here reaches the public by
 default. Release notes come from `play-store/release_notes/<language>.txt`,
 which is edited and committed before each upload.
 
-Credentials are a Google Cloud service-account JSON key, never in the
-repository. The first of these that is set is used:
+In CI (.github/workflows/play-release.yml) workload identity federation supplies
+a short-lived MAGPIE_PLAY_ACCESS_TOKEN and no key exists. Locally, credentials
+are a Google Cloud service-account JSON key, never in the repository. The first
+of these that is set is used:
 
   MAGPIE_PLAY_SERVICE_ACCOUNT_JSON   the key's contents (for CI)
   MAGPIE_PLAY_SERVICE_ACCOUNT        a path to the key file
@@ -136,8 +138,15 @@ def release(version_code: int, version_name: str | None, notes: list[dict], *, d
 
 
 class Client:
-    def __init__(self, key: dict, session: requests.Session | None = None) -> None:
+    def __init__(self, key: dict | None = None, session: requests.Session | None = None, *,
+                 access_token: str | None = None) -> None:
         self.session = session or requests.Session()
+        if access_token:
+            # CI: a short-lived token from workload identity federation; no key exists.
+            self.session.headers["Authorization"] = f"Bearer {access_token}"
+            return
+        if key is None:
+            raise Failure("no Play credentials: set MAGPIE_PLAY_ACCESS_TOKEN or a service-account key")
         response = self.session.post(TOKEN_URL, timeout=60, data={
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": assertion(key, int(time.time())),
@@ -219,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         if mapping is None:
             print(f"warning: no R8 mapping file at {args.mapping}; crash reports will be obfuscated", file=sys.stderr)
         notes = release_notes()
-        client = Client(service_account(os.environ))
+        token = os.environ.get("MAGPIE_PLAY_ACCESS_TOKEN")
+        client = Client(access_token=token) if token else Client(service_account(os.environ))
         publish(client, track=args.track, bundle=args.bundle, mapping=mapping, notes=notes,
                 draft=args.draft, rollout=args.rollout)
     except Failure as failure:

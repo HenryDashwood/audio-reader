@@ -140,3 +140,17 @@ def test_a_missing_bundle_asks_for_a_release_build(tmp_path, capsys, monkeypatch
     monkeypatch.setattr(upload, "Client", lambda *_: pytest.fail("contacted Google"))
     assert upload.main(["--bundle", str(tmp_path / "none.aab")]) == 1
     assert "make android-release" in capsys.readouterr().err
+
+
+def test_an_access_token_from_ci_skips_the_key_exchange():
+    class NoNetwork:
+        headers: dict = {}
+        def post(self, *args, **kwargs):
+            pytest.fail("exchanged a key in CI")
+    client = upload.Client(access_token="ya29.ci-token", session=NoNetwork())
+    assert client.session.headers["Authorization"] == "Bearer ya29.ci-token"
+
+
+def test_no_credentials_at_all_is_named():
+    with pytest.raises(upload.Failure, match="MAGPIE_PLAY_ACCESS_TOKEN"):
+        upload.Client()
