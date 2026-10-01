@@ -49,8 +49,10 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+      # Restore only: main CI saves this cache, and a second writer racing it
+      # left the first release run hanging in its post-job cache upload.
       - name: Cache Android dependencies
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: build/android-gradle
           key: android-gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle/gradle-daemon-jvm.properties') }}
@@ -81,8 +83,10 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+      # Restore only: main CI saves this cache, and a second writer racing it
+      # left the first release run hanging in its post-job cache upload.
       - name: Cache Android dependencies
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: build/android-gradle
           key: android-gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'android/gradle/gradle-daemon-jvm.properties') }}
