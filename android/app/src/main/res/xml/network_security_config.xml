@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Podcast audio and artwork come from whatever hosts a feed names, and many still serve or redirect
+  over plain http (BBC podcasts end on http after their tracking redirects). Like other podcast
+  players, Magpie allows that. Its own account, library and voice requests stay HTTPS-only: the
+  API clients refuse any non-https origin in code, and the capture WebView blocks mixed content.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

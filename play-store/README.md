@@ -74,13 +74,17 @@ These are prepared in Play Console directly or remain to be created:
     `app-store/assets/magpie-mark-transparent.png` on the app's `#101317`
     background.
   - Feature graphic: 1024 × 500 JPEG or 24-bit PNG with no alpha.
-  - Phone screenshots: 2–8, each side between 320 and 3,840 px, aspect ratio
-    no more than 2:1.
+  - Phone screenshots: 2–8, PNG or JPEG up to 8 MB, exactly 16:9 or 9:16, each
+    side between 320 and 3,840 px (at least 1,080 px for promotion).
   - Optionally 7- and 10-inch tablet screenshots.
 
-  Screenshots must show real app behaviour and no personal data. Take them from
-  a Play-signed internal build. `make android-screenshot` saves captures under
-  `build/android-artifacts/`.
+  The six phone screenshots in `screenshots/phone/` show the App Store set's
+  fictional library (`scripts/seed_app_store_screenshots.py`), served by the
+  instrumented test `PlayStoreScreenshots` with no backend or personal data.
+  Recapture them with `ANDROID_AVD=medium_phone_16g make android-emulator`, then
+  `make android-play-screenshots`. The test uses a 9:41 demo status bar, UK
+  dates and a 1080 × 1920 screen (Play Console accepts only 16:9 or 9:16), and restores the emulator
+  afterwards. The 6 GB `medium_phone` emulator is too full to install the tests.
 - **Store settings:**
   - App category: Music & Audio (confirmed by the owner; see `app_content.md`).
   - Contact email and website (`https://audio-reader-production.up.railway.app/support`).

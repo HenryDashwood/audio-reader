@@ -122,7 +122,7 @@ app-store-sync:
 	@test -n "$(VERSION)" || (echo "VERSION is required, for example: make app-store-sync VERSION=1.0" >&2; exit 2)
 	@uv run scripts/app_store_sync.py sync --version "$(VERSION)"
 
-.PHONY: android-release-check android-release android-upload
+.PHONY: android-release-check android-release android-upload android-play-screenshots
 android-release-check:
 	./scripts/android-dev.sh release-check
 
@@ -132,5 +132,9 @@ android-release:
 # Uploads the bundle from android-release to Google Play: internal testing unless
 # TRACK=alpha|beta|production (production also needs PLAY_ARGS=--confirm-production).
 # DRAFT=1 leaves the release for review in Play Console. See docs/android-release.md.
+# Captures the six Play Store phone screenshots on an emulator into play-store/screenshots/phone.
+android-play-screenshots:
+	./scripts/android-dev.sh play-screenshots
+
 android-upload:
 	@uv run scripts/play_upload.py --track "$(or $(TRACK),internal)" $(if $(DRAFT),--draft) $(PLAY_ARGS)

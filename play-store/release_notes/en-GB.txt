@@ -1,1 +1,1 @@
-Fixes saving articles shared from Chrome. The share screen now has a single Save button.
+Fixes podcasts that would not play, such as In Our Time, and lets the whole saved-article row be swiped.

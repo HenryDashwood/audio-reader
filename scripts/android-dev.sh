@@ -151,6 +151,23 @@ case "${1:-doctor}" in
         [[ -n "$fresh" ]] || fail 'No instrumentation results were written; the test APK may not have installed. Check the Gradle output above (for example, INSTALL_FAILED_INSUFFICIENT_STORAGE).'
         ! grep -q '<testsuites tests="0"' "$fresh" || fail 'No instrumentation tests ran. Check the TEST filter and the Gradle output above.'
         ;;
+    play-screenshots)
+        # Six phone screenshots from the App Store's fictional library; see PlayStoreScreenshots.kt.
+        select_emulator
+        output="$root/android/app/build/outputs/connected_android_test_additional_output"
+        started="$(mktemp)"
+        ANDROID_SERIAL="$ANDROID_SERIAL" gradle connectedDebugAndroidTest \
+            -Pandroid.testInstrumentationRunnerArguments.class=com.henrydashwood.magpie.PlayStoreScreenshots \
+            -Pandroid.testInstrumentationRunnerArguments.playScreenshots=true
+        destination="$root/play-store/screenshots/phone"
+        mkdir -p "$destination"
+        count=0
+        while IFS= read -r image; do cp "$image" "$destination/"; count=$((count + 1)); done \
+            < <(find "$output" -name '0*-*.jpg' -newer "$started" 2>/dev/null)
+        rm -f "$started"
+        [[ "$count" -eq 6 ]] || fail "Expected 6 screenshots but found $count. Check the Gradle output above."
+        echo "Saved $count screenshots to $destination"
+        ;;
     run) select_emulator; install_debug ;;
     screenshot) select_emulator; screenshot ;;
     layout)
@@ -164,5 +181,5 @@ case "${1:-doctor}" in
     phone-screenshot) select_phone; screenshot ;;
     phone-logs) select_phone; logs android-phone ;;
     cli) shift; android_cli "$@" ;;
-    *) fail 'Usage: scripts/android-dev.sh {doctor|build|check|release-check|release|unit-test|emulators|emulator|test|run|screenshot|layout|logs|phone|phone-staging|phone-production|phone-screenshot|phone-logs|cli ...}' ;;
+    *) fail 'Usage: scripts/android-dev.sh {doctor|build|check|release-check|release|unit-test|emulators|emulator|test|run|screenshot|layout|logs|phone|phone-staging|phone-production|phone-screenshot|phone-logs|play-screenshots|cli ...}' ;;
 esac

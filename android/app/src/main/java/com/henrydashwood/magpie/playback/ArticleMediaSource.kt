@@ -7,6 +7,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Timeline
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.TransferListener
 import androidx.media3.exoplayer.source.ConcatenatingMediaSource2
@@ -16,10 +18,22 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import java.io.IOException
 import kotlinx.coroutines.runBlocking
 
+/**
+ * Podcast audio is fetched from whatever host a feed names, usually through ad-tracking redirects that
+ * switch between https and http (In Our Time: https -> http -> http -> http). Media3 refuses such
+ * redirects by default, which surfaces as "Response code: 302", so allow them, as podcast players must.
+ */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun podcastHttpDataSource(): DefaultHttpDataSource.Factory =
+    DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun podcastDataSource(context: Context) = DefaultDataSource.Factory(context, podcastHttpDataSource())
+
 /** A whole article is one Media3 item/window, with independently loaded audio periods. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal class ArticleMediaSourceFactory(context: Context, private val renderer: ArticleRenderer,
-    private val fallback: MediaSource.Factory = DefaultMediaSourceFactory(context)) : MediaSource.Factory by fallback {
+    private val fallback: MediaSource.Factory = DefaultMediaSourceFactory(podcastDataSource(context))) : MediaSource.Factory by fallback {
     override fun createMediaSource(mediaItem: MediaItem): MediaSource {
         val uri = mediaItem.localConfiguration?.uri
         if (uri?.scheme != "magpie-article") return fallback.createMediaSource(mediaItem)

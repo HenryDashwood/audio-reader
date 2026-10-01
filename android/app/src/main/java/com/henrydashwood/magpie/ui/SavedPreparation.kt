@@ -3,6 +3,7 @@ package com.henrydashwood.magpie.ui
 import android.content.Intent
 import androidx.core.net.toUri
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.combinedClickable
@@ -67,20 +68,25 @@ fun SavedArticlePreparation(item: LibraryItem, model: MagpieModel) {
     val state by model.savedPreparation.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var openError by remember(item.id) { mutableStateOf<String?>(null) }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         item.captureError?.let { raw ->
             // The shared backend sometimes includes Safari-specific recovery advice.
-            val message = if (raw.contains("Safari")) "The link is saved, but Magpie could not retrieve the full article. Try again later or capture the page in Magpie." else raw
-            Text(message, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-            TextButton(onClick = { model.savedPreparation.retry(item) }, enabled = !state.busy,
-                modifier = Modifier.semantics { contentDescription = "Retry preparing ${item.title}" }) { Text("Retry") }
-            if (item.originalUrl != null) TextButton(onClick = {
-                try { context.startActivity(Intent(Intent.ACTION_VIEW, item.originalUrl.toUri())) }
-                catch (_: android.content.ActivityNotFoundException) { openError = "No browser is available to open the original page." }
-            }) { Text("Open original") }
-            // Recovery only when the server could not read the page; otherwise it lives in the row's menu.
-            if (item.originalUrl != null) TextButton(onClick = { captureSavedPage(context, item) }, enabled = !state.busy,
-                modifier = Modifier.semantics { contentDescription = "Capture page for ${item.title}" }) { Text("Capture page") }
+            val message = if (raw.contains("Safari")) "Magpie couldn't fetch the full article. Retry, or capture the page in Magpie." else raw
+            // As on iOS: a caption, then the recovery actions on one line. Capture page is Android's
+            // stand-in for Safari handing over the rendered page.
+            Text(message, Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val compact = PaddingValues(horizontal = 8.dp)
+            FlowRow(Modifier.offset(x = (-8).dp)) {
+                TextButton(onClick = { model.savedPreparation.retry(item) }, enabled = !state.busy, contentPadding = compact,
+                    modifier = Modifier.semantics { contentDescription = "Retry preparing ${item.title}" }) { Text("Retry") }
+                if (item.originalUrl != null) TextButton(onClick = {
+                    try { context.startActivity(Intent(Intent.ACTION_VIEW, item.originalUrl.toUri())) }
+                    catch (_: android.content.ActivityNotFoundException) { openError = "No browser is available to open the original page." }
+                }, contentPadding = compact) { Text("Open original") }
+                if (item.originalUrl != null) TextButton(onClick = { captureSavedPage(context, item) }, enabled = !state.busy, contentPadding = compact,
+                    modifier = Modifier.semantics { contentDescription = "Capture page for ${item.title}" }) { Text("Capture page") }
+            }
         }
         openError?.let { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
     }
