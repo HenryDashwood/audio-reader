@@ -169,7 +169,7 @@ class Client:
 
 
 def publish(client: Client, *, track: str, bundle: Path, mapping: Path | None, notes: list[dict],
-            draft: bool, rollout: float | None, log=print) -> int:
+            draft: bool, rollout: float | None, version_name: str | None = None, log=print) -> int:
     """Upload, attach, assign and commit in one edit; abandon the edit on any failure."""
     edit = client.request("POST", f"{API}/edits")["id"]
     try:
@@ -179,7 +179,8 @@ def publish(client: Client, *, track: str, bundle: Path, mapping: Path | None, n
         if mapping is not None:
             log(f"Attaching the R8 mapping file for version code {version_code}…")
             client.upload(f"{UPLOAD_API}/edits/{edit}/apks/{version_code}/deobfuscationFiles/proguard", mapping)
-        name = _version_name(client, edit, version_code)
+        # Play reports no versionName for bundle uploads, so the caller's is preferred.
+        name = version_name or _version_name(client, edit, version_code)
         body = release(version_code, name, notes, draft=draft, rollout=rollout)
         client.request("PUT", f"{API}/edits/{edit}/tracks/{track}", json={"track": track, "releases": [body]})
         client.request("POST", f"{API}/edits/{edit}:commit")
@@ -216,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--confirm-production", action="store_true", help="required for --track production")
     parser.add_argument("--bundle", type=Path, default=BUNDLE)
     parser.add_argument("--mapping", type=Path, default=MAPPING)
+    parser.add_argument("--version-name", help="shown in the release name, e.g. 1.0.3")
     args = parser.parse_args(argv)
     try:
         if args.track == "production" and not args.confirm_production:
@@ -231,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         token = os.environ.get("MAGPIE_PLAY_ACCESS_TOKEN")
         client = Client(access_token=token) if token else Client(service_account(os.environ))
         publish(client, track=args.track, bundle=args.bundle, mapping=mapping, notes=notes,
-                draft=args.draft, rollout=args.rollout)
+                draft=args.draft, rollout=args.rollout, version_name=args.version_name)
     except Failure as failure:
         print(f"error: {failure}", file=sys.stderr)
         return 1

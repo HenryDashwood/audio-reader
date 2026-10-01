@@ -109,7 +109,11 @@ jobs:
           fi
           if [ -n "$name" ]; then
             echo "ORG_GRADLE_PROJECT_MAGPIE_VERSION_NAME=$name" >> "$GITHUB_ENV"
+          else
+            name=$(sed -n 's/.*MAGPIE_VERSION_NAME").orNull ?: "\(.*\)"/\1/p' android/app/build.gradle.kts)
           fi
+          # For the release name in Play Console ("301 (1.0.2)").
+          echo "VERSION_NAME=$name" >> "$GITHUB_ENV"
 
       - name: Write the upload key
         env:
@@ -155,7 +159,7 @@ jobs:
           TRACK: ${{ inputs.track || 'internal' }}
           DRAFT: ${{ inputs.draft && '--draft' || '' }}
         # DRAFT is unquoted on purpose: empty means "roll out".
-        run: uv run scripts/play_upload.py --track "$TRACK" $DRAFT
+        run: uv run scripts/play_upload.py --track "$TRACK" --version-name "$VERSION_NAME" $DRAFT
 
       - name: Keep the bundle and R8 mapping
         if: always()

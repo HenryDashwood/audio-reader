@@ -154,3 +154,11 @@ def test_an_access_token_from_ci_skips_the_key_exchange():
 def test_no_credentials_at_all_is_named():
     with pytest.raises(upload.Failure, match="MAGPIE_PLAY_ACCESS_TOKEN"):
         upload.Client()
+
+
+def test_the_callers_version_name_names_the_release(tmp_path):
+    bundle = tmp_path / "app.aab"; bundle.write_bytes(b"aab")
+    client = FakeClient()
+    upload.publish(client, track="internal", bundle=bundle, mapping=None, notes=[], draft=True,
+                   rollout=None, version_name="1.0.3", log=lambda _: None)
+    assert client.track_body["releases"][0]["name"] == "3 (1.0.3)"
