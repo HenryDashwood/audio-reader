@@ -116,8 +116,8 @@ the one editable draft (never submitted, or sent back by review) to the new
 version. It does **not** submit the version for review on its own: that is a
 manual run of the workflow with **submit_for_review** ticked, alongside the
 build number and version, which sends the version to App Review with the
-repository's notes and contact. Releasing an approved version stays a decision
-made in App Store Connect.
+repository's notes and contact. The sync applies `releaseType: AFTER_APPROVAL`
+from `config.json`, so Apple automatically releases the version after approval.
 
 The same operation can be run locally:
 
