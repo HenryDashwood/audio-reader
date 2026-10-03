@@ -51,6 +51,14 @@ open class MagpieApplication : Application() {
         }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** Episode audio kept on the phone. Follows the account library; see EpisodeDownloads. */
+    open val downloads: EpisodeDownloads by lazy {
+        EpisodeDownloads(SystemDownloadTransport(this), FileDownloadManifestStore(this), PreferencesDownloadSettingsStore(this),
+            scope, { SystemDownloadTransport.onMobileData(this) },
+            protecting = { com.henrydashwood.magpie.playback.PlaybackStatus.currentItemId.value }).also { downloads ->
+            scope.launch { library.state.collect(downloads::libraryChanged) }
+        }
+    }
     fun progressWork(work: suspend () -> Unit) = scope.launch { work() }
     open fun createTelemetryStore(): com.henrydashwood.magpie.telemetry.TelemetryStore = com.henrydashwood.magpie.telemetry.FileTelemetryStore(this)
     open val articleInbox: ArticleInboxStore by lazy { ArticleInboxStore(this) }

@@ -44,7 +44,7 @@ class VoiceAttempt(private val accessible: Boolean, private val turns: Int, priv
             is LocalCommand.Sleep -> { outcome = VoiceOutcome.Sleep; sleep = "set" }
             LocalCommand.CancelSleep -> { outcome = VoiceOutcome.Sleep; sleep = "cancel" }
             LocalCommand.EndConversation -> outcome = VoiceOutcome.Ended
-            LocalCommand.Undo -> outcome = VoiceOutcome.Spoken
+            LocalCommand.Undo, LocalCommand.Download, LocalCommand.RemoveDownload -> outcome = VoiceOutcome.Spoken
         }
     }
     fun finish() {

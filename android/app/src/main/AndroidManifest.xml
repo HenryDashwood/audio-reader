@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Automatic episode downloads run without a notification; ones she asks for show their progress. -->
+    <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
     <!-- Conversation cues: the go-ahead to speak is felt as well as heard. -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <queries>

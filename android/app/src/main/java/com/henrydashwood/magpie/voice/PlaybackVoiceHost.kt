@@ -10,7 +10,8 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
     private val playing: () -> LibraryItem?, private val prepare: () -> Unit,
     private val send: suspend (String, Bundle) -> Bundle,
     private val startPlayback: (suspend (LibraryItem) -> Unit)? = null,
-    private val resetRestoredBookmark: Boolean = false) : VoiceHost {
+    private val resetRestoredBookmark: Boolean = false,
+    private val downloads: EpisodeDownloads? = null) : VoiceHost {
     private var interruptedKind: ContentKind? = null
     private var requestId: String? = null
     private fun playbackKind() = playing()?.kind ?: interruptedKind ?: ContentKind.Podcast
@@ -63,7 +64,43 @@ class PlaybackVoiceHost(private val library: AccountLibrary, private val store: 
                     speed(token, previous.before, previous.kind); library.speedUndo = null; LocalVoiceResult("Playback speed restored.")
                 }
             }
+            LocalCommand.Download, LocalCommand.RemoveDownload -> download(command)
             LocalCommand.EndConversation -> null
+        }
+    }
+
+    /** Spoken, because a download makes no sound and she may not be looking at the screen. */
+    private fun download(command: LocalCommand): LocalVoiceResult {
+        val downloads = downloads ?: return LocalVoiceResult("Downloads are not available here.")
+        val item = playing() ?: return LocalVoiceResult("Nothing is playing. Play an episode first, then ask me to download it.")
+        if (command == LocalCommand.RemoveDownload) {
+            if (downloads.record(item.id) == null) return LocalVoiceResult("${item.title} is not downloaded.")
+            downloads.remove(item.id)
+            return LocalVoiceResult("Removed the download of ${item.title}.")
+        }
+        return when (val decision = downloads.request(listOf(item))) {
+            is DownloadDecision.Started -> LocalVoiceResult("Downloading ${item.title}.")
+            is DownloadDecision.NothingToDo -> LocalVoiceResult(decision.message)
+            is DownloadDecision.Refused -> LocalVoiceResult(decision.message)
+            is DownloadDecision.NeedsConfirmation -> {
+                downloads.awaitVoiceAnswer(decision.confirmation)
+                LocalVoiceResult(decision.confirmation.spokenQuestion, expectsReply = true)
+            }
+        }
+    }
+
+    override suspend fun answer(heard: String, token: String): LocalVoiceResult? {
+        // Anything other than an answer drops the question and is handled as a new request.
+        val confirmation = downloads?.takeVoiceQuestion() ?: return null
+        val title = if (confirmation.episodes.size == 1) confirmation.episodes[0].title else "those episodes"
+        return when (DownloadPhrases.reply(heard)) {
+            DownloadPhrases.Reply.Yes -> { downloads.confirm(confirmation, waitForWifi = false); LocalVoiceResult("Downloading $title.") }
+            DownloadPhrases.Reply.WaitForWifi -> if (confirmation.usesMobileData) {
+                downloads.confirm(confirmation, waitForWifi = true)
+                LocalVoiceResult("I will download $title when you are on Wi-Fi.")
+            } else LocalVoiceResult("OK, I will not download it.")
+            DownloadPhrases.Reply.No -> LocalVoiceResult("OK, I will not download it.")
+            null -> null
         }
     }
     override suspend fun consent() = library.aiConsent()

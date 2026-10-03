@@ -18,7 +18,8 @@ import com.henrydashwood.magpie.data.LibraryItem
 /** Shared by article and recorded-episode pages; browser actions accept only web URLs. */
 @Composable
 fun ReaderToolbarActions(item: LibraryItem, playing: Boolean, searching: Boolean, togglePlayback: () -> Unit,
-    toggleFind: () -> Unit, launchIntent: ((Intent) -> Unit)? = null, onAsk: () -> Unit = {}) {
+    toggleFind: () -> Unit, launchIntent: ((Intent) -> Unit)? = null, onAsk: () -> Unit = {},
+    download: (@Composable () -> Unit)? = null) {
     val context = LocalContext.current
     var message by rememberSaveable(item.id) { mutableStateOf<String?>(null) }
     val original = remember(item.originalUrl) {
@@ -31,9 +32,12 @@ fun ReaderToolbarActions(item: LibraryItem, playing: Boolean, searching: Boolean
     IconButton(onClick = togglePlayback) {
         Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Pause" else "Listen")
     }
+    // As on iOS, a podcast episode's web page is rarely wanted and the bar has no room for both:
+    // downloading takes its place, and the link stays reachable through Share.
+    if (download != null) download()
     // As on iOS, both need a web page, so an article without one shows neither.
     if (original != null) {
-        IconButton(onClick = { launch(Intent(Intent.ACTION_VIEW, original)) }) {
+        if (download == null) IconButton(onClick = { launch(Intent(Intent.ACTION_VIEW, original)) }) {
             Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open the original")
         }
         IconButton(onClick = {

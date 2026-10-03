@@ -314,7 +314,11 @@ abstract class BaseMagpieAppFunctions : AppFunctionService() {
             val result = changeLibrary("undo", null, false)
             return MagpieRequestResult(result.message, false, result.item, null)
         }
+        // A download can need a spoken or on-screen yes, which an assistant request cannot give.
+        if (command == LocalCommand.Download || command == LocalCommand.RemoveDownload)
+            return MagpieRequestResult("Open Magpie to manage downloads.", false, null, null)
         val (name, value, message) = when (command) {
+            LocalCommand.Download, LocalCommand.RemoveDownload, LocalCommand.EndConversation, LocalCommand.Resume -> error("handled above")
             LocalCommand.Pause -> Triple("pause", null, "Listening paused.")
             is LocalCommand.Seek -> Triple("skip", command.seconds, "Listening position updated.")
             is LocalCommand.Speed -> Triple("speed", command.rate.toDouble(), "Playback speed updated.")

@@ -57,6 +57,7 @@ import com.henrydashwood.magpie.MagpieModel
 import com.henrydashwood.magpie.PlayerState
 import com.henrydashwood.magpie.data.playbackRates
 import com.henrydashwood.magpie.data.ContentKind
+import com.henrydashwood.magpie.data.DownloadStatus
 import com.henrydashwood.magpie.data.ItemFilingAction
 import com.henrydashwood.magpie.data.LibraryItem
 import com.henrydashwood.magpie.data.LibraryFeed
@@ -93,6 +94,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     var reloadVersion by remember { mutableIntStateOf(0) }
     var showingAccount by rememberSaveable { mutableStateOf(false) }
     var showingShortcuts by rememberSaveable { mutableStateOf(false) }
+    var showingDownloads by rememberSaveable { mutableStateOf(false) }
     val shortcutNavigation by model.shortcutNavigation.collectAsStateWithLifecycle()
     val shortcutWorking by model.shortcutWorking.collectAsStateWithLifecycle()
     val saved by model.saved.collectAsStateWithLifecycle()
@@ -199,6 +201,11 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
         ShortcutsScreen(model) { showingShortcuts = false }
         return
     }
+    if (showingDownloads) {
+        BackHandler { showingDownloads = false }
+        DownloadsScreen(model) { showingDownloads = false }
+        return
+    }
     LaunchedEffect(playback.item) { if (playback.item == null) showingPlayer = false }
     LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); model.dismissNotice() } }
     LaunchedEffect(preparation.error) { preparation.error?.let { snackbar.showSnackbar(it, duration = SnackbarDuration.Long) } }
@@ -247,7 +254,8 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                         val isPlaying = playback.item?.id == selectedItem.id && playback.playing
                         ReaderToolbarActions(selectedItem, isPlaying, showingSearch,
                             { if (isPlaying) model.pause() else model.play(selectedItem) },
-                            { showingSearch = !showingSearch; query = "" }, onAsk = { model.ask(selectedItem.episodeId) })
+                            { showingSearch = !showingSearch; query = "" }, onAsk = { model.ask(selectedItem.episodeId) },
+                            download = if (snapshot.live && selectedItem.audioUrl != null) { { DownloadButton(model, selectedItem) } } else null)
                     } else if (selectedSource != null || destination == Destination.Following || destination == Destination.Saved) {
                         IconButton(onClick = { showingSearch = !showingSearch; query = "" }) {
                             Icon(if (showingSearch) Icons.Rounded.Close else Icons.Rounded.Search,
@@ -316,7 +324,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                         pendingLinks = pendingLinks, removePendingLink = model::removePendingLink, live = snapshot.live, model = model, loading = snapshot.loading,
                         notice = snapshot.error, retry = ::refresh, finishedTab = savedFinishedTab)
                 }
-                else -> SettingsScreen(model, onShortcuts = { showingShortcuts = true }) { showingAccount = true }
+                else -> SettingsScreen(model, onShortcuts = { showingShortcuts = true }, onDownloads = { showingDownloads = true }) { showingAccount = true }
             } }
             if (refreshable) CompositionLocalProvider(LocalRefreshActions provides refreshActions) {
                 PullToRefreshBox(isRefreshing = snapshot.loading || snapshot.searching, onRefresh = ::refresh,
@@ -334,10 +342,13 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     }
     SourceManagementDialog(model)
     ReplaceSavedTextDialog(model)
+    DownloadPromptDialog(model)
     AskConversation(model)
     if (showingPlayer) ModalBottomSheet(onDismissRequest = { showingPlayer = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        val downloadable = playback.item?.takeIf { snapshot.live && it.audioUrl != null }
         FullPlayer(playback, preparation, model::toggle, model::skip, model::seek, model::speed,
-            sleepTimer, model::startSleepTimer, model::cancelSleepTimer, close = { showingPlayer = false }) {
+            sleepTimer, model::startSleepTimer, model::cancelSleepTimer, close = { showingPlayer = false },
+            download = downloadable?.let { item -> { DownloadButton(model, item) } }) {
             // Load its text too: a restored player can hold an article that has not been opened yet.
             playback.item?.let(::openItem)
             showingPlayer = false
@@ -611,6 +622,7 @@ private fun StoryMetadata(item: LibraryItem, progress: ListeningPresentation?) {
         length?.let { it to secondary },
         progress?.label?.let { it to if (it == "Played") secondary else MaterialTheme.colorScheme.primary },
         "Not in Latest".takeIf { item.dismissed }?.let { it to secondary },
+        downloadLabel(item)?.let { it to secondary },
     )
     if (fields.isEmpty()) return
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.semantics(mergeDescendants = true) { }) {
@@ -718,7 +730,14 @@ private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> U
     else actions + listOfNotNull(if (item.kind == ContentKind.Article) StoryAction(
         if (item.id in saved) "Dismiss from Saved" else "Save article",
         if (item.id in saved) Icons.Rounded.BookmarkRemove else Icons.Rounded.BookmarkAdd, { model.toggleSaved(item) }) else null)
-    ActionStoryRow(item, open, play, menu, leading, trailing, progress, currentLabel, below)
+    val downloads by model.downloads.records.collectAsStateWithLifecycle()
+    // In the item's actions menu and TalkBack's actions, as on iOS's swipe; never the only way to download.
+    val download = if (!live || item.audioUrl == null) null else when (downloads[item.id]?.status) {
+        is DownloadStatus.Queued, is DownloadStatus.Downloading -> StoryAction("Cancel download", Icons.Rounded.Stop, { model.removeDownload(item, cancelled = true) })
+        DownloadStatus.Downloaded -> StoryAction("Remove download", Icons.Rounded.Delete, { model.removeDownload(item) })
+        else -> StoryAction("Download", Icons.Rounded.Download, { model.requestDownload(listOf(item)) })
+    }
+    ActionStoryRow(item, open, play, menu + listOfNotNull(download), leading, trailing, progress, currentLabel, below)
 }
 
 @Composable
@@ -848,7 +867,8 @@ private fun PreparationBar(state: Preparation, cancel: () -> Unit) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FullPlayer(state: PlayerState, preparing: Preparation, toggle: () -> Unit, skip: (Int) -> Unit, seek: (Long) -> Unit, speed: (Float) -> Unit,
-    sleepTimer: SleepTimerState, startSleepTimer: (Int) -> Unit, cancelSleepTimer: () -> Unit, close: () -> Unit, read: () -> Unit) {
+    sleepTimer: SleepTimerState, startSleepTimer: (Int) -> Unit, cancelSleepTimer: () -> Unit, close: () -> Unit,
+    download: (@Composable () -> Unit)? = null, read: () -> Unit) {
     val item = state.item ?: return
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 28.dp).padding(bottom = 32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp)) {
         IconButton(onClick = close, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Rounded.KeyboardArrowDown, "Close player") }
@@ -886,6 +906,7 @@ private fun FullPlayer(state: PlayerState, preparing: Preparation, toggle: () ->
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SpeedPicker(state.speed, speed)
             SleepTimerButton(sleepTimer, state.connected, startSleepTimer, cancelSleepTimer)
+            download?.invoke()
         }
     }
 }
