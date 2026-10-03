@@ -281,6 +281,7 @@ final class AuthController: ObservableObject {
         CaptureInbox.shared.signOut()
         SavedLibrary.shared.clear()
         OfflineCache.shared.clear()
+        EpisodeDownloads.shared.clear()
         // Events are scoped by account, but removing all queues is the safest
         // boundary on a shared phone and fulfils deletion immediately.
         TelemetryReporter.clearStoredQueues()

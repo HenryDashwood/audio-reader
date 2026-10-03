@@ -141,46 +141,91 @@ func fileEpisode(_ filing: EpisodeFiling, _ episode: Episode, api: HearfulAPIPro
 }
 
 extension View {
-    /// The filing actions for one episode row.
+    /// The filing and download actions for one episode row.
     ///
     /// Swipe actions, because VoiceOver surfaces them through the Actions
     /// rotor — the same gesture on every row of every list, and the only way
     /// to reach a control that is otherwise hidden behind a swipe you cannot
     /// see. Dismissal lives on the leading edge in Latest and Saved; completion and
-    /// its inverse live on the trailing edge everywhere. With one action on an
-    /// edge, either can be completed in a single full swipe.
+    /// its inverse live on the trailing edge everywhere. With one filing action
+    /// on an edge, either can be completed in a single full swipe; downloading
+    /// comes after it on the trailing edge so a full swipe still files.
     func episodeFilingActions(
         for episode: Episode,
         allowsDismissal: Bool,
         perform: @escaping (EpisodeFiling) -> Void
     ) -> some View {
-        swipeActions(edge: .leading, allowsFullSwipe: true) {
-            ForEach(
-                EpisodeFiling.leadingSwipeActions(
-                    for: episode, allowsDismissal: allowsDismissal),
-                id: \.self
-            ) { filing in
-                Button {
-                    perform(filing)
-                } label: {
-                    Label(filing.actionTitle(for: episode), systemImage: filing.systemImage)
+        modifier(EpisodeRowActions(episode: episode, allowsDismissal: allowsDismissal, perform: perform))
+    }
+}
+
+private struct EpisodeRowActions: ViewModifier {
+    let episode: Episode
+    let allowsDismissal: Bool
+    let perform: (EpisodeFiling) -> Void
+    @ObservedObject private var downloads = EpisodeDownloads.shared
+    @State private var prompt: DownloadPrompt?
+
+    func body(content: Content) -> some View {
+        content
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                ForEach(
+                    EpisodeFiling.leadingSwipeActions(
+                        for: episode, allowsDismissal: allowsDismissal),
+                    id: \.self
+                ) { filing in
+                    Button {
+                        perform(filing)
+                    } label: {
+                        Label(filing.actionTitle(for: episode), systemImage: filing.systemImage)
+                    }
+                    .tint(filing.tint)
                 }
-                .tint(filing.tint)
             }
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            ForEach(
-                EpisodeFiling.trailingSwipeActions(
-                    for: episode, allowsDismissal: allowsDismissal),
-                id: \.self
-            ) { filing in
-                Button {
-                    perform(filing)
-                } label: {
-                    Label(filing.actionTitle(for: episode), systemImage: filing.systemImage)
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                ForEach(
+                    EpisodeFiling.trailingSwipeActions(
+                        for: episode, allowsDismissal: allowsDismissal),
+                    id: \.self
+                ) { filing in
+                    Button {
+                        perform(filing)
+                    } label: {
+                        Label(filing.actionTitle(for: episode), systemImage: filing.systemImage)
+                    }
+                    .tint(filing.tint)
                 }
-                .tint(filing.tint)
+                if episode.audioURL != nil { downloadAction }
             }
+            .downloadPrompt($prompt)
+    }
+
+    @ViewBuilder
+    private var downloadAction: some View {
+        switch downloads.record(for: episode.id)?.status {
+        case .queued, .downloading:
+            Button {
+                downloads.remove(episodeID: episode.id)
+                AccessibilityNotification.Announcement("Download cancelled").post()
+            } label: {
+                Label("Cancel download", systemImage: "stop.circle")
+            }
+            .tint(.orange)
+        case .downloaded:
+            Button {
+                downloads.remove(episodeID: episode.id)
+                AccessibilityNotification.Announcement("Download removed: \(episode.title)").post()
+            } label: {
+                Label("Remove download", systemImage: "trash")
+            }
+            .tint(.red)
+        case .failed, nil:
+            Button {
+                prompt = downloads.requestFromTap([episode])
+            } label: {
+                Label("Download", systemImage: "arrow.down.circle")
+            }
+            .tint(.indigo)
         }
     }
 }

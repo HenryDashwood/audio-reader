@@ -137,6 +137,7 @@ struct ContentView: View {
             applyShortcutNavigation()
             OfflineRecovery.shared.start()
             await PlaybackRestore.restore()
+            await EpisodeDownloads.shared.refreshAutomatic()
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulAskByVoice)) { _ in
             _ = VoicePrompt.consume()
@@ -156,6 +157,7 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .hearfulServerChanged)) { _ in
             SavedLibrary.shared.clear()
             OfflineCache.shared.clear()
+            EpisodeDownloads.shared.clear()
             PlaybackCoordinator.shared.clear()
             ShortcutLibrary.shared.invalidate()
             serverGeneration += 1

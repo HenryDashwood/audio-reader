@@ -31,5 +31,10 @@ struct HearfulApp: App {
                 await ObsoleteVoiceCleanup.remove()
             }
         }
+        // The system relaunches Magpie in the background to hand over
+        // finished episode downloads.
+        .backgroundTask(.urlSession(BackgroundDownloadTransport.identifier)) { _ in
+            await EpisodeDownloads.shared.handleBackgroundEvents()
+        }
     }
 }

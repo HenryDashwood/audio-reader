@@ -217,10 +217,10 @@ release, signing or version change was performed for this work.
 
 ### Remaining boundaries
 
-Managed podcast downloads, downloading remote article images, local previews of
-unprocessed browser captures, and queueing add/remove Saved operations remain
-separate features. Podcast playback still needs reachable media or audio already
-buffered by the player. Local voice needs an installed supported speech model.
+Downloading remote article images, local previews of unprocessed browser
+captures, and queueing add/remove Saved operations remain separate features.
+Podcast downloads were added later on iOS; see `podcast-downloads.md`. Without a
+download, podcast playback still needs reachable media. Local voice needs an installed supported speech model.
 Physical-device acceptance should still cover airplane mode, unreliable Wi-Fi,
 background termination, speech-model availability and reconnection.
 

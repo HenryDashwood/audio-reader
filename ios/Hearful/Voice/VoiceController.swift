@@ -138,6 +138,10 @@ final class VoiceController: ObservableObject {
     private let player: AudioPlaying
     private let feedback: FeedbackPlaying
     private let sleepTimer: SleepTimer
+    private let downloads: EpisodeDownloading
+    /// A download that went over the limit or onto mobile data, waiting on
+    /// her yes. Only the very next answer counts.
+    private var pendingDownload: DownloadConfirmation?
     private let telemetry: TelemetryReporting?
     private let conversationPreferences: @MainActor () -> VoiceConversationPreferences
     private var responseFailed = false
@@ -177,6 +181,7 @@ final class VoiceController: ObservableObject {
     init(
         api: HearfulAPIProtocol, speech: SpeechRecognizing, speaker: Speaking,
         player: AudioPlaying, feedback: FeedbackPlaying, sleepTimer: SleepTimer = .shared,
+        downloads: EpisodeDownloading = EpisodeDownloads.shared,
         telemetry: TelemetryReporting? = nil, sessionContext: VoiceSessionContext = VoiceSessionContext(),
         conversationPreferences: @escaping @MainActor () -> VoiceConversationPreferences = {
             VoiceConversationPreferences()
@@ -197,6 +202,7 @@ final class VoiceController: ObservableObject {
         self.player = player
         self.feedback = feedback
         self.sleepTimer = sleepTimer
+        self.downloads = downloads
         self.telemetry = telemetry
         self.conversationPreferences = conversationPreferences
         self.progressDelay = progressDelay
@@ -387,6 +393,17 @@ final class VoiceController: ObservableObject {
             conversation.sheSaid(heard)
             liveUserText = ""
 
+            // An answer to "Shall I download it anyway?" Anything else drops
+            // the question and is handled as a new request.
+            if let pending = pendingDownload {
+                pendingDownload = nil
+                if let reply = DownloadCommand.reply(heard) {
+                    attempt.outcome = .spoken
+                    await answer(pending, with: reply)
+                    return .answered
+                }
+            }
+
             // Transport controls and the sleep timer resolve here, with no
             // network and no model. Sleep is checked first: its phrases are
             // the more specific of the two ("stop" is a pause, "stop in
@@ -422,6 +439,12 @@ final class VoiceController: ObservableObject {
                 attempt.sleepCommand = sleep == .cancel ? "cancel" : "after"
                 await perform(sleep)
                 return .answered
+            }
+            if selectedOptionID == nil, let command = DownloadCommand.match(heard) {
+                sessionContext.clarification = nil
+                clarification = nil
+                attempt.outcome = .spoken
+                return await perform(command)
             }
             if selectedOptionID == nil, let transport = TransportCommand.match(heard) {
                 sessionContext.clarification = nil
@@ -632,6 +655,50 @@ final class VoiceController: ObservableObject {
             await finish(saying: "Sleep timer off.")
         }
         // The episode she interrupted to say this carries on.
+    }
+
+    /// Downloads or removes whatever is playing. The answer is spoken: a
+    /// download makes no sound, and she may not be looking at the screen.
+    private func perform(_ command: DownloadCommand) async -> TurnOutcome {
+        guard let episode = player.currentEpisode else {
+            await finish(saying: "Nothing is playing. Play an episode first, then ask me to download it.")
+            return .answered
+        }
+        switch command {
+        case .download:
+            switch downloads.request([episode]) {
+            case .started:
+                await finish(saying: "Downloading \(episode.title).")
+            case .nothingToDo(let message), .refused(let message):
+                await finish(saying: message)
+            case .needsConfirmation(let confirmation):
+                pendingDownload = confirmation
+                await finish(saying: confirmation.spokenQuestion)
+                return .expectsReply
+            }
+        case .remove:
+            if downloads.record(for: episode.id) == nil {
+                await finish(saying: "\(episode.title) is not downloaded.")
+            } else {
+                downloads.remove(episodeID: episode.id)
+                await finish(saying: "Removed the download of \(episode.title).")
+            }
+        }
+        return .answered
+    }
+
+    private func answer(_ confirmation: DownloadConfirmation, with reply: DownloadCommand.Reply) async {
+        let title = confirmation.episodes.count == 1 ? confirmation.episodes[0].title : "those episodes"
+        switch reply {
+        case .yes:
+            downloads.confirm(confirmation, waitForWiFi: false)
+            await finish(saying: "Downloading \(title).")
+        case .waitForWiFi where confirmation.usesMobileData:
+            downloads.confirm(confirmation, waitForWiFi: true)
+            await finish(saying: "I will download \(title) when you are on Wi-Fi.")
+        case .no, .waitForWiFi:
+            await finish(saying: "OK, I will not download it.")
+        }
     }
 
     /// Puts back what she was listening to, unless something replaced it.

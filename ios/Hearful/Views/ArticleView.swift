@@ -131,6 +131,9 @@ private struct ArticleReaderView: View {
                 // not move Find and Ask into its automatic overflow menu.
                 HStack(spacing: 12) {
                     ArticlePlaybackButton(episode: episode)
+                    if episode.audioURL != nil {
+                        DownloadButton(episode: episode)
+                    }
                     if let link = episode.link {
                         Link(destination: link) {
                             Image(systemName: "safari")
