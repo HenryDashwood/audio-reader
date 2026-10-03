@@ -54,6 +54,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     /// Sounded when an item reaches its end. Injectable so the tests can watch
     /// for it without a speaker.
     var feedback: FeedbackPlaying = Feedback.shared
+    /// The downloaded copy of an episode, if there is one. Played in place of
+    /// the feed's URL so a downloaded episode needs no connection at all.
+    var localFile: @MainActor (Episode) -> URL? = { EpisodeDownloads.shared.localFile(for: $0) }
     /// Announces that the current item has run out, for the coordinator to act
     /// on. The player itself does not decide what happens next.
     let finished = PassthroughSubject<Void, Never>()
@@ -253,7 +256,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         // accept a seek callback from the retired item while it loads.
         seekGeneration += 1
         isSeeking = resumeAt != nil
-        let item = AVPlayerItem(url: url)
+        let item = AVPlayerItem(url: localFile(episode) ?? url)
         // timeDomain keeps speech natural at raised speeds; the default
         // algorithm turns 1.5x podcasts into chipmunks-adjacent audio.
         item.audioTimePitchAlgorithm = .timeDomain

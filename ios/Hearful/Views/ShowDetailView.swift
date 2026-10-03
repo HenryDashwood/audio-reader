@@ -12,6 +12,7 @@ struct ShowDetailView: View {
     @State private var searchText = ""
     @State private var managingSources = false
     @State private var refreshedShow: Show?
+    @State private var downloadPrompt: DownloadPrompt?
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -159,6 +160,16 @@ struct ShowDetailView: View {
             } label: {
                 Label("Manage sources", systemImage: "link")
             }
+            if !unplayedToDownload.isEmpty {
+                Button {
+                    downloadPrompt = EpisodeDownloads.shared.requestFromTap(unplayedToDownload)
+                } label: {
+                    Label(
+                        unplayedToDownload.count == 1
+                            ? "Download unplayed episode" : "Download \(unplayedToDownload.count) unplayed episodes",
+                        systemImage: "arrow.down.circle")
+                }
+            }
             Divider()
             // The catalog keeps the feed and its positions, so unsubscribing
             // stays one tap and reversible, just like the voice path.
@@ -190,7 +201,23 @@ struct ShowDetailView: View {
         .menuOrder(.fixed)
         .disabled(model.unsubscribing)
         .accessibilityLabel(model.unsubscribing ? "Unsubscribing from \(show.title)" : "Manage \(show.title)")
-        .accessibilityHint("Manage sources or unsubscribe")
+        .accessibilityHint("Manage sources, download episodes or unsubscribe")
+        .downloadPrompt($downloadPrompt)
+    }
+
+    /// The newest unplayed episodes not already on the phone. Capped, so a
+    /// show with years of back catalogue cannot fill the phone in one tap.
+    private var unplayedToDownload: [Episode] {
+        guard case .loaded(let episodes) = model.state, !model.isSearching else { return [] }
+        let downloads = EpisodeDownloads.shared
+        return Array(episodes.filter { episode in
+            guard episode.audioURL != nil,
+                player.listeningProgress(for: episode) != .played,
+                episode.dismissed != true
+            else { return false }
+            if case .failed = downloads.record(for: episode.id)?.status { return true }
+            return downloads.record(for: episode.id) == nil
+        }.prefix(5))
     }
 
     @ViewBuilder
@@ -303,6 +330,7 @@ struct EpisodeRow: View {
 private struct EpisodeMetadata: View {
     let episode: Episode
     let progress: ListeningProgress
+    @ObservedObject private var downloads = EpisodeDownloads.shared
 
     private var length: String? {
         episode.isArticle
@@ -310,8 +338,10 @@ private struct EpisodeMetadata: View {
             : formatLength(seconds: episode.durationSeconds)
     }
     private var progressLabel: String? { progress.label }
+    /// "Downloaded", "Downloading 40%" and so on; nil when not downloaded.
+    private var downloadLabel: String? { downloads.record(for: episode.id)?.statusLabel }
     private var hasPrimary: Bool { episode.publishedAt != nil || length != nil }
-    private var hasStatus: Bool { progressLabel != nil || episode.dismissed == true }
+    private var hasStatus: Bool { progressLabel != nil || episode.dismissed == true || downloadLabel != nil }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -365,6 +395,10 @@ private struct EpisodeMetadata: View {
                 // every other row when viewed inside its show.
                 Text("Not in Latest")
             }
+            if let downloadLabel {
+                if progressLabel != nil || episode.dismissed == true { Text("·") }
+                Text(downloadLabel)
+            }
         }
     }
 
@@ -386,6 +420,9 @@ private struct EpisodeMetadata: View {
             }
             if episode.dismissed == true {
                 Text("Not in Latest").fixedSize(horizontal: true, vertical: false)
+            }
+            if let downloadLabel {
+                Text(downloadLabel).fixedSize(horizontal: true, vertical: false)
             }
         }
     }

@@ -9,6 +9,7 @@ struct NowPlayingView: View {
     @ObservedObject private var articlePlayer = ArticlePlayer.shared
     @ObservedObject private var sleepTimer = SleepTimer.shared
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var scrubPosition: TimeInterval = 0
 
     var body: some View {
@@ -78,9 +79,16 @@ struct NowPlayingView: View {
 
                 scrubber
                 transport
-                HStack(spacing: 16) {
+                // Three capsules do not fit side by side at the largest text
+                // sizes; they stack instead of truncating.
+                (dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(spacing: 12)) : AnyLayout(HStackLayout(spacing: 16))) {
                     speedControl
                     sleepControl
+                    if player.mode == .audio, let episode = player.currentEpisode, episode.audioURL != nil {
+                        DownloadButton(episode: episode, capsule: true)
+                            .buttonStyle(.plain)
+                    }
                 }
 
                 if player.mode == .article, let message = articlePlayer.progressError {

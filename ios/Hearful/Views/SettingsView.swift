@@ -132,6 +132,12 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    DownloadsSettingsLink()
+                } footer: {
+                    Text("Keep episodes on this iPhone so they play without a connection.")
+                }
+
+                Section {
                     NavigationLink {
                         SiriShortcutsView()
                     } label: {
