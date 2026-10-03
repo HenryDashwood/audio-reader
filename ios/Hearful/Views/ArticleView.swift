@@ -131,16 +131,20 @@ private struct ArticleReaderView: View {
                 // not move Find and Ask into its automatic overflow menu.
                 HStack(spacing: 12) {
                     ArticlePlaybackButton(episode: episode)
+                    // A podcast episode's web page is rarely wanted, and the
+                    // bar has no room for both: downloading takes its place,
+                    // and the link stays reachable through Share.
                     if episode.audioURL != nil {
                         DownloadButton(episode: episode)
-                    }
-                    if let link = episode.link {
+                    } else if let link = episode.link {
                         Link(destination: link) {
                             Image(systemName: "safari")
                                 .frame(width: 44, height: 44)
                         }
                         .accessibilityLabel("Open the original")
                         .accessibilityHint("Opens this page in your browser")
+                    }
+                    if let link = episode.link {
                         ArticleShareButton(episode: episode, link: link)
                     }
                     Button {
