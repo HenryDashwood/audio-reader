@@ -10,6 +10,21 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.6.2
+
+Download podcast episodes to listen when you have no connection. Use Download
+on an episode's page or in the player, choose the Download action on an
+episode row, or say "download this" while an episode is in the player.
+
+Magpie can also download the newest unplayed episodes of shows you follow.
+In Settings → Downloads, choose how many episodes to keep, set a storage
+limit, and manage your downloads. Downloads use Wi-Fi by default; Magpie asks
+before using mobile data or exceeding your storage limit.
+
+Please try downloading an episode, then listening with your connection off.
+Tell us if a download does not finish, an episode will not play offline, or
+the controls are difficult to use with VoiceOver.
+
 ## 1.6.1
 
 This update is mostly fixes. Magpie should understand you better when a
