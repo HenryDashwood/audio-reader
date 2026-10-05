@@ -13,6 +13,9 @@ sealed interface LocalCommand {
     data object CancelSleep : LocalCommand
     data object EndConversation : LocalCommand
     data object Undo : LocalCommand
+    /** "Download this": whatever is in the player. */
+    data object Download : LocalCommand
+    data object RemoveDownload : LocalCommand
 
     companion object {
         fun match(transcript: String): LocalCommand? {
@@ -22,6 +25,7 @@ sealed interface LocalCommand {
             if (dialogue in endings) return EndConversation
             if (dialogue in setOf("undo", "undo that", "undo last action")) return Undo
             sleep(transcript)?.let { return it }
+            DownloadPhrases.match(transcript)?.let { return it }
             val phrase = transcript.lowercase(Locale.ROOT)
                 .replace(Regex("(?<![0-9])\\.|\\.(?![0-9])"), " ")
                 .map { if (it.isLetterOrDigit() || it.isWhitespace() || it == '.') it else ' ' }.joinToString("")
@@ -111,4 +115,55 @@ sealed interface LocalCommand {
         private val sleepFiller = setOf("please", "can", "could", "you", "hey", "ok", "okay", "just", "the", "for", "in",
             "after", "set", "put", "me", "my", "i", "want", "to", "go", "at", "on")
     }
+}
+
+/**
+ * Whole-utterance download phrases, as on iOS: "download the new episode of In Our Time" names
+ * something else and is left for the model.
+ */
+object DownloadPhrases {
+    enum class Reply { Yes, WaitForWifi, No }
+
+    fun match(transcript: String): LocalCommand? {
+        val phrase = normalise(transcript)
+        return when (phrase) {
+            in download -> LocalCommand.Download
+            in remove -> LocalCommand.RemoveDownload
+            else -> null
+        }
+    }
+
+    /** An answer to "Shall I download it anyway?" */
+    fun reply(transcript: String): Reply? = when (normalise(transcript)) {
+        in yes -> Reply.Yes
+        in wait -> Reply.WaitForWifi
+        in no -> Reply.No
+        else -> null
+    }
+
+    private val things = listOf("this", "this episode", "this one", "it", "this podcast", "the episode", "that", "that episode")
+    private val download = buildSet {
+        addAll(listOf("download", "download for offline", "save for offline"))
+        for (thing in things) addAll(listOf("download $thing", "download $thing for offline", "save $thing for offline",
+            "keep $thing for offline", "make $thing available offline"))
+    }
+    private val remove = buildSet {
+        addAll(listOf("remove download", "delete download", "remove the download", "delete the download",
+            "remove this download", "delete this download", "remove that download", "delete that download"))
+        for (thing in things) addAll(listOf("remove $thing from downloads", "delete $thing from downloads",
+            "remove the download of $thing", "delete the download of $thing"))
+    }
+    private val yes = setOf("yes", "yeah", "yep", "sure", "go ahead", "do it", "download it", "download it anyway",
+        "download anyway", "download now", "download it now", "now", "ok", "okay", "use mobile data", "yes download it",
+        "yes use mobile data", "that's fine", "thats fine", "fine")
+    private val wait = setOf("wait", "wait for wifi", "wait for wi fi", "wait until wifi", "wait until wi fi",
+        "wait until i'm on wifi", "wait until i'm on wi fi", "later", "on wifi", "on wi fi", "when i'm on wifi",
+        "when i'm on wi fi", "download it later", "download later")
+    private val no = setOf("no", "nope", "no thanks", "no thank", "cancel", "don't", "dont", "don't download it",
+        "never mind", "nevermind", "forget it", "stop")
+    private val filler = setOf("please", "can", "could", "you", "hey", "just", "my", "me")
+
+    private fun normalise(transcript: String) = transcript.lowercase(Locale.ROOT).replace('’', '\'').replace('-', ' ')
+        .map { if (it.isLetterOrDigit() || it.isWhitespace() || it == '\'') it else ' ' }.joinToString("")
+        .split(Regex("\\s+")).filter { it.isNotEmpty() && it !in filler }.joinToString(" ")
 }

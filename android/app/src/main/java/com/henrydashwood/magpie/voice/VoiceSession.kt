@@ -15,13 +15,15 @@ interface VoiceInput {
 }
 fun interface VoiceOutput { suspend fun speak(text: String) }
 data class VoiceAccount(val owner: String?, val revision: Int, val live: Boolean, val playingEpisodeId: Int?, val country: String? = null)
-data class LocalVoiceResult(val reply: String = "", val end: Boolean = false)
+data class LocalVoiceResult(val reply: String = "", val end: Boolean = false, val expectsReply: Boolean = false)
 interface VoiceHost {
     fun account(): VoiceAccount
     suspend fun begin(token: String, revision: Int)
     suspend fun end(token: String, resume: Boolean)
     fun valid(token: String, revision: Int): Boolean
     suspend fun local(command: LocalCommand, token: String): LocalVoiceResult?
+    /** An answer to a question a local command asked, such as "Shall I download it anyway?" */
+    suspend fun answer(heard: String, token: String): LocalVoiceResult? = null
     suspend fun consent(): Boolean
     suspend fun allowAI()
     suspend fun prepareRequest(request: VoiceRequest, token: String) {}
@@ -225,15 +227,18 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                         attempt?.local(command)
                         conversation.userSaid(heard); publish(); mutable.update { it.copy(visible = false) }; break
                     }
-                    val local = command?.let { host.local(it, active.token) }
+                    val local = (if (selectedOptionId == null) host.answer(heard, active.token) else null)
+                        ?: command?.let { host.local(it, active.token) }
                     var expectsReply = false
                     if (local != null) {
                         conversation.abandonClarification()
-                        attempt?.local(checkNotNull(command)); attempt?.answered()
+                        if (command != null) attempt?.local(command) else attempt?.outcome = VoiceOutcome.Spoken
+                        attempt?.answered()
                         conversation.userSaid(heard); publish()
                         say(local.reply, ::checkTurn)
                         // Pause, resume and skip end the exchange but leave the sheet open, as on iOS.
                         if (local.end) break
+                        expectsReply = local.expectsReply
                     } else {
                         if (!account.live) throw VoiceFailure("Sign in to ask about your library. Playback and sleep commands work without an account.")
                         val owner = checkNotNull(account.owner)

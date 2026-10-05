@@ -31,6 +31,18 @@ fun SourceManagementMenu(model: MagpieModel, feed: LibraryFeed) {
         DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(text = { Text("Manage sources") }, leadingIcon = { Icon(Icons.Rounded.Link, null) },
                 onClick = { expanded = false; model.sourceManager.open(feed, library.revision) })
+            // The newest five unplayed episodes not already here, so a long back catalogue cannot fill the phone.
+            val downloads by model.downloads.records.collectAsStateWithLifecycle()
+            val unplayed = remember(library, downloads, feed.id) {
+                (library.feedItems[feed.id] ?: emptyList()).mapNotNull { id -> library.items.firstOrNull { it.id == id } }
+                    .filter { it.audioUrl != null && !it.completed && !it.dismissed &&
+                        (downloads[it.id] == null || downloads[it.id]?.status is com.henrydashwood.magpie.data.DownloadStatus.Failed) }
+                    .take(5)
+            }
+            if (unplayed.isNotEmpty()) DropdownMenuItem(
+                text = { Text(if (unplayed.size == 1) "Download unplayed episode" else "Download ${unplayed.size} unplayed episodes") },
+                leadingIcon = { Icon(Icons.Rounded.Download, null) },
+                onClick = { expanded = false; model.requestDownload(unplayed) })
             HorizontalDivider()
             DropdownMenuItem(text = { Text("Unsubscribe", color = MaterialTheme.colorScheme.error) },
                 leadingIcon = { Icon(Icons.Rounded.RemoveCircleOutline, null) },

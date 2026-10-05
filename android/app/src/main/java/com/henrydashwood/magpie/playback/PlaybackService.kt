@@ -67,6 +67,9 @@ object PlaybackStatus {
     val sleepTimer = mutableSleepTimer.asStateFlow()
     internal val mutableReadingPosition = MutableStateFlow<ArticleReadingPosition?>(null)
     val readingPosition = mutableReadingPosition.asStateFlow()
+    /** What the player has loaded, which downloads must not remove underneath it. */
+    internal val mutableCurrentItemId = MutableStateFlow<String?>(null)
+    val currentItemId = mutableCurrentItemId.asStateFlow()
 }
 
 // Media3 still marks session negotiation and some service controls as unstable.
@@ -660,7 +663,10 @@ class PlaybackService : MediaLibraryService() {
         player.setPlaybackSpeed(store.speed(item.kind))
         store.lastItem = item.id
         store.saveContinuation(library.state.value.owner, item.id)
-        val uri = audio?.uri ?: item.audioUrl ?: "asset:///welcome.wav"
+        PlaybackStatus.mutableCurrentItemId.value = item.id
+        // A downloaded episode plays from the phone, with no connection needed.
+        val downloaded = if (audio == null) (application as MagpieApplication).downloads.localPath(item)?.let { android.net.Uri.fromFile(java.io.File(it)).toString() } else null
+        val uri = audio?.uri ?: downloaded ?: item.audioUrl ?: "asset:///welcome.wav"
         return MediaLibraryCatalog.media(item).buildUpon().setUri(uri).build()
     }
 

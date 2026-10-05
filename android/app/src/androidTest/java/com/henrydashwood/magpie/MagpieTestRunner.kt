@@ -32,4 +32,17 @@ class MagpieTestApplication : MagpieApplication() {
 class MagpieTestRunner : AndroidJUnitRunner() {
     override fun newApplication(cl: ClassLoader, className: String, context: Context): Application =
         super.newApplication(cl, MagpieTestApplication::class.java.name, context)
+
+    /**
+     * The Play Store screenshots run only from `make android-play-screenshots`. Leaving them out here
+     * rather than relying on their own assumption keeps the ordinary suite green: the connected-test
+     * report records a failed assumption as a failure, not a skip.
+     */
+    override fun onCreate(arguments: android.os.Bundle) {
+        if (arguments.getString("playScreenshots") != "true") {
+            val excluded = listOfNotNull(arguments.getString("notClass"), PlayStoreScreenshots::class.java.name)
+            arguments.putString("notClass", excluded.joinToString(","))
+        }
+        super.onCreate(arguments)
+    }
 }

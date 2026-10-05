@@ -1,8 +1,9 @@
-# Podcast downloads (iOS)
+# Podcast downloads
 
 Episode audio can be kept on the phone so it plays with no connection. Article
 text was already kept offline (see `offline-reliability-investigation.md`);
-this covers podcast audio only. Android does not have this yet.
+this covers podcast audio only. iOS and Android follow the same rules; the
+Android section below lists where they differ.
 
 ## Behaviour
 
@@ -60,4 +61,32 @@ No backend or API contract change was needed.
   flag, so released clients are not sent an action they cannot perform.
 - Automatic downloads only refresh while the app runs; a `BGAppRefreshTask`
   would fetch new episodes overnight.
-- Android.
+
+## Android
+
+The same settings, limits, voice phrases and wording, in
+`android/app/src/main/java/com/henrydashwood/magpie/data/EpisodeDownloads.kt`
+(rules and controller, unit-tested in `EpisodeDownloadsTest`) and
+`AndroidDownloads.kt` (platform pieces). Differences:
+
+- **Transfers** use Android's system `DownloadManager`, which keeps going when
+  Magpie is closed and supports a per-download "no metered network" rule for
+  Wi-Fi-only downloads. Files go to app-specific storage
+  (`Android/data/<package>/files/Podcasts`). Downloads she asks for show
+  progress in the notification shade; automatic ones are silent
+  (`DOWNLOAD_WITHOUT_NOTIFICATION`). Magpie polls the system's rows while
+  anything is under way, and again on the next launch.
+- **No request of its own.** The controller follows `AccountLibrary.state`:
+  Latest decides automatic downloads, an item's `completed` flag marks it
+  finished, and a different account owner or signing out clears everything.
+- **Row actions.** Download / Cancel download / Remove download is in each
+  episode's long-press menu and TalkBack actions (Android rows put actions
+  there rather than behind a swipe). The episode page's toolbar shows the
+  download button in place of "Open the original"; the full player and the
+  show's ⋯ menu match iOS. Settings → Downloads lists everything with visible
+  play, retry and remove buttons.
+- **Voice.** "Download this" and "remove this download" are local commands. A
+  spoken question waits two minutes for its answer, which also works when
+  TalkBack ends the turn after the question.
+- **Assistant (App Functions)** requests to download are answered with "Open
+  Magpie to manage downloads", since they cannot ask for a yes.

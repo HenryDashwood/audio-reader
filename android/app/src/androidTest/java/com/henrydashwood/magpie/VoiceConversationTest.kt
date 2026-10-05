@@ -399,6 +399,8 @@ class VoiceConversationTest {
     @Test fun conversationPreferencesPersistAndLargeTextScreenRemainsUsable() {
         compose.onNodeWithText("Settings").performClick()
         // "Wait for a reply" only applies, and only shows, while Keep listening is on (as on iOS).
+        // Settings is a lazy list: on a small screen the Conversation section starts below the fold.
+        compose.onNodeWithTag("settings-list").performScrollToNode(hasContentDescription("Keep listening after replies"))
         compose.onNodeWithContentDescription("Keep listening after replies").performClick()
         compose.onNodeWithTag("settings-list").performScrollToNode(hasTestTag("conversation-wait"))
         compose.onNodeWithTag("conversation-wait").performClick()

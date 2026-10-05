@@ -456,8 +456,17 @@ class ShortcutsTest {
             shell("cmd statusbar set-tiles custom(${component.flattenToString()})")
             shell("cmd statusbar expand-settings")
             compose.waitUntil(10_000) { shell("dumpsys activity services ${app.packageName}").contains("AskMagpieTile") }
-            shell("cmd statusbar click-tile ${component.flattenToString()}")
-            compose.waitUntil(10_000) { model.voice.state.value.visible }
+            // SystemUI drops a click that arrives before the newly bound tile is listening, which
+            // happens under load. Click again, a few seconds apart, until the sheet opens.
+            var clickedAt = 0L
+            compose.waitUntil(20_000) {
+                model.voice.state.value.visible || false.also {
+                    if (android.os.SystemClock.uptimeMillis() - clickedAt >= 4_000) {
+                        shell("cmd statusbar click-tile ${component.flattenToString()}")
+                        clickedAt = android.os.SystemClock.uptimeMillis()
+                    }
+                }
+            }
             compose.onNodeWithTag("ask-microphone").assertIsDisplayed()
             compose.waitUntil(10_000) { listens == 1 && microphoneActive }
         } finally {

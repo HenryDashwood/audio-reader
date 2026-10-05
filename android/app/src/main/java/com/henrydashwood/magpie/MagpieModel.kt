@@ -47,6 +47,9 @@ data class PlayerState(
     val connected: Boolean = false,
 )
 
+/** A download dialog: a question when `confirmation` is set, otherwise an explanation. */
+data class DownloadPrompt(val title: String, val message: String, val confirmation: com.henrydashwood.magpie.data.DownloadConfirmation? = null)
+
 data class ListeningSettings(val podcastSpeed: Float, val articleSpeed: Float, val voiceId: String?)
 data class LinkCaptureState(val showing: Boolean = false, val url: String = "", val saving: Boolean = false, val error: String? = null, val savedUrl: String? = null)
 
@@ -121,6 +124,36 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     val sleepTimer = PlaybackStatus.sleepTimer
     private val mutableNotice = MutableStateFlow<String?>(null)
     val notice = mutableNotice.asStateFlow()
+    val downloads = (application as MagpieApplication).downloads
+    private val mutableDownloadPrompt = MutableStateFlow<DownloadPrompt?>(null)
+    /** A download that needs a yes first, or cannot happen; shown as a dialog. */
+    val downloadPrompt = mutableDownloadPrompt.asStateFlow()
+    init {
+        viewModelScope.launch { downloads.announcements.collect { mutableNotice.value = it } }
+    }
+    /** From a tap: starts and says so, or asks first. A voice request asks out loud instead. */
+    fun requestDownload(items: List<LibraryItem>) {
+        when (val decision = downloads.request(items)) {
+            is com.henrydashwood.magpie.data.DownloadDecision.Started -> mutableNotice.value = startedNotice(decision.episodes)
+            is com.henrydashwood.magpie.data.DownloadDecision.NothingToDo -> mutableDownloadPrompt.value = DownloadPrompt("Nothing to download", decision.message)
+            is com.henrydashwood.magpie.data.DownloadDecision.Refused -> mutableDownloadPrompt.value = DownloadPrompt("Not enough space", decision.message)
+            is com.henrydashwood.magpie.data.DownloadDecision.NeedsConfirmation -> mutableDownloadPrompt.value =
+                DownloadPrompt(decision.confirmation.title, decision.confirmation.message, decision.confirmation)
+        }
+    }
+    fun answerDownloadPrompt(waitForWifi: Boolean? = null) {
+        val confirmation = mutableDownloadPrompt.value?.confirmation
+        mutableDownloadPrompt.value = null
+        if (confirmation == null || waitForWifi == null) return
+        downloads.confirm(confirmation, waitForWifi)
+        mutableNotice.value = if (waitForWifi) "Will download when you are on Wi-Fi." else startedNotice(confirmation.episodes)
+    }
+    fun removeDownload(item: LibraryItem, cancelled: Boolean = false) {
+        downloads.remove(item.id)
+        mutableNotice.value = if (cancelled) "Download cancelled" else "Download removed: ${item.title}"
+    }
+    private fun startedNotice(episodes: List<com.henrydashwood.magpie.data.DownloadedEpisode>) =
+        if (episodes.size == 1) "Downloading ${episodes[0].title}" else "Downloading ${episodes.size} episodes"
     val newsletters = com.henrydashwood.magpie.data.Newsletters(viewModelScope, repository) { mutableNotice.value = it }
     val sourceManager = com.henrydashwood.magpie.data.SourceManager(viewModelScope, repository) { mutableNotice.value = it }
     val savedPreparation = com.henrydashwood.magpie.data.SavedPreparation(viewModelScope, repository,
@@ -139,7 +172,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     val voice by lazy {
         VoiceSession(viewModelScope, PlaybackVoiceHost(repository, store, { player.value.item }, {
             contentJob?.cancel(); voiceCatalog.stop(); voiceRefresh?.cancel()
-        }, ::voiceCommand), speechInput,
+        }, ::voiceCommand, downloads = downloads), speechInput,
             (getApplication<Application>() as MagpieApplication).voiceOutput { store.voiceId }, { store.conversation }, repository.voiceConversation, com.henrydashwood.magpie.telemetry.LibraryVoiceTelemetry(repository),
             voiceFeedback)
     }

@@ -40,7 +40,7 @@ import com.henrydashwood.magpie.playback.SpeechVoices
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: () -> Unit) {
+fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onDownloads: () -> Unit = {}, onAccount: () -> Unit) {
     val library by model.libraryState.collectAsStateWithLifecycle()
     val preferences by model.settings.collectAsStateWithLifecycle()
     val conversation by model.conversationSettings.collectAsStateWithLifecycle()
@@ -102,6 +102,16 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onAccount: 
         item {
             SettingsSection("Assistant and Shortcuts") {
                 SettingsAction("Home screen and Quick Settings", Icons.Rounded.AppShortcut, onShortcuts)
+            }
+        }
+        if (library.live) item {
+            val records by model.downloads.records.collectAsStateWithLifecycle()
+            SettingsSection("Downloads", "Keep episodes on this phone so they play without a connection.") {
+                ListItem(headlineContent = { Text("Downloads") },
+                    supportingContent = { Text(if (records.isEmpty()) "None" else "${com.henrydashwood.magpie.data.formatBytes(com.henrydashwood.magpie.data.DownloadPolicy.used(records.values))} used") },
+                    leadingContent = { Icon(Icons.Rounded.DownloadForOffline, null) },
+                    trailingContent = { Icon(Icons.Rounded.ChevronRight, null) },
+                    modifier = Modifier.clickable(onClickLabel = "Open downloads", onClick = onDownloads).testTag("downloads-setting"))
             }
         }
         if (library.live) item {
@@ -172,7 +182,7 @@ private fun SpeedSetting(title: String, current: Float, select: (Float) -> Unit)
 
 /** Android's single-choice dialog: radio buttons on the left; choosing closes it. */
 @Composable
-private fun <T> ChoiceDialog(title: String, options: List<T>, selected: T, label: (T) -> String, choose: (T) -> Unit, dismiss: () -> Unit) {
+internal fun <T> ChoiceDialog(title: String, options: List<T>, selected: T, label: (T) -> String, choose: (T) -> Unit, dismiss: () -> Unit) {
     AlertDialog(onDismissRequest = dismiss, title = { Text(title) },
         text = {
             Column(Modifier.selectableGroup().verticalScroll(rememberScrollState())) {
@@ -201,7 +211,7 @@ private fun SettingsAction(title: String, icon: androidx.compose.ui.graphics.vec
  * Settings and iOS's grouped lists. The heading is larger than the rows so the page scans.
  */
 @Composable
-private fun SettingsSection(title: String, footer: String? = null, top: androidx.compose.ui.unit.Dp = 24.dp, content: @Composable ColumnScope.() -> Unit) {
+internal fun SettingsSection(title: String, footer: String? = null, top: androidx.compose.ui.unit.Dp = 24.dp, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = top)) {
         Text(title, Modifier.padding(start = 16.dp, bottom = 8.dp).semantics { heading() },
             style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
