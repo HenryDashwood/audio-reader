@@ -301,7 +301,7 @@ binary — so Siri shortcuts silently never register from a Debug build.
 make ios-phone
 ```
 
-The command finds the one paired physical iPhone, builds a signed Release app,
+The command finds the one connected, paired physical iPhone, builds a signed Release app,
 installs it over the existing copy, and opens it. The phone may connect by USB
 or over the same Wi-Fi network. It launches against the staging Railway API,
 replacing any server address remembered by an older development run. Staging has
@@ -309,7 +309,7 @@ a separate account and library, so sign in again if prompted. Use
 `make ios-phone-production` to install and launch against production, or
 `make ios-phone-staging` to select staging explicitly. Set
 `IOS_DEVICE_API_URL=http://<mac-lan-ip>:8000` when local phone-to-Mac testing is
-intentional. If more than one iPhone is paired, select one with
+intentional. Unavailable paired phones are ignored. If more than one iPhone is connected, select one with
 `IOS_DEVICE_ID=<udid> make ios-phone`. To verify device selection without
 building or touching the phone, run `IOS_DEVICE_DRY_RUN=1 make ios-phone`.
 

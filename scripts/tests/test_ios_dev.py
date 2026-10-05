@@ -364,3 +364,91 @@ def test_explicit_simulator_can_opt_into_preview(ios_runner):
     result, calls = ios_runner(runtimes=[], devices=devices, IOS_SIMULATOR_ID="preview-id")
     assert result.returncode == 0, result.stderr
     assert "platform=iOS Simulator,id=preview-id" in calls["test"]
+
+
+@pytest.mark.parametrize("wireless", [False, True])
+@pytest.mark.parametrize(
+    ("connected_ids", "requested", "expected_id", "error"),
+    [
+        (["new-phone"], "", "new-phone", ""),
+        ([], "", "", "no connected, paired physical iPhone"),
+        (["new-phone"], "old-phone", "", "not a connected, paired physical iPhone"),
+        (["new-phone", "other-phone"], "", "", "more than one connected"),
+        (["new-phone", "other-phone"], "other-phone", "other-phone", ""),
+    ],
+)
+def test_phone_selection_ignores_unavailable_pairings(
+    tmp_path: Path,
+    connected_ids: list[str],
+    requested: str,
+    expected_id: str,
+    error: str,
+    wireless: bool,
+) -> None:
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    jq = shutil.which("jq")
+    assert jq is not None, "jq is required by the iOS wrapper"
+    (tools / "jq").symlink_to(jq)
+    inventory = tmp_path / "devices.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "result": {
+                    "devices": [
+                        {
+                            "identifier": device_id,
+                            "properties": {
+                                "hardware": {
+                                    "reality": "physical",
+                                    "deviceType": "iPhone",
+                                    "udid": device_id,
+                                },
+                                "connection": {
+                                    "pairingState": "paired",
+                                    "state": state,
+                                },
+                                "state": {"name": "iPhone (60)"},
+                            },
+                        }
+                        for device_id, state in [("old-phone", "unavailable")]
+                        + [(device_id, "disconnected" if wireless else "connected") for device_id in connected_ids]
+                    ]
+                }
+            }
+        )
+    )
+    _executable(tools / "xcodebuild", "exit 99\n")
+    _executable(
+        tools / "xcrun",
+        '''if [[ "$1 $2 $3" == "devicectl list devices" ]]; then
+  cat "$PHONE_INVENTORY"
+elif [[ "$1 $2 $3 $4" == "devicectl device info details" ]]; then
+  jq --arg id "$6" '{result: (.result.devices[] | select(.identifier == $id)
+    | .properties.connection.state = "connected")}' "$PHONE_INVENTORY"
+else
+  exit 99
+fi
+''',
+    )
+    repo = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [repo / "scripts" / "ios-dev.sh", "device"],
+        env=os.environ
+        | {
+            "PATH": f"{tools}:/usr/bin:/bin",
+            "PHONE_INVENTORY": str(inventory),
+            "IOS_DEVICE_DRY_RUN": "1",
+            "IOS_DEVICE_ID": requested,
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if error:
+        assert result.returncode == 1
+        assert error in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        assert f"({expected_id})" in result.stdout
+        assert "Dry run only" in result.stdout

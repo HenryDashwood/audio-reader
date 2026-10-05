@@ -164,17 +164,37 @@ test_with_preboot() (
 )
 
 choose_device() {
-  local inventory matches count requested
+  local inventory matches count requested candidate details
   requested="${IOS_DEVICE_ID:-}"
   inventory="$(
     xcrun devicectl list devices --quiet --json-output - --omit-deprecated-fields-in-json
   )"
+  # Wireless development connections are opened on demand. Refresh disconnected
+  # candidates before deciding that they cannot be used.
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if details="$(xcrun devicectl device info details --device "$candidate" \
+      --timeout 10 --quiet --json-output - --omit-deprecated-fields-in-json 2>/dev/null)"; then
+      inventory="$(jq --arg id "$candidate" --argjson details "$details" '
+        .result.devices |= map(if .identifier == $id then $details.result else . end)
+      ' <<<"$inventory")"
+    fi
+  done < <(jq -r --arg requested "$requested" '
+    .result.devices[]
+    | select(.properties.hardware.reality == "physical")
+    | select(.properties.hardware.deviceType == "iPhone")
+    | select(.properties.connection.pairingState == "paired")
+    | select(.properties.connection.state == "disconnected")
+    | select($requested == "" or .identifier == $requested or .properties.hardware.udid == $requested)
+    | .identifier
+  ' <<<"$inventory")
   matches="$(jq --arg requested "$requested" '
     [
       .result.devices[]
       | select(.properties.hardware.reality == "physical")
       | select(.properties.hardware.deviceType == "iPhone")
       | select(.properties.connection.pairingState == "paired")
+      | select(.properties.connection.state == "connected")
       | select(
           $requested == ""
           or .identifier == $requested
@@ -186,16 +206,16 @@ choose_device() {
 
   if [[ "$count" -eq 0 ]]; then
     if [[ -n "$requested" ]]; then
-      echo "error: IOS_DEVICE_ID '$requested' is not a paired physical iPhone" >&2
+      echo "error: IOS_DEVICE_ID '$requested' is not a connected, paired physical iPhone" >&2
     else
-      echo "error: no paired physical iPhone is visible" >&2
+      echo "error: no connected, paired physical iPhone is available" >&2
     fi
-    echo "Unlock the phone, keep it on this Mac's network, and check Xcode > Window > Devices and Simulators." >&2
+    echo "Connect the phone by USB, unlock it, accept Trust This Computer if prompted, and finish device setup in Xcode." >&2
     exit 1
   fi
 
   if [[ "$count" -gt 1 ]]; then
-    echo "error: more than one paired physical iPhone is visible; choose one with IOS_DEVICE_ID:" >&2
+    echo "error: more than one connected, paired physical iPhone is available; choose one with IOS_DEVICE_ID:" >&2
     jq -r '.[] | "  \(.properties.state.name): \(.properties.hardware.udid // .identifier)"' <<<"$matches" >&2
     exit 1
   fi
@@ -321,6 +341,7 @@ if [[ "$action" == "device" ]]; then
     -destination "platform=iOS,id=$device_id" \
     -derivedDataPath "$device_derived_data" \
     -allowProvisioningUpdates \
+    -allowProvisioningDeviceRegistration \
     "${device_build_settings[@]}"
 
   if [[ ! -d "$app_path" ]]; then
