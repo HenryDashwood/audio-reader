@@ -1,1 +1,1 @@
-Fixes podcasts that would not play, such as In Our Time. Saved articles that could not be fetched now show their options on one line, and the whole row can be swiped.
+Download podcast episodes to listen offline. Use Download on an episode's page or in the player, or say "download this". Magpie can automatically download the newest unplayed episodes of shows you follow. Settings → Downloads lets you manage downloads, set a storage limit and choose Wi-Fi only. Magpie asks before using mobile data or exceeding your storage limit.
