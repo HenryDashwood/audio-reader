@@ -21,6 +21,10 @@ In Settings → Downloads, choose how many episodes to keep, set a storage
 limit, and manage your downloads. Downloads use Wi-Fi by default; Magpie asks
 before using mobile data or exceeding your storage limit.
 
+If an episode cannot play, Magpie now shows the error and retry controls
+without unexpectedly speaking aloud. Spoken replies remain available when
+you ask Magpie by voice, and VoiceOver can still read the error.
+
 Please try downloading an episode, then listening with your connection off.
 Tell us if a download does not finish, an episode will not play offline, or
 the controls are difficult to use with VoiceOver.

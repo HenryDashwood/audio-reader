@@ -218,25 +218,17 @@ struct ContentView: View {
     }
 }
 
-/// Owns the one root-level playback concern: a terminal failure that must be
-/// spoken and presented over whichever screen is open. Kept outside
+/// Presents a terminal playback failure over whichever screen is open without
+/// starting unsolicited speech. VoiceOver can read the alert, and an active
+/// voice interaction owns its own spoken responses. Kept outside
 /// ContentView's observation graph so ordinary position ticks remain local to
 /// the mini/full players that actually draw them.
 private struct PlaybackFailurePresenter: View {
     @ObservedObject private var playback = PlaybackCoordinator.shared
-    @State private var speaker = Speaker()
 
     var body: some View {
         Color.clear
             .frame(width: 0, height: 0)
-            .onChange(of: playback.playbackFailure) { _, failure in
-                guard let failure else { return }
-                // VoiceOver reads the alert itself. Without VoiceOver there may be
-                // nobody looking at the screen—the spoken interface still needs
-                // to explain why a promised episode became silence.
-                guard !UIAccessibility.isVoiceOverRunning else { return }
-                Task { await speaker.speak(failure.message) }
-            }
             .alert(
                 "Playback stopped",
                 isPresented: Binding(
