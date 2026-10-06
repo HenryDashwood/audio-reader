@@ -47,6 +47,16 @@ private final class ArticleWebViewLoadWaiter: NSObject, WKNavigationDelegate {
 @Suite("Article reader")
 @MainActor
 struct ArticleReaderTests {
+    @Test func linkSaveMenuOnlyAcceptsPublicWebLinks() {
+        for value in ["https://example.com/next?chapter=5#start", "http://example.com/next"] {
+            #expect(ArticleLinkMenu.configuration(for: URL(string: value), save: { _ in }) != nil)
+        }
+        for value in ["hearful://feed", "mailto:editor@example.com", "file:///private/story", "https://user:secret@example.com/story"] {
+            #expect(ArticleLinkMenu.configuration(for: URL(string: value), save: { _ in }) == nil)
+        }
+        #expect(ArticleLinkMenu.configuration(for: nil, save: { _ in }) == nil)
+    }
+
     @Test func switchingArticlesInPlaceReplacesTheBodyAlongWithTheHeader() async throws {
         let api = FakeAPI()
         let cache = makeCache()
@@ -98,6 +108,7 @@ struct ArticleReaderTests {
             }
             #expect(displayed?.contains("Article \(id)") == true)
             #expect(displayed?.contains(expectedBody) == true)
+            #expect(webView(in: host.view)?.uiDelegate != nil)
         }
     }
 

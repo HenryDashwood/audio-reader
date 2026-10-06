@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.os.Bundle
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.henrydashwood.magpie.playback.PlaybackStatus
 import com.henrydashwood.magpie.playback.ArticleReadingPosition
@@ -37,6 +38,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.viewinterop.AndroidView
 import com.henrydashwood.magpie.data.LibraryItem
 import com.henrydashwood.magpie.R
@@ -44,9 +46,9 @@ import java.io.ByteArrayInputStream
 
 @Composable
 fun ArticleReader(item: LibraryItem, query: String, followControl: ArticleFollowControl? = null, chrome: ReaderChrome = ReaderChrome(),
-    openFeed: (() -> Unit)? = null) {
+    openFeed: (() -> Unit)? = null, saveLink: ((String) -> Unit)? = null) {
     val position by PlaybackStatus.readingPosition.collectAsStateWithLifecycle()
-    ArticleReader(item, query, position, followControl, chrome, openFeed)
+    ArticleReader(item, query, position, followControl, chrome, openFeed, saveLink)
 }
 
 /** How the page sits under the app's bars, and whether dragging it may fade them (as on iOS). */
@@ -55,13 +57,13 @@ data class ReaderChrome(val top: Float = 0f, val bottom: Float = 0f, val fades: 
 
 @Composable
 fun ArticleReader(item: LibraryItem, query: String, position: ArticleReadingPosition?, followControl: ArticleFollowControl? = null,
-    chrome: ReaderChrome = ReaderChrome(), openFeed: (() -> Unit)? = null) {
-    key(item.id) { ArticleReaderContent(item, query, position, followControl, chrome, openFeed) }
+    chrome: ReaderChrome = ReaderChrome(), openFeed: (() -> Unit)? = null, saveLink: ((String) -> Unit)? = null) {
+    key(item.id) { ArticleReaderContent(item, query, position, followControl, chrome, openFeed, saveLink) }
 }
 
 @Composable
 private fun ArticleReaderContent(item: LibraryItem, query: String, position: ArticleReadingPosition?, followControl: ArticleFollowControl?,
-    chrome: ReaderChrome, openFeed: (() -> Unit)?) {
+    chrome: ReaderChrome, openFeed: (() -> Unit)?, saveLink: ((String) -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     val reading = position?.takeIf { it.itemId == item.id && it.contentVersion == item.contentVersion }
     var following by rememberSaveable(item.id) { mutableStateOf(true) }
@@ -89,6 +91,7 @@ private fun ArticleReaderContent(item: LibraryItem, query: String, position: Art
     LaunchedEffect(query) { matchCount = 0; activeMatch = 0 }
     var scrollY by rememberSaveable(item.id) { mutableIntStateOf(0) }
     var error by remember { mutableStateOf<String?>(null) }
+    var heldLink by remember { mutableStateOf<ReaderLink?>(null) }
     val currentQuery by rememberUpdatedState(query)
     Column(Modifier.fillMaxSize()) {
         if (query.isNotBlank()) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -119,6 +122,7 @@ private fun ArticleReaderContent(item: LibraryItem, query: String, position: Art
             },
             update = { view ->
                 view.openFeed = openFeed ?: {}
+                view.showLinkMenu = if (saveLink != null) { uri, point -> heldLink = ReaderLink(uri, point) } else null
                 view.setChrome(chrome)
                 view.readingMarker.update(reading, colors.primary.toArgb(), following)
                 view.display(document, query, scrollY, item.text)
@@ -129,6 +133,7 @@ private fun ArticleReaderContent(item: LibraryItem, query: String, position: Art
                 view.setFindListener(null)
                 view.openLink = {}
                 view.openFeed = {}
+                view.showLinkMenu = null
                 view.readingMarker.onFollowingChanged = {}
                 view.release()
             },
@@ -136,6 +141,12 @@ private fun ArticleReaderContent(item: LibraryItem, query: String, position: Art
     }
     if (error != null) AlertDialog(onDismissRequest = { error = null }, title = { Text("Could not open") },
         text = { Text(error!!) }, confirmButton = { TextButton(onClick = { error = null }) { Text("Close") } })
+    heldLink?.let { link ->
+        ReaderLinkMenu(link, onDismiss = { heldLink = null },
+            onSave = { heldLink = null; saveLink?.invoke(link.uri.toString()) },
+            onOpen = { heldLink = null; browser?.openLink?.invoke(link.uri) },
+            onError = { error = it })
+    }
 }
 
 private fun Color.css() = "#%06X".format(toArgb() and 0xFFFFFF)
@@ -147,6 +158,7 @@ class ArticleWebView(context: Context) : WebView(context) {
     val readingMarker = ArticleReadingMarker(this)
     var openLink: (Uri) -> Unit = {}
     var openFeed: () -> Unit = {}
+    var showLinkMenu: ((Uri, IntOffset) -> Unit)? = null
     var ready = false
         private set
     private var document: String? = null
@@ -156,6 +168,7 @@ class ArticleWebView(context: Context) : WebView(context) {
     private var chrome = ReaderChrome()
     private val chromeTracker = ArticleChromeTracker()
     private var downY = 0f
+    private var linkPress: IntOffset? = null
     private val accessibility = context.getSystemService(android.view.accessibility.AccessibilityManager::class.java)
 
     fun setChrome(value: ReaderChrome) {
@@ -188,6 +201,19 @@ class ArticleWebView(context: Context) : WebView(context) {
         }
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
         webChromeClient = WebChromeClient()
+        setOnLongClickListener {
+            val show = showLinkMenu
+            val hit = hitTestResult
+            val isLink = hit.type == HitTestResult.SRC_ANCHOR_TYPE || hit.type == HitTestResult.SRC_IMAGE_ANCHOR_TYPE
+            val url = if (isLink) hit.extra?.let(ArticleDocument::webUrl) else null
+            if (show != null && url != null) {
+                val location = IntArray(2)
+                getLocationInWindow(location)
+                val point = linkPress ?: IntOffset(width / 2, height / 2)
+                show(url.toUri(), IntOffset(location[0] + point.x, location[1] + point.y))
+                true
+            } else false
+        }
         webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String?) {
                 if (ready || released) return
@@ -262,6 +288,7 @@ class ArticleWebView(context: Context) : WebView(context) {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) linkPress = IntOffset(event.x.toInt(), event.y.toInt())
         readingMarker.touch(event)
         // Only her own drags move the bars; the reading follow scroll never does. Under TalkBack
         // nothing hides, because the gesture that brings them back is not one she would make.

@@ -12,6 +12,21 @@ import org.junit.Test
 class LinkCaptureTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    @Test fun readerLinkPersistsWithoutOpeningTheAddLinkForm() {
+        val url = "https://example.org/reader-save/${UUID.randomUUID()}?chapter=5#start"
+        val model = compose.runOnUiThread { ViewModelProvider(compose.activity)[MagpieModel::class.java] }
+        val inbox = (compose.activity.application as MagpieApplication).deviceLinkInbox
+        try {
+            compose.runOnUiThread { model.saveReaderLink(url) }
+            compose.waitUntil(5_000) { model.pendingLinks.value.contains(url) }
+            assertTrue(inbox.links().contains(url))
+            assertFalse(model.linkCapture.value.showing)
+        } finally {
+            compose.runOnUiThread { model.removePendingLink(url) }
+            compose.waitUntil(5_000) { !inbox.links().contains(url) }
+        }
+    }
+
     @Test fun linkCaptureValidatesPersistsDeduplicatesFiltersAndRemoves() {
         val url = "https://example.org/magpie-capture-test/${UUID.randomUUID()}"
         val model = compose.runOnUiThread { ViewModelProvider(compose.activity)[MagpieModel::class.java] }

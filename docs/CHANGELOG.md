@@ -12,6 +12,13 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.6.2
 
+Hold a link inside an article and choose Save to Magpie to keep reading without
+leaving the app. Tap a link to open it in your browser as before. Saved links
+are kept on your device and prepared when you have a connection.
+
+Settings no longer waits for secure account storage while opening the tab.
+This fixes a freeze that could happen immediately after updating the app.
+
 Download podcast episodes to listen when you have no connection. Use Download
 on an episode's page or in the player, choose the Download action on an
 episode row, or say "download this" while an episode is in the player.

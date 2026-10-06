@@ -67,6 +67,127 @@ class ArticleReaderTest {
         bitmap.recycle()
     }
 
+    private fun holdLink(view: ArticleWebView): androidx.compose.ui.geometry.Offset {
+        val point = inspect(view, """(() => {
+            const r = document.querySelector('main a').getBoundingClientRect();
+            return {x: r.left + r.width / 2, y: r.top + r.height / 2};
+        })()""")
+        val density = compose.runOnUiThread { view.resources.displayMetrics.density }
+        val offset = androidx.compose.ui.geometry.Offset(point.getDouble("x").toFloat() * density,
+            point.getDouble("y").toFloat() * density)
+        // WebView's hold timer uses Android's real clock, outside Compose's
+        // virtual gesture clock. Send a physical-duration hold to the native view.
+        val screen = IntArray(2)
+        compose.runOnUiThread { view.getLocationOnScreen(screen) }
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val down = android.os.SystemClock.uptimeMillis()
+        fun touch(action: Int) {
+            val event = android.view.MotionEvent.obtain(down, android.os.SystemClock.uptimeMillis(), action,
+                screen[0] + offset.x, screen[1] + offset.y, 0)
+            try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+        }
+        touch(android.view.MotionEvent.ACTION_DOWN)
+        Thread.sleep(android.view.ViewConfiguration.getLongPressTimeout() + 200L)
+        touch(android.view.MotionEvent.ACTION_UP)
+        compose.waitForIdle()
+        return offset
+    }
+
+    @Test fun holdingAReaderLinkOffersSaveWithoutOpeningIt() {
+        val url = "https://publisher.example/next?chapter=5#start"
+        val saved = AtomicReference<String?>(null)
+        val opened = AtomicReference<String?>(null)
+        val item = RichArticleSample.item.copy(title = "Linked article", text = "Next chapter",
+            originalUrl = "https://publisher.example/story",
+            html = """<p><a href="/next?chapter=5#start"><b>Next chapter</b></a></p>""")
+        compose.runOnUiThread {
+            compose.activity.setContent { MagpieTheme { ArticleReader(item, "", saveLink = { saved.set(it) }) } }
+        }
+        val view = browser()
+        compose.runOnIdle { view.openLink = { opened.set(it.toString()) } }
+        val offset = holdLink(view)
+        compose.onNodeWithText("Save to Magpie").assertIsDisplayed()
+        compose.onNodeWithText("Open in browser").assertIsDisplayed()
+        compose.onNodeWithText("Copy link").assertIsDisplayed()
+        compose.onNodeWithText("Share link").assertIsDisplayed()
+        compose.onNodeWithText(url).assertDoesNotExist()
+        assertEquals(null, opened.get())
+        capture("article-link-menu")
+        compose.onNodeWithText("Save to Magpie").performClick()
+        assertEquals(url, saved.get())
+        assertEquals(null, opened.get())
+        capture("article-link-saved")
+        compose.onNodeWithTag("article-webview").performTouchInput { click(offset) }
+        compose.waitUntil(5_000) { opened.get() != null }
+        assertEquals(url, opened.get())
+        assertSame(view, browser())
+    }
+
+    @Test fun linkMenuFitsAtThePageEdgeWithLargeTextAndUsesTheFullRedirectUrl() {
+        val url = "https://substack.com/redirect/3718c25c-cffe-4e28-968c-18bfddafd347?j=" + "abc123".repeat(25)
+        val opened = AtomicReference<String?>(null)
+        val item = RichArticleSample.item.copy(title = "Linked article", text = "Next chapter",
+            html = "<p>${"Article paragraph. ".repeat(100)}</p><p><a href=\"$url\">Next chapter</a></p>")
+        compose.runOnUiThread {
+            compose.activity.setContent {
+                MagpieTheme(darkTheme = true) {
+                    val density = LocalDensity.current
+                    CompositionLocalProvider(LocalDensity provides Density(density.density, 1.6f)) {
+                        ArticleReader(item, "", saveLink = {})
+                    }
+                }
+            }
+        }
+        val view = browser()
+        compose.runOnIdle { view.openLink = { opened.set(it.toString()) }; view.scrollTo(0, view.maximumScrollY()) }
+        holdLink(view)
+        listOf("Save to Magpie", "Open in browser", "Copy link", "Share link").forEach {
+            compose.onNodeWithText(it).assertIsDisplayed()
+        }
+        compose.onNodeWithText("substack.com").assertIsDisplayed()
+        compose.onNodeWithText(url).assertDoesNotExist()
+        capture("article-link-menu-dark-large-text")
+        androidx.test.espresso.Espresso.pressBack()
+        compose.onNodeWithTag("reader-link-menu").assertDoesNotExist()
+        assertNull(opened.get())
+
+        val shared = AtomicReference<android.content.Intent?>(null)
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val monitor = object : android.app.Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: android.content.Intent): android.app.Instrumentation.ActivityResult? {
+                if (intent.action != android.content.Intent.ACTION_CHOOSER) return null
+                shared.set(intent.getParcelableExtra(android.content.Intent.EXTRA_INTENT, android.content.Intent::class.java))
+                return android.app.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK, null)
+            }
+        }
+        instrumentation.addMonitor(monitor)
+        try {
+            holdLink(view)
+            compose.onNodeWithText("Share link").performClick()
+            compose.runOnIdle {
+                assertEquals(android.content.Intent.ACTION_SEND, shared.get()?.action)
+                assertEquals("text/plain", shared.get()?.type)
+                assertEquals(url, shared.get()?.getStringExtra(android.content.Intent.EXTRA_TEXT))
+            }
+        } finally { instrumentation.removeMonitor(monitor) }
+        holdLink(view)
+        compose.onNodeWithText("Open in browser").performClick()
+        compose.onNodeWithTag("reader-link-menu").assertDoesNotExist()
+        assertEquals(url, opened.get())
+        assertSame(view, browser())
+
+        // Copy last: Android's system clipboard preview overlays this bottom-edge link.
+        opened.set(null)
+        holdLink(view)
+        compose.onNodeWithText("Copy link").performClick()
+        compose.onNodeWithTag("reader-link-menu").assertDoesNotExist()
+        compose.runOnIdle {
+            val clipboard = compose.activity.getSystemService(android.content.ClipboardManager::class.java)
+            assertEquals(url, clipboard.primaryClip!!.getItemAt(0).text.toString())
+        }
+        assertNull(opened.get())
+    }
+
     @Test fun staticChartsRenderWithCaptionsAndFitTheReader() {
         val svg = """<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420"
             color="black" style="background:white;color:black"><circle cx="320" cy="210" r="100" fill="#ff5500"/>

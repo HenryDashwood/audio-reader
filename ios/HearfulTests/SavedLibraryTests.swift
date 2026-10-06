@@ -66,6 +66,37 @@ struct SavedLibraryTests {
         return (model, inbox, cache)
     }
 
+    @Test func readerLinkIsPersistedBeforeAnyNetworkPreparation() throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (model, inbox, _) = try setup(directory, transport: SavedLibraryTransport(episode: episode))
+        let url = URL(string: "https://publisher.example/next?chapter=5#start")!
+        try model.queueLink(url)
+        let reopened = CaptureInbox(directory: inbox.directory)
+        let account = try #require(inbox.account)
+        let capture = try #require(reopened.pending(for: account).first)
+        #expect(capture.url == url)
+        #expect(capture.html == nil)
+        #expect(capture.title == nil)
+        #expect(model.pending.map(\.id) == [capture.id])
+    }
+
+    @Test func readerLinkDoesNotClaimSuccessWhenSignedOutOrStorageFails() throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (model, inbox, _) = try setup(directory, transport: SavedLibraryTransport(episode: episode))
+        let url = URL(string: "https://publisher.example/next")!
+        let account = try #require(inbox.account)
+        try FileManager.default.removeItem(at: #require(inbox.directory))
+        #expect(throws: CaptureInbox.InboxError.self) { try model.queueLink(url) }
+        try inbox.configure(account)
+        // Keep account routing readable but make the capture directory unwritable.
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: #require(inbox.directory).path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: inbox.directory!.path) }
+        #expect(throws: (any Error).self) { try model.queueLink(url) }
+        #expect(model.pending.isEmpty)
+    }
+
     @Test func dismissalRemovesFailedReplacementAndItStaysRemovedAfterReload() async throws {
         let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

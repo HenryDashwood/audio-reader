@@ -310,6 +310,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                     }
                 }
                 selectedItem != null -> ArticleReader(selectedItem, query, followControl, chrome,
+                    saveLink = model::saveReaderLink,
                     // The byline links to the show's page when it is one she follows.
                     openFeed = snapshot.feeds.firstOrNull { it.id == selectedItem.sourceId }?.let { feed -> { selectedItemId = null; selectedSource = feed.id } })
                 selectedSource != null -> ItemList(if (snapshot.live) snapshot.feedResults.mapNotNull { id -> snapshot.items.find { it.id == id } } else model.library.filter { it.source == selectedSource }, saved, if (snapshot.live) "" else query, ::openItem, model::play, model::toggleSaved, source = selectedFeed?.title ?: selectedSource, live = snapshot.live,

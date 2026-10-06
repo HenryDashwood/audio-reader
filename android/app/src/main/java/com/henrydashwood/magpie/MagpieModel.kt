@@ -538,6 +538,26 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
             catch (error: Exception) { if (revision == libraryState.value.revision) mutableLinkCapture.update { it.copy(saving = false, error = error.message ?: "The link could not be saved. Please try again.") } }
         }
     }
+    fun saveReaderLink(url: String) {
+        val revision = libraryState.value.revision
+        viewModelScope.launch {
+            try {
+                if (libraryState.value.live) {
+                    savedPreparation.add(url)
+                } else {
+                    val added = withContext(Dispatchers.IO) { inbox.add(url) }
+                    if (revision != libraryState.value.revision) return@launch
+                    mutablePendingLinks.value = inbox.links()
+                    mutableDeviceLinks.value = inbox.links()
+                    mutableNotice.value = if (added) "Link saved on this device" else "This link is already saved on this device"
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (revision == libraryState.value.revision) mutableNotice.value = error.message ?: "The link could not be saved. Please try again."
+            }
+        }
+    }
+
     fun removePendingLink(url: String) {
         viewModelScope.launch {
             try {

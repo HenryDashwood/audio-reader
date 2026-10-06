@@ -8,13 +8,13 @@ final class SubscriptionImportModel: ObservableObject {
     @Published private(set) var error: String?
     @Published var selected: Set<Int> = []
     private let api: any SubscriptionImportAPI
-    private let validSession: () -> Bool
+    private let validSession: () async -> Bool
     private var generation = 0
     private var pendingStart: (id: String, entries: [Int], request: String)?
     private var pendingRetry: (id: String, request: String)?
     var uncertainStart: Bool { pendingStart != nil }
 
-    init(api: any SubscriptionImportAPI = SubscriptionImportClient(), validSession: @escaping () -> Bool = { true }) {
+    init(api: any SubscriptionImportAPI, validSession: @escaping () async -> Bool = { true }) {
         self.api = api
         self.validSession = validSession
     }
@@ -40,18 +40,19 @@ final class SubscriptionImportModel: ObservableObject {
         }
     }
     private func perform(_ work: () async throws -> SubscriptionImportJob?) async {
-        guard !busy, validSession() else { return }
+        guard !busy else { return }
         busy = true
         error = nil
         let ticket = generation
         defer { if ticket == generation { busy = false } }
+        guard await validSession(), ticket == generation, !Task.isCancelled else { return }
         do {
             let value = try await work()
-            guard ticket == generation, validSession(), !Task.isCancelled else { return }
+            guard await validSession(), ticket == generation, !Task.isCancelled else { return }
             accept(value)
         } catch is CancellationError {
         } catch {
-            guard ticket == generation, validSession(), !Task.isCancelled else { return }
+            guard await validSession(), ticket == generation, !Task.isCancelled else { return }
             self.error = (error as? APIError)?.spokenResponse ?? "The import couldn't connect. Please try again."
         }
     }
@@ -82,24 +83,43 @@ final class SubscriptionImportModel: ObservableObject {
 }
 
 struct SubscriptionImportView: View {
+    private let onFollowing: () -> Void
+    private let loadSession: @Sendable () async -> SubscriptionSession
+
+    init(
+        onFollowing: @escaping () -> Void = { ShortcutNavigation.request(.destination(.following)) },
+        loadSession: @escaping @Sendable () async -> SubscriptionSession = { await SubscriptionSession.capture() }
+    ) {
+        self.onFollowing = onFollowing
+        self.loadSession = loadSession
+    }
+
+    var body: some View {
+        SubscriptionSessionView(title: "Import subscriptions", loadSession: loadSession) {
+            SubscriptionImportSessionView(session: $0, onFollowing: onFollowing)
+        }
+    }
+
+    nonisolated static func readFile(_ url: URL) async throws -> Data {
+        try await SubscriptionImportSessionView.readFile(url)
+    }
+}
+
+private struct SubscriptionImportSessionView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model: SubscriptionImportModel
     @State private var choosingFile = false
     @State private var query = ""
     private let onFollowing: () -> Void
-    private let initialToken: String?
-    private let initialServer: URL
+    private let session: SubscriptionSession
 
-    init(onFollowing: @escaping () -> Void = { ShortcutNavigation.request(.destination(.following)) }) {
-        let token = KeychainTokenStore.token
-        let server = AppConfiguration.apiBaseURL
-        initialToken = token
-        initialServer = server
+    init(session: SubscriptionSession, onFollowing: @escaping () -> Void) {
+        self.session = session
         self.onFollowing = onFollowing
         _model = StateObject(wrappedValue: SubscriptionImportModel(
-            api: SubscriptionImportClient(baseURL: server, token: token),
-            validSession: { KeychainTokenStore.token == token && AppConfiguration.apiBaseURL == server }))
+            api: SubscriptionImportClient(baseURL: session.server, token: session.token),
+            validSession: { await session.isCurrent() }))
     }
 
     var body: some View {
@@ -139,12 +159,11 @@ struct SubscriptionImportView: View {
             Task {
                 do {
                     guard let url = try result.get().first else { return }
-                    let data = try await Self.readFile(url)
+                    let data = try await SubscriptionImportView.readFile(url)
                     await model.preview(data)
                 } catch { model.fileError() }
             }
         }
-        .task { await model.load() }
         .task(id: "\(model.job?.id ?? "none")-\(model.job?.active == true)-\(scenePhase == .active)") {
             guard scenePhase == .active else { return }
             while model.job?.active == true && !Task.isCancelled {
@@ -152,12 +171,12 @@ struct SubscriptionImportView: View {
                 await model.load()
             }
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
-                if KeychainTokenStore.token != initialToken || AppConfiguration.apiBaseURL != initialServer {
-                    model.invalidate(); dismiss()
-                } else { Task { await model.load() } }
-            }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            let valid = await session.isCurrent()
+            guard !Task.isCancelled else { return }
+            if !valid { model.invalidate(); dismiss() }
+            else { await model.load() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulServerChanged)) { _ in model.invalidate(); dismiss() }
         .onChange(of: model.job?.status) { previous, current in

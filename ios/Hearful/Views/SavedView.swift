@@ -200,6 +200,21 @@ final class SavedLibrary: ObservableObject {
         NotificationCenter.default.post(name: .hearfulSavedChanged, object: nil)
     }
 
+    /// Persist before reporting success, including when the reader is offline.
+    func queueLink(_ url: URL) throws {
+        guard let account = currentAccount else { throw CaptureInbox.InboxError.signedOut }
+        try inbox.save(url: url)
+        pending = inbox.pending(for: account)
+        NotificationCenter.default.post(name: .hearfulSavedChanged, object: nil)
+    }
+
+    func prepareQueuedLinks() async {
+        // A library refresh may already be uploading an earlier snapshot of
+        // the queue. Wait for it so this new link is prepared too.
+        await waitForPreparation()
+        await load()
+    }
+
     func remove(_ episode: Episode) async {
         guard let account = currentAccount, removals.insert(episode.id).inserted else { return }
         defer { removals.remove(episode.id) }

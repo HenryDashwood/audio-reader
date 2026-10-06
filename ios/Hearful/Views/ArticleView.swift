@@ -68,6 +68,8 @@ private struct ArticleReaderView: View {
     @State private var articleWebView: WKWebView?
     /// The feed page opened from the linked publication name in the byline.
     @State private var openFeed: PodcastResult?
+    @State private var linkSaveMessage: String?
+    @State private var linkSaveFailed = false
     /// Not read directly — it is here so a change of text size redraws the
     /// page, since the web view is sized in points we hand it rather than by
     /// anything that scales on its own.
@@ -119,6 +121,16 @@ private struct ArticleReaderView: View {
         // one that belongs to the page.
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .alert(
+            linkSaveFailed ? "Could not save link" : "Link saved",
+            isPresented: Binding(
+                get: { linkSaveMessage != nil },
+                set: { if !$0 { linkSaveMessage = nil } })
+        ) {
+            Button("OK", role: .cancel) { linkSaveMessage = nil }
+        } message: {
+            Text(linkSaveMessage ?? "")
+        }
         // Everything this page can do, in the corner it shares with the back
         // button — so it all leaves and returns together when she scrolls,
         // and the foot of the screen is left to the tab bar and whatever is
@@ -229,6 +241,7 @@ private struct ArticleReaderView: View {
                     episodeID: episode.id,
                     speechText: nil,
                     openFeed: openContainingFeed,
+                    saveLink: saveLink,
                     ready: { articleWebView = $0 })
             } else {
                 // The same sentence the player would have read out, shown
@@ -259,6 +272,7 @@ private struct ArticleReaderView: View {
                     episodeID: episode.id,
                     speechText: article.text,
                     openFeed: openContainingFeed,
+                    saveLink: saveLink,
                     ready: { articleWebView = $0 })
             }
         }
@@ -285,6 +299,19 @@ private struct ArticleReaderView: View {
             publisher: nil,
             episodeCount: nil,
             artworkURL: episode.imageURL)
+    }
+
+    private func saveLink(_ url: URL) {
+        do {
+            try SavedLibrary.shared.queueLink(url)
+            linkSaveFailed = false
+            linkSaveMessage = "Saved on this device. Magpie will prepare the linked article when connected."
+            Task { await SavedLibrary.shared.prepareQueuedLinks() }
+        } catch {
+            linkSaveFailed = true
+            linkSaveMessage = error.localizedDescription
+            Feedback.shared.play(.failed)
+        }
     }
 }
 
@@ -689,6 +716,7 @@ private struct ArticleWebView: UIViewRepresentable {
     /// Opens the containing podcast or blog inside Magpie. All other links
     /// still leave for Safari.
     let openFeed: @MainActor () -> Void
+    let saveLink: @MainActor (URL) -> Void
     /// Handed out so the bars can be told what to track, and so the toolbar
     /// has something to ask for a find bar.
     let ready: (WKWebView) -> Void
@@ -703,6 +731,7 @@ private struct ArticleWebView: UIViewRepresentable {
         configuration.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
+        view.uiDelegate = context.coordinator
         // The page paints no background of its own, so the app's shows
         // through and the article is the right colour in both appearances
         // without the web view having to be told which one it is in.
@@ -781,12 +810,13 @@ private struct ArticleWebView: UIViewRepresentable {
         coordinator.detach(from: view)
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(openFeed: openFeed) }
+    func makeCoordinator() -> Coordinator { Coordinator(openFeed: openFeed, saveLink: saveLink) }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var loaded: String?
         let openFeed: @MainActor () -> Void
+        let saveLink: @MainActor (URL) -> Void
         private weak var webView: WKWebView?
         private var spokenLocation: ArticleSpokenLocation?
         private var markerSubscription: AnyCancellable?
@@ -798,8 +828,17 @@ private struct ArticleWebView: UIViewRepresentable {
         private let marker = ArticleReadingMarkerView()
         private let followOwner = UUID()
 
-        init(openFeed: @escaping @MainActor () -> Void) {
+        init(openFeed: @escaping @MainActor () -> Void, saveLink: @escaping @MainActor (URL) -> Void) {
             self.openFeed = openFeed
+            self.saveLink = saveLink
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo,
+            completionHandler: @escaping @MainActor (UIContextMenuConfiguration?) -> Void
+        ) {
+            completionHandler(ArticleLinkMenu.configuration(for: elementInfo.linkURL, save: saveLink))
         }
 
         func attach(to view: WKWebView, episodeID: Int, speechText: String?) {
