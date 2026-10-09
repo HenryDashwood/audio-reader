@@ -178,13 +178,13 @@ class PlaybackService : MediaLibraryService() {
         val sessionPlayer = object : ForwardingPlayer(player) {
             private fun mayPlay() = cancelledPlayback.isEmpty() ||
                 session.controllerForCurrentRequest?.let { it !in cancelledPlayback } == true
-            override fun play() { if (mayPlay()) { beginProgressIntent(); super.play() } }
+            override fun play() { if (mayPlay()) { beginProgressIntent(refreshArticleProgress = true); super.play() } }
             override fun pause() { cancelAssistant(); resumptionInteraction = null; super.pause() }
             override fun stop() { cancelAssistant(); resumptionInteraction = null; super.stop() }
             override fun setPlayWhenReady(playWhenReady: Boolean) {
                 if (!playWhenReady) { cancelAssistant(); resumptionInteraction = null }
                 if (!playWhenReady || mayPlay()) {
-                    if (playWhenReady) beginProgressIntent()
+                    if (playWhenReady) beginProgressIntent(refreshArticleProgress = true)
                     super.setPlayWhenReady(playWhenReady)
                 }
             }
@@ -670,10 +670,17 @@ class PlaybackService : MediaLibraryService() {
         return MediaLibraryCatalog.media(item).buildUpon().setUri(uri).build()
     }
 
-    private fun beginProgressIntent(item: LibraryItem? = current, position: Long = player.currentPosition, articleOffset: Int? = null) {
+    private fun beginProgressIntent(item: LibraryItem? = current, position: Long = player.currentPosition,
+        articleOffset: Int? = null, refreshArticleProgress: Boolean = false) {
         if (item == null || !library.usesGuardedProgress(item)) return
-        val latest = if (item.kind == ContentKind.Article) item else
+        // A loaded article keeps its original item while acknowledgements advance
+        // the library's revision. Explicit transport resume must use that newer
+        // revision or its first save conflicts with this device's own earlier save.
+        // Initial preparation still uses the revision selected before rendering.
+        val latest = if (item.kind == ContentKind.Article && !refreshArticleProgress) item else
             library.state.value.items.firstOrNull { it.id == item.id } ?: return
+        if (item.kind == ContentKind.Article && (latest.contentId != item.contentId ||
+                latest.contentVersion != item.contentVersion || !library.usesGuardedProgress(latest))) return
         val offset = articleOffset ?: rendered?.let { it.playerBookmark(player.currentTimeline, position, item.contentVersion).offsetUtf16 } ?: 0
         val version = playbackRevision
         val id = java.util.UUID.randomUUID().toString()

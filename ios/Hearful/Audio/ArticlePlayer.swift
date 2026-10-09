@@ -363,7 +363,12 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
                     let saved,
                     !saved.text.isEmpty
                 {
-                    self.textLoaded(saved)
+                    // Draining progress can acknowledge a pause report and
+                    // advance both the journal revision and cached bookmark.
+                    // The snapshot taken before that wait no longer matches
+                    // the journal and would rewind to the previous session.
+                    let latest = cache.article(episodeID: saved.episodeID, contentID: saved.contentID) ?? saved
+                    self.textLoaded(latest)
                     return
                 }
                 self.loadFailed(with: error)

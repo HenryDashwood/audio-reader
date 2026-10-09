@@ -56,8 +56,8 @@ android {
         buildConfigField("String", "ACCOUNT_API_URL", "\"$accountServer\"")
         // Release CI passes the commit count and the android-v* tag, as TestFlight does for iOS;
         // these literals are the fallback for local builds.
-        versionCode = providers.gradleProperty("MAGPIE_VERSION_CODE").orNull?.toInt() ?: 4
-        versionName = providers.gradleProperty("MAGPIE_VERSION_NAME").orNull ?: "1.0.4"
+        versionCode = providers.gradleProperty("MAGPIE_VERSION_CODE").orNull?.toInt() ?: 5
+        versionName = providers.gradleProperty("MAGPIE_VERSION_NAME").orNull ?: "1.0.5"
         testInstrumentationRunner = "com.henrydashwood.magpie.MagpieTestRunner"
     }
     signingConfigs {

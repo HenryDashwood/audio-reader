@@ -40,9 +40,15 @@ class ArticleProgressPlaybackTest {
         var revision = "a".repeat(64)
         var row = RemoteEpisode(1, "Durable article test", source = "Test publication", contentId = 7)
         val reports = mutableListOf<ArticleProgressReport>()
+        var enforceRevision = false
+        var conflicts = 0
         override suspend fun articleProgress(token: String, episodeId: Int, report: ArticleProgressReport): ArticleProgressReceipt {
             reports += report
             if (offline) throw IOException("Offline fixture")
+            if (enforceRevision && report.expectedRevision != revision) {
+                conflicts++
+                throw com.henrydashwood.magpie.auth.AccountFailure(409, "Progress changed")
+            }
             row = row.copy(articleBookmark = RemoteArticleBookmark(report.textVersion, report.offsetUtf16), completed = report.completed)
             revision = "b".repeat(64)
             return ArticleProgressReceipt(row, ArticleProgressState(hash, 7, revision, row.articleBookmark), revision)
@@ -87,6 +93,36 @@ class ArticleProgressPlaybackTest {
         compose.waitUntil(60_000) { compose.runOnUiThread { controller!!.isPlaying && controller!!.duration > 30_000 } }
     }
     private fun entries() = runBlocking { journal.read(library.state.value.owner!!) }
+    @Test fun transportResumeAfterSuccessfulSyncKeepsSavingTheNewSession() {
+        api.offline = false
+        api.enforceRevision = true
+        play()
+        compose.runOnUiThread { controller!!.seekTo(15_000); controller!!.pause() }
+        compose.waitUntil(10_000) { entries().firstOrNull()?.latest?.offsetUtf16?.let { it > 0 } == true }
+        runBlocking(Dispatchers.Main) { library.flushArticleProgress(); library.flushArticleProgress() }
+        val paused = entries().single().latest.offsetUtf16
+        assertEquals("b".repeat(64), entries().single().baselineRevision)
+        assertNull(entries().single().pending)
+
+        // The notification/mini-player Play command reuses the loaded voice,
+        // whose original LibraryItem still carries revision a.
+        compose.runOnUiThread { controller!!.play() }
+        compose.waitUntil(10_000) { compose.runOnUiThread { controller!!.isPlaying } }
+        compose.runOnUiThread { controller!!.seekTo(30_000); controller!!.pause() }
+        compose.waitUntil(10_000) { entries().single().blocked || entries().single().latest.offsetUtf16 > paused }
+        runBlocking(Dispatchers.Main) { library.flushArticleProgress(); library.flushArticleProgress() }
+        assertEquals("A normal resume must not conflict with this device's own saved bookmark", 0, api.conflicts)
+        assertFalse(entries().single().blocked)
+        assertTrue(api.row.articleBookmark!!.offsetUtf16 > paused)
+        assertNull(entries().single().pending)
+
+        val savedAfterResume = api.row.articleBookmark!!.offsetUtf16
+        val previousPlaybackId = entries().single().playbackId
+        play() // Explicit article Play fetches the bookmark and rebuilds the voice.
+        compose.runOnUiThread { controller!!.pause() }
+        compose.waitUntil(10_000) { entries().single().let { it.playbackId != previousPlaybackId && it.sampled } }
+        assertTrue(entries().single().latest.offsetUtf16 >= savedAfterResume)
+    }
     @Test fun offlinePauseSurvivesFreshJournalAndRetriesOriginalRequestBeforeLatestClock() {
         play()
         compose.runOnUiThread { controller!!.seekTo(15_000); controller!!.pause() }

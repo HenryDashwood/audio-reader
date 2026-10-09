@@ -1,1 +1,1 @@
-Hold a link inside an article to save it to Magpie without leaving the reader. The new link menu also offers Open in browser, Copy link and Share link. Saved links are kept on your device and prepared when connected. You can also download podcast episodes for offline listening and automatically keep the newest unplayed episodes of shows you follow.
+Article listening now keeps your place when you pause and resume. This fixes a problem where reloading the voice later could jump back to the start of an earlier listening session.

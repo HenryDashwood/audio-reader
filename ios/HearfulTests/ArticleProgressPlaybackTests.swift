@@ -154,6 +154,53 @@ struct ArticleProgressPlaybackTests {
         #expect(player.progressContext?.offsetUTF16 == (api.body as NSString).range(of: "Another").location)
         #expect(player.currentTime < 120)
     }
+    @Test(arguments: [false, true])
+    func offlineReloadUsesBookmarkAcknowledgedWhileDrainingProgress(hasNewerLocalSample: Bool) async throws {
+        let api = BookmarkPlaybackAPI()
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = OfflineCache(directory: directory.appending(path: "text"))
+        let journal = ArticleProgressJournal(store: FileArticleProgressStorage(directory: directory.appending(path: "progress")))
+        let episode = try await api.episode(id: 1)
+        let text = try await api.articleText(episodeID: 1)
+        cache.saveArticle(text)
+        let progress = try #require(text.articleProgress)
+        let playbackID = UUID()
+        let offset = (api.body as NSString).range(of: "Another").location
+        let sample = ArticleProgressSample(textVersion: progress.textVersion, contentID: progress.contentID,
+            offsetUTF16: offset, completed: false)
+        try journal.start(owner: owner, episodeID: 1, playbackID: playbackID, progress: progress, sample: sample)
+        try journal.record(owner: owner, episodeID: 1, playbackID: playbackID, sample: sample)
+        let expectedOffset = hasNewerLocalSample ? (api.body as NSString).range(of: "The final").location : offset
+        if hasNewerLocalSample {
+            try journal.record(owner: owner, episodeID: 1, playbackID: playbackID,
+                sample: .init(textVersion: progress.textVersion, contentID: progress.contentID,
+                    offsetUTF16: expectedOffset, completed: false))
+        }
+        let synth = SilentSynthesizer()
+        let player = ArticlePlayer(api: api, cache: cache, synthesizer: synth, bookmarkJournal: journal,
+            progressScope: { owner }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
+        // The pending pause report succeeds during reload, but the following
+        // text fetch loses connectivity. Its acknowledgement advances both the
+        // journal revision and the cached bookmark, just as ArticleProgressSync does.
+        player.progressDrain = {
+            do {
+                try await journal.flush(owner: owner, valid: { true }, send: { id, report in
+                    try await api.reportArticleProgress(episodeID: id, report: report)
+                }, applied: { receipt in
+                    player.acceptArticleProgress(receipt, replacing: progress, playbackID: playbackID)
+                })
+                await api.setOffline(true)
+            } catch { Issue.record(error) }
+        }
+        defer { player.progressDrain = nil; player.clear() }
+        player.play(episode)
+        try await loaded(player)
+        #expect(cache.article(episodeID: 1, contentID: 7)?.articleProgress?.bookmark?.offsetUTF16 == offset)
+        #expect(synth.lastSpoken?.hasPrefix(hasNewerLocalSample ? "The final" : "Another") == true)
+        #expect(player.progressContext?.offsetUTF16 == expectedOffset)
+    }
     @Test func offlinePausePersistsExactRequestAndFreshObjectsResumeTheSamePassage() async throws {
         let api = BookmarkPlaybackAPI(); let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
