@@ -10,12 +10,14 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
-## 1.6.2
+## 1.6.3
 
 Saving articles from Safari now handles The Nation's pages and poems with line
 breaks more reliably. Free articles should no longer be rejected because of
 conflicting paywall information. Please try sharing the Anne Carson article
 from Safari again and check that it is ready to read and listen to in Saved.
+
+## 1.6.2
 
 Hold a link inside an article and choose Save to Magpie to keep reading without
 leaving the app. Tap a link to open it in your browser as before. Saved links
