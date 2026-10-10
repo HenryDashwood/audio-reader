@@ -207,14 +207,19 @@ async def capture(
 def extract(
     raw: str, *, browser: bool = False, url: str | None = None, article: bool = False
 ) -> tuple[str, str | None]:
-    # Subscription/login interstitials are not complete articles. Structured metadata
-    # is useful evidence; absence of that signal is not a guarantee of completeness.
-    if not browser and '"isAccessibleForFree":false' in raw.replace(" ", "").replace("\n", ""):
-        return "", None
     try:
         page = lxml_html.document_fromstring(raw)
     except Exception:
         # lxml exposes platform-specific parser exception classes from its C module.
+        return "", None
+    # The Nation marks even explicitly free articles as paid in its JSON-LD.
+    # Honor its specific no-paywall tag; do not relax the guard for other sites
+    # or infer access from the amount of text delivered behind a paywall.
+    nation_free = urlsplit(url or "").hostname in {"thenation.com", "www.thenation.com"} and any(
+        "no-paywall" in {tag.strip().lower() for tag in tags.split(",")}
+        for tags in page.xpath('//head/meta[@name="sailthru.tags"]/@content')
+    )
+    if not browser and not nation_free and '"isAccessibleForFree":false' in raw.replace(" ", "").replace("\n", ""):
         return "", None
     metadata = trafilatura.extract_metadata(raw)
     normalise_images(page, url or "")

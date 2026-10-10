@@ -12,6 +12,11 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.6.2
 
+Saving articles from Safari now handles The Nation's pages and poems with line
+breaks more reliably. Free articles should no longer be rejected because of
+conflicting paywall information. Please try sharing the Anne Carson article
+from Safari again and check that it is ready to read and listen to in Saved.
+
 Hold a link inside an article and choose Save to Magpie to keep reading without
 leaving the app. Tap a link to open it in your browser as before. Saved links
 are kept on your device and prepared when you have a connection.

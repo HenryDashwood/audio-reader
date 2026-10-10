@@ -12,7 +12,7 @@ from audioreader import saved
 from audioreader.feeds import articles
 from audioreader.feeds.graphics import static_svg
 from audioreader.feeds.images import normalise_images
-from audioreader.page_capture import publisher_body, social_title
+from audioreader.page_capture import missing_prose, publisher_body, social_title, substantial_paragraphs
 from audioreader.text import article_text
 
 FIXTURES = Path(__file__).resolve().parents[2] / "ios/HearfulTests/BrowserCaptureFixtures"
@@ -70,6 +70,54 @@ def test_generic_capture_rejects_missing_substantial_paragraphs(monkeypatch):
     )
     monkeypatch.setattr(articles, "extract_with_videos", lambda *_args, **_kwargs: f"<p>{paragraphs[0]}</p>")
     assert saved.extract(raw)[0] == ""
+
+
+@pytest.mark.parametrize("browser", [False, True])
+def test_explicitly_free_nation_article_survives_conflicting_schema(browser):
+    raw, url = fixture("article-with-deck-and-poetry")
+    html, _ = saved.extract(raw, url=url, browser=browser)
+    for phrase in [
+        "Opening body paragraph",
+        "Closing body paragraph",
+        "First verse begins",
+        "The last line brings us home",
+    ]:
+        assert phrase in html
+
+
+@pytest.mark.parametrize("tags", ["Free", "no-paywall-preview", "Books &amp; the Arts"])
+def test_nation_paid_metadata_still_rejects_articles_without_the_exact_free_tag(tags):
+    raw, url = fixture("article-with-deck-and-poetry")
+    raw = raw.replace("Books &amp; the Arts,Free,no-paywall", tags)
+    assert saved.extract(raw, url=url)[0] == ""
+
+
+def test_nation_free_tag_does_not_override_other_publishers_or_an_interstitial():
+    raw, _ = fixture("article-with-deck-and-poetry")
+    assert saved.extract(raw, url="https://example.com/article")[0] == ""
+    page = lxml_html.document_fromstring(raw)
+    article = page.xpath("//article")[0]
+    article.clear()
+    article.append(lxml_html.fromstring("<p>Subscribe to continue reading. Already a subscriber?</p>"))
+    assert (
+        saved.extract(lxml_html.tostring(page, encoding="unicode"), url="https://www.thenation.com/article/")[0] == ""
+    )
+
+
+def test_prose_completeness_ignores_decks_cards_and_poetry_whitespace_but_not_missing_lines():
+    raw, _ = fixture("article-with-deck-and-poetry")
+    page = lxml_html.document_fromstring(raw)
+    evidence = substantial_paragraphs(page.xpath("//article"))
+    assert len(evidence) == 5
+    assert not any("Introductory deck" in p or "Recommended story" in p for p in evidence)
+    for node in page.xpath('//div[@class="article-title__dek"] | //section[@class="collections"]'):
+        node.drop_tree()
+    for node in page.iter("br"):
+        node.tail = " " + (node.tail or "")
+    assert not missing_prose(evidence, lxml_html.tostring(page, encoding="unicode"))
+    for node in page.xpath("//blockquote"):
+        node.drop_tree()
+    assert missing_prose(evidence, lxml_html.tostring(page, encoding="unicode"))
 
 
 def test_generic_short_sponsor_is_not_a_successful_article(monkeypatch):

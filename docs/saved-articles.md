@@ -31,6 +31,11 @@ Other short illustrated articles can be retained when a single article body,
 matching canonical URL, and article metadata identify the content. Generic
 extraction checks substantial paragraphs in the selected article and rejects a
 result that silently omits them; it does not merge unrelated page sections.
+Completeness checks ignore The Nation's headline decks and recommendation cards,
+and tolerate whitespace changes when extraction reformats verse line breaks.
+For server-fetched Nation pages, an explicit `no-paywall` publisher tag takes
+precedence over its conflicting paid-article metadata; ordinary paywall and
+missing-prose checks still apply.
 
 X/Twitter status links use a concise author-and-opening title (at most 100 Unicode
 code points), while retaining the complete post body. Explicit article headlines

@@ -136,6 +136,8 @@ var MagpieCapture = {
                 var parent = p;
                 while (parent) {
                     if (['ASIDE', 'NAV', 'FORM', 'FOOTER'].includes(parent.tagName)
+                        // Publisher decks and recommendation cards are summaries, not body prose.
+                        || parent.classList.contains('article-title__dek') || parent.classList.contains('collections__card')
                         || /related|newsletter|comment|social|share|promo|author|footer/i.test((parent.getAttribute('class') || '') + ' ' + parent.id)
                         || /(?:^|\s)(?:sidebar(?:[-_]\S+)?|td-(?:ss-)?main-sidebar)(?:\s|$)/i.test((parent.getAttribute('class') || '') + ' ' + parent.id)) return;
                     parent = parent.parentElement;
@@ -148,8 +150,10 @@ var MagpieCapture = {
         return result;
     },
     missingProse: function (paragraphs, body) {
-        var text = this.proseText(body);
-        var missing = paragraphs.filter(function (p) { return !text.includes(p); });
+        // Extraction rewrites line breaks and paragraph boundaries. Compare the
+        // actual characters so harmless whitespace changes do not reject poetry.
+        var text = this.proseText(body).replace(/\s/g, '');
+        var missing = paragraphs.filter(function (p) { return !text.includes(p.replace(/\s/g, '')); });
         return missing.length >= 2 || missing.some(function (p) { return p.length >= 160; });
     }
 };
