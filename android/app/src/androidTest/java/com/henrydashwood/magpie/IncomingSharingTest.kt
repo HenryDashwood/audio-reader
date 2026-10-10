@@ -65,8 +65,17 @@ class IncomingSharingTest {
         api = Api(); library = AccountLibrary(api, "https://share-${UUID.randomUUID()}.invalid")
         runBlocking(Dispatchers.Main) { library.changeSession("alice") }
         app.libraryOverride = library
+        // Hidden page capture never reaches the network in tests: unknown pages are 404s.
+        CaptureFixtures.respond = { url ->
+            pages[url]?.let { android.webkit.WebResourceResponse("text/html", "UTF-8", it.byteInputStream()) }
+                ?: android.webkit.WebResourceResponse("text/html", "UTF-8", 404, "Not Found", emptyMap(), "".byteInputStream())
+        }
     }
+    private val pages = mutableMapOf<String, String>()
+    private val prose = "This is a complete article about a quiet walk through the garden. The trees provide shade and the birds sing in the branches. ".repeat(12)
+    private fun article(url: String) = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>A quiet walk</title><link rel='canonical' href='$url'></head><body><nav>Site menu</nav><article><h1>A quiet walk</h1><p>$prose</p><p style='display:none'>HIDDEN SECRET</p><p id='late'></p></article><script>setTimeout(function(){document.getElementById('late').textContent='Rendered by script.'}, 200)</script></body></html>"
     @After fun cleanup() {
+        CaptureFixtures.respond = null
         scenario?.close()
         runBlocking { library.state.value.owner?.let { owner -> app.articleInbox.pending(owner).forEach { app.articleInbox.remove(owner, it.id) } } }
         app.libraryOverride = null
@@ -84,6 +93,7 @@ class IncomingSharingTest {
     @Test fun confirmationRecreationAndOfflineQueuePreserveHtmlUntilSuccessfulSync() {
         val html = "<article><h1>Shared story</h1><p>Shared browser content.</p></article>"
         launch(html = html)
+        assertFalse("Browser-supplied HTML is not read again", model.state.value.preparing)
         val owner = checkNotNull(library.state.value.owner)
         assertTrue(runBlocking { app.articleInbox.pending(owner) }.isEmpty())
         scenario!!.recreate()
@@ -192,6 +202,35 @@ class IncomingSharingTest {
         app.articleInbox.add(owner, PendingArticle(url = first.url))
         assertEquals(newer.id, app.articleInbox.pending(owner).single().id)
     }
+    @Test fun linkOnlyShareReadsThePageOutOfSightSoOneSaveKeepsIt() {
+        val url = "https://capture-fixture.invalid/hidden"
+        pages[url] = article(url)
+        launch(url)
+        // Saving before the page is read waits for it rather than storing a bare link.
+        compose.onNodeWithText("Reading the page…").assertExists()
+        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.waitUntil(20_000) { model.state.value.saved }
+        val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
+        assertEquals(url, stored.url); assertEquals("article", stored.contentFormat); assertEquals("A quiet walk", stored.title)
+        assertTrue(stored.html!!.contains("quiet walk")); assertTrue(stored.html.contains("Rendered by script."))
+        assertFalse(stored.html.contains("HIDDEN SECRET")); assertFalse(stored.html.contains("Site menu"))
+        assertTrue(api.captures.isEmpty())
+    }
+    @Test fun unreadablePagesFallBackToSavingTheLink() {
+        launch("https://capture-fixture.invalid/missing")
+        compose.waitUntil(20_000) { !model.state.value.preparing }
+        compose.onNodeWithText("Reading the page…").assertDoesNotExist()
+        assertNull(model.state.value.article!!.html)
+        assertEquals("Shared story", model.state.value.article!!.title)
+        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.waitUntil(10_000) { model.state.value.saved }
+        assertNull(runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single().html)
+    }
+    @Test fun insecureLinksAreNotOpenedInTheHiddenBrowser() {
+        launch("http://example.com/plain")
+        assertFalse(model.state.value.preparing)
+        compose.onNodeWithText("Reading the page…").assertDoesNotExist()
+    }
     @Test fun ordinaryShareOffersNoPageCapture() {
         launch("https://capture-fixture.invalid/article")
         compose.onNodeWithText("Capture page").assertDoesNotExist()
@@ -202,7 +241,6 @@ class IncomingSharingTest {
         launch("https://capture-fixture.invalid/article", capture = true)
         compose.onNodeWithText("Preview article").assertExists()
         compose.waitForIdle()
-        val prose = "This is a complete article about a quiet walk through the garden. The trees provide shade and the birds sing in the branches. ".repeat(12)
         val html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1'><title>A quiet walk</title><link rel='canonical' href='https://capture-fixture.invalid/article'></head><body><article><h1>A quiet walk</h1><p>$prose</p><p style='display:none'>HIDDEN SECRET</p></article></body></html>"
         scenario!!.onActivity { activity ->
             val view = findWebView(activity.window.decorView)!!

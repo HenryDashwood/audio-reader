@@ -95,6 +95,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     var showingAccount by rememberSaveable { mutableStateOf(false) }
     var showingShortcuts by rememberSaveable { mutableStateOf(false) }
     var showingDownloads by rememberSaveable { mutableStateOf(false) }
+    var showingWebsiteSignIns by rememberSaveable { mutableStateOf(false) }
     val shortcutNavigation by model.shortcutNavigation.collectAsStateWithLifecycle()
     val shortcutWorking by model.shortcutWorking.collectAsStateWithLifecycle()
     val saved by model.saved.collectAsStateWithLifecycle()
@@ -161,7 +162,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     LaunchedEffect(appleReturn) { if (appleReturn > 0) showingAccount = true }
     LaunchedEffect(shortcut?.delivery) {
         shortcut?.let {
-            showingAccount = false; showingShortcuts = false; showingPlayer = false
+            showingAccount = false; showingShortcuts = false; showingWebsiteSignIns = false; showingPlayer = false
             model.runShortcut(it); consumeShortcut()
         }
     }
@@ -176,7 +177,7 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                 model.consumeShortcutNavigation()
                 return@let
             }
-            showingAccount = false; showingShortcuts = false; showingPlayer = false
+            showingAccount = false; showingShortcuts = false; showingWebsiteSignIns = false; showingPlayer = false
             selectedItemId = null; selectedSource = null; query = ""; showingSearch = false
             when (request.action) {
                 ShortcutAction.Saved -> destination = Destination.Saved
@@ -204,6 +205,10 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
     if (showingDownloads) {
         BackHandler { showingDownloads = false }
         DownloadsScreen(model) { showingDownloads = false }
+        return
+    }
+    if (showingWebsiteSignIns) {
+        com.henrydashwood.magpie.sharing.WebsiteSignInsScreen { showingWebsiteSignIns = false }
         return
     }
     LaunchedEffect(playback.item) { if (playback.item == null) showingPlayer = false }
@@ -325,7 +330,8 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                         pendingLinks = pendingLinks, removePendingLink = model::removePendingLink, live = snapshot.live, model = model, loading = snapshot.loading,
                         notice = snapshot.error, retry = ::refresh, finishedTab = savedFinishedTab)
                 }
-                else -> SettingsScreen(model, onShortcuts = { showingShortcuts = true }, onDownloads = { showingDownloads = true }) { showingAccount = true }
+                else -> SettingsScreen(model, onShortcuts = { showingShortcuts = true }, onDownloads = { showingDownloads = true },
+                    onWebsiteSignIns = { showingWebsiteSignIns = true }) { showingAccount = true }
             } }
             if (refreshable) CompositionLocalProvider(LocalRefreshActions provides refreshActions) {
                 PullToRefreshBox(isRefreshing = snapshot.loading || snapshot.searching, onRefresh = ::refresh,
