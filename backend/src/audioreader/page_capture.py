@@ -165,6 +165,8 @@ def substantial_paragraphs(nodes) -> list[str]:
             ancestors = [p, *p.iterancestors()]
             if any(
                 a.tag in {"aside", "nav", "form", "footer"}
+                # Publisher decks and recommendation cards are summaries, not body prose.
+                or bool(_classes(a) & {"article-title__dek", "collections__card"})
                 or re.search(
                     r"related|newsletter|comment|social|share|promo|author|footer",
                     a.get("class", "") + " " + a.get("id", ""),
@@ -188,6 +190,7 @@ def substantial_paragraphs(nodes) -> list[str]:
 def missing_prose(paragraphs: list[str], html: str) -> bool:
     if not html:
         return bool(paragraphs)
-    text = _prose_text(lxml_html.fromstring(html))
-    missing = [p for p in paragraphs if p not in text]
+    # Extraction may rewrite line breaks and paragraph boundaries, especially in poetry.
+    text = re.sub(r"\s", "", _prose_text(lxml_html.fromstring(html)))
+    missing = [p for p in paragraphs if re.sub(r"\s", "", p) not in text]
     return len(missing) >= 2 or any(len(p) >= 160 for p in missing)

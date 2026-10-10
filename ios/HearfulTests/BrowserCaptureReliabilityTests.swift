@@ -126,6 +126,39 @@ struct BrowserCaptureReliabilityTests {
         #expect(truncated["html"] == "")
     }
 
+    @Test func decksRecommendationsAndReformattedPoetryDoNotRejectAnArticle() async throws {
+        let raw = try resource("article-with-deck-and-poetry")
+        let url = "https://www.thenation.com/article/culture/line-breaks/"
+        let result = try await capture(raw, url: url)
+        #expect(result["contentFormat"] == "article")
+        let html = try #require(result["html"])
+        for phrase in ["Opening body paragraph", "Middle body paragraph", "Closing body paragraph",
+                       "First verse begins", "Its final line reaches the sea", "Second verse begins", "The last line brings us home"] {
+            #expect(html.contains(phrase))
+        }
+        // Model an extractor that omits the deck/cards and changes poem layout.
+        let setup = """
+            Readability.prototype.parse = function () {
+                var article = document.querySelector('article').cloneNode(true);
+                article.querySelectorAll('.article-title__dek, .collections').forEach(n => n.remove());
+                article.querySelectorAll('br').forEach(n => n.replaceWith(' '));
+                return {content:article.innerHTML, title:document.title, length:article.textContent.length, textContent:article.textContent};
+            };
+            """
+        let reformatted = try await capture(raw, url: url, setup: setup)
+        #expect(reformatted["contentFormat"] == "article")
+        let truncated = try await capture(raw, url: url, setup: setup + """
+            var parse = Readability.prototype.parse;
+            Readability.prototype.parse = function () {
+                var result = parse();
+                var node = document.createElement('div'); node.innerHTML = result.content;
+                node.querySelectorAll('blockquote').forEach(n => n.remove());
+                result.content = node.innerHTML; return result;
+            };
+            """)
+        #expect(truncated["html"] == "")
+    }
+
     @Test func responsiveAndLazyImagesUseResolvedSources() async throws {
         let raw = try resource("inline-charts").replacingOccurrences(of: "</article>", with: """
             <img id="selected" src="/placeholder.jpg" srcset="/small.jpg 1x, /large.jpg 2x">
