@@ -381,6 +381,8 @@ git tag v1.1.0 && git push origin v1.1.0
 
 ```bash
 gh workflow run testflight.yml --ref main
+# After Apple closes the previous version, use a new internal beta version:
+gh workflow run testflight.yml --ref main -f build_version=1.6.3
 ```
 
 Only a tag reaches external testers. A manual run uploads the build, sets its
