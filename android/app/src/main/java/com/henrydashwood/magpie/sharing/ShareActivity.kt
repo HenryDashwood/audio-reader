@@ -55,19 +55,24 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
         return
     }
     BackHandler(enabled = state.busy) { /* Keep the durable-write acknowledgement visible. */ }
+    val reading = state.article?.url?.takeIf { state.preparing }
+    if (reading != null) key(reading) { HiddenPageCapture(reading, model::prepared) }
     Scaffold { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Text(if (state.saved) "Saved to Magpie" else "Save to Magpie", style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.semantics { heading(); liveRegion = LiveRegionMode.Polite })
-            if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (state.busy || state.saveRequested) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (state.preparing) Text(if (state.saveRequested) "Reading the page before saving…" else "Reading the page…",
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
             state.article?.let { article ->
                 article.title?.let { Text(it, style = MaterialTheme.typography.titleLarge) }
                 Text(article.url)
                 article.preview?.let { Text(it, Modifier.semantics { contentDescription = "Article begins: $it" }) }
                 if (!state.saved) {
-                    // As on iOS: one Save. If Magpie can't fetch the page, Saved offers "Capture page".
+                    // As on iOS: one Save, which keeps the page read above. If it can't be read,
+                    // the link is saved and Saved offers "Capture page" when the server fetch fails.
                     Text("Ready to read or listen to later.")
                     Text("Already saved? This updates your copy. If the text changes, listening starts from the beginning.")
                 }
@@ -88,7 +93,7 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
                             else "Connect to load your Magpie account before saving. Open Magpie to retry.")
                         Button(onClick = openMagpie, enabled = !state.busy) { Text("Open Magpie") }
                     } else if (state.article != null) {
-                        Button(onClick = model::save, enabled = !state.busy) { Text("Save article") }
+                        Button(onClick = model::save, enabled = !state.busy && !state.saveRequested) { Text("Save article") }
                     }
                     TextButton(onClick = close, enabled = !state.busy) { Text("Cancel") }
                 }
