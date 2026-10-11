@@ -18,6 +18,13 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
+      build_version:
+        description: >-
+          Marketing version for a new manual TestFlight build (for example 1.6.3).
+          Use a new version when Apple has closed the last approved version.
+          Does not distribute externally or submit an App Store release.
+        required: false
+        default: ""
       distribute_build:
         description: >-
           Distribute an already-uploaded build number to the external testers
@@ -112,18 +119,32 @@ jobs:
 
       - name: Work out the version numbers
         id: version
+        env:
+          BUILD_VERSION: ${{ inputs.build_version }}
         run: |
           set -euo pipefail
           # App Store Connect rejects a build number it has seen before. The
           # commit count is unique and always increasing, which the manual
           # CURRENT_PROJECT_VERSION bump in the project file is not.
           echo "build=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
-          # A v-tag sets the user-visible version. A manual run inherits the
+          # A v-tag sets the user-visible version. Unless overridden for a
+          # new TestFlight train, a manual run inherits the
           # highest release tag reachable from this commit, so a post-release
           # build cannot accidentally go backwards to the project's stale
           # MARKETING_VERSION and lose to an older build in TestFlight.
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             marketing_version="${GITHUB_REF_NAME#v}"
+          elif [ -n "$BUILD_VERSION" ]; then
+            if [[ ! "$BUILD_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::build_version must have three numeric components, such as 1.6.3"
+              exit 1
+            fi
+            notes_version=$(sed -n 's/^## //p' docs/CHANGELOG.md | sed -n '1p')
+            if [ "$notes_version" != "$BUILD_VERSION" ]; then
+              echo "::error::The top changelog section must match build_version"
+              exit 1
+            fi
+            marketing_version="$BUILD_VERSION"
           else
             release_tag=$(git tag --merged HEAD --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')
             marketing_version="${release_tag#v}"
