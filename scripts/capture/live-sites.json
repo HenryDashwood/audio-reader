@@ -1,0 +1,46 @@
+[
+  {
+    "name": "The Nation — news and criticism",
+    "url": "https://www.thenation.com/article/culture/anne-carson-wrong-norma/"
+  },
+  {
+    "name": "Astral Codex Ten — Substack custom domain",
+    "url": "https://www.astralcodexten.com/p/lines-composed-in-a-fake-sequoia"
+  },
+  {
+    "name": "J. Sanilac — Ghost members-only article",
+    "url": "https://www.jsanilac.com/chapter-xi-how-to-simulate-a-small-zombie-apocalypse-part-i-haunting-your-local-hammam/"
+  },
+  {
+    "name": "Wikipedia — reference article",
+    "url": "https://en.wikipedia.org/wiki/Sequoia_sempervirens"
+  },
+  {
+    "name": "MDN — technical documentation",
+    "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Introduction"
+  },
+  {
+    "name": "Python — technical tutorial",
+    "url": "https://docs.python.org/3/tutorial/introduction.html"
+  },
+  {
+    "name": "Paul Graham — plain HTML essay",
+    "url": "https://www.paulgraham.com/greatwork.html"
+  },
+  {
+    "name": "Dan Luu — independent technical blog",
+    "url": "https://danluu.com/branch-prediction/"
+  },
+  {
+    "name": "Canary Media — split article layout",
+    "url": "https://www.canarymedia.com/articles/geothermal/dig-energy-novel-geothermal-drilling-tech"
+  },
+  {
+    "name": "Simon Willison — short illustrated post",
+    "url": "https://simonwillison.net/2026/Sep/12/sighting-399708714/"
+  },
+  {
+    "name": "Patreon — membership article",
+    "url": "https://www.patreon.com/clerkofoxford/posts/against-dark-171869287"
+  }
+]

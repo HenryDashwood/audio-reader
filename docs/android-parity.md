@@ -245,6 +245,22 @@ Website cookies are separate from the sending browser; Android does not capture
 the sending browser's existing tab DOM. Unconfirmed browser content is not stored
 in an activity Bundle; process death returns to the original share for review.
 
+Since 10 October 2026, a share that arrives with only a link (Chrome's normal
+share) is read out of sight before Save: Magpie loads the HTTPS page in a hidden,
+transparent WebView excluded from accessibility, waits for it to settle, and runs
+the same Safari extraction. The preview shows the extracted title and opening, and
+one Save stores the rendered page. Save pressed earlier waits for the reading
+rather than storing a bare link. A load failure, uncertain extraction, or 20
+seconds without a result saves the link as before. Shares that already include
+HTML, and plain HTTP links, are not read again.
+
+Chrome's sign-ins are not available to other apps, so Settings → Saved Articles →
+Website Sign-ins opens a site in the capture browser for a one-off sign-in. Its
+cookies are kept by every capture view, including the hidden one; the screen lists
+opened sites and offers Sign out of all websites, which clears all website cookies
+and storage. Sign-ins through third-party pop-ups (for example Google) may not
+work, as third-party cookies and new windows stay disabled.
+
 Confirmed title/HTML/format and replacement intent survive offline storage and
 restart. Each confirmed capture keeps its own ID and upload order, preserving
 earlier offline content if a later capture fails and preventing an older in-flight

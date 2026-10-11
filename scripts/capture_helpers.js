@@ -1,6 +1,43 @@
 // Capture policy shared in behavior with backend page_capture.py/images.py.
 // This runs on a clone; publisher scripts are never copied into saved articles.
 var MagpieCapture = {
+    removeRecommendations: function (page, source) {
+        var normalize = function (text) { return text.replace(/\s+/g, ' ').trim().toLowerCase(); };
+        var hints = [source.title, (source.querySelector('meta[property="og:title"]') || {}).content || ''].map(normalize);
+        var headings = Array.from(page.querySelectorAll('h1')).filter(function (heading) {
+            var text = normalize(heading.textContent);
+            return text.length >= 8 && !heading.closest('a, blockquote, pre, code')
+                && hints.some(function (hint) { return hint.includes(text); });
+        });
+        if (headings.length !== 1) return;
+        var primary = headings[0], scope = null;
+        page.querySelectorAll('h2, h3, h4').forEach(function (heading) {
+            if (!heading.isConnected || heading.closest('blockquote, pre, code')
+                || !/^(?:related|recommended|popular|recent|more) (?:posts|articles|stories)$/.test(normalize(heading.textContent))) return;
+            // Remove only a separately headed branch beside the identified story.
+            // Never cut the document at a phrase: it can be a real subsection,
+            // and the article may continue in later sibling containers.
+            var common = primary.parentElement;
+            while (common && !common.contains(heading)) common = common.parentElement;
+            if (!common) return;
+            var branch = heading;
+            while (branch.parentElement !== common) branch = branch.parentElement;
+            if (branch === heading || branch.contains(primary)
+                || branch.querySelector('h1, h2, h3, h4') !== heading) return;
+            var semantic = branch.closest('article');
+            if (semantic && semantic.contains(primary)) return;
+            var proseBefore = Array.from(branch.querySelectorAll('p, blockquote, pre, figure, ul, ol, table')).some(function (node) {
+                return Boolean(node.compareDocumentPosition(heading) & 4) && node.textContent.trim().length > 0;
+            });
+            if (!proseBefore) {
+                // Keep the narrowest common container: it retains sibling parts
+                // of the story while excluding other feeds elsewhere on the page.
+                if (!scope || scope.contains(common)) scope = common;
+                branch.remove();
+            }
+        });
+        return scope;
+    },
     webImage: function (value, base) {
         if (!value || !value.trim()) return null;
         try {
@@ -45,8 +82,8 @@ var MagpieCapture = {
         });
     },
     publisherBody: function (page, address) {
-        var url = new URL(address), body = page.createElement('article');
-        if (['canarymedia.com', 'www.canarymedia.com'].includes(url.hostname) && url.pathname.startsWith('/articles/')) {
+        var layout = MagpieCapturePolicy.layout(address), body = page.createElement('article');
+        if (layout === 'split-prose') {
             var mains = page.querySelectorAll('main'), headings = page.querySelectorAll('main h1');
             if (mains.length !== 1 || headings.length !== 1) throw new Error('Uncertain publisher layout');
             var excluded = function (node) { return Boolean(node.closest('aside, nav, form, footer, article, .prose-sans')); };
@@ -80,7 +117,7 @@ var MagpieCapture = {
             if (Array.from(body.querySelectorAll('p')).reduce(function (count, p) { return count + p.textContent.trim().length; }, 0) < 350) {
                 throw new Error('Incomplete publisher body');
             }
-        } else if (url.hostname === 'simonwillison.net' && /^\/\d{4}\/[A-Za-z]{3}\/\d{1,2}\/sighting-[0-9]+\/$/.test(url.pathname)) {
+        } else if (layout === 'illustrated-note') {
             var entries = page.querySelectorAll('div.entry.entryPage');
             if (entries.length !== 1) throw new Error('Uncertain sighting');
             var contents = entries[0].querySelectorAll('div.beat-content');
@@ -93,17 +130,13 @@ var MagpieCapture = {
             }
         } else { return null; }
         body.querySelectorAll('script, style, form, nav, aside, footer, article, .prose-sans').forEach(function (node) { node.remove(); });
-        if (['canarymedia.com', 'www.canarymedia.com'].includes(url.hostname)
+        if (layout === 'split-prose'
             && Array.from(body.querySelectorAll('p')).reduce(function (count, p) { return count + p.textContent.trim().length; }, 0) < 350) {
             throw new Error('Incomplete publisher body');
         }
         return body;
     },
-    socialAuthor: function (address) {
-        var url = new URL(address);
-        var match = url.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status\/[0-9]+\/?$/);
-        return ['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'].includes(url.hostname) && match ? match[1] : null;
-    },
+    socialAuthor: function (address) { return MagpieCapturePolicy.socialAuthor(address); },
     socialTitle: function (address, title, text, headline) {
         var author = this.socialAuthor(address);
         if (!author) return title;
@@ -142,7 +175,13 @@ var MagpieCapture = {
                         || /(?:^|\s)(?:sidebar(?:[-_]\S+)?|td-(?:ss-)?main-sidebar)(?:\s|$)/i.test((parent.getAttribute('class') || '') + ' ' + parent.id)) return;
                     parent = parent.parentElement;
                 }
-                var text = self.proseText(p);
+                // Widgets injected by JavaScript can put block elements inside a
+                // paragraph, even though an HTML parser would split that markup.
+                // Compare the paragraph's own inline prose; nested paragraphs are
+                // checked separately. Removed widget controls are not lost prose.
+                var inline = p.cloneNode(true);
+                inline.querySelectorAll('div, section, article, p, aside, nav, footer, form, button').forEach(function (node) { node.remove(); });
+                var text = self.proseText(inline);
                 var linked = Array.from(p.querySelectorAll('a')).reduce(function (count, a) { return count + a.textContent.length; }, 0);
                 if (text.length >= 80 && linked < text.length / 2) result.push(text);
             });

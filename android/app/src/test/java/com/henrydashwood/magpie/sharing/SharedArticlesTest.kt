@@ -31,4 +31,10 @@ class SharedArticlesTest {
         assertTrue(captureWebUrl("https://example.com/article"))
         listOf("http://example.com", "file:///secret", "intent://app", "javascript:void(0)", "https://user@example.com").forEach { assertFalse(captureWebUrl(it)) }
     }
+    @Test fun websiteSignInAddressesAreSecureAndForgiving() {
+        assertEquals("https://nytimes.com", websiteAddress(" nytimes.com "))
+        assertEquals("https://www.ft.com/content/1", websiteAddress("https://www.ft.com/content/1"))
+        listOf("", "not a site", "http://example.com", "javascript:alert(1)", "https://user@example.com").forEach { assertNull(it, websiteAddress(it)) }
+        assertEquals("https://www.ft.com", websiteHome("https://www.ft.com/content/1?x=1"))
+    }
 }

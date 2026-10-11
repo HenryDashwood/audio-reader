@@ -7,6 +7,8 @@ final class ShareViewController: UIViewController {
     private var confirmation: UIHostingController<ShareConfirmationView>?
     private var started = false
     private var pendingInput: Input?
+    private var queuedCapture: CaptureInbox.Capture?
+    private var uploadTask: Task<Void, Never>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -41,6 +43,7 @@ final class ShareViewController: UIViewController {
         let html: String?
         var preview: String? = nil
         var contentFormat: String? = nil
+        var captureFailure: String? = nil
     }
 
     private func read(_ provider: NSItemProvider, type: String) async -> Input? {
@@ -56,7 +59,7 @@ final class ShareViewController: UIViewController {
                         returning: Input(
                             url: url, title: result["title"] as? String,
                             html: result["html"] as? String, preview: result["preview"] as? String,
-                            contentFormat: result["contentFormat"] as? String))
+                            contentFormat: result["contentFormat"] as? String, captureFailure: result["captureFailure"] as? String))
                 } else if let url = value as? URL {
                     continuation.resume(returning: Input(url: url, title: nil, html: nil))
                 } else if let value = value as? String, let url = URL(string: value) {
@@ -86,20 +89,41 @@ final class ShareViewController: UIViewController {
         do {
             guard let input else { throw CaptureInbox.InboxError.invalidURL }
             pendingInput = input
-            show(.ready(title: input.title, url: input.url, preview: input.preview))
+            show(.ready(title: input.title, url: input.url, preview: input.preview,
+                issue: input.captureFailure, hasText: input.html?.isEmpty == false))
         } catch {
             show(.failed(message: error.localizedDescription))
         }
     }
 
     private func saveCapture() {
+        guard uploadTask == nil else { return }
         do {
-            guard let input = pendingInput else { throw CaptureInbox.InboxError.invalidURL }
-            try CaptureInbox.shared.save(
-                url: input.url, title: input.title, html: input.html,
-                contentFormat: input.contentFormat, replaceExisting: true)
+            if queuedCapture == nil {
+                guard let input = pendingInput else { throw CaptureInbox.InboxError.invalidURL }
+                queuedCapture = try CaptureInbox.shared.save(
+                    url: input.url, title: input.title, html: input.html,
+                    contentFormat: input.contentFormat, replaceExisting: true)
+            }
+            guard let capture = queuedCapture else { throw CaptureInbox.InboxError.unavailable }
             pendingInput = nil
-            show(.saved(title: input.title, url: input.url))
+            show(.uploading)
+            uploadTask = Task { [weak self] in
+                do {
+                    try await CaptureUploader().finish(capture, inbox: .shared)
+                    try Task.checkCancellation()
+                    self?.queuedCapture = nil
+                    self?.show(.saved(title: capture.title, url: capture.url))
+                } catch is CancellationError {
+                    // Dismissal leaves the durable queue available to a later retry.
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    let message = (error as? CaptureUploader.Failure)?.localizedDescription
+                        ?? "The upload could not finish. Your capture is kept on this device. Retry here, or Magpie will retry when you next open it."
+                    self?.show(.queued(message: message))
+                }
+                self?.uploadTask = nil
+            }
         } catch {
             show(.failed(message: error.localizedDescription))
         }
@@ -109,30 +133,40 @@ final class ShareViewController: UIViewController {
         ShareConfirmationView(state: state, save: { [weak self] in
             self?.saveCapture()
         }) { [weak self] in
+            self?.uploadTask?.cancel()
             self?.extensionContext?.completeRequest(returningItems: nil)
         }
     }
 
     private func show(_ state: ShareConfirmationView.Phase) {
         confirmation?.rootView = makeConfirmation(state: state)
-        if !state.isReady {
+        if state.isSaved || state.isFailure {
             UINotificationFeedbackGenerator().notificationOccurred(state.isSaved ? .success : .error)
         }
         UIAccessibility.post(
             notification: .announcement, argument: "\(state.heading). \(state.message)")
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        uploadTask?.cancel()
     }
 }
 
 private struct ShareConfirmationView: View {
     enum Phase {
         case saving
-        case ready(title: String?, url: URL, preview: String?)
+        case uploading
+        case queued(message: String)
+        case ready(title: String?, url: URL, preview: String?, issue: String? = nil, hasText: Bool = true)
         case saved(title: String?, url: URL)
         case failed(message: String)
 
         var heading: String {
             switch self {
             case .saving: "Preparing article…"
+            case .uploading: "Saving to Magpie…"
+            case .queued: "Save not finished"
             case .ready: "Save to Magpie"
             case .saved: "Saved to Magpie"
             case .failed: "Couldn't save article"
@@ -142,21 +176,36 @@ private struct ShareConfirmationView: View {
         var message: String {
             switch self {
             case .saving: "Getting this page ready to save."
-            case .ready(_, _, let preview):
-                if let preview, !preview.isEmpty {
-                    "Ready to read or listen to later."
+            case .uploading: "Uploading the article and checking that its text is ready. Keep this pane open until saving finishes."
+            case .queued(let message): message
+            case .ready(_, _, _, let issue, let hasText):
+                if issue == "website-sign-in" {
+                    "This page requires a website sign-in or subscription. Return to Safari, sign in and share the unlocked article again. You can also save only its link."
+                } else if issue == "page-identity" {
+                    "The page does not match its article address. Return to Safari, reload it and share again, or save only its link."
+                } else if hasText {
+                    "Article text captured. Check the opening before saving; a website may still supply only a preview."
                 } else {
-                    "The article couldn't be identified in this page. Save its link and Magpie will try the original address."
+                    "Magpie could not confidently capture this article. Return to Safari, check that the article has loaded and share again, or save only its link."
                 }
             case .saved:
-                "Saved on this device. Open Magpie to prepare it for reading and listening."
+                "Your article is saved and ready for reading and listening in Magpie."
             case .failed(let message): message
             }
         }
 
         var isSaving: Bool {
-            if case .saving = self { return true }
-            return false
+            switch self {
+            case .saving, .uploading: true
+            default: false
+            }
+        }
+
+        var isFailure: Bool {
+            switch self {
+            case .failed, .queued: true
+            default: false
+            }
         }
 
         var isSaved: Bool {
@@ -197,7 +246,7 @@ private struct ShareConfirmationView: View {
                         articlePreview(title: title, url: url)
                     }
 
-                    if case .ready(let title, let url, let preview) = state {
+                    if case .ready(let title, let url, let preview, _, let hasText) = state {
                         articlePreview(title: title, url: url, preview: preview)
                         VStack(spacing: 16) {
                             Text("Already saved? This updates your copy. If the text changes, listening starts from the beginning.")
@@ -206,7 +255,7 @@ private struct ShareConfirmationView: View {
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
                             Button(action: save) {
-                                Text("Save article")
+                                Text(hasText ? "Save article" : "Save link only")
                                     .font(.headline)
                                     .frame(maxWidth: .infinity, minHeight: 32)
                             }
@@ -222,15 +271,25 @@ private struct ShareConfirmationView: View {
                     }
 
                     if !state.isReady {
+                        if case .queued = state {
+                            Button(action: save) {
+                                Text("Retry")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity, minHeight: 32)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .buttonBorderShape(.roundedRectangle(radius: 16))
+                            .controlSize(.large)
+                        }
                         Button(action: done) {
-                            Text("Done")
+                            Text(state.isSaving ? "Finish later" : "Done")
                                 .font(.headline)
                                 .frame(maxWidth: .infinity, minHeight: 32)
                         }
                         .buttonStyle(.borderedProminent)
                         .buttonBorderShape(.roundedRectangle(radius: 16))
                         .controlSize(.large)
-                        .disabled(state.isSaving)
+                        .disabled({ if case .saving = state { return true }; return false }())
                     }
                 }
                 .padding(28)

@@ -55,20 +55,25 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
         return
     }
     BackHandler(enabled = state.busy) { /* Keep the durable-write acknowledgement visible. */ }
+    val reading = state.article?.url?.takeIf { state.preparing }
+    if (reading != null) key(reading) { HiddenPageCapture(reading, model::prepared) }
     Scaffold { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Text(if (state.saved) "Saved to Magpie" else "Save to Magpie", style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.semantics { heading(); liveRegion = LiveRegionMode.Polite })
-            if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (state.busy || state.saveRequested) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (state.preparing) Text(if (state.saveRequested) "Reading the page before saving…" else "Reading the page…",
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
             state.article?.let { article ->
                 article.title?.let { Text(it, style = MaterialTheme.typography.titleLarge) }
                 Text(article.url)
                 article.preview?.let { Text(it, Modifier.semantics { contentDescription = "Article begins: $it" }) }
                 if (!state.saved) {
-                    // As on iOS: one Save. If Magpie can't fetch the page, Saved offers "Capture page".
-                    Text("Ready to read or listen to later.")
+                    if (article.captureIssue != null) Text(article.captureIssue.message, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                    else if (article.html != null) Text("Article text captured. Check the opening above before saving; a website may still supply only a preview.")
+                    else if (!state.preparing) Text("Only the link was captured. Magpie will try to fetch the article, but pages that require a website sign-in may not be readable.")
                     Text("Already saved? This updates your copy. If the text changes, listening starts from the beginning.")
                 }
             }
@@ -88,7 +93,20 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
                             else "Connect to load your Magpie account before saving. Open Magpie to retry.")
                         Button(onClick = openMagpie, enabled = !state.busy) { Text("Open Magpie") }
                     } else if (state.article != null) {
-                        Button(onClick = model::save, enabled = !state.busy) { Text("Save article") }
+                        val article = state.article!!
+                        when {
+                            article.captureIssue != null -> {
+                                if (captureWebUrl(article.url)) Button(onClick = model::openBrowser, enabled = !state.busy) {
+                                    Text(if (article.requiresWebsiteSignIn) "Sign in to website" else "Open page to capture")
+                                }
+                                TextButton(onClick = model::saveLink, enabled = !state.busy) { Text("Save link only") }
+                            }
+                            article.html == null && !state.preparing -> Button(onClick = model::saveLink, enabled = !state.busy) { Text("Save link only") }
+                            else -> Button(onClick = model::save, enabled = !state.busy && !state.saveRequested) { Text("Save article") }
+                        }
+                        if (article.captureIssue == null && captureWebUrl(article.url)) {
+                            TextButton(onClick = model::openBrowser, enabled = !state.busy) { Text("Sign in or capture page") }
+                        }
                     }
                     TextButton(onClick = close, enabled = !state.busy) { Text("Cancel") }
                 }

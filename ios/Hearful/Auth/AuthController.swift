@@ -29,7 +29,12 @@ final class AuthController: ObservableObject {
     @Published private(set) var user: UserInfo? {
         didSet {
             if let user {
-                try? CaptureInbox.shared.configure(.init(userID: user.id, server: AppConfiguration.apiBaseURL))
+                let account = CaptureInbox.Account(userID: user.id, server: AppConfiguration.apiBaseURL)
+                if !TestEnvironment.isRunningTests, let token = readToken() {
+                    do { try CaptureSessionStore.write(.init(account: account, token: token)) }
+                    catch { CaptureSessionStore.clear() }
+                }
+                try? CaptureInbox.shared.configure(account)
             }
         }
     }
@@ -74,6 +79,7 @@ final class AuthController: ObservableObject {
         // ambiguous events to whichever account happens to open this version.
         TelemetryReporter.removeLegacyQueue()
         guard readToken() != nil else {
+            if !TestEnvironment.isRunningTests { CaptureSessionStore.clear() }
             state = .signedOut
             return
         }
@@ -275,6 +281,7 @@ final class AuthController: ObservableObject {
         linkedProviders = nil
         linkingError = nil
         writeToken(nil)
+        CaptureSessionStore.clear()
         ShortcutLifecycle.resetSession()
         // The next person to sign in on this phone must not be shown the last
         // person's library out of the cache.

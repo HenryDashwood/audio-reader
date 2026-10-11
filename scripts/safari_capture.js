@@ -2,45 +2,27 @@
 // Bundled with pinned Mozilla Readability by build_safari_capture.py.
 var ExtensionPreprocessingJS = {
     run: function (arguments) {
-        var fallback = { url: document.URL, title: MagpieCapture.socialTitle(document.URL, document.title, '', null), html: '', preview: '' };
+        var fallback = { url: document.URL, title: MagpieCapture.socialTitle(document.URL, document.title, '', null), html: '', preview: '', status: 'uncertain', captureFailure: 'no-article' };
         try {
-            function identity(value) {
-                var url = new URL(value, document.baseURI);
-                url.hash = '';
-                Array.from(url.searchParams.keys()).forEach(function (key) {
-                    if (/^utm_|^(fbclid|gclid)$/.test(key)) url.searchParams.delete(key);
-                });
-                return url.href;
-            }
-            function archiveSnapshotMatches(canonical) {
-                var current = new URL(document.URL);
-                var snapshot = new URL(canonical.href);
-                // Archive snapshots declare a timestamped canonical and a short
-                // og:url. Require that explicit short identity, not just the host:
-                // a stale snapshot must not be captured under another short link.
-                var hosts = ['archive.is', 'archive.today', 'archive.ph', 'archive.li',
-                    'archive.vn', 'archive.fo', 'archive.md'];
-                var declared = document.head.querySelectorAll('meta[property="og:url"]');
-                var path = snapshot.pathname.match(/^\/(?:\d{4}\.\d{2}\.\d{2}-\d{6}|\d{14})\/(https?:\/\/.+)$/);
-                if (!hosts.includes(current.hostname) || !/^https?:$/.test(current.protocol)
-                    || current.username || current.password || current.port
-                    || snapshot.origin !== current.origin || snapshot.username || snapshot.password
-                    || !/^\/[A-Za-z0-9]{5}$/.test(current.pathname) || !path
-                    || declared.length !== 1 || identity(declared[0].content) !== identity(document.URL)) return false;
-                var original = new URL(path[1]);
-                return Boolean(original.hostname) && !original.username && !original.password;
-            }
+            function identity(value) { return MagpieCapturePolicy.identity(value, document); }
             var canonical = document.querySelector('link[rel="canonical"]');
             // An in-page navigation can update the address before its body arrives.
             if (canonical && identity(canonical.href) !== identity(document.URL)
-                && !archiveSnapshotMatches(canonical)) {
+                && !MagpieCapturePolicy.archiveSnapshotMatches(document, canonical)) {
+                fallback.captureFailure = 'page-identity';
+                arguments.completionFunction(fallback);
+                return;
+            }
+            if (MagpieCapturePolicy.accessRequired(document)) {
+                fallback.captureFailure = 'website-sign-in';
+                fallback.status = 'sign-in-required';
                 arguments.completionFunction(fallback);
                 return;
             }
             var page = document.cloneNode(true);
             var live = document.querySelectorAll('*');
             var clones = page.querySelectorAll('*');
-            if (live.length > 50000) throw new Error('Page too complex');
+            if (live.length > 50000) throw new Error('too-large');
             live.forEach(function (node, index) {
                 if (node.tagName === 'IMG') MagpieCapture.normalizeImage(node, clones[index], document.baseURI);
                 var style = window.getComputedStyle(node);
@@ -53,6 +35,7 @@ var ExtensionPreprocessingJS = {
                 }
             });
             page.querySelectorAll('script, style, form, input, textarea, select, nav, aside').forEach(function (node) { node.remove(); });
+            var boundedScope = MagpieCapture.removeRecommendations(page, document);
 
             // Publishers may split one story's heading/body/bio into separate articles
             // with a common ID (IEEE does this). Never choose solely by body length.
@@ -86,7 +69,7 @@ var ExtensionPreprocessingJS = {
                         });
                     });
                 });
-                if (matches.length !== 1) throw new Error('Multiple possible articles');
+                if (matches.length !== 1) throw new Error('ambiguous');
                 candidates = matches;
             }
             var headline;
@@ -97,6 +80,12 @@ var ExtensionPreprocessingJS = {
                 groups.forEach(function (nodes) {
                     if (nodes !== chosen) nodes.forEach(function (node) { node.remove(); });
                 });
+            }
+            if (candidates.length === 0 && boundedScope && boundedScope !== page.body) {
+                // Non-semantic publisher layouts can have several complete posts
+                // on one page. Score only the title-anchored story's container.
+                page.body.replaceChildren(boundedScope.cloneNode(true));
+                boundedScope = page.body.firstElementChild;
             }
             // Resolve URLs before parsing; a cloned document may lose its base URI.
             var articleTitles = page.querySelectorAll('[data-testid="twitterArticleTitle"]');
@@ -110,7 +99,7 @@ var ExtensionPreprocessingJS = {
                 node.removeAttribute('srcset');
             });
             var publisher = MagpieCapture.publisherBody(page, document.URL);
-            var evidence = MagpieCapture.paragraphs(candidates.length === 1 ? candidates[0] : []);
+            var evidence = MagpieCapture.paragraphs(candidates.length === 1 ? candidates[0] : (boundedScope ? [boundedScope] : []));
             var shortScopes = Array.from(page.querySelectorAll('article')).filter(function (node) {
                 return !node.parentElement.closest('article') && prose([node]) >= 40;
             });
@@ -118,7 +107,7 @@ var ExtensionPreprocessingJS = {
             // The stricter short-article check must not count every paragraph in
             // a long article's surrounding layout (which can include sidebars).
             var shortIdentified = Boolean(canonical && declaredArticle && shortScopes.length === 1 && prose(shortScopes) < 350);
-            if (!publisher && candidates.length === 0 && shortScopes.length > 1) throw new Error('Competing short articles');
+            if (!publisher && candidates.length === 0 && shortScopes.length > 1) throw new Error('ambiguous');
             var shortProse = shortIdentified ? Array.from(shortScopes[0].querySelectorAll('p')).map(function (p) {
                 return p.textContent.replace(/\s+/g, ' ').trim();
             }) : [];
@@ -130,16 +119,16 @@ var ExtensionPreprocessingJS = {
             var article = selectedBody ? { content: selectedBody.innerHTML, textContent: selectedBody.textContent,
                 length: selectedBody.textContent.trim().length, title: document.title }
                 : new Readability(page, { maxElemsToParse: 50000, charThreshold: 350, disableJSONLD: true }).parse();
-            if (!article || (!publisher && article.length < 350 && !shortIdentified)) throw new Error('No article');
+            if (!article || (!publisher && article.length < 350 && !shortIdentified)) throw new Error('no-article');
             var extracted = document.createElement('div');
             extracted.innerHTML = article.content;
-            if (!extracted.textContent.trim() || (!publisher && MagpieCapture.missingProse(evidence, extracted))) throw new Error('Incomplete article');
+            if (!extracted.textContent.trim() || (!publisher && MagpieCapture.missingProse(evidence, extracted))) throw new Error('incomplete');
             if (!publisher && shortIdentified) {
                 var retained = extracted.textContent.replace(/\s+/g, ' ').trim();
-                if (shortProse.some(function (p) { return p.length >= 40 && !retained.includes(p); })) throw new Error('Missing short article');
+                if (shortProse.some(function (p) { return p.length >= 40 && !retained.includes(p); })) throw new Error('incomplete');
             }
             if (!publisher && article.length < 350 && (!extracted.querySelector('p')
-                || extracted.textContent.trim().length < 40 || !extracted.querySelector('img, h1'))) throw new Error('Uncertain short article');
+                || extracted.textContent.trim().length < 40 || !extracted.querySelector('img, h1'))) throw new Error('no-article');
             var headings = extracted.querySelectorAll('h1');
             if (headings.length === 1) headline = headings[0].textContent.trim();
             var titleSource = MagpieCapture.socialAuthor(document.URL) ? document.title : (headline || article.title || document.title);
@@ -185,11 +174,12 @@ var ExtensionPreprocessingJS = {
             });
             output.body.appendChild(body);
             var html = output.documentElement.outerHTML;
-            if (html.length > 500000) throw new Error('Article too large');
+            if (html.length > 500000) throw new Error('too-large');
             var paragraph = body.querySelector('p');
             var preview = (paragraph ? paragraph.textContent : article.textContent).replace(/\s+/g, ' ').trim().slice(0, 600);
-            arguments.completionFunction({ url: document.URL, title: title, html: html, preview: preview, contentFormat: 'article' });
-        } catch (_) {
+            arguments.completionFunction({ url: document.URL, title: title, html: html, preview: preview, contentFormat: 'article', status: 'captured' });
+        } catch (failure) {
+            if (['too-large', 'ambiguous', 'incomplete', 'no-article'].includes(failure.message)) fallback.captureFailure = failure.message;
             // An uncertain extraction keeps a link, never a truncated or competing body.
             arguments.completionFunction(fallback);
         }

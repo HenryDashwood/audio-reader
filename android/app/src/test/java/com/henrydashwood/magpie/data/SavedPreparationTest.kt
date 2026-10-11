@@ -63,6 +63,39 @@ class SavedPreparationTest {
         model.activate("alice", 4); runCurrent()
         assertEquals(4, repo.captures.single().second); assertTrue(inbox.pending("alice").isEmpty())
     }
+    @Test fun signedInCaptureSupersedesEarlierLinkOnlyAttemptAfterSuccessfulUpload() = runTest {
+        val link = PendingArticle(url = "https://example.com/paid", replaceExisting = true)
+        val text = link.copy(id = "captured", html = "<p>Signed-in article</p>", contentFormat = "article")
+        val other = PendingArticle(url = "https://example.com/other")
+        val inbox = Inbox().apply { rows["alice"] = listOf(link, other, text) }
+        val repo = Repository()
+        val model = SavedPreparation(backgroundScope, repo, inbox)
+        model.activate("alice", 1); runCurrent()
+        assertEquals(listOf(text, other), repo.captures.map { it.first })
+        assertTrue(inbox.pending("alice").isEmpty())
+    }
+    @Test fun failedTextUploadKeepsBothAttemptsForRetry() = runTest {
+        val link = PendingArticle(url = "https://example.com/paid", replaceExisting = true)
+        val text = link.copy(id = "captured", html = "<p>Signed-in article</p>", contentFormat = "article")
+        val inbox = Inbox().apply { rows["alice"] = listOf(link, text) }
+        val repo = Repository().apply { fail = true }
+        val model = SavedPreparation(backgroundScope, repo, inbox)
+        model.activate("alice", 1); runCurrent()
+        assertEquals(text, repo.captures.single().first)
+        assertEquals(listOf(link, text), inbox.pending("alice"))
+    }
+    @Test fun supersedingLinkDoesNotRemoveANewerCaptureWhileUploading() = runTest {
+        val link = PendingArticle(url = "https://example.com/paid", replaceExisting = true)
+        val text = link.copy(id = "captured", html = "<p>Signed-in article</p>")
+        val later = link.copy(id = "newer-link")
+        val inbox = Inbox().apply { rows["alice"] = listOf(link, text) }
+        val repo = Repository().apply { gate = CompletableDeferred() }
+        val model = SavedPreparation(backgroundScope, repo, inbox)
+        model.activate("alice", 1); runCurrent()
+        inbox.rows["alice"] = listOf(link, text, later)
+        repo.gate!!.complete(Unit); runCurrent()
+        assertEquals(listOf(text, later), repo.captures.map { it.first })
+    }
     @Test fun lateSyncDoesNotRemoveOldAccountsPendingLinkOrPublishItIntoNewAccount() = runTest {
         val inbox = Inbox().apply { rows["alice"] = listOf(PendingArticle(url = "https://alice.example")) }
         val repo = Repository().apply { gate = CompletableDeferred() }

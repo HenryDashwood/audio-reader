@@ -1,1 +1,1 @@
-Article listening now keeps your place when you pause and resume. This fixes a problem where reloading the voice later could jump back to the start of an earlier listening session.
+Shared articles now offer a preview and website sign-in when needed. You can capture a page manually or choose to save only its link. Sign-in dialogs and separate login windows work more reliably. Capture better separates the requested article from recommended posts, and a new text capture can replace an earlier failed link save. Please check the beginning and ending of saved articles.

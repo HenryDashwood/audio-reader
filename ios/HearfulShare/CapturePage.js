@@ -2786,9 +2786,200 @@ if (typeof module === "object") {
   module.exports = Readability;
 }
 
+// One policy for Safari and Android. Platform exceptions require page evidence;
+// individual publication domains never participate in access or URL decisions.
+var MagpieCapturePolicy = {
+    profiles: [
+        {
+            name: 'substack',
+            matches: function (doc, url) {
+                return url.hostname === 'substack.com' || url.hostname.endsWith('.substack.com')
+                    || Array.from(doc.querySelectorAll('script[src]')).some(function (script) {
+                        try {
+                            var source = new URL(script.src, doc.baseURI);
+                            return source.origin === 'https://substackcdn.com' && !source.username && !source.password
+                                && source.pathname.startsWith('/bundle/static/js/');
+                        } catch (_) { return false; }
+                    });
+            },
+            navigationFlags: [['open', 'false'], ['triedRedirect', 'true']],
+            articlePath: /^\/p\//,
+            gates: '.paywall, .paywall-content, .subscription-widget-wrap[data-paywall]'
+        },
+        {
+            name: 'ghost',
+            matches: function (doc) {
+                var generator = doc.querySelector('meta[name="generator"]');
+                return Boolean(generator && /^Ghost(?:\s|$)/i.test(generator.content));
+            },
+            gates: '.gh-post-upgrade-cta, .single-content .single-cta'
+        }
+    ],
+    profile: function (doc) {
+        var url = new URL(doc.URL);
+        return this.profiles.find(function (profile) { return profile.matches(doc, url); }) || null;
+    },
+    visible: function (node) {
+        for (; node; node = node.parentElement) {
+            var style = window.getComputedStyle(node);
+            if (node.hidden || node.getAttribute('aria-hidden') === 'true' || style.display === 'none'
+                || style.visibility === 'hidden' || style.visibility === 'collapse'
+                || style.contentVisibility === 'hidden') return false;
+        }
+        return true;
+    },
+    identity: function (value, doc) {
+        var url = new URL(value, doc.baseURI), current = new URL(doc.URL), profile = this.profile(doc);
+        url.hash = '';
+        Array.from(url.searchParams.keys()).forEach(function (key) {
+            if (/^utm_|^(fbclid|gclid)$/.test(key)) url.searchParams.delete(key);
+        });
+        if (profile && profile.navigationFlags && url.origin === current.origin && profile.articlePath.test(url.pathname)) {
+            profile.navigationFlags.forEach(function (flag) {
+                var values = url.searchParams.getAll(flag[0]);
+                if (values.length && values.every(function (value) { return value === flag[1]; })) url.searchParams.delete(flag[0]);
+            });
+        }
+        return url.href;
+    },
+    // Only repair a rejected request after the server explicitly identifies this
+    // exact repeated parameter. Never rewrite an unknown site's working URL.
+    navigationRetry: function (doc, status) {
+        if (status !== 400) return null;
+        try {
+            var url = new URL(doc.URL);
+            if (url.protocol !== 'https:' || url.username || url.password) return null;
+            var result = JSON.parse(doc.body.textContent);
+            if (!Array.isArray(result.errors) || result.errors.length !== 1) return null;
+            var error = result.errors[0], values = url.searchParams.getAll('open');
+            if (error.location !== 'query' || error.param !== 'open' || error.msg !== 'Invalid value'
+                || values.length < 2 || !values.every(function (value) { return value === 'false'; })
+                || !Array.isArray(error.value) || error.value.length !== values.length
+                || !error.value.every(function (value) { return value === 'false'; })) return null;
+            var parts = url.search.slice(1).split('&'), kept = false;
+            // Do not alter percent-encoded parameters or any signed value.
+            if (parts.filter(function (part) { return part === 'open=false'; }).length !== values.length) return null;
+            var query = parts.filter(function (part) {
+                if (part !== 'open=false') return true;
+                if (kept) return false;
+                kept = true; return true;
+            }).join('&');
+            return doc.URL.split('?')[0] + '?' + query + url.hash;
+        } catch (_) { return null; }
+    },
+    accessRequired: function (doc) {
+        var self = this, profile = this.profile(doc);
+        var action = 'a[href], button, input[type="email"], [data-portal]';
+        if (profile && Array.from(doc.querySelectorAll(profile.gates)).some(function (gate) {
+            return self.visible(gate) && Array.from(gate.querySelectorAll(action)).some(self.visible);
+        })) return true;
+        // Publisher-independent evidence: a visible access instruction plus an
+        // action, inside article content or a blocking dialog. A footer's general
+        // newsletter invitation and paid-article metadata alone are not gates.
+        var scopes = 'article, main, [role="main"], [role="dialog"], [aria-modal="true"], [class*="paywall"], [data-testid*="paywall"]';
+        // An explicit unlock action beneath the page's own heading is access
+        // evidence even without semantic article/paragraph markup. Stop at the
+        // next section heading so locked recommendations do not gate a readable
+        // story. Headings inside links can be author/byline labels, not sections.
+        var normalize = function (text) { return text.replace(/\s+/g, ' ').trim().toLowerCase(); };
+        var hints = [doc.title, (doc.querySelector('meta[property="og:title"]') || {}).content || ''].map(normalize);
+        var primary = false;
+        if (Array.from(doc.querySelectorAll('h1, h2, h3, a[href], button')).some(function (node) {
+            if (!self.visible(node) || node.closest('nav, aside, footer, blockquote, pre, code')) return false;
+            var text = normalize(node.textContent);
+            if (/^H[1-3]$/.test(node.tagName)) {
+                if (node.closest('a[href]')) return false;
+                primary = node.tagName === 'H1' && text.length >= 8 && hints.some(function (hint) { return hint.includes(text); });
+                return false;
+            }
+            return primary && Boolean(node.closest(scopes))
+                && /^(?:(?:join|subscribe|sign in|log in) to unlock(?: (?:this|the) (?:post|article))?|unlock (?:this (?:post|article)|with (?:a )?membership))$/.test(text);
+        })) return true;
+        var restriction = /(?:this (?:post|article|content) is (?:only )?for (?:paid |premium )?(?:subscribers|members)|(?:sign in|log in|subscribe|become a member|subscription required).{0,60}(?:to (?:continue reading|read (?:the (?:full|rest of)|this)|unlock)|full (?:article|access))|(?:continue reading|read the (?:full|rest of)).{0,60}(?:sign in|log in|subscrib))/i;
+        return Array.from(doc.querySelectorAll('h1, h2, h3, p, [role="heading"]')).some(function (label) {
+            var text = label.textContent.replace(/\s+/g, ' ').trim();
+            if (text.length > 350 || !restriction.test(text) || !self.visible(label)
+                || !label.closest(scopes) || label.closest('nav, aside, footer, blockquote, pre, code')) return false;
+            var box = label.parentElement;
+            if (!box || box.textContent.length > 2500) return false;
+            return Array.from(box.querySelectorAll(action)).some(function (node) {
+                return self.visible(node) && /sign.?in|log.?in|subscrib|membership|unlock/i.test(
+                    node.textContent + ' ' + (node.getAttribute('href') || '') + ' ' + (node.getAttribute('data-portal') || ''));
+            });
+        });
+    },
+    archiveSnapshotMatches: function (document, canonical) {
+        var current = new URL(document.URL);
+        var snapshot = new URL(canonical.href);
+        // Archive snapshots declare a timestamped canonical and a short
+        // og:url. Require that explicit short identity, not just the host:
+        // a stale snapshot must not be captured under another short link.
+        var hosts = ['archive.is', 'archive.today', 'archive.ph', 'archive.li',
+            'archive.vn', 'archive.fo', 'archive.md'];
+        var declared = document.head.querySelectorAll('meta[property="og:url"]');
+        var path = snapshot.pathname.match(/^\/(?:\d{4}\.\d{2}\.\d{2}-\d{6}|\d{14})\/(https?:\/\/.+)$/);
+        if (!hosts.includes(current.hostname) || !/^https?:$/.test(current.protocol)
+            || current.username || current.password || current.port
+            || snapshot.origin !== current.origin || snapshot.username || snapshot.password
+            || !/^\/[A-Za-z0-9]{5}$/.test(current.pathname) || !path
+            || declared.length !== 1 || this.identity(declared[0].content, document) !== this.identity(document.URL, document)) return false;
+        var original = new URL(path[1]);
+        return Boolean(original.hostname) && !original.username && !original.password;
+    },
+    socialAuthor: function (address) {
+        var url = new URL(address), match = url.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status\/[0-9]+\/?$/);
+        return ['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'].includes(url.hostname) && match ? match[1] : null;
+    },
+    // Bounded layout adapters are optional extraction overrides, separate from
+    // access/identity policy. Unknown publishers always use general extraction.
+    layout: function (address) {
+        var url = new URL(address);
+        if (['canarymedia.com', 'www.canarymedia.com'].includes(url.hostname) && url.pathname.startsWith('/articles/')) return 'split-prose';
+        if (url.hostname === 'simonwillison.net' && /^\/\d{4}\/[A-Za-z]{3}\/\d{1,2}\/sighting-[0-9]+\/$/.test(url.pathname)) return 'illustrated-note';
+        return null;
+    }
+};
+
 // Capture policy shared in behavior with backend page_capture.py/images.py.
 // This runs on a clone; publisher scripts are never copied into saved articles.
 var MagpieCapture = {
+    removeRecommendations: function (page, source) {
+        var normalize = function (text) { return text.replace(/\s+/g, ' ').trim().toLowerCase(); };
+        var hints = [source.title, (source.querySelector('meta[property="og:title"]') || {}).content || ''].map(normalize);
+        var headings = Array.from(page.querySelectorAll('h1')).filter(function (heading) {
+            var text = normalize(heading.textContent);
+            return text.length >= 8 && !heading.closest('a, blockquote, pre, code')
+                && hints.some(function (hint) { return hint.includes(text); });
+        });
+        if (headings.length !== 1) return;
+        var primary = headings[0], scope = null;
+        page.querySelectorAll('h2, h3, h4').forEach(function (heading) {
+            if (!heading.isConnected || heading.closest('blockquote, pre, code')
+                || !/^(?:related|recommended|popular|recent|more) (?:posts|articles|stories)$/.test(normalize(heading.textContent))) return;
+            // Remove only a separately headed branch beside the identified story.
+            // Never cut the document at a phrase: it can be a real subsection,
+            // and the article may continue in later sibling containers.
+            var common = primary.parentElement;
+            while (common && !common.contains(heading)) common = common.parentElement;
+            if (!common) return;
+            var branch = heading;
+            while (branch.parentElement !== common) branch = branch.parentElement;
+            if (branch === heading || branch.contains(primary)
+                || branch.querySelector('h1, h2, h3, h4') !== heading) return;
+            var semantic = branch.closest('article');
+            if (semantic && semantic.contains(primary)) return;
+            var proseBefore = Array.from(branch.querySelectorAll('p, blockquote, pre, figure, ul, ol, table')).some(function (node) {
+                return Boolean(node.compareDocumentPosition(heading) & 4) && node.textContent.trim().length > 0;
+            });
+            if (!proseBefore) {
+                // Keep the narrowest common container: it retains sibling parts
+                // of the story while excluding other feeds elsewhere on the page.
+                if (!scope || scope.contains(common)) scope = common;
+                branch.remove();
+            }
+        });
+        return scope;
+    },
     webImage: function (value, base) {
         if (!value || !value.trim()) return null;
         try {
@@ -2833,8 +3024,8 @@ var MagpieCapture = {
         });
     },
     publisherBody: function (page, address) {
-        var url = new URL(address), body = page.createElement('article');
-        if (['canarymedia.com', 'www.canarymedia.com'].includes(url.hostname) && url.pathname.startsWith('/articles/')) {
+        var layout = MagpieCapturePolicy.layout(address), body = page.createElement('article');
+        if (layout === 'split-prose') {
             var mains = page.querySelectorAll('main'), headings = page.querySelectorAll('main h1');
             if (mains.length !== 1 || headings.length !== 1) throw new Error('Uncertain publisher layout');
             var excluded = function (node) { return Boolean(node.closest('aside, nav, form, footer, article, .prose-sans')); };
@@ -2868,7 +3059,7 @@ var MagpieCapture = {
             if (Array.from(body.querySelectorAll('p')).reduce(function (count, p) { return count + p.textContent.trim().length; }, 0) < 350) {
                 throw new Error('Incomplete publisher body');
             }
-        } else if (url.hostname === 'simonwillison.net' && /^\/\d{4}\/[A-Za-z]{3}\/\d{1,2}\/sighting-[0-9]+\/$/.test(url.pathname)) {
+        } else if (layout === 'illustrated-note') {
             var entries = page.querySelectorAll('div.entry.entryPage');
             if (entries.length !== 1) throw new Error('Uncertain sighting');
             var contents = entries[0].querySelectorAll('div.beat-content');
@@ -2881,17 +3072,13 @@ var MagpieCapture = {
             }
         } else { return null; }
         body.querySelectorAll('script, style, form, nav, aside, footer, article, .prose-sans').forEach(function (node) { node.remove(); });
-        if (['canarymedia.com', 'www.canarymedia.com'].includes(url.hostname)
+        if (layout === 'split-prose'
             && Array.from(body.querySelectorAll('p')).reduce(function (count, p) { return count + p.textContent.trim().length; }, 0) < 350) {
             throw new Error('Incomplete publisher body');
         }
         return body;
     },
-    socialAuthor: function (address) {
-        var url = new URL(address);
-        var match = url.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/status\/[0-9]+\/?$/);
-        return ['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com'].includes(url.hostname) && match ? match[1] : null;
-    },
+    socialAuthor: function (address) { return MagpieCapturePolicy.socialAuthor(address); },
     socialTitle: function (address, title, text, headline) {
         var author = this.socialAuthor(address);
         if (!author) return title;
@@ -2930,7 +3117,13 @@ var MagpieCapture = {
                         || /(?:^|\s)(?:sidebar(?:[-_]\S+)?|td-(?:ss-)?main-sidebar)(?:\s|$)/i.test((parent.getAttribute('class') || '') + ' ' + parent.id)) return;
                     parent = parent.parentElement;
                 }
-                var text = self.proseText(p);
+                // Widgets injected by JavaScript can put block elements inside a
+                // paragraph, even though an HTML parser would split that markup.
+                // Compare the paragraph's own inline prose; nested paragraphs are
+                // checked separately. Removed widget controls are not lost prose.
+                var inline = p.cloneNode(true);
+                inline.querySelectorAll('div, section, article, p, aside, nav, footer, form, button').forEach(function (node) { node.remove(); });
+                var text = self.proseText(inline);
                 var linked = Array.from(p.querySelectorAll('a')).reduce(function (count, a) { return count + a.textContent.length; }, 0);
                 if (text.length >= 80 && linked < text.length / 2) result.push(text);
             });
@@ -2950,45 +3143,27 @@ var MagpieCapture = {
 // Bundled with pinned Mozilla Readability by build_safari_capture.py.
 var ExtensionPreprocessingJS = {
     run: function (arguments) {
-        var fallback = { url: document.URL, title: MagpieCapture.socialTitle(document.URL, document.title, '', null), html: '', preview: '' };
+        var fallback = { url: document.URL, title: MagpieCapture.socialTitle(document.URL, document.title, '', null), html: '', preview: '', status: 'uncertain', captureFailure: 'no-article' };
         try {
-            function identity(value) {
-                var url = new URL(value, document.baseURI);
-                url.hash = '';
-                Array.from(url.searchParams.keys()).forEach(function (key) {
-                    if (/^utm_|^(fbclid|gclid)$/.test(key)) url.searchParams.delete(key);
-                });
-                return url.href;
-            }
-            function archiveSnapshotMatches(canonical) {
-                var current = new URL(document.URL);
-                var snapshot = new URL(canonical.href);
-                // Archive snapshots declare a timestamped canonical and a short
-                // og:url. Require that explicit short identity, not just the host:
-                // a stale snapshot must not be captured under another short link.
-                var hosts = ['archive.is', 'archive.today', 'archive.ph', 'archive.li',
-                    'archive.vn', 'archive.fo', 'archive.md'];
-                var declared = document.head.querySelectorAll('meta[property="og:url"]');
-                var path = snapshot.pathname.match(/^\/(?:\d{4}\.\d{2}\.\d{2}-\d{6}|\d{14})\/(https?:\/\/.+)$/);
-                if (!hosts.includes(current.hostname) || !/^https?:$/.test(current.protocol)
-                    || current.username || current.password || current.port
-                    || snapshot.origin !== current.origin || snapshot.username || snapshot.password
-                    || !/^\/[A-Za-z0-9]{5}$/.test(current.pathname) || !path
-                    || declared.length !== 1 || identity(declared[0].content) !== identity(document.URL)) return false;
-                var original = new URL(path[1]);
-                return Boolean(original.hostname) && !original.username && !original.password;
-            }
+            function identity(value) { return MagpieCapturePolicy.identity(value, document); }
             var canonical = document.querySelector('link[rel="canonical"]');
             // An in-page navigation can update the address before its body arrives.
             if (canonical && identity(canonical.href) !== identity(document.URL)
-                && !archiveSnapshotMatches(canonical)) {
+                && !MagpieCapturePolicy.archiveSnapshotMatches(document, canonical)) {
+                fallback.captureFailure = 'page-identity';
+                arguments.completionFunction(fallback);
+                return;
+            }
+            if (MagpieCapturePolicy.accessRequired(document)) {
+                fallback.captureFailure = 'website-sign-in';
+                fallback.status = 'sign-in-required';
                 arguments.completionFunction(fallback);
                 return;
             }
             var page = document.cloneNode(true);
             var live = document.querySelectorAll('*');
             var clones = page.querySelectorAll('*');
-            if (live.length > 50000) throw new Error('Page too complex');
+            if (live.length > 50000) throw new Error('too-large');
             live.forEach(function (node, index) {
                 if (node.tagName === 'IMG') MagpieCapture.normalizeImage(node, clones[index], document.baseURI);
                 var style = window.getComputedStyle(node);
@@ -3001,6 +3176,7 @@ var ExtensionPreprocessingJS = {
                 }
             });
             page.querySelectorAll('script, style, form, input, textarea, select, nav, aside').forEach(function (node) { node.remove(); });
+            var boundedScope = MagpieCapture.removeRecommendations(page, document);
 
             // Publishers may split one story's heading/body/bio into separate articles
             // with a common ID (IEEE does this). Never choose solely by body length.
@@ -3034,7 +3210,7 @@ var ExtensionPreprocessingJS = {
                         });
                     });
                 });
-                if (matches.length !== 1) throw new Error('Multiple possible articles');
+                if (matches.length !== 1) throw new Error('ambiguous');
                 candidates = matches;
             }
             var headline;
@@ -3045,6 +3221,12 @@ var ExtensionPreprocessingJS = {
                 groups.forEach(function (nodes) {
                     if (nodes !== chosen) nodes.forEach(function (node) { node.remove(); });
                 });
+            }
+            if (candidates.length === 0 && boundedScope && boundedScope !== page.body) {
+                // Non-semantic publisher layouts can have several complete posts
+                // on one page. Score only the title-anchored story's container.
+                page.body.replaceChildren(boundedScope.cloneNode(true));
+                boundedScope = page.body.firstElementChild;
             }
             // Resolve URLs before parsing; a cloned document may lose its base URI.
             var articleTitles = page.querySelectorAll('[data-testid="twitterArticleTitle"]');
@@ -3058,7 +3240,7 @@ var ExtensionPreprocessingJS = {
                 node.removeAttribute('srcset');
             });
             var publisher = MagpieCapture.publisherBody(page, document.URL);
-            var evidence = MagpieCapture.paragraphs(candidates.length === 1 ? candidates[0] : []);
+            var evidence = MagpieCapture.paragraphs(candidates.length === 1 ? candidates[0] : (boundedScope ? [boundedScope] : []));
             var shortScopes = Array.from(page.querySelectorAll('article')).filter(function (node) {
                 return !node.parentElement.closest('article') && prose([node]) >= 40;
             });
@@ -3066,7 +3248,7 @@ var ExtensionPreprocessingJS = {
             // The stricter short-article check must not count every paragraph in
             // a long article's surrounding layout (which can include sidebars).
             var shortIdentified = Boolean(canonical && declaredArticle && shortScopes.length === 1 && prose(shortScopes) < 350);
-            if (!publisher && candidates.length === 0 && shortScopes.length > 1) throw new Error('Competing short articles');
+            if (!publisher && candidates.length === 0 && shortScopes.length > 1) throw new Error('ambiguous');
             var shortProse = shortIdentified ? Array.from(shortScopes[0].querySelectorAll('p')).map(function (p) {
                 return p.textContent.replace(/\s+/g, ' ').trim();
             }) : [];
@@ -3078,16 +3260,16 @@ var ExtensionPreprocessingJS = {
             var article = selectedBody ? { content: selectedBody.innerHTML, textContent: selectedBody.textContent,
                 length: selectedBody.textContent.trim().length, title: document.title }
                 : new Readability(page, { maxElemsToParse: 50000, charThreshold: 350, disableJSONLD: true }).parse();
-            if (!article || (!publisher && article.length < 350 && !shortIdentified)) throw new Error('No article');
+            if (!article || (!publisher && article.length < 350 && !shortIdentified)) throw new Error('no-article');
             var extracted = document.createElement('div');
             extracted.innerHTML = article.content;
-            if (!extracted.textContent.trim() || (!publisher && MagpieCapture.missingProse(evidence, extracted))) throw new Error('Incomplete article');
+            if (!extracted.textContent.trim() || (!publisher && MagpieCapture.missingProse(evidence, extracted))) throw new Error('incomplete');
             if (!publisher && shortIdentified) {
                 var retained = extracted.textContent.replace(/\s+/g, ' ').trim();
-                if (shortProse.some(function (p) { return p.length >= 40 && !retained.includes(p); })) throw new Error('Missing short article');
+                if (shortProse.some(function (p) { return p.length >= 40 && !retained.includes(p); })) throw new Error('incomplete');
             }
             if (!publisher && article.length < 350 && (!extracted.querySelector('p')
-                || extracted.textContent.trim().length < 40 || !extracted.querySelector('img, h1'))) throw new Error('Uncertain short article');
+                || extracted.textContent.trim().length < 40 || !extracted.querySelector('img, h1'))) throw new Error('no-article');
             var headings = extracted.querySelectorAll('h1');
             if (headings.length === 1) headline = headings[0].textContent.trim();
             var titleSource = MagpieCapture.socialAuthor(document.URL) ? document.title : (headline || article.title || document.title);
@@ -3133,11 +3315,12 @@ var ExtensionPreprocessingJS = {
             });
             output.body.appendChild(body);
             var html = output.documentElement.outerHTML;
-            if (html.length > 500000) throw new Error('Article too large');
+            if (html.length > 500000) throw new Error('too-large');
             var paragraph = body.querySelector('p');
             var preview = (paragraph ? paragraph.textContent : article.textContent).replace(/\s+/g, ' ').trim().slice(0, 600);
-            arguments.completionFunction({ url: document.URL, title: title, html: html, preview: preview, contentFormat: 'article' });
-        } catch (_) {
+            arguments.completionFunction({ url: document.URL, title: title, html: html, preview: preview, contentFormat: 'article', status: 'captured' });
+        } catch (failure) {
+            if (['too-large', 'ambiguous', 'incomplete', 'no-article'].includes(failure.message)) fallback.captureFailure = failure.message;
             // An uncertain extraction keeps a link, never a truncated or competing body.
             arguments.completionFunction(fallback);
         }

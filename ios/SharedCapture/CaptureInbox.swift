@@ -2,7 +2,7 @@ import Foundation
 
 /// Shared storage contains pending captures and account routing, never credentials.
 /// Each capture is one atomically written file so the extension and app cannot
-/// overwrite each other's queue. The app removes only acknowledged files.
+/// overwrite each other's queue. Consumers remove only acknowledged files.
 nonisolated struct CaptureInbox {
     static let groupID = "group.com.henrydashwood.hearful"
     static let shared = CaptureInbox(

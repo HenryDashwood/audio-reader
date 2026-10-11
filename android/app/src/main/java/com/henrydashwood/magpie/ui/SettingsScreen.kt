@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.rounded.Login
 import androidx.compose.material.icons.automirrored.rounded.OpenInNew
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -40,7 +41,7 @@ import com.henrydashwood.magpie.playback.SpeechVoices
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onDownloads: () -> Unit = {}, onAccount: () -> Unit) {
+fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onDownloads: () -> Unit = {}, onWebsiteSignIns: () -> Unit = {}, onAccount: () -> Unit) {
     val library by model.libraryState.collectAsStateWithLifecycle()
     val preferences by model.settings.collectAsStateWithLifecycle()
     val conversation by model.conversationSettings.collectAsStateWithLifecycle()
@@ -118,6 +119,14 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onDownloads
             SettingsSection("Library") {
                 SettingsAction("Import subscriptions", Icons.Rounded.FileOpen, model.subscriptionImport::open)
                 SettingsAction("Export subscriptions", Icons.Rounded.FileUpload) { showingExport = true }
+            }
+        }
+        if (library.live) item {
+            SettingsSection("Saved Articles", "Sign in to websites you subscribe to, so articles shared from Chrome are saved in full.") {
+                ListItem(headlineContent = { Text("Website Sign-ins") },
+                    leadingContent = { Icon(Icons.AutoMirrored.Rounded.Login, null) },
+                    trailingContent = { Icon(Icons.Rounded.ChevronRight, null) },
+                    modifier = Modifier.clickable(onClickLabel = "Open website sign-ins", onClick = onWebsiteSignIns).testTag("website-sign-ins-setting"))
             }
         }
         item {
