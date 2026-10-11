@@ -49,6 +49,30 @@ struct BrowserCaptureReliabilityTests {
         return try #require(result as? [String: String])
     }
 
+    @Test func sharedCapturePolicyCorpus() async throws {
+        let cases = try #require(JSONSerialization.jsonObject(with: Data(resource("capture-policy-cases", extension: "json").utf8)) as? [[String: Any]])
+        for item in cases {
+            let name = try #require(item["name"] as? String)
+            let html = try #require(item["html"] as? String)
+            let url = try #require(item["url"] as? String)
+            if let status = item["httpStatus"] as? Int {
+                let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+                let loader = ReliabilityPageLoader()
+                await loader.load(html, into: view, url: try #require(URL(string: url)))
+                let result = try await view.callAsyncJavaScript(script() + "\nreturn MagpieCapturePolicy.navigationRetry(document, \(status));",
+                    arguments: [:], in: nil, contentWorld: .page)
+                #expect(result as? String == item["retry"] as? String, "\(name)")
+            } else {
+                let result = try await capture(html, url: url)
+                #expect(result["status"] == item["status"] as? String, "\(name)")
+                if let reason = item["reason"] as? String { #expect(result["captureFailure"] == reason, "\(name)") }
+                for text in item["contains"] as? [String] ?? [] { #expect(result["html"]?.contains(text) == true, "\(name): \(text)") }
+                for text in item["excludes"] as? [String] ?? [] { #expect(result["html"]?.contains(text) == false, "\(name): \(text)") }
+                if result["status"] != "captured" { #expect(result["html"] == "", "\(name)") }
+            }
+        }
+    }
+
     @Test func splitPublisherRetainsBothSectionsImagesAndCaptions() async throws {
         let result = try await capture(resource("canary-split"), url: "https://www.canarymedia.com/articles/geothermal/dig-energy-novel-geothermal-drilling-tech")
         let html = try #require(result["html"])
@@ -99,6 +123,62 @@ struct BrowserCaptureReliabilityTests {
         let result = try await capture(raw, url: "https://simonwillison.net/2026/Sep/12/sighting-399708714/")
         #expect(result["html"] == "")
         #expect(result["contentFormat"] == nil)
+    }
+
+    @Test func substackBrowserParameterDoesNotDiscardCapturedText() async throws {
+        for host in ["www.razibkhan.com", "writer.substack.com", "www.astralcodexten.com", "custom-publication.example"] {
+            let canonical = "https://\(host)/p/story"
+            let raw = try resource("inline-charts").replacingOccurrences(of: "https://example.com/charts", with: canonical)
+                .replacingOccurrences(of: "</head>", with: #"<script type="text/plain" src="https://substackcdn.com/bundle/static/js/main.js"></script></head>"#)
+            for query in ["open=false", "triedRedirect=true", "utm_campaign=posts-open-in-app&triedRedirect=true",
+                          "open=false&triedRedirect=true&utm_source=share", "triedRedirect=true&triedRedirect=true&open=false"] {
+                let url = canonical + "?" + query
+                let result = try await capture(raw, url: url)
+                #expect(result["url"] == url)
+                #expect(result["contentFormat"] == "article")
+                #expect(result["html"]?.contains("final conclusion") == true)
+                #expect(result["html"]?.contains("href=\"\(url.replacingOccurrences(of: "&", with: "&amp;"))\"") == true)
+            }
+            for address in [canonical + "?open=false&page=2", canonical + "?open=true",
+                            canonical + "?triedRedirect=true&page=2", canonical + "?triedRedirect=false",
+                            canonical + "?triedRedirect=true&triedRedirect=false",
+                            "https://\(host)/p/different?open=false", "https://other.substack.com/p/story?open=false"] {
+                let rejected = try await capture(raw, url: address)
+                #expect(rejected["html"] == "")
+                #expect(rejected["captureFailure"] == "page-identity")
+            }
+        }
+        let other = try resource("inline-charts")
+        let rejected = try await capture(other, url: "https://example.com/charts?open=false")
+        #expect(rejected["html"] == "")
+        let otherRedirect = try await capture(other, url: "https://example.com/charts?triedRedirect=true")
+        #expect(otherRedirect["html"] == "")
+    }
+
+    @Test func customSubstackDetectionRequiresItsApplicationBundle() async throws {
+        let canonical = "https://custom-publication.example/p/story"
+        let raw = try resource("inline-charts").replacingOccurrences(of: "https://example.com/charts", with: canonical)
+        for source in ["", "https://substackcdn.com.example/bundle/static/js/main.js",
+                       "https://substackcdn.com/image/fetch/photo.jpg", "https://other.example/bundle/static/js/main.js"] {
+            let marked = raw.replacingOccurrences(of: "</head>", with: "<script type='text/plain' src='\(source)'></script></head>")
+            let result = try await capture(marked, url: canonical + "?triedRedirect=true")
+            #expect(result["captureFailure"] == "page-identity")
+        }
+    }
+
+    @Test func ghostMembershipGatesRequireSignInWithoutRejectingUnlockedArticles() async throws {
+        let raw = try resource("inline-charts").replacingOccurrences(of: "</head>", with: "<meta name='generator' content='Ghost 6.70'></head>")
+        for gate in ["<section class='single-cta'><a data-portal='signin' href='#/portal/signin'>Already have an account? Sign in</a></section>",
+                     "<div class='gh-post-upgrade-cta'><a href='/signup/'>Subscribe</a></div>"] {
+            let locked = raw.replacingOccurrences(of: "</body>", with: "<div class='single-content'>\(gate)</div></body>")
+            let rejected = try await capture(locked, url: "https://example.com/charts")
+            #expect(rejected["html"] == "")
+            #expect(rejected["captureFailure"] == "website-sign-in")
+            let unlocked = raw.replacingOccurrences(of: "</body>", with: "<div class='single-content' style='display:none'>\(gate)</div><nav><a data-portal='signin'>Sign in</a></nav></body>")
+            let accepted = try await capture(unlocked, url: "https://example.com/charts")
+            #expect(accepted["contentFormat"] == "article")
+            #expect(accepted["html"]?.contains("final conclusion") == true)
+        }
     }
 
     @Test func extractionCannotSilentlyDropSubstantialArticleParagraphs() async throws {

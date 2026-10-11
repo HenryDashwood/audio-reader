@@ -71,9 +71,9 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
                 Text(article.url)
                 article.preview?.let { Text(it, Modifier.semantics { contentDescription = "Article begins: $it" }) }
                 if (!state.saved) {
-                    // As on iOS: one Save, which keeps the page read above. If it can't be read,
-                    // the link is saved and Saved offers "Capture page" when the server fetch fails.
-                    Text("Ready to read or listen to later.")
+                    if (article.captureIssue != null) Text(article.captureIssue.message, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                    else if (article.html != null) Text("Article text captured. Check the opening above before saving; a website may still supply only a preview.")
+                    else if (!state.preparing) Text("Only the link was captured. Magpie will try to fetch the article, but pages that require a website sign-in may not be readable.")
                     Text("Already saved? This updates your copy. If the text changes, listening starts from the beginning.")
                 }
             }
@@ -93,7 +93,20 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
                             else "Connect to load your Magpie account before saving. Open Magpie to retry.")
                         Button(onClick = openMagpie, enabled = !state.busy) { Text("Open Magpie") }
                     } else if (state.article != null) {
-                        Button(onClick = model::save, enabled = !state.busy && !state.saveRequested) { Text("Save article") }
+                        val article = state.article!!
+                        when {
+                            article.captureIssue != null -> {
+                                if (captureWebUrl(article.url)) Button(onClick = model::openBrowser, enabled = !state.busy) {
+                                    Text(if (article.requiresWebsiteSignIn) "Sign in to website" else "Open page to capture")
+                                }
+                                TextButton(onClick = model::saveLink, enabled = !state.busy) { Text("Save link only") }
+                            }
+                            article.html == null && !state.preparing -> Button(onClick = model::saveLink, enabled = !state.busy) { Text("Save link only") }
+                            else -> Button(onClick = model::save, enabled = !state.busy && !state.saveRequested) { Text("Save article") }
+                        }
+                        if (article.captureIssue == null && captureWebUrl(article.url)) {
+                            TextButton(onClick = model::openBrowser, enabled = !state.busy) { Text("Sign in or capture page") }
+                        }
                     }
                     TextButton(onClick = close, enabled = !state.busy) { Text("Cancel") }
                 }

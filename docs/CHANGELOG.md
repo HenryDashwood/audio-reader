@@ -12,10 +12,16 @@ still at the top fails the release rather than shipping stale notes.
 
 ## 1.6.3
 
-Saving articles from Safari now handles The Nation's pages and poems with line
-breaks more reliably. Free articles should no longer be rejected because of
-conflicting paywall information. Please try sharing the Anne Carson article
-from Safari again and check that it is ready to read and listen to in Saved.
+Saving from Safari now uploads and prepares the article in the share pane.
+Keep the pane open until Saved to Magpie appears; you no longer need to open
+Magpie to finish each save. Open Magpie once after updating to connect its
+sign-in to the share pane. If an upload fails, your capture is kept and you can
+retry without leaving the pane.
+
+Article capture checks more carefully for website sign-in requirements,
+incomplete text and unrelated recommended posts. If a website requires sign-in,
+sign in in Safari and share the unlocked article again. Please check both the
+opening and ending of saved articles, including pages with poems and images.
 
 ## 1.6.2
 

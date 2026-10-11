@@ -767,11 +767,40 @@ HTTP(S) URL without credentials. Multiple links, arbitrary content/file URIs,
 unsupported types, and payloads over 2 MB UTF-8 are rejected with an explanation.
 Shared HTML is previewed as plain text; it never executes in the share screen.
 
+The share screen always offers **Sign in or capture page** for HTTPS pages,
+including pages that appear readable but contain only a preview. A detected
+Ghost membership gate instead offers **Sign in to website** and does not queue
+its preview, even if Save was tapped while the page was loading. After signing
+in inside Magpie, Preview article must capture an unlocked page before saving.
+
 Capture page is an explicit HTTPS browser action. It does not access the sending
 browser's tab or cookies. The user can authenticate to a publisher in Magpie's
-WebView, then choose Preview article. Extraction excludes hidden content and
-uses the existing iOS article identity/ambiguity checks. It falls back to a link
-when extraction is uncertain. Navigation during capture invalidates its reply.
+WebView, then choose Preview article. Automatic capture requires two matching
+snapshots across separate settling intervals. A changing page, blocked request,
+identity mismatch, ambiguous article, or detected membership gate returns a
+review outcome rather than silently completing a pending Save. **Save link only**
+is an explicit fallback. Manual capture remains available even when extraction
+returned text, because an unrecognized publisher may supply a preview.
+
+`scripts/capture_policy.js` owns platform recognition, canonical identity rules,
+access evidence, and bounded layout adapter selection for both browser engines.
+No publication allowlist is used to repair redirects. A main-frame GET is retried
+only after an HTTP 400 response explicitly identifies the exact repeated
+`open=false` query parameter; unrelated parameters remain byte-for-byte intact.
+Substack identity flags are ignored only on a recognized Substack page, including
+custom domains with its application bundle. Other query values, article paths,
+and origins must still match. See [capture reliability](../docs/capture-reliability.md)
+for policy boundaries, reproducible coverage, live results, and limitations.
+
+Visible capture permits one user-initiated popup with its own displayed address.
+The parent page stays alive for the website's normal `postMessage`/close return;
+**Close window** returns to it without capturing the sign-in page. Nested and
+unsolicited popups are rejected, and hidden capture never opens a new window.
+This does not make every identity provider compatible with WebView. In particular,
+[Google does not support embedded-browser sign-in](https://developers.google.com/identity/gsi/web/guides/supported-browsers).
+Use the publisher's email sign-in where available. Opening Chrome separately does
+not transfer its website session into Magpie's capture browser.
+
 The WebView has no native bridge, app authorization headers, file/content access,
 third-party cookies, mixed content, downloads, or website permission grants.
 Certificate errors are rejected. Website cookies/storage remain in Magpie's
@@ -786,7 +815,10 @@ requires review again. Captures use the existing `/saved/replace` contract,
 including the iOS warning that changed text resets listening. Each confirmed
 capture keeps its own queue ID and upload order. This preserves an earlier offline
 HTML copy if a later link-only capture fails, and an older in-flight acknowledgement
-cannot remove the new content. Legacy URL-only
+cannot remove the new content. Earlier URL-only
+attempts for the same address are superseded by a later confirmed text capture
+only after that text uploads successfully, so a failed URL fetch cannot block
+its signed-in replacement. Legacy URL-only
 queue rows remain readable. Opening Magpie navigates to Saved and starts normal
 foreground preparation; resuming an already-open app also checks its queue; closing the share leaves accepted content on disk.
 

@@ -67,19 +67,32 @@ class ShareModel(application: Application) : AndroidViewModel(application) {
             catch (failure: Exception) { if (version == generation) mutable.value = ShareState(error = failure.message ?: "This share could not be opened.") }
         }
     }
-    /** The hidden capture finished: [article] is the rendered page, or null to save the link. */
+    /** Hidden capture returns rendered text, a website sign-in requirement, or null for a link. */
     fun prepared(article: SharedArticle?) {
         val current = state.value
         if (!current.preparing) return
         preparation?.cancel()
         mutable.value = current.copy(preparing = false, saveRequested = false,
-            article = article?.copy(title = article.title ?: current.article?.title) ?: current.article)
-        if (current.saveRequested) save()
+            article = article?.copy(title = article.title ?: current.article?.title)
+                ?: current.article?.copy(captureIssue = CaptureIssue.UNAVAILABLE))
+        if (current.saveRequested && state.value.article?.captureIssue == null) save()
     }
     fun reviewAccount() { mutable.value = state.value.copy(accountChanged = false, error = null) }
+    fun openBrowser() {
+        val current = state.value
+        if (current.busy || current.saved || current.accountChanged || current.article?.url?.let(::captureWebUrl) != true) return
+        preparation?.cancel()
+        mutable.value = current.copy(browser = true, preparing = false, saveRequested = false, error = null)
+    }
     fun closeBrowser() { mutable.value = state.value.copy(browser = false) }
     fun captured(article: SharedArticle) {
         if (state.value.browser && !state.value.accountChanged) mutable.value = state.value.copy(article = article, browser = false, error = null)
+    }
+    fun saveLink() {
+        val before = state.value
+        if (before.busy || before.preparing || before.saved || before.accountChanged) return
+        mutable.value = before.copy(article = before.article?.copy(html = null, preview = null, captureIssue = null))
+        save()
     }
     fun save() {
         val before = state.value
@@ -87,6 +100,7 @@ class ShareModel(application: Application) : AndroidViewModel(application) {
         if (before.busy || before.saved || before.accountChanged) return
         // Save waits for the page being read rather than storing a bare link.
         if (before.preparing) { mutable.value = before.copy(saveRequested = true, error = null); return }
+        if (article.captureIssue != null) { openBrowser(); return }
         val snapshot = library.value
         val owner = snapshot.owner
         if (!snapshot.live || owner == null) {

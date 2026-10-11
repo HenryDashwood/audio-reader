@@ -5,11 +5,38 @@ import com.henrydashwood.magpie.data.PendingArticle
 import com.henrydashwood.magpie.data.validateLink
 import org.jsoup.Jsoup
 
+/** Local review outcomes; these are not uploaded as article content. */
+enum class CaptureIssue(val message: String) {
+    WEBSITE_SIGN_IN("This page requires a website sign-in or subscription. Open it in Magpie, sign in, and preview the article."),
+    PAGE_IDENTITY("Magpie could not match this page to its article address. Reload the page and try again."),
+    INCOMPLETE("Magpie could not capture all the visible article text. Open the page and try again."),
+    AMBIGUOUS("Magpie found more than one possible article. Open the article page and try again."),
+    TOO_LARGE("This page is too large to capture. You can save its link instead."),
+    NO_ARTICLE("Magpie could not identify article text on this page. Open the page to sign in, let it finish loading, or save only its link."),
+    UNAVAILABLE("Magpie could not read the page. Open it to retry or sign in, or save only its link.");
+
+    companion object {
+        fun fromReason(reason: String): CaptureIssue = when (reason) {
+            "website-sign-in" -> WEBSITE_SIGN_IN
+            "page-identity" -> PAGE_IDENTITY
+            "incomplete" -> INCOMPLETE
+            "ambiguous" -> AMBIGUOUS
+            "too-large" -> TOO_LARGE
+            "no-article" -> NO_ARTICLE
+            else -> UNAVAILABLE
+        }
+    }
+}
+
 /** Untrusted input is previewed as plain text, never loaded as an executable page. */
 data class SharedArticle(val url: String, val title: String? = null, val html: String? = null,
-    val contentFormat: String = "page", val preview: String? = null) {
-    fun pending() = PendingArticle(url = validateLink(url), title = title, html = html,
-        contentFormat = contentFormat, replaceExisting = true)
+    val contentFormat: String = "page", val preview: String? = null, val captureIssue: CaptureIssue? = null) {
+    val requiresWebsiteSignIn: Boolean get() = captureIssue == CaptureIssue.WEBSITE_SIGN_IN
+    fun pending(): PendingArticle {
+        require(captureIssue == null) { "Sign in to the website and capture the full article before saving." }
+        return PendingArticle(url = validateLink(url), title = title, html = html,
+            contentFormat = contentFormat, replaceExisting = true)
+    }
 }
 
 object SharedArticles {

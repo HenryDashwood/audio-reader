@@ -63,9 +63,18 @@ class SavedPreparation(private val scope: CoroutineScope, private val repository
     fun sync() = run {
         reload()
         while (active()) {
-            val article = state.value.pending.firstOrNull() ?: break
+            val pending = state.value.pending
+            val first = pending.firstOrNull() ?: break
+            // A failed URL-only attempt must not block its later signed-in capture.
+            // Retain both on failure; acknowledge only these snapshot IDs on success.
+            val article = if (first.html == null) pending.firstOrNull {
+                it.url == first.url && it.html != null && it.replaceExisting
+            } ?: first else first
             repository.captureSaved(article, revision)
             if (!active()) return@run
+            for (superseded in pending.takeWhile { it.id != article.id }.filter { it.url == article.url && it.html == null }) {
+                inbox.remove(owner, superseded.id)
+            }
             inbox.remove(owner, article.id)
             reload()
         }
