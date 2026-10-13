@@ -122,6 +122,9 @@ final class PositionReporter {
     // AudioPlayer's published state cannot be forced without real audio.
 
     func episodeChanged(to episode: Episode?) {
+        let episode = episode.map { episode in
+            sessionScope.map { podcastJournal.overlay(episode, owner: $0) } ?? episode
+        }
         if let episode, trackedEpisode?.id == episode.id {
             trackedEpisode = episode
             return

@@ -79,4 +79,88 @@ struct PodcastProgressJournalTests {
         #expect(try journal.entries(owner: owner).first?.pending != nil)
         #expect(try journal.entries(owner: next).isEmpty)
     }
+
+    @Test func acknowledgedRevisionsResolveOldSnapshotsAfterDiskRecreation() async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FilePodcastProgressStorage(directory: directory)
+        let journal = PodcastProgressJournal(store: store)
+        let playback = UUID()
+        try journal.start(owner: owner, episodeID: 1, playbackID: playback, revision: owner,
+            sample: .init(seconds: 0, completed: false))
+        for (seconds, revision) in [(90.0, next), (120.0, newer)] {
+            try journal.record(owner: owner, episodeID: 1, playbackID: playback,
+                sample: .init(seconds: seconds, completed: false))
+            try await journal.flush(owner: owner, valid: { true }, send: { _, _ in
+                .init(episode: episode(revision), acceptedRevision: revision)
+            })
+        }
+        let reopened = PodcastProgressJournal(store: FilePodcastProgressStorage(directory: directory))
+        for staleRevision in [owner, next] {
+            let restored = reopened.overlay(episode(staleRevision), owner: owner)
+            #expect(restored.progressRevision == newer)
+            #expect(restored.positionSeconds == 120)
+        }
+        // An episode snapshot from an unrelated server change is never rebased.
+        let remote = episode(String(repeating: "d", count: 64))
+        #expect(reopened.overlay(remote, owner: owner) == remote)
+
+        let resumed = UUID()
+        try reopened.start(owner: owner, episodeID: 1, playbackID: resumed, revision: owner,
+            sample: .init(seconds: 120, completed: false))
+        try reopened.record(owner: owner, episodeID: 1, playbackID: resumed,
+            sample: .init(seconds: 150, completed: false))
+        #expect(try reopened.entries(owner: owner).first?.pending?.expectedRevision == newer)
+    }
+
+    @Test func resumingWhileThePauseSaveIsInFlightKeepsTheAcknowledgedRevision() async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let journal = PodcastProgressJournal(store: FilePodcastProgressStorage(directory: directory))
+        let playback = UUID()
+        try journal.start(owner: owner, episodeID: 1, playbackID: playback, revision: owner,
+            sample: .init(seconds: 0, completed: false))
+        try journal.record(owner: owner, episodeID: 1, playbackID: playback,
+            sample: .init(seconds: 90, completed: false))
+        try await journal.flush(owner: owner, valid: { true }, send: { _, _ in
+            let resumed = UUID()
+            try journal.start(owner: owner, episodeID: 1, playbackID: resumed, revision: owner,
+                sample: .init(seconds: 90, completed: false))
+            try journal.record(owner: owner, episodeID: 1, playbackID: resumed,
+                sample: .init(seconds: 120, completed: false))
+            return .init(episode: episode(next), acceptedRevision: next)
+        })
+        let pending = try #require(journal.entries(owner: owner).first?.pending)
+        #expect(pending.expectedRevision == next)
+        #expect(pending.seconds == 120)
+        #expect(journal.overlay(episode(owner), owner: owner).positionSeconds == 120)
+        #expect(journal.overlay(episode(owner), owner: owner).progressRevision == next)
+    }
+
+    @Test(arguments: [true, false])
+    func aConflictOrFilingInvalidatesPreviouslyAcknowledgedRevisions(filing: Bool) async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let journal = PodcastProgressJournal(store: FilePodcastProgressStorage(directory: directory))
+        let playback = UUID()
+        try journal.start(owner: owner, episodeID: 1, playbackID: playback, revision: owner,
+            sample: .init(seconds: 0, completed: false))
+        try journal.record(owner: owner, episodeID: 1, playbackID: playback,
+            sample: .init(seconds: 90, completed: false))
+        try await journal.flush(owner: owner, valid: { true }, send: { _, _ in
+            .init(episode: episode(next), acceptedRevision: next)
+        })
+        if filing {
+            try journal.block(owner: owner, episodeIDs: [1])
+        } else {
+            try journal.record(owner: owner, episodeID: 1, playbackID: playback,
+                sample: .init(seconds: 120, completed: false))
+            try await journal.flush(owner: owner, valid: { true }, send: { _, _ in
+                .init(episode: episode(newer), acceptedRevision: "")
+            })
+        }
+        #expect(journal.overlay(episode(owner), owner: owner) == episode(owner))
+        #expect(try journal.entries(owner: owner).first?.blocked == true)
+        #expect(try journal.entries(owner: owner).first?.supersededRevisions == nil)
+    }
 }

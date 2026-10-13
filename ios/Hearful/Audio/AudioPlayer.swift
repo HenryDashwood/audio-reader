@@ -35,6 +35,8 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
 
     private let player: AVPlayer
     private let activateAudioSession: @MainActor () throws -> Void
+    private let podcastJournal: PodcastProgressJournal
+    private let progressScope: () -> String?
     private var needsInterruptionRecovery = false
     private let defaults: UserDefaults
     private var timeObserver: Any?
@@ -75,11 +77,15 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     init(
         defaults: UserDefaults,
         player: AVPlayer = AVPlayer(),
-        activateAudioSession: @escaping @MainActor () throws -> Void = AudioSession.configureForPlayback
+        activateAudioSession: @escaping @MainActor () throws -> Void = AudioSession.configureForPlayback,
+        podcastJournal: PodcastProgressJournal = .shared,
+        progressScope: @escaping () -> String? = { ShortcutScope.current }
     ) {
         self.defaults = defaults
         self.player = player
         self.activateAudioSession = activateAudioSession
+        self.podcastJournal = podcastJournal
+        self.progressScope = progressScope
         super.init()
         playbackRate = PlaybackSpeedPreference.load(.podcast, defaults: defaults)
         // defaultRate makes every play()/resume() come back at her speed
@@ -248,6 +254,9 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
     /// `resumeAt` overrides the episode's saved position, for a retry of the
     /// item she was already part-way through.
     private func replaceItem(url: URL, episode: Episode, resumeAt: TimeInterval? = nil) {
+        // Lists and prepared players can outlive several successful saves on
+        // this phone. Resolve both the position and its revision before loading.
+        let episode = progressScope().map { podcastJournal.overlay(episode, owner: $0) } ?? episode
         stallTask?.cancel()
         failedEpisodeID = nil
         needsInterruptionRecovery = false

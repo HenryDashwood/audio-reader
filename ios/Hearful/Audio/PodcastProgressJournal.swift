@@ -20,11 +20,21 @@ nonisolated struct QueuedPodcastProgress: Codable, Equatable, Sendable {
     var sampled = false
     var blocked = false
     var guards: Set<String> = []
+    /// Revisions replaced by this journal's own acknowledged writes. A list or
+    /// player can still hold one of these after she switches to another episode.
+    /// Optional so journals written by earlier app versions remain readable.
+    var supersededRevisions: Set<String>?
 
     var isValid: Bool {
         episodeID > 0 && isProgressToken(revision) && latest.isValid
             && (pending == nil) == (pendingPlaybackID == nil)
             && (pending?.isValid ?? true) && guards.allSatisfy { !$0.isEmpty }
+            && (supersededRevisions?.allSatisfy(isProgressToken) ?? true)
+    }
+
+    func canResume(from revision: String) -> Bool {
+        !blocked && guards.isEmpty
+            && (self.revision == revision || supersededRevisions?.contains(revision) == true)
     }
 }
 
@@ -102,9 +112,11 @@ final class PodcastProgressJournal {
         else { throw CocoaError(.fileWriteUnknown) }
         var rows = try entries(owner: owner)
         let old = rows.first { $0.episodeID == episodeID }
-        let next = QueuedPodcastProgress(episodeID: episodeID, playbackID: playbackID, revision: revision,
+        let continuing = old.flatMap { $0.canResume(from: revision) ? $0 : nil }
+        let next = QueuedPodcastProgress(episodeID: episodeID, playbackID: playbackID,
+            revision: continuing?.revision ?? revision,
             latest: sample, pending: old?.pending, pendingPlaybackID: old?.pendingPlaybackID,
-            guards: old?.guards ?? [])
+            guards: old?.guards ?? [], supersededRevisions: continuing?.supersededRevisions)
         rows.removeAll { $0.episodeID == episodeID }; rows.append(next)
         try store.write(owner: owner, entries: rows)
     }
@@ -123,15 +135,20 @@ final class PodcastProgressJournal {
     }
     func resume(owner: String, episodeID: Int, revision: String) throws -> PodcastProgressSample? {
         try entries(owner: owner).first {
-            $0.episodeID == episodeID && !$0.blocked && $0.guards.isEmpty && $0.sampled && $0.revision == revision
+            $0.episodeID == episodeID && $0.sampled && $0.canResume(from: revision)
         }?.latest
     }
     func overlay(_ episode: Episode, owner: String) -> Episode {
         guard episode.audioURL != nil, let revision = episode.progressRevision,
-              let local = try? resume(owner: owner, episodeID: episode.id, revision: revision) else { return episode }
+              let local = try? entries(owner: owner).first(where: {
+                  $0.episodeID == episode.id && $0.canResume(from: revision)
+              }) else { return episode }
         var result = episode
-        result.positionSeconds = local.seconds
-        result.completed = local.completed
+        result.progressRevision = local.revision
+        if local.sampled {
+            result.positionSeconds = local.latest.seconds
+            result.completed = local.latest.completed
+        }
         return result
     }
 
@@ -139,6 +156,7 @@ final class PodcastProgressJournal {
         var rows = try entries(owner: owner)
         for index in rows.indices where episodeIDs.contains(rows[index].episodeID) {
             rows[index].blocked = true; rows[index].pending = nil; rows[index].pendingPlaybackID = nil
+            rows[index].supersededRevisions = nil
         }
         try store.write(owner: owner, entries: rows)
     }
@@ -177,11 +195,18 @@ final class PodcastProgressJournal {
             let freshIntent = row.playbackID != row.pendingPlaybackID && row.revision == receipt.episode.progressRevision!
             if receipt.changedSinceAcceptance && !freshIntent {
                 row.blocked = true; row.pending = nil; row.pendingPlaybackID = nil
+                row.supersededRevisions = nil
             } else {
                 let revision = row.playbackID == row.pendingPlaybackID || row.revision == request.expectedRevision
                     ? receipt.episode.progressRevision! : row.revision
                 let newer = row.sampled && (row.playbackID != row.pendingPlaybackID || row.latest != PodcastProgressSample(
                     seconds: request.seconds, completed: request.completed))
+                // Only our own successful compare-and-save establishes that an
+                // older snapshot is safe to advance. Never infer this from an
+                // unrelated server revision or a conflict response.
+                if !receipt.changedSinceAcceptance && row.revision == request.expectedRevision {
+                    row.supersededRevisions = (row.supersededRevisions ?? []).union([request.expectedRevision])
+                }
                 row.revision = revision
                 row.pending = newer ? row.latest.report(revision: revision) : nil
                 row.pendingPlaybackID = newer ? row.playbackID : nil
