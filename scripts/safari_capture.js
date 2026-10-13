@@ -23,8 +23,20 @@ var ExtensionPreprocessingJS = {
             var live = document.querySelectorAll('*');
             var clones = page.querySelectorAll('*');
             if (live.length > 50000) throw new Error('too-large');
+            var expandedSections = MagpieCapturePolicy.expandableArticleSections(document);
             live.forEach(function (node, index) {
                 if (node.tagName === 'IMG') MagpieCapture.normalizeImage(node, clones[index], document.baseURI);
+                if (expandedSections.has(node)) {
+                    // Expand the capture copy only. Preserve independently hidden
+                    // descendants and the user's original page/disclosure state.
+                    clones[index].removeAttribute('hidden');
+                    clones[index].removeAttribute('aria-hidden');
+                    clones[index].style.display = 'block';
+                    clones[index].style.visibility = 'visible';
+                    clones[index].style.contentVisibility = 'visible';
+                    clones[index].classList.add('open-block');
+                    return;
+                }
                 var style = window.getComputedStyle(node);
                 if (node.hidden || node.getAttribute('aria-hidden') === 'true'
                     || style.display === 'none' || style.visibility === 'hidden'
@@ -35,6 +47,7 @@ var ExtensionPreprocessingJS = {
                 }
             });
             page.querySelectorAll('script, style, form, input, textarea, select, nav, aside').forEach(function (node) { node.remove(); });
+            MagpieCapture.normalizeLinkLabels(page);
             var boundedScope = MagpieCapture.removeRecommendations(page, document);
 
             // Publishers may split one story's heading/body/bio into separate articles
@@ -98,7 +111,7 @@ var ExtensionPreprocessingJS = {
                 });
                 node.removeAttribute('srcset');
             });
-            var publisher = MagpieCapture.publisherBody(page, document.URL);
+            var publisher = MagpieCapture.publisherBody(page, document.URL, document);
             var evidence = MagpieCapture.paragraphs(candidates.length === 1 ? candidates[0] : (boundedScope ? [boundedScope] : []));
             var shortScopes = Array.from(page.querySelectorAll('article')).filter(function (node) {
                 return !node.parentElement.closest('article') && prose([node]) >= 40;
@@ -116,12 +129,18 @@ var ExtensionPreprocessingJS = {
             var selectedBody = publisher || (shortIdentified && prose(shortScopes) < 350
                 && shortScopes[0].querySelector('img') ? shortScopes[0].cloneNode(true) : null);
             if (selectedBody) selectedBody.querySelectorAll('footer').forEach(function (node) { node.remove(); });
+            // Readability mutates its input, so keep an independent retry document.
+            var retry = !selectedBody && candidates.length === 1 ? MagpieCapture.flattenedArticle(page, candidates[0], document) : null;
             var article = selectedBody ? { content: selectedBody.innerHTML, textContent: selectedBody.textContent,
                 length: selectedBody.textContent.trim().length, title: document.title }
                 : new Readability(page, { maxElemsToParse: 50000, charThreshold: 350, disableJSONLD: true }).parse();
-            if (!article || (!publisher && article.length < 350 && !shortIdentified)) throw new Error('no-article');
             var extracted = document.createElement('div');
-            extracted.innerHTML = article.content;
+            extracted.innerHTML = article ? article.content : '';
+            if (retry && (!article || article.length < 350 || MagpieCapture.missingProse(evidence, extracted))) {
+                article = new Readability(retry, { maxElemsToParse: 50000, charThreshold: 350, disableJSONLD: true }).parse();
+                extracted.innerHTML = article ? article.content : '';
+            }
+            if (!article || (!publisher && article.length < 350 && !shortIdentified)) throw new Error('no-article');
             if (!extracted.textContent.trim() || (!publisher && MagpieCapture.missingProse(evidence, extracted))) throw new Error('incomplete');
             if (!publisher && shortIdentified) {
                 var retained = extracted.textContent.replace(/\s+/g, ' ').trim();

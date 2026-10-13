@@ -12,7 +12,13 @@ from audioreader import saved
 from audioreader.feeds import articles
 from audioreader.feeds.graphics import static_svg
 from audioreader.feeds.images import normalise_images
-from audioreader.page_capture import missing_prose, publisher_body, social_title, substantial_paragraphs
+from audioreader.page_capture import (
+    missing_prose,
+    normalise_link_labels,
+    publisher_body,
+    social_title,
+    substantial_paragraphs,
+)
 from audioreader.text import article_text
 
 FIXTURES = Path(__file__).resolve().parents[2] / "ios/HearfulTests/BrowserCaptureFixtures"
@@ -70,6 +76,93 @@ def test_generic_capture_rejects_missing_substantial_paragraphs(monkeypatch):
     )
     monkeypatch.setattr(articles, "extract_with_videos", lambda *_args, **_kwargs: f"<p>{paragraphs[0]}</p>")
     assert saved.extract(raw)[0] == ""
+
+
+@pytest.mark.parametrize("browser", [False, True])
+def test_split_semantic_article_retains_every_paragraph_image_and_caption(browser):
+    raw, url = fixture("split-semantic-article")
+    body, title = saved.extract(raw, url=url, browser=browser)
+    assert title == "A river survey across the seasons"
+    page = lxml_html.fromstring(body)
+    text = article_text(body)
+    expected = [
+        f"{section} paragraph {index}"
+        for section, count in [("Opening", 5), ("Middle", 7), ("Closing", 4)]
+        for index in range(count)
+    ]
+    assert all(text.count(phrase) == 1 for phrase in expected)
+    assert [text.index(phrase) for phrase in expected] == sorted(text.index(phrase) for phrase in expected)
+    assert len(page.xpath(".//p")) == 16
+    assert page.xpath(".//img/@src") == ["https://images.example/river.jpg"]
+    assert "The survey site in autumn." in body and "Remaining questions" in body
+    assert "https://reports.example/study" in body
+    assert not any(
+        phrase in text
+        for phrase in [
+            "external",
+            "Unrelated sidebar",
+            "Publication footer",
+            "Unrelated recommendation",
+            "Publication navigation",
+        ]
+    )
+
+
+def test_bounded_retry_preserves_real_prose_under_a_related_heading():
+    raw, url = fixture("split-semantic-article")
+    raw = raw.replace(
+        "<h2>Remaining questions</h2>",
+        "<section><h2>Related topics</h2><p>Intentional article subsection. "
+        "Observers used this section to explain the connections between water quality and wildlife.</p></section>"
+        "<h2>Remaining questions</h2>",
+    )
+    body, _ = saved.extract(raw, url=url)
+    assert "Intentional article subsection." in body and "Closing paragraph 3" in body
+    assert "Unrelated recommendation" not in body
+
+
+def test_bounded_retry_still_rejects_truncated_extraction(monkeypatch):
+    raw, url = fixture("split-semantic-article")
+    first = lxml_html.fromstring(raw).xpath("//article//p")[0]
+    monkeypatch.setattr(
+        articles, "extract_with_videos", lambda *_args, **_kwargs: lxml_html.tostring(first, encoding="unicode")
+    )
+    assert saved.extract(raw, url=url)[0] == ""
+
+
+@pytest.mark.parametrize("link_only", [False, True])
+async def test_split_article_save_and_prepared_text_keep_the_complete_capture(client, monkeypatch, link_only):
+    raw, url = fixture("split-semantic-article")
+
+    async def fetch(*_args, **_kwargs):
+        return raw.encode(), url
+
+    monkeypatch.setattr(saved, "fetch_public_bytes", fetch)
+    response = await client.post("/saved", json={"url": url, **({} if link_only else {"html": raw})})
+    assert response.status_code == 200
+    item = response.json()
+    assert item["has_text"] and item["content_id"] and not item["capture_error"]
+    prepared = await client.get(f"/episodes/{item['id']}/text", params={"content_id": item["content_id"]})
+    assert prepared.status_code == 200
+    body = prepared.json()
+    for section, count in [("Opening", 5), ("Middle", 7), ("Closing", 4)]:
+        for index in range(count):
+            assert body["text"].count(f"{section} paragraph {index}") == 1
+    assert "The survey site in autumn." in body["html"]
+    assert "https://images.example/river.jpg" in body["html"]
+    assert "external" not in body["text"]
+
+
+@pytest.mark.parametrize("label_class", ["visually-hidden", "sr-only", "screen-reader-text"])
+def test_accessibility_annotations_are_not_prose_but_sole_link_labels_survive(label_class):
+    page = lxml_html.fromstring(
+        f'<article><p>Read <a href="/report">the report<span class="{label_class}">, external</span></a>.</p>'
+        f'<p><a href="/next"><span class="{label_class}">Next chapter</span></a></p>'
+        f'<p><span class="{label_class}">Accessible story text</span></p></article>'
+    )
+    normalise_link_labels(page)
+    assert "external" not in page.text_content()
+    assert "Next chapter" in page.text_content() and "Accessible story text" in page.text_content()
 
 
 @pytest.mark.parametrize("browser", [False, True])

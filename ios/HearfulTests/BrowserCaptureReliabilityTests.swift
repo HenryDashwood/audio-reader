@@ -98,6 +98,67 @@ struct BrowserCaptureReliabilityTests {
         #expect(!html.contains("Author biography"))
     }
 
+    @Test func splitSemanticArticleRetainsEveryParagraphImageAndCaption() async throws {
+        let result = try await capture(resource("split-semantic-article"), url: "https://unfamiliar.example/river-survey")
+        let html = try #require(result["html"])
+        #expect(result["contentFormat"] == "article")
+        #expect(result["title"] == "A river survey across the seasons")
+        var previous = html.startIndex
+        for (section, count) in [("Opening", 5), ("Middle", 7), ("Closing", 4)] {
+            for index in 0..<count {
+                let phrase = "\(section) paragraph \(index)"
+                let range = try #require(html.range(of: phrase))
+                #expect(range.lowerBound >= previous)
+                #expect(html.components(separatedBy: phrase).count == 2)
+                previous = range.upperBound
+            }
+        }
+        #expect(html.components(separatedBy: "<img").count - 1 == 1)
+        #expect(html.contains("https://images.example/river.jpg"))
+        #expect(html.contains("The survey site in autumn."))
+        #expect(html.contains("Remaining questions"))
+        #expect(html.contains("https://reports.example/study"))
+        #expect(!html.contains("external"))
+        #expect(!html.contains("Unrelated sidebar"))
+        #expect(!html.contains("Publication footer"))
+        #expect(!html.contains("Unrelated recommendation"))
+        #expect(!html.contains("Publication navigation"))
+        #expect(!html.contains("unrelated.jpg"))
+    }
+
+    @Test func mediaWikiCollapsedSectionsCaptureTheFullBodyWithoutChangingThePage() async throws {
+        let result = try await capture(resource("mediawiki-collapsed-sections"), url: "https://public-wiki.example/wiki/River_survey", setup: """
+            var originalPage = document.documentElement.outerHTML;
+            var originalRun = ExtensionPreprocessingJS.run;
+            ExtensionPreprocessingJS.run = function (args) {
+                originalRun.call(this, {completionFunction: function (result) {
+                    result.originalPageUnchanged = String(document.documentElement.outerHTML === originalPage);
+                    args.completionFunction(result);
+                }});
+            };
+            """)
+        let html = try #require(result["html"])
+        #expect(result["contentFormat"] == "article")
+        #expect(result["title"] == "River survey")
+        #expect(result["originalPageUnchanged"] == "true")
+        var previous = html.startIndex
+        for section in ["Lead", "Background", "Nested findings", "Conclusion"] {
+            for index in 0..<3 {
+                let phrase = "\(section) paragraph \(index)"
+                let range = try #require(html.range(of: phrase))
+                #expect(range.lowerBound >= previous)
+                #expect(html.components(separatedBy: phrase).count == 2)
+                previous = range.upperBound
+            }
+        }
+        #expect(html.contains("survey.jpg"))
+        #expect(html.contains("The river survey site."))
+        #expect(html.contains("A retained observation."))
+        for excluded in ["INDEPENDENT HIDDEN SECRET", "MENU SECRET", "ARTICLE CONTENTS CONTROL", "UNRELATED WIKI NAVIGATION", "EDIT ARTICLE CONTROL"] {
+            #expect(!html.contains(excluded))
+        }
+    }
+
     @Test func shortGallerySurvivesWithoutSponsorOrFooter() async throws {
         let result = try await capture(resource("short-gallery"), url: "https://simonwillison.net/2026/Sep/12/sighting-399708714/")
         let html = try #require(result["html"])

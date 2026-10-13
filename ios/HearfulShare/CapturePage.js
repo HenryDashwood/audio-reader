@@ -2819,6 +2819,37 @@ var MagpieCapturePolicy = {
         var url = new URL(doc.URL);
         return this.profiles.find(function (profile) { return profile.matches(doc, url); }) || null;
     },
+    mediaWikiBody: function (doc) {
+        var generator = doc.querySelector('meta[name="generator"]');
+        if (!generator || !/^MediaWiki(?:\s|$)/i.test(generator.content)) return null;
+        var bodies = doc.querySelectorAll('#mw-content-text.mw-parser-output, #mw-content-text .mw-parser-output');
+        var headings = doc.querySelectorAll('h1');
+        if (bodies.length !== 1 || headings.length !== 1) return null;
+        var normalize = function (text) { return text.replace(/\s+/g, ' ').trim().toLowerCase(); };
+        var heading = normalize(headings[0].textContent);
+        var hints = [doc.title, (doc.querySelector('meta[property="og:title"]') || {}).content || ''];
+        return heading && hints.some(function (hint) { return normalize(hint).includes(heading); }) ? bodies[0] : null;
+    },
+    expandableArticleSections: function (doc) {
+        // MediaWiki's mobile section bodies are public disclosures. These
+        // relationships distinguish them from hidden templates and menus.
+        var body = this.mediaWikiBody(doc), sections = new Set();
+        if (!body) return sections;
+        body.querySelectorAll('.mw-heading').forEach(function (heading) {
+            var section = heading.nextElementSibling;
+            if (heading.querySelector('h2, h3, h4, h5, h6') && section
+                && section.classList.contains('mf-collapsible-content')) {
+                var control = heading.querySelector('.mf-collapsible-toggle[aria-controls]');
+                if (!control || control.getAttribute('aria-controls') === section.id) sections.add(section);
+            }
+        });
+        body.querySelectorAll('[id^="mf-section-"]').forEach(function (section) {
+            var heading = section.previousElementSibling;
+            if (/^mf-section-[1-9][0-9]*$/.test(section.id) && heading
+                && /^H[2-6]$/.test(heading.tagName) && heading.classList.contains('section-heading')) sections.add(section);
+        });
+        return sections;
+    },
     visible: function (node) {
         for (; node; node = node.parentElement) {
             var style = window.getComputedStyle(node);
@@ -2943,6 +2974,61 @@ var MagpieCapturePolicy = {
 // Capture policy shared in behavior with backend page_capture.py/images.py.
 // This runs on a clone; publisher scripts are never copied into saved articles.
 var MagpieCapture = {
+    normalizeLinkLabels: function (page) {
+        // Accessibility-only link annotations are not article prose. Retain
+        // screen-reader text when it supplies the link's only label.
+        page.querySelectorAll('a').forEach(function (link) {
+            var labels = Array.from(link.querySelectorAll('.visually-hidden, .sr-only, .screen-reader-text'));
+            var visible = link.cloneNode(true);
+            visible.querySelectorAll('.visually-hidden, .sr-only, .screen-reader-text').forEach(function (node) { node.remove(); });
+            if (visible.textContent.trim()) labels.forEach(function (node) { node.remove(); });
+        });
+    },
+    flattenedArticle: function (page, nodes, source) {
+        // Retry only inside a single, title-identified semantic article. Layout
+        // divs can make a scorer choose one section instead of the whole story.
+        if (nodes.length !== 1) return null;
+        var root = nodes[0], headings = root.querySelectorAll('h1');
+        if (headings.length !== 1) return null;
+        var words = headings[0].textContent.toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+        var hints = [source.title, (source.querySelector('meta[property="og:title"]') || {}).content || ''];
+        if (words.length < 3 || !hints.some(function (hint) {
+            var other = new Set(hint.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []);
+            return words.filter(function (word) { return other.has(word); }).length / words.length >= 0.75;
+        })) return null;
+        var retry = page.cloneNode(false);
+        retry.appendChild(page.documentElement.cloneNode(false));
+        retry.documentElement.appendChild(source.head.cloneNode(true));
+        retry.head.querySelectorAll('script, style').forEach(function (node) { node.remove(); });
+        var body = retry.createElement('body'), article = root.cloneNode(true);
+        article.querySelectorAll('aside, nav, form, footer, article, [role="complementary"]').forEach(function (node) { node.remove(); });
+        article.querySelectorAll('h2, h3, h4').forEach(function (heading) {
+            // A headed list of links is navigation. A section with its own
+            // unlinked prose remains part of the story, even under this label.
+            if (!/^(?:related (?:topics|(?:internet )?links|posts|articles|stories)|(?:more|recommended|popular|recent) (?:posts|articles|stories))(?:\s|$)/i.test(heading.textContent.trim())) return;
+            var box = heading.parentElement;
+            while (box && box !== article && !box.querySelector('a[href], p')) box = box.parentElement;
+            if (!box || box === article || box.querySelector('h1, h2, h3, h4') !== heading) return;
+            var prose = Array.from(box.querySelectorAll('p')).some(function (p) {
+                if (p.closest('a[href]')) return false;
+                var text = p.textContent.trim(), linked = Array.from(p.querySelectorAll('a')).reduce(function (n, a) { return n + a.textContent.length; }, 0);
+                return text && linked < text.length / 2;
+            });
+            if (!prose) box.remove();
+        });
+        article.querySelectorAll('[class], [id]').forEach(function (node) {
+            if (/(?:^|\s)(?:sidebar(?:[-_]\S+)?|td-(?:ss-)?main-sidebar)(?:\s|$)/i.test(
+                (node.getAttribute('class') || '') + ' ' + node.id)) node.remove();
+        });
+        article.querySelectorAll('div').forEach(function (node) {
+            if (node.hasAttribute('lang') || node.hasAttribute('dir')) return;
+            while (node.firstChild) node.parentNode.insertBefore(node.firstChild, node);
+            node.remove();
+        });
+        body.appendChild(article);
+        retry.documentElement.appendChild(body);
+        return retry;
+    },
     removeRecommendations: function (page, source) {
         var normalize = function (text) { return text.replace(/\s+/g, ' ').trim().toLowerCase(); };
         var hints = [source.title, (source.querySelector('meta[property="og:title"]') || {}).content || ''].map(normalize);
@@ -3023,9 +3109,19 @@ var MagpieCapture = {
             clone.removeAttribute(key);
         });
     },
-    publisherBody: function (page, address) {
+    publisherBody: function (page, address, source) {
         var layout = MagpieCapturePolicy.layout(address), body = page.createElement('article');
-        if (layout === 'split-prose') {
+        if (source && MagpieCapturePolicy.mediaWikiBody(source)) {
+            var wiki = page.querySelector('#mw-content-text.mw-parser-output, #mw-content-text .mw-parser-output');
+            if (!wiki || !wiki.isConnected || !Array.from(wiki.querySelectorAll('p')).some(function (p) {
+                return p.textContent.trim().length >= 40;
+            })) throw new Error('no-article');
+            var heading = page.createElement('h1');
+            heading.textContent = source.querySelector('h1').textContent.trim();
+            body.appendChild(heading);
+            body.appendChild(wiki.cloneNode(true));
+            body.querySelectorAll('button, .mw-editsection, .toc, .navbox, .vertical-navbox').forEach(function (node) { node.remove(); });
+        } else if (layout === 'split-prose') {
             var mains = page.querySelectorAll('main'), headings = page.querySelectorAll('main h1');
             if (mains.length !== 1 || headings.length !== 1) throw new Error('Uncertain publisher layout');
             var excluded = function (node) { return Boolean(node.closest('aside, nav, form, footer, article, .prose-sans')); };
@@ -3164,8 +3260,20 @@ var ExtensionPreprocessingJS = {
             var live = document.querySelectorAll('*');
             var clones = page.querySelectorAll('*');
             if (live.length > 50000) throw new Error('too-large');
+            var expandedSections = MagpieCapturePolicy.expandableArticleSections(document);
             live.forEach(function (node, index) {
                 if (node.tagName === 'IMG') MagpieCapture.normalizeImage(node, clones[index], document.baseURI);
+                if (expandedSections.has(node)) {
+                    // Expand the capture copy only. Preserve independently hidden
+                    // descendants and the user's original page/disclosure state.
+                    clones[index].removeAttribute('hidden');
+                    clones[index].removeAttribute('aria-hidden');
+                    clones[index].style.display = 'block';
+                    clones[index].style.visibility = 'visible';
+                    clones[index].style.contentVisibility = 'visible';
+                    clones[index].classList.add('open-block');
+                    return;
+                }
                 var style = window.getComputedStyle(node);
                 if (node.hidden || node.getAttribute('aria-hidden') === 'true'
                     || style.display === 'none' || style.visibility === 'hidden'
@@ -3176,6 +3284,7 @@ var ExtensionPreprocessingJS = {
                 }
             });
             page.querySelectorAll('script, style, form, input, textarea, select, nav, aside').forEach(function (node) { node.remove(); });
+            MagpieCapture.normalizeLinkLabels(page);
             var boundedScope = MagpieCapture.removeRecommendations(page, document);
 
             // Publishers may split one story's heading/body/bio into separate articles
@@ -3239,7 +3348,7 @@ var ExtensionPreprocessingJS = {
                 });
                 node.removeAttribute('srcset');
             });
-            var publisher = MagpieCapture.publisherBody(page, document.URL);
+            var publisher = MagpieCapture.publisherBody(page, document.URL, document);
             var evidence = MagpieCapture.paragraphs(candidates.length === 1 ? candidates[0] : (boundedScope ? [boundedScope] : []));
             var shortScopes = Array.from(page.querySelectorAll('article')).filter(function (node) {
                 return !node.parentElement.closest('article') && prose([node]) >= 40;
@@ -3257,12 +3366,18 @@ var ExtensionPreprocessingJS = {
             var selectedBody = publisher || (shortIdentified && prose(shortScopes) < 350
                 && shortScopes[0].querySelector('img') ? shortScopes[0].cloneNode(true) : null);
             if (selectedBody) selectedBody.querySelectorAll('footer').forEach(function (node) { node.remove(); });
+            // Readability mutates its input, so keep an independent retry document.
+            var retry = !selectedBody && candidates.length === 1 ? MagpieCapture.flattenedArticle(page, candidates[0], document) : null;
             var article = selectedBody ? { content: selectedBody.innerHTML, textContent: selectedBody.textContent,
                 length: selectedBody.textContent.trim().length, title: document.title }
                 : new Readability(page, { maxElemsToParse: 50000, charThreshold: 350, disableJSONLD: true }).parse();
-            if (!article || (!publisher && article.length < 350 && !shortIdentified)) throw new Error('no-article');
             var extracted = document.createElement('div');
-            extracted.innerHTML = article.content;
+            extracted.innerHTML = article ? article.content : '';
+            if (retry && (!article || article.length < 350 || MagpieCapture.missingProse(evidence, extracted))) {
+                article = new Readability(retry, { maxElemsToParse: 50000, charThreshold: 350, disableJSONLD: true }).parse();
+                extracted.innerHTML = article ? article.content : '';
+            }
+            if (!article || (!publisher && article.length < 350 && !shortIdentified)) throw new Error('no-article');
             if (!extracted.textContent.trim() || (!publisher && MagpieCapture.missingProse(evidence, extracted))) throw new Error('incomplete');
             if (!publisher && shortIdentified) {
                 var retained = extracted.textContent.replace(/\s+/g, ' ').trim();

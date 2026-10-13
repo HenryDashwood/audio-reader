@@ -40,6 +40,7 @@ All host/platform decisions for browser capture live in `capture_policy.js`:
 | Archive identity | Explicit matching short-link metadata and timestamped snapshot identity. |
 | Social title | Platform URL structure determines author attribution; it does not relax article identity. |
 | Optional layout adapters | Existing Canary split-prose and Simon Willison illustrated-note adapters remain bounded layout exceptions. They do not determine access or recovery options. |
+| MediaWiki article sections | Generator metadata, a single parser body and a matching primary heading identify the article. Current heading/body disclosures and older `mf-section` blocks are expanded in the capture copy; unrelated hidden elements and the original page state are preserved. |
 
 There are no article-specific capture branches or new publication-domain
 exceptions. Unknown sites use the general extractor. New exceptions need
@@ -51,6 +52,33 @@ injected inside a paragraph is not part of that paragraph's text evidence;
 nested paragraphs are checked separately. This preserves meaningful omissions
 while avoiding false failures when Readability removes widget controls.
 
+When browser extraction loses paragraphs from a single semantic article whose
+primary heading matches the page title, it retries inside that article with
+layout divs unwrapped. The server starts with this bounded selection and falls
+back to page scoring if it loses prose. Both paths still run their extractor
+and must pass the original paragraph-preservation check. Ambiguous articles,
+unmatched headings, access gates and genuinely truncated extraction do not gain
+a raw-HTML fallback.
+Language and direction attributes survive layout simplification.
+
+The retry excludes explicit sidebars, footers and separately headed lists of
+related links; a similarly named section with its own prose remains article
+content. Accessibility-only annotations inside already labelled links are
+removed consistently before extraction and comparison. Sole screen-reader link
+labels and accessible text outside links remain intact. The server also protects
+illustrated figures and their captions while selecting prose. These rules use
+document structure and common accessibility conventions, with no BBC-specific
+hostname, class or article branch.
+
+MediaWiki pages, including Wikipedia, use their identified parser body directly
+so section boundaries, references, lists, images and captions survive capture.
+The shared script recognises both the current `mf-collapsible-content` structure
+and older mobile section blocks. It removes collapse attributes only from
+verified section bodies in the copy, without clicking controls, changing website
+preferences or exposing independently hidden descendants. Article edit controls,
+contents controls and navigation boxes are omitted. The usual address, access,
+size and sanitisation checks remain in place.
+
 ## Repeatable checks
 
 - `make android-check`: full Android compile, JVM tests, and lint.
@@ -58,7 +86,7 @@ while avoiding false failures when Readability removes widget controls.
   share lifecycle, queue/account isolation, navigation recovery, late paywalls,
   explicit fallback, sign-in/capture, and large-text presentation.
 - `BrowserCaptureReliabilityTests` and `SafariCaptureTests`: native WebKit
-  extraction, including the shared 45-case corpus in
+  extraction, including the shared 65-case corpus in
   `ios/HearfulTests/BrowserCaptureFixtures/capture-policy-cases.json`.
 - `CaptureUploaderTests`: share-pane upload and prepared-text acknowledgement,
   failed/unfinished save retention, cancellation, retry, and account isolation.

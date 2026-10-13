@@ -8,7 +8,75 @@ from lxml import html as lxml_html
 
 
 def _classes(node) -> set[str]:
-    return set(node.get("class", "").split())
+    return set((node.get("class") or "").split())
+
+
+def normalise_link_labels(page) -> None:
+    """Drop accessibility annotations, preserving links labelled only for AT."""
+    label_classes = {"visually-hidden", "sr-only", "screen-reader-text"}
+    for link in page.iter("a"):
+        labels = [node for node in link.iterdescendants() if _classes(node) & label_classes]
+        visible = deepcopy(link)
+        for node in list(visible.iterdescendants()):
+            if _classes(node) & label_classes and node.getparent() is not None:
+                node.drop_tree()
+        if visible.text_content().strip():
+            for node in labels:
+                if node.getparent() is not None:
+                    node.drop_tree()
+
+
+def flattened_article(nodes, hints: list[str]) -> str | None:
+    """Bound a retry to one title-identified article, unwrapping layout divs."""
+    if len(nodes) != 1:
+        return None
+    headings = nodes[0].xpath(".//h1")
+    if len(headings) != 1:
+        return None
+    words = re.findall(r"\w+", headings[0].text_content().lower())
+    if len(words) < 3 or not any(
+        sum(word in set(re.findall(r"\w+", hint.lower())) for word in words) / len(words) >= 0.75 for hint in hints
+    ):
+        return None
+    article = deepcopy(nodes[0])
+    for node in list(article.iterdescendants()):
+        if not isinstance(node.tag, str):
+            continue
+        if (
+            node.tag in {"aside", "nav", "form", "footer", "article"}
+            or node.get("role") == "complementary"
+            or re.search(
+                r"(?:^|\s)(?:sidebar(?:[-_]\S+)?|td-(?:ss-)?main-sidebar)(?:\s|$)",
+                node.get("class", "") + " " + node.get("id", ""),
+                re.I,
+            )
+        ):
+            if node.getparent() is not None:
+                node.drop_tree()
+    for heading in article.xpath(".//h2 | .//h3 | .//h4"):
+        if not re.match(
+            r"^(?:related (?:topics|(?:internet )?links|posts|articles|stories)|"
+            r"(?:more|recommended|popular|recent) (?:posts|articles|stories))(?:\s|$)",
+            heading.text_content().strip(),
+            re.I,
+        ):
+            continue
+        box = heading.getparent()
+        while box is not None and box is not article and not box.xpath(".//a[@href] | .//p"):
+            box = box.getparent()
+        if box is None or box is article or box.xpath(".//h1 | .//h2 | .//h3 | .//h4")[0] is not heading:
+            continue
+        if not any(
+            p.text_content().strip()
+            and not any(a.get("href") for a in p.iterancestors("a"))
+            and sum(len(a.text_content()) for a in p.iter("a")) < len(p.text_content().strip()) / 2
+            for p in box.iter("p")
+        ):
+            box.drop_tree()
+    for node in list(article.iter("div")):
+        if not node.get("lang") and not node.get("dir"):
+            node.drop_tag()
+    return lxml_html.tostring(article, encoding="unicode")
 
 
 def _excluded(node) -> bool:

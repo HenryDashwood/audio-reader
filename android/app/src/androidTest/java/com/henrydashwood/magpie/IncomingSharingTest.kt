@@ -262,6 +262,76 @@ class IncomingSharingTest {
         assertEquals(stored.html, api.captures.single().html)
         assertTrue(runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.isEmpty())
     }
+    @Test fun splitSemanticArticleKeepsAllSectionsAndMediaWhenSaved() {
+        val url = "https://unfamiliar-publisher.example/split-story"
+        val opening = (0..4).map { "Opening paragraph $it. " + prose.take(140) }
+        val middle = (0..6).map { "Middle paragraph $it. " + prose.take(320) }
+        val closing = (0..3).map { "Closing paragraph $it. " + prose.take(160) }
+        fun block(paragraphs: List<String>) = "<div><div><div><div>" +
+            paragraphs.joinToString("") { "<p>$it</p>" } + "</div></div></div></div>"
+        pages[url] = "<html><head><title>A quiet walk</title><link rel='canonical' href='$url'></head>" +
+            "<body><article><h1>A quiet walk</h1><div>" + block(opening) +
+            "<figure><img src='https://images.example/garden.jpg' alt='Garden'><figcaption>A garden in autumn.</figcaption></figure>" +
+            block(middle) + "<h2>Remaining questions</h2>" + block(closing) +
+            "<p>Read <a href='https://reports.example/study'>the study<span class='sr-only'>, external</span></a> for details.</p>" +
+            "<section><h2>More stories on gardens</h2><a href='https://unfamiliar-publisher.example/other'>" +
+            "<img src='https://images.example/unrelated.jpg'><p>Unrelated recommendation.</p></a></section>" +
+            "<aside><p>Unrelated sidebar. $prose</p></aside><footer><p>Publication footer. $prose</p></footer>" +
+            "</div></article></body></html>"
+        launch(url)
+        compose.waitUntil(20_000) { !model.state.value.preparing }
+        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.waitUntil(10_000) { model.state.value.saved }
+        val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
+        val body = org.jsoup.Jsoup.parse(checkNotNull(stored.html)).body()
+        assertEquals("article", stored.contentFormat)
+        assertEquals(opening + middle + closing + "Read the study for details.", body.select("p").map { it.text() })
+        assertEquals("https://images.example/garden.jpg", body.select("img").single().attr("src"))
+        assertEquals("A garden in autumn.", body.select("figcaption").text())
+        assertTrue(body.text().contains("Remaining questions"))
+        assertFalse(body.text().contains("Unrelated sidebar"))
+        assertFalse(body.text().contains("Publication footer"))
+        assertFalse(body.text().contains("Unrelated recommendation"))
+        assertFalse(body.text().contains("external"))
+        runBlocking(Dispatchers.Main) {
+            api.offline = false
+            SavedPreparation(this, library, app.articleInbox).activate(library.state.value.owner, library.state.value.revision)
+        }
+        assertEquals(stored.html, api.captures.single().html)
+        assertTrue(runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.isEmpty())
+    }
+    @Test fun collapsedWikiSectionsAreSavedAndUploadedWithTheCompleteBody() {
+        val url = "https://public-wiki.example/wiki/Quiet_walk"
+        val lead = "Lead body. $prose"
+        val background = "Background body. $prose"
+        val ending = "Ending body. $prose"
+        pages[url] = "<html><head><title>A quiet walk - Example Wiki</title>" +
+            "<meta name='generator' content='MediaWiki 1.47'><link rel='canonical' href='$url'>" +
+            "<style>.mf-collapsible-content[hidden] {display:none}</style></head><body><main><h1>A quiet walk</h1>" +
+            "<div id='mw-content-text'><div class='mw-parser-output'><p>$lead</p>" +
+            "<section><div class='mw-heading'><h2>Background</h2><button class='mf-collapsible-toggle' " +
+            "aria-controls='section-body' aria-expanded='false'>Expand section</button></div>" +
+            "<div id='section-body' class='mf-collapsible-content' hidden='until-found'><p>$background</p>" +
+            "<figure><img src='https://images.example/garden.jpg' alt='Garden'><figcaption>A garden in autumn.</figcaption></figure>" +
+            "<p hidden>INDEPENDENT HIDDEN SECRET. $prose</p><p>$ending</p></div></section>" +
+            "</div></div></main></body></html>"
+        launch(url)
+        compose.waitUntil(20_000) { !model.state.value.preparing }
+        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.waitUntil(10_000) { model.state.value.saved }
+        val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
+        val body = org.jsoup.Jsoup.parse(checkNotNull(stored.html)).body()
+        assertEquals("article", stored.contentFormat)
+        assertEquals(listOf(lead.trim(), background.trim(), ending.trim()), body.select("p").map { it.text() })
+        assertEquals("A garden in autumn.", body.select("figcaption").text())
+        assertFalse(body.text().contains("INDEPENDENT HIDDEN SECRET"))
+        runBlocking(Dispatchers.Main) {
+            api.offline = false
+            SavedPreparation(this, library, app.articleInbox).activate(library.state.value.owner, library.state.value.revision)
+        }
+        assertEquals(stored.html, api.captures.single().html)
+        assertTrue(runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.isEmpty())
+    }
     @Test fun latePaywallCannotBeSavedFromAnEarlyReadableSnapshot() {
         val url = "https://unfamiliar-publisher.example/story"
         pages[url] = article(url).replace("</body>", "<script>setTimeout(function(){document.body.insertAdjacentHTML('beforeend', '<div role=\"dialog\"><h2>Subscribe to continue reading</h2><a href=\"/subscribe\">Subscribe</a></div>')}, 1200)</script></body>")
