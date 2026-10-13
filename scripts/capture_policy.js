@@ -31,6 +31,37 @@ var MagpieCapturePolicy = {
         var url = new URL(doc.URL);
         return this.profiles.find(function (profile) { return profile.matches(doc, url); }) || null;
     },
+    mediaWikiBody: function (doc) {
+        var generator = doc.querySelector('meta[name="generator"]');
+        if (!generator || !/^MediaWiki(?:\s|$)/i.test(generator.content)) return null;
+        var bodies = doc.querySelectorAll('#mw-content-text.mw-parser-output, #mw-content-text .mw-parser-output');
+        var headings = doc.querySelectorAll('h1');
+        if (bodies.length !== 1 || headings.length !== 1) return null;
+        var normalize = function (text) { return text.replace(/\s+/g, ' ').trim().toLowerCase(); };
+        var heading = normalize(headings[0].textContent);
+        var hints = [doc.title, (doc.querySelector('meta[property="og:title"]') || {}).content || ''];
+        return heading && hints.some(function (hint) { return normalize(hint).includes(heading); }) ? bodies[0] : null;
+    },
+    expandableArticleSections: function (doc) {
+        // MediaWiki's mobile section bodies are public disclosures. These
+        // relationships distinguish them from hidden templates and menus.
+        var body = this.mediaWikiBody(doc), sections = new Set();
+        if (!body) return sections;
+        body.querySelectorAll('.mw-heading').forEach(function (heading) {
+            var section = heading.nextElementSibling;
+            if (heading.querySelector('h2, h3, h4, h5, h6') && section
+                && section.classList.contains('mf-collapsible-content')) {
+                var control = heading.querySelector('.mf-collapsible-toggle[aria-controls]');
+                if (!control || control.getAttribute('aria-controls') === section.id) sections.add(section);
+            }
+        });
+        body.querySelectorAll('[id^="mf-section-"]').forEach(function (section) {
+            var heading = section.previousElementSibling;
+            if (/^mf-section-[1-9][0-9]*$/.test(section.id) && heading
+                && /^H[2-6]$/.test(heading.tagName) && heading.classList.contains('section-heading')) sections.add(section);
+        });
+        return sections;
+    },
     visible: function (node) {
         for (; node; node = node.parentElement) {
             var style = window.getComputedStyle(node);

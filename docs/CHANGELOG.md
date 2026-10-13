@@ -10,6 +10,18 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.6.4
+
+Saved articles now keep the complete story more reliably, including pages that
+split their text across several sections. This fixes BBC articles that could
+fail to save or lose their opening and ending. Images and captions are kept,
+while unrelated recommended stories are left out.
+
+Wikipedia pages now include collapsed sections automatically when you save.
+You no longer need to expand each section first, and the original page stays
+as you left it. Please check the beginning, ending and section headings of
+saved articles, including pages with images and lists.
+
 ## 1.6.3
 
 Saving from Safari now uploads and prepares the article in the share pane.

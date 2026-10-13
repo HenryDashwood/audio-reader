@@ -65,7 +65,7 @@ def normalise_frames(html: str) -> str:
 
 
 def extract_with_videos(source: str, *, favor_recall: bool = False) -> str:
-    """Protect players and chart figures in order while trafilatura selects prose.
+    """Protect players and illustrated figures while trafilatura selects prose.
 
     Only markers inside the selected article survive; sidebar videos are never
     appended to an unrelated extraction. Tokens are per extraction, not supplied
@@ -74,7 +74,7 @@ def extract_with_videos(source: str, *, favor_recall: bool = False) -> str:
     """
     page = lxml_html.document_fromstring(normalise_frames(source))
     videos: dict[str, str] = {}
-    for frame in page.xpath("//iframe | //svg[not(ancestor::svg)]"):
+    for frame in page.xpath("//iframe | //svg[not(ancestor::svg)] | //figure[.//img]"):
         if page not in frame.iterancestors():
             continue  # A containing figure was already protected.
         frame = next(frame.iterancestors("figure"), frame)

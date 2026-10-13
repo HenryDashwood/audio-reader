@@ -21,7 +21,9 @@ from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_p
 from audioreader.feeds.images import normalise_images
 from audioreader.models import ArticleContent, Episode, Feed, PlaybackPosition, SavedArticle, User, utcnow
 from audioreader.page_capture import (
+    flattened_article,
     missing_prose,
+    normalise_link_labels,
     publisher_body,
     short_illustrated_body,
     social_post_author,
@@ -223,6 +225,7 @@ def extract(
         return "", None
     metadata = trafilatura.extract_metadata(raw)
     normalise_images(page, url or "")
+    normalise_link_labels(page)
     # Also protect URL saves and queued captures from older clients. Only Safari
     # can resolve stylesheet visibility; here we can remove explicit hidden nodes.
     for node in list(page.iter()):
@@ -288,7 +291,14 @@ def extract(
             evidence = (
                 substantial_paragraphs(matches[0] if len(candidates) > 1 else candidates[0]) if candidates else []
             )
-            html = articles.extract_with_videos(lxml_html.tostring(page, encoding="unicode"))
+            bounded = flattened_article(
+                candidates[0] if len(candidates) == 1 else [],
+                page.xpath('//title/text() | //meta[@property="og:title"]/@content'),
+            )
+            source = lxml_html.tostring(page, encoding="unicode")
+            html = articles.extract_with_videos(bounded or source)
+            if bounded and (not html or missing_prose(evidence, html)):
+                html = articles.extract_with_videos(source)
             if missing_prose(evidence, html):
                 return "", None
             if (
