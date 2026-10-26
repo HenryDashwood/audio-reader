@@ -45,13 +45,9 @@ async def step(maker) -> bool:
             await session.commit()
             return True
         user = await session.get(User, doc.user_id)
-        if doc.status == "queued" and (
-            user is None
-            or not await service.enabled(session, user)
-            or user.pdf_consent_version != service.CONSENT_VERSION
-        ):
+        if doc.status == "queued" and (user is None or not await service.enabled(session, user)):
             doc.status = "failed"
-            doc.error = "PDF processing is disabled. Enable it in Import PDF before retrying."
+            doc.error = "PDF importing is not enabled for this account."
             saved = await session.get(SavedArticle, (doc.user_id, doc.episode_id))
             if saved:
                 saved.capture_error = doc.error

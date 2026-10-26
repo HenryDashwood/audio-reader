@@ -20,12 +20,7 @@ struct PDFImportView: View {
                 }
                 if let capability {
                     if capability.enabled {
-                        if capability.consented {
-                            Button("Choose PDF", systemImage: "doc.badge.plus") { choosing = true }.disabled(busy)
-                            Button("Stop allowing PDF processing", role: .destructive) { Task { await setConsent(false) } }.disabled(busy)
-                        } else {
-                            Button("Allow Datalab to process PDFs") { Task { await setConsent(true) } }.disabled(busy)
-                        }
+                        Button("Choose PDF", systemImage: "doc.badge.plus") { choosing = true }.disabled(busy)
                         if let account {
                             ForEach(PDFUploadInbox.shared.pending(for: account)) { item in
                                 VStack(alignment: .leading) {
@@ -63,13 +58,7 @@ struct PDFImportView: View {
     }
 
     private func load() async {
-        do { capability = try await request("capability") }
-        catch { self.error = error.localizedDescription }
-    }
-    private func setConsent(_ granted: Bool) async {
-        busy = true
-        defer { busy = false }
-        do { capability = try await request("consent", granted: granted); error = nil }
+        do { capability = try await request() }
         catch { self.error = error.localizedDescription }
     }
     private func upload(_ item: PDFUploadInbox.Pending) async {
@@ -83,23 +72,8 @@ struct PDFImportView: View {
             dismiss()
         } catch { self.error = error.localizedDescription }
     }
-    private func request(_ path: String, granted: Bool? = nil) async throws -> PDFCapability {
+    private func request() async throws -> PDFCapability {
         guard let session, CaptureSessionStore.read() == session else { throw CaptureUploader.Failure.changedAccount }
-        var request = URLRequest(url: session.account.server.appendingPathComponent("documents/\(path)"))
-        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-        if let granted {
-            request.httpMethod = "PUT"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["granted": granted])
-        }
-        let (data, response) = try await CaptureUploader.send(request)
-        guard CaptureSessionStore.read() == session else { throw CaptureUploader.Failure.changedAccount }
-        guard response.statusCode == 200 else { throw PDFUploadInbox.Failure.message("PDF importing is unavailable for this account or server.") }
-        return try JSONDecoder().decode(PDFCapability.self, from: data)
+        return try await PDFImportAccess().request(for: session.account)
     }
-}
-
-nonisolated struct PDFCapability: Decodable {
-    let enabled: Bool
-    let consented: Bool
 }

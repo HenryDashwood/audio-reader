@@ -24,6 +24,13 @@ nonisolated struct CaptureInbox {
         var contentFormat: String? = nil
         var replaceExisting: Bool? = nil
         let createdAt: Date
+
+        var displayTitle: String {
+            if let title = title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { return title }
+            let filename = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
+            if !filename.isEmpty { return filename }
+            return url.host ?? "Saved link"
+        }
     }
 
     enum InboxError: LocalizedError {

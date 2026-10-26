@@ -91,37 +91,23 @@ fun PDFImportDialog(initialUri: Uri? = null, onClose: () -> Unit) {
             if (client == null) Text("Open Magpie and sign in first.")
             else if (capability?.enabled == false) Text("PDF importing is not enabled for this account.")
             else if (capability?.enabled == true) {
-                if (capability?.consented != true) TextButton(onClick = {
+                TextButton(onClick = { picker.launch(arrayOf("application/pdf")) }, enabled = !busy) { Text("Choose PDF") }
+                if (selected != null) TextButton(onClick = {
                     scope.launch {
                         busy = true
-                        try { val result = client.consent(true); if (current()) capability = result }
-                        catch (failure: Exception) { if (current()) error = failure.message }
-                        finally { if (current()) busy = false }
+                        try {
+                            check(current()) { "Your account changed." }
+                            val item = inbox.add(checkNotNull(selected), checkNotNull(owner))
+                            check(current()) { "Your account changed." }
+                            selected = null
+                            queued = inbox.pending(owner)
+                            upload(item)
+                        } catch (failure: Exception) { if (current()) { error = failure.message; busy = false } }
                     }
-                }, enabled = !busy) { Text("Allow Datalab to process PDFs") }
-                else {
-                    TextButton(onClick = { picker.launch(arrayOf("application/pdf")) }, enabled = !busy) { Text("Choose PDF") }
-                    if (selected != null) TextButton(onClick = {
-                        scope.launch {
-                            busy = true
-                            try {
-                                check(current()) { "Your account changed." }
-                                val item = inbox.add(checkNotNull(selected), checkNotNull(owner))
-                                check(current()) { "Your account changed." }
-                                selected = null
-                                queued = inbox.pending(owner)
-                                upload(item)
-                            } catch (failure: Exception) { if (current()) { error = failure.message; busy = false } }
-                        }
-                    }, enabled = !busy) { Text("Save selected PDF") }
-                    TextButton(onClick = { scope.launch {
-                        try { val result = client.consent(false); if (current()) capability = result }
-                        catch (failure: Exception) { if (current()) error = failure.message }
-                    } }, enabled = !busy) { Text("Stop allowing PDF processing") }
-                }
+                }, enabled = !busy) { Text("Save selected PDF") }
                 queued.forEach { item ->
                     Text(item.filename)
-                    TextButton(onClick = { upload(item) }, enabled = !busy && capability?.consented == true) { Text("Retry upload") }
+                    TextButton(onClick = { upload(item) }, enabled = !busy) { Text("Retry upload") }
                     TextButton(onClick = { scope.launch { inbox.remove(item); if (current()) queued = inbox.pending(checkNotNull(owner)) } }, enabled = !busy) { Text("Remove local PDF") }
                 }
             }

@@ -41,9 +41,11 @@ async def resolve(body: URLImport, session: Session, user: CurrentUser):
 
 @router.get("/capability")
 async def capability(session: Session, user: CurrentUser):
+    enabled = await service.enabled(session, user)
     return {
-        "enabled": await service.enabled(session, user),
-        "consented": user.pdf_consent_version == service.CONSENT_VERSION,
+        "enabled": enabled,
+        # Retained for older beta clients: saving a PDF is the processing confirmation.
+        "consented": enabled,
         "max_bytes": settings.pdf_max_bytes,
         "max_pages": settings.pdf_max_pages,
     }
@@ -52,7 +54,7 @@ async def capability(session: Session, user: CurrentUser):
 @router.put("/consent")
 async def consent(body: Consent, session: Session, user: CurrentUser):
     if body.granted:
-        await service.require_access(session, user, consent=False)
+        await service.require_access(session, user)
     user.pdf_consent_version = service.CONSENT_VERSION if body.granted else None
     await session.commit()
     return await capability(session, user)

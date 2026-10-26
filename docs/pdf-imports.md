@@ -6,7 +6,7 @@ existing Magpie share flow. A server-accepted PDF appears in Saved while Datalab
 prepares it. Completed imports use the existing reader, offline cache, player
 and immutable article progress contracts.
 
-## Availability and consent
+## Availability and saving
 
 The server requires all of the following before accepting or submitting a PDF:
 
@@ -15,14 +15,13 @@ The server requires all of the following before accepting or submitting a PDF:
 - A linked Apple/Google identity has an email in
   `AUDIOREADER_PDF_IMPORT_EMAILS`. Its default is exactly
   `hcndashwood@gmail.com`; this is not matched against editable profile data.
-- The account has accepted the separate Datalab processing permission in
-  **Saved → Import PDF**.
 
 The allowlist is evaluated on the server on every import and again before a
 queued job is submitted. Development tokens do not bypass it. Existing readable
-PDFs remain accessible if importing is disabled. Withdrawing consent prevents
-new submissions, while already submitted work may complete. Account merges
-clear PDF consent and preserve both libraries.
+PDFs remain accessible if importing is disabled. Saving a PDF confirms processing;
+there is no separate consent step or requirement to open the app from the share
+pane. Both clients explain Datalab processing alongside PDF import controls.
+Account merges preserve both libraries.
 
 This configuration enables the beta only on servers carrying the key. A local
 `.env` does not configure staging or production. Deployments must use the
@@ -113,8 +112,10 @@ and spoken text. A saved revision is not silently reprocessed or replaced.
 
 ## API
 
-- `GET /documents/capability`: enabled/consented flags and effective limits.
-- `PUT /documents/consent`: `{ "granted": true | false }`.
+- `GET /documents/capability`: enabled flag and effective limits. The legacy
+  `consented` field mirrors `enabled` so older beta clients can import directly.
+- `PUT /documents/consent`: retained for wire compatibility with the first beta;
+  the stored preference no longer gates imports or worker submissions.
 - `POST /documents/resolve`: `{ "url": "…" }`; bounded PDF classification.
 - `POST /documents/from-url`: URL and optional title; returns 202 and an episode.
 - `POST /documents/file?filename=…`: raw PDF body; returns 202 and an episode.
@@ -158,7 +159,7 @@ to erase a disconnected device immediately.
 
 ## Verification and rollout
 
-`backend/tests/test_documents.py` covers the verified-identity gate, consent,
+`backend/tests/test_documents.py` covers the verified-identity gate, saving without separate consent,
 private access, deduplication, quota, browser detection, unsafe redirects, worker
 recovery, deletion races, provider credential isolation and HTML normalisation.
 Native tests cover queued acknowledgements, file inbox isolation and signed PDF

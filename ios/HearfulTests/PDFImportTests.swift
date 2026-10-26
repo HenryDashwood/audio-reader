@@ -3,6 +3,17 @@ import Testing
 @testable import Hearful
 
 struct PDFImportTests {
+    @Test(arguments: [nil, "", "  "] as [String?])
+    func pendingCapturesAlwaysHaveReadableTitles(title: String?) throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let inbox = CaptureInbox(directory: directory)
+        try inbox.configure(.init(userID: "alice", server: URL(string: "https://example.com")!))
+        let capture = try inbox.save(url: URL(string: "https://arxiv.org/pdf/1706.03762")!, title: title, contentFormat: "pdf")
+        #expect(capture.displayTitle == "1706.03762")
+        #expect(inbox.pending(for: capture.account).first?.displayTitle == "1706.03762")
+    }
+
     @Test func fileQueueSurvivesReopeningAndRemainsBoundToAccount() throws {
         let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
