@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import io
 import uuid
-from datetime import timedelta
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -122,22 +121,6 @@ def inspect_file(raw: bytes) -> int:
     return pages
 
 
-async def reserve(session: AsyncSession, user: User, pages: int) -> None:
-    now = utcnow()
-    for since, limit in (
-        (now - timedelta(days=1), settings.pdf_daily_pages),
-        (now.replace(day=1, hour=0, minute=0, second=0, microsecond=0), settings.pdf_monthly_pages),
-    ):
-        used = await session.scalar(
-            select(func.coalesce(func.sum(PDFUsage.pages), 0)).where(
-                PDFUsage.user_id == user.id, PDFUsage.created_at >= since
-            )
-        )
-        if (used or 0) + pages > limit:
-            raise HTTPException(429, "The PDF beta processing allowance has been reached. Try again later.")
-    session.add(PDFUsage(user_id=user.id, pages=pages))
-
-
 async def enqueue(
     session: AsyncSession, user: User, *, url: str | None = None, raw: bytes | None = None, title: str | None = None
 ) -> Episode:
@@ -150,7 +133,7 @@ async def enqueue(
         raise HTTPException(422, "Use a public HTTP or HTTPS PDF link without login details.") from None
     identity = hashlib.sha256((url.encode() if url else raw) or b"").hexdigest()
     identity = ("url:" if url else "file:") + identity
-    # Serialize quota reservations, deduplication and the private feed creation per owner.
+    # Serialize deduplication and the private feed creation per owner.
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
     existing = await session.scalar(
         select(PDFDocument).where(PDFDocument.user_id == user.id, PDFDocument.identity == identity)
@@ -189,7 +172,6 @@ async def enqueue(
     )
     if (stored or 0) + len(raw or b"") > settings.pdf_storage_bytes:
         raise HTTPException(413, "PDF storage is full. Delete an imported PDF before adding another.")
-    await reserve(session, user, pages or settings.pdf_max_pages)
     feed = await session.scalar(select(Feed).where(Feed.url == f"documents:{user.id}"))
     if feed is None:
         feed = Feed(url=f"documents:{user.id}", title="PDFs", source="document", owner_user_id=user.id)
@@ -245,7 +227,6 @@ async def retry(session: AsyncSession, user: User, document: PDFDocument) -> Epi
     if document.request_id:
         document.status = "processing"
     else:
-        await reserve(session, user, document.page_count or settings.pdf_max_pages)
         document.status = "queued"
     document.error = None
     # This timestamp bounds the current processing attempt, including explicit retries.

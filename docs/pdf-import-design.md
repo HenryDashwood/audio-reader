@@ -290,7 +290,7 @@ return not-found for other owners.
 | `PUT /documents/{id}/file` | Bounded raw PDF stream; validate and store it, then return 202 and queue conversion. A replay returns the existing state and cannot overwrite completed bytes. |
 | `GET /documents` | Recover pending and failed imports, with pagination. Ready items are also in Saved. |
 | `GET /documents/{id}` | State, safe error code, warnings and eventual episode/content IDs. |
-| `POST /documents/{id}/retry` | Idempotent explicit retry or higher-quality conversion, subject to quota. |
+| `POST /documents/{id}/retry` | Idempotent explicit retry or higher-quality conversion, without a cumulative processing quota. |
 | `GET /documents/{id}/original` | Authorised original download, with range support for source-page viewing. |
 | `GET /documents/{id}/assets/{asset_id}` | Authorised asset belonging to an owned revision. |
 | `DELETE /documents/{id}` | Immediately tombstone access and enqueue durable deletion of originals, revisions, assets and provider results. |
@@ -340,12 +340,10 @@ deleting a local job cancels processing already running at Datalab.
 
 ## Beta limits and cost
 
-Proposed starting limits are one PDF at a time, 25 MiB and 200 pages per PDF,
-one active conversion per account, 500 submitted pages per account per day,
-and a $10 monthly provider-processing budget for this beta. Reserve estimated
-cost transactionally before submission and settle against reported cost;
-retries consume the same budget. Keep storage quotas and result-size limits
-separate from page limits.
+The private beta has no daily or monthly processing allowance. Prior usage must
+not block new imports or retries. Datalab's own account limits still apply.
+Resource bounds remain one active conversion per account, 25 MiB and 200 pages
+per PDF, and separate storage and result-size limits.
 
 For uploads, validate actual file structure, size, encryption and page count
 before sending bytes to Datalab. Reject password-protected files initially. Use a maintained
@@ -403,7 +401,7 @@ failed pages, cleanup backlog and cost per successfully prepared page.
 Tests must cover two-account access and guessed IDs; duplicate concurrent
 uploads; interrupted upload recovery; app/account switches; worker restarts;
 lease expiry; ambiguous provider submission; deletion during conversion;
-account merging; quota races; provider rate limits; malformed/oversized output;
+account merging; historical usage not blocking saves; provider rate limits; malformed/oversized output;
 failed pages; unsafe HTML/assets; revision replacement; Unicode speech mapping;
 and offline reading/listening with assets. Browser coverage must include Safari
 and Chrome sharing, PDFs without file extensions, misleading extensions,
