@@ -39,16 +39,18 @@ jobs:
         id: xcode
         run: |
           set -euo pipefail
+          # Xcode 27.1 (27A9275) was released on 15 October 2026.
+          # Keep the simulator matrix pinned independently of the compiler.
           xcode=""
-          for candidate in /Applications/Xcode_27.0.app /Applications/Xcode.app; do
+          for candidate in /Applications/Xcode_27.1.app /Applications/Xcode.app; do
             if [[ -d "$candidate" ]] \
-              && [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$candidate/Contents/Info.plist")" == "27.0" ]]; then
+              && [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$candidate/Contents/Info.plist")" == "27.1" ]]; then
               xcode="$candidate"
               break
             fi
           done
           if [[ -z "$xcode" ]]; then
-            echo "::error::The runner must provide released Xcode 27.0"
+            echo "::error::The runner must provide released Xcode 27.1"
             exit 1
           fi
           export DEVELOPER_DIR="$xcode/Contents/Developer"

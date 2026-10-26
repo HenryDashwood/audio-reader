@@ -202,7 +202,7 @@ the `magpie-ios` label (in `~/actions-runner`, started as a login service), so
 they wait while that Mac is asleep or offline. GitHub's `xcode-27` image has no
 iOS 26 simulator, and a freshly created one starved its three CPUs on first
 boot. Because the runner executes workflow code, pull requests from forks need
-approval before any workflow runs. The jobs require released Xcode 27.0,
+approval before any workflow runs. The jobs require released Xcode 27.1,
 selected through `DEVELOPER_DIR` rather than `xcode-select`, and install released
 iOS 27.0 and 26.5 runtimes through `scripts/prepare-ios-simulators.sh`, which
 takes the versions to prepare as arguments and defaults to both. Setup reuses
