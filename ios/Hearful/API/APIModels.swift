@@ -206,6 +206,11 @@ nonisolated struct APIError: Error {
     /// signing in rather than "try again in a moment".
     let isAuthFailure: Bool
     var statusCode: Int? = nil
+    let isConnectionFailure: Bool
+    var isRetryableDownload: Bool {
+        isConnectionFailure || statusCode == 408 || statusCode == 429
+            || (statusCode.map { (500...599).contains($0) } ?? false)
+    }
 
     static let genericSpokenResponse =
         "Sorry, something went wrong. Please try again in a moment."
@@ -213,12 +218,13 @@ nonisolated struct APIError: Error {
     init(
         spokenResponse: String = APIError.genericSpokenResponse,
         underlying: String,
-        isAuthFailure: Bool = false, statusCode: Int? = nil
+        isAuthFailure: Bool = false, statusCode: Int? = nil, isConnectionFailure: Bool = false
     ) {
         self.spokenResponse = spokenResponse
         self.underlying = underlying
         self.isAuthFailure = isAuthFailure
         self.statusCode = statusCode
+        self.isConnectionFailure = isConnectionFailure
     }
 }
 

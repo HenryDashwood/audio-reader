@@ -1,9 +1,12 @@
 """GET /episodes/{id}/text: the reading path for written articles."""
 
+import pytest
 from sqlalchemy import select
 
 from audioreader.feeds import articles
-from audioreader.models import Episode, Feed
+from audioreader.models import ArticleContent, Episode, Feed, SavedArticle, User, utcnow
+from audioreader.ratelimit import SlidingWindow
+from audioreader.routers import feeds
 
 FEED_URL = "https://example.com/feed.xml"
 
@@ -347,3 +350,57 @@ class TestArticleHtml:
 
         assert body["text"] == "Words as they were first extracted."
         assert "<p>" in body["html"]
+
+
+@pytest.mark.parametrize("source", ["browser", "pdf"])
+async def test_saved_downloads_are_independent_of_publication_budget(
+    client, session, user, make_client, monkeypatch, source
+):
+    episode = Episode(guid=f"private-{source}", title="Saved document")
+    session.add(episode)
+    await session.flush()
+    content = ArticleContent(
+        episode_id=episode.id,
+        owner_user_id=user.id,
+        title=episode.title,
+        text="Already prepared words.",
+        html="<p>Already prepared words.</p>",
+        digest=f"digest-{source}",
+        source=source,
+    )
+    session.add(content)
+    await session.flush()
+    session.add(SavedArticle(user_id=user.id, episode_id=episode.id, content_id=content.id, saved_at=utcnow()))
+    await session.commit()
+    monkeypatch.setattr(feeds, "_feed_operation_limit", SlidingWindow(limit=1, window_seconds=60))
+
+    async def no_publication(*args):
+        return None
+
+    monkeypatch.setattr(feeds, "find_feed_by_name", no_publication)
+    path = f"/episodes/{episode.id}/text?content_id={content.id}"
+    for _ in range(25):
+        response = await client.get(path)
+        assert response.status_code == 200
+        assert response.json()["text"] == content.text
+    # Downloads neither consume the lookup allowance nor depend on it.
+    assert (await client.post("/search/publications", json={"query": "Example"})).status_code == 200
+    limited = await client.post("/search/publications", json={"query": "Example"})
+    assert limited.status_code == 429
+    assert int(limited.headers["Retry-After"]) > 0
+    assert (await client.get(path)).status_code == 200
+    # Removing the limiter does not remove private-content authorization.
+    other = User(display_name="Other listener")
+    session.add(other)
+    await session.commit()
+    async with make_client(other) as outsider:
+        assert (await outsider.get(path)).status_code == 404
+
+
+async def test_feed_text_downloads_do_not_use_publication_budget(client, respx_mock, article_xml, monkeypatch):
+    monkeypatch.setattr(articles, "FULL_TEXT_THRESHOLD", 10)
+    feed_id = (await subscribe(client, respx_mock, article_xml)).json()["id"]
+    episode = (await client.get(f"/feeds/{feed_id}/episodes")).json()[0]
+    monkeypatch.setattr(feeds, "_feed_operation_limit", SlidingWindow(limit=1, window_seconds=60))
+    for _ in range(25):
+        assert (await client.get(f"/episodes/{episode['id']}/text")).status_code == 200

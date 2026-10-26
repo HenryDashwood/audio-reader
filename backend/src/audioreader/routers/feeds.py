@@ -648,7 +648,8 @@ async def get_episode(episode_id: int, session: Session, user: CurrentUser) -> E
     return (await episodes_read(session, user, [episode]))[0]
 
 
-@episodes_router.get("/{episode_id}/text", dependencies=[Depends(check_feed_operation_limit)])
+# Reading and offline downloads must not consume the publication lookup budget.
+@episodes_router.get("/{episode_id}/text")
 async def get_episode_text(
     episode_id: int, session: Session, user: CurrentUser, content_id: int | None = None
 ) -> EpisodeTextRead:
