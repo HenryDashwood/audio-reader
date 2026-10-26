@@ -24,6 +24,8 @@ data class LibraryItem(
     val completed: Boolean = false,
     val dismissed: Boolean = false,
     val captureError: String? = null,
+    val documentId: String? = null,
+    val documentStatus: String? = null,
     val durationSeconds: Int? = null,
     val progressRevision: String? = null,
     val articleBookmark: RemoteArticleBookmark? = null,

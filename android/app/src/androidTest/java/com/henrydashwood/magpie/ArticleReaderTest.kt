@@ -93,6 +93,44 @@ class ArticleReaderTest {
         return offset
     }
 
+    @Test fun importedPDFEquationTypesetsAsMathWithoutExternalScripts() {
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val html = instrumentation.context.assets.open("pdf_math.html").bufferedReader().use { it.readText() }
+        val item = RichArticleSample.item.copy(title = "Attention equation", text = "Attention equation", html = html)
+        compose.runOnUiThread {
+            compose.activity.setContent {
+                MagpieTheme {
+                    val density = LocalDensity.current
+                    CompositionLocalProvider(LocalDensity provides Density(density.density, 1.4f)) {
+                        ArticleReader(item, "")
+                    }
+                }
+            }
+        }
+        val layout = inspect(browser(), """(() => {
+            const formula = document.querySelector('.formula');
+            formula.scrollLeft = 100;
+            const scrolls = formula.scrollLeft > 0;
+            const fraction = document.querySelector('mfrac');
+            const numerator = fraction.children[0].getBoundingClientRect();
+            const denominator = fraction.children[1].getBoundingClientRect();
+            const power = document.querySelector('msup');
+            const base = power.children[0].getBoundingClientRect();
+            const exponent = power.children[1].getBoundingClientRect();
+            return {
+                scrolls,
+                mathNamespace: fraction.namespaceURI,
+                stacked: numerator.bottom <= denominator.top,
+                raised: exponent.top < base.top,
+                root: !!document.querySelector('msqrt'),
+                contained: document.documentElement.scrollWidth <= document.documentElement.clientWidth
+            };
+        })()""")
+        assertEquals("http://www.w3.org/1998/Math/MathML", layout.getString("mathNamespace"))
+        listOf("stacked", "raised", "root", "contained", "scrolls").forEach { assertTrue(it, layout.getBoolean(it)) }
+        capture("pdf-attention-equation")
+    }
+
     @Test fun holdingAReaderLinkOffersSaveWithoutOpeningIt() {
         val url = "https://publisher.example/next?chapter=5#start"
         val saved = AtomicReference<String?>(null)

@@ -7,6 +7,7 @@ final class ShareViewController: UIViewController {
     private var confirmation: UIHostingController<ShareConfirmationView>?
     private var started = false
     private var pendingInput: Input?
+    private var queuedPDF: PDFUploadInbox.Pending?
     private var queuedCapture: CaptureInbox.Capture?
     private var uploadTask: Task<Void, Never>?
 
@@ -41,6 +42,7 @@ final class ShareViewController: UIViewController {
         let url: URL
         let title: String?
         let html: String?
+        var pdf: Data? = nil
         var preview: String? = nil
         var contentFormat: String? = nil
         var captureFailure: String? = nil
@@ -53,16 +55,17 @@ final class ShareViewController: UIViewController {
                     let dictionary = value as? NSDictionary,
                     let result = dictionary[NSExtensionJavaScriptPreprocessingResultsKey]
                         as? [String: Any],
-                    let rawURL = result["url"] as? String, let url = URL(string: rawURL)
+                    let rawURL = result["url"] as? String, let url = URL(string: rawURL),
+                    ["http", "https"].contains(url.scheme?.lowercased() ?? "")
                 {
                     continuation.resume(
                         returning: Input(
                             url: url, title: result["title"] as? String,
                             html: result["html"] as? String, preview: result["preview"] as? String,
                             contentFormat: result["contentFormat"] as? String, captureFailure: result["captureFailure"] as? String))
-                } else if let url = value as? URL {
+                } else if let url = value as? URL, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
                     continuation.resume(returning: Input(url: url, title: nil, html: nil))
-                } else if let value = value as? String, let url = URL(string: value) {
+                } else if let value = value as? String, let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
                     continuation.resume(returning: Input(url: url, title: nil, html: nil))
                 } else {
                     continuation.resume(returning: nil)
@@ -86,6 +89,21 @@ final class ShareViewController: UIViewController {
             }
             if input != nil { break }
         }
+        if input == nil {
+            for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) {
+                input = await withCheckedContinuation { continuation in
+                    provider.loadFileRepresentation(forTypeIdentifier: UTType.pdf.identifier) { url, _ in
+                        guard let url, let data = try? PDFUploadInbox.readFile(url) else {
+                            continuation.resume(returning: nil); return
+                        }
+                        continuation.resume(returning: Input(url: URL(fileURLWithPath: url.lastPathComponent),
+                            title: url.lastPathComponent, html: nil, pdf: data,
+                            preview: "PDF · Prepared privately with Datalab", contentFormat: "pdf"))
+                    }
+                }
+                if input != nil { break }
+            }
+        }
         do {
             guard let input else { throw CaptureInbox.InboxError.invalidURL }
             pendingInput = input
@@ -99,6 +117,24 @@ final class ShareViewController: UIViewController {
     private func saveCapture() {
         guard uploadTask == nil else { return }
         do {
+            if pendingInput?.pdf != nil || queuedPDF != nil {
+                if queuedPDF == nil, let input = pendingInput, let data = input.pdf {
+                    guard let account = CaptureInbox.shared.account else { throw CaptureUploader.Failure.signIn }
+                    queuedPDF = try PDFUploadInbox.shared.save(data, filename: input.title ?? "Document.pdf", account: account)
+                }
+                guard let pdf = queuedPDF else { throw CaptureInbox.InboxError.unavailable }
+                pendingInput = nil
+                show(.uploading)
+                uploadTask = Task { [weak self] in
+                    do {
+                        try await PDFUploadInbox.shared.upload(pdf)
+                        self?.queuedPDF = nil
+                        self?.show(.saved(title: pdf.filename, url: URL(fileURLWithPath: pdf.filename), preparing: true))
+                    } catch { self?.show(.queued(message: error.localizedDescription)) }
+                    self?.uploadTask = nil
+                }
+                return
+            }
             if queuedCapture == nil {
                 guard let input = pendingInput else { throw CaptureInbox.InboxError.invalidURL }
                 queuedCapture = try CaptureInbox.shared.save(
@@ -110,10 +146,10 @@ final class ShareViewController: UIViewController {
             show(.uploading)
             uploadTask = Task { [weak self] in
                 do {
-                    try await CaptureUploader().finish(capture, inbox: .shared)
+                    let preparing = try await CaptureUploader().finish(capture, inbox: .shared)
                     try Task.checkCancellation()
                     self?.queuedCapture = nil
-                    self?.show(.saved(title: capture.title, url: capture.url))
+                    self?.show(.saved(title: capture.title, url: capture.url, preparing: preparing))
                 } catch is CancellationError {
                     // Dismissal leaves the durable queue available to a later retry.
                 } catch {
@@ -159,7 +195,7 @@ private struct ShareConfirmationView: View {
         case uploading
         case queued(message: String)
         case ready(title: String?, url: URL, preview: String?, issue: String? = nil, hasText: Bool = true)
-        case saved(title: String?, url: URL)
+        case saved(title: String?, url: URL, preparing: Bool = false)
         case failed(message: String)
 
         var heading: String {
@@ -176,7 +212,7 @@ private struct ShareConfirmationView: View {
         var message: String {
             switch self {
             case .saving: "Getting this page ready to save."
-            case .uploading: "Uploading the article and checking that its text is ready. Keep this pane open until saving finishes."
+            case .uploading: "Saving to your account. Keep this pane open until saving finishes."
             case .queued(let message): message
             case .ready(_, _, _, let issue, let hasText):
                 if issue == "website-sign-in" {
@@ -188,8 +224,8 @@ private struct ShareConfirmationView: View {
                 } else {
                     "Magpie could not confidently capture this article. Return to Safari, check that the article has loaded and share again, or save only its link."
                 }
-            case .saved:
-                "Your article is saved and ready for reading and listening in Magpie."
+            case .saved(_, _, let preparing):
+                preparing ? "Your PDF is saved. Magpie is preparing it for reading and listening; you can close this pane." : "Your article is saved and ready for reading and listening in Magpie."
             case .failed(let message): message
             }
         }
@@ -242,7 +278,7 @@ private struct ShareConfirmationView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    if case .saved(let title, let url) = state {
+                    if case .saved(let title, let url, _) = state {
                         articlePreview(title: title, url: url)
                     }
 
@@ -255,7 +291,7 @@ private struct ShareConfirmationView: View {
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
                             Button(action: save) {
-                                Text(hasText ? "Save article" : "Save link only")
+                                Text(hasText ? "Save article" : "Save to Magpie")
                                     .font(.headline)
                                     .frame(maxWidth: .infinity, minHeight: 32)
                             }

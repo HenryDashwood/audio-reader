@@ -12,6 +12,7 @@ from audioreader import telemetry
 from audioreader.auth import service as auth_service
 from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
+from audioreader.documents.worker import run as run_documents
 from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_feeds
 from audioreader.imports.service import run as run_imports
 from audioreader.newsletters.companions import attach_missing_companions
@@ -93,7 +94,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.poll_interval_seconds > 0:
         poll_task = asyncio.create_task(_poll_forever(settings.poll_interval_seconds))
     import_task = asyncio.create_task(run_imports(SessionMaker))
+    document_task = asyncio.create_task(run_documents(SessionMaker))
     yield
+    document_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await document_task
     import_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await import_task
@@ -146,7 +151,9 @@ def create_app() -> FastAPI:
         """
         return FileResponse(STATIC_DIR / "delete-account.html", media_type="text/html")
 
-    from audioreader.routers import apple_browser
+    from audioreader.routers import apple_browser, documents
+
+    app.include_router(documents.router)
 
     app.include_router(apple_browser.router)
     app.include_router(subscription_imports.router)

@@ -49,7 +49,7 @@ class FileLibraryCache(private val directory: File) : LibraryCache {
         .put("audio", it.audioUrl).put("words", it.wordCount).put("loaded", it.textLoaded)
         .put("position", it.remotePositionMs).put("completed", it.completed).put("dismissed", it.dismissed)
         .put("published_at", it.publishedAt).put("image_url", it.imageUrl).put("author", it.author)
-        .put("capture_error", it.captureError).put("duration", it.durationSeconds).put("progress_revision", it.progressRevision)
+        .put("document_id", it.documentId).put("document_status", it.documentStatus).put("capture_error", it.captureError).put("duration", it.durationSeconds).put("progress_revision", it.progressRevision)
         .put("article_bookmark", it.articleBookmark?.let(::bookmark))
         .put("article_progress", it.articleProgress?.let { progress -> JSONObject()
             .put("text_version", progress.textVersion).put("content", progress.contentId).put("revision", progress.revision)
@@ -71,7 +71,7 @@ class FileLibraryCache(private val directory: File) : LibraryCache {
                 contentId = item.intOrNull("content_id"), sourceId = item.getString("source_id"), audioUrl = item.stringOrNull("audio"),
                 wordCount = item.intOrNull("words"), textLoaded = item.getBoolean("loaded"), remotePositionMs = item.getLong("position"),
                 completed = item.getBoolean("completed"), dismissed = item.getBoolean("dismissed"),
-                captureError = item.stringOrNull("capture_error"), durationSeconds = item.intOrNull("duration"),
+                captureError = item.stringOrNull("capture_error"), documentId = item.stringOrNull("document_id"), documentStatus = item.stringOrNull("document_status"), durationSeconds = item.intOrNull("duration"),
                 progressRevision = item.stringOrNull("progress_revision"), publishedAt = item.stringOrNull("published_at"), imageUrl = item.stringOrNull("image_url"), author = item.stringOrNull("author"),
                 articleBookmark = item.optJSONObject("article_bookmark")?.let(::decodeBookmark),
                 articleProgress = item.optJSONObject("article_progress")?.let { progress ->

@@ -3240,6 +3240,11 @@ var MagpieCapture = {
 var ExtensionPreprocessingJS = {
     run: function (arguments) {
         var fallback = { url: document.URL, title: MagpieCapture.socialTitle(document.URL, document.title, '', null), html: '', preview: '', status: 'uncertain', captureFailure: 'no-article' };
+        if (document.contentType === 'application/pdf' || /\.pdf$/i.test(new URL(document.URL).pathname)) {
+            arguments.completionFunction({url: document.URL, title: document.title, html: '',
+                contentFormat: 'pdf', preview: 'PDF · Prepared privately with Datalab', status: 'ready'});
+            return;
+        }
         try {
             function identity(value) { return MagpieCapturePolicy.identity(value, document); }
             var canonical = document.querySelector('link[rel="canonical"]');

@@ -148,3 +148,35 @@ struct CaptureUploaderTests {
     }
 
 }
+
+extension CaptureUploaderTests {
+    @Test func queuedPDFIsAcknowledgedWithoutWaitingForText() async throws {
+        let (inbox, capture) = try makeInbox()
+        defer { try? FileManager.default.removeItem(at: inbox.directory!) }
+        let transport = CaptureUploadTransport([(200, #"{"id":42,"document_id":"pdf-42","document_status":"queued","capture_error":"Preparing PDF…"}"#)])
+        let credentials = CaptureSessionStore.Session(account: account, token: "test-token")
+        let preparing = try await CaptureUploader(transport: { try await transport.send($0) }, session: { credentials }).finish(capture, inbox: inbox)
+        #expect(preparing)
+        #expect(inbox.pending(for: account).isEmpty)
+        #expect(await transport.requests.count == 1)
+    }
+}
+
+extension CaptureUploaderTests {
+    @Test(arguments: [
+        #"{"id":42,"document_id":"","document_status":"queued"}"#,
+        #"{"id":42,"document_id":"pdf-42"}"#,
+        #"{"id":42,"document_id":"pdf-42","document_status":"failed","capture_error":"PDF could not be read."}"#
+    ])
+    func invalidOrFailedPDFReceiptsKeepTheLocalShare(metadata: String) async throws {
+        let (inbox, capture) = try makeInbox()
+        defer { try? FileManager.default.removeItem(at: inbox.directory!) }
+        let transport = CaptureUploadTransport([(200, metadata)])
+        let credentials = CaptureSessionStore.Session(account: account, token: "test-token")
+        await #expect(throws: Error.self) {
+            try await CaptureUploader(transport: { try await transport.send($0) }, session: { credentials }).finish(capture, inbox: inbox)
+        }
+        #expect(inbox.pending(for: account).count == 1)
+        #expect(await transport.requests.count == 1)
+    }
+}

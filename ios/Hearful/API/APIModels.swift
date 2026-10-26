@@ -79,6 +79,9 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
     var contentID: Int? = nil
     var savedAt: Date? = nil
     var captureError: String? = nil
+    var documentID: String? = nil
+    var documentStatus: String? = nil
+    var preparingPDF: Bool { ["queued", "submitting", "processing"].contains(documentStatus ?? "") }
 
     enum CodingKeys: String, CodingKey {
         case id, title, description, author, link, completed, dismissed
@@ -96,6 +99,8 @@ nonisolated struct Episode: Codable, Equatable, Hashable, Identifiable, Sendable
         case contentID = "content_id"
         case savedAt = "saved_at"
         case captureError = "capture_error"
+        case documentID = "document_id"
+        case documentStatus = "document_status"
     }
 
     /// An item the app reads aloud rather than streams.

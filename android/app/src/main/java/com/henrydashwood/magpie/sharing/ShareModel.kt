@@ -52,12 +52,20 @@ class ShareModel(application: Application) : AndroidViewModel(application) {
         val version = generation
         work = viewModelScope.launch {
             try {
-                val article = withContext(Dispatchers.Default) { SharedArticles.fromIntent(intent) }
+                var article = withContext(Dispatchers.Default) { SharedArticles.fromIntent(intent) }
+                val token = app.accounts.accessToken.value
+                if (article.html == null && article.contentFormat != "pdf" && token != null) {
+                    try {
+                        val pdfClient = com.henrydashwood.magpie.data.PDFClient(com.henrydashwood.magpie.BuildConfig.ACCOUNT_API_URL, token)
+                        if (pdfClient.resolve(article.url)) article = article.copy(contentFormat = "pdf", preview = "PDF · Prepared privately with Datalab")
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { /* The ordinary webpage flow remains available. */ }
+                }
                 if (version != generation) return@launch
                 val https = captureWebUrl(article.url)
                 // Chrome and most Android browsers share only a link. Without page HTML from the
                 // sender, read the page here so one Save captures it as Safari's share does.
-                val prepare = !capture && https && article.html == null
+                val prepare = !capture && https && article.html == null && article.contentFormat != "pdf"
                 mutable.value = ShareState(article, browser = capture && https, preparing = prepare)
                 if (prepare) preparation = viewModelScope.launch {
                     delay(PREPARATION_MILLIS)

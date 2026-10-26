@@ -1,4 +1,5 @@
 import SwiftUI
+import QuickLook
 
 extension Notification.Name {
     nonisolated static let hearfulSavedChanged = Notification.Name("hearfulSavedChanged")
@@ -109,6 +110,11 @@ final class SavedLibrary: ObservableObject {
         }
         refreshAvailability()
         pending = inbox.pending(for: account)
+        for pdf in PDFUploadInbox.shared.pending(for: account) {
+            do { try await PDFUploadInbox.shared.upload(pdf) }
+            catch { self.error = error.localizedDescription; break }
+            guard currentAccount == account, self.generation == generation else { return }
+        }
         // Library display and preparation are independent of pending uploads.
         // A slow or bad capture must not hide everything already saved.
         do {
@@ -138,6 +144,10 @@ final class SavedLibrary: ObservableObject {
                 // persisted. A failed text download remains visible/retryable.
                 guard cache.save(episodes, for: .savedArticles) else {
                     throw CocoaError(.fileWriteUnknown)
+                }
+                if episode.documentID != nil {
+                    try inbox.remove(capture)
+                    continue
                 }
                 await download(episode)
                 guard currentAccount == account, self.generation == generation else { return }
@@ -351,6 +361,11 @@ struct SavedView: View {
     @State private var query = ""
     @State private var adding = false
     @State private var link = ""
+    @State private var deletingPDF: Episode?
+    @State private var originalPDF: URL?
+    @State private var pdfError: String?
+    @State private var importingPDF = false
+    @State private var pdfEnabled = false
     @State private var addError: String?
     @State private var replacing: Episode?
 
@@ -409,7 +424,7 @@ struct SavedView: View {
                         if let error = episode.captureError {
                             Text(error).font(.caption).foregroundStyle(.secondary)
                             HStack {
-                                Button("Retry") { Task { await model.retry(episode) } }
+                                if !episode.preparingPDF { Button("Retry") { Task { await model.retry(episode) } } }
                                 if let url = episode.link {
                                     Link("Open original", destination: url)
                                 }
@@ -420,7 +435,13 @@ struct SavedView: View {
                         Task { await model.file(filing, episode: episode) }
                     }
                     .contextMenu {
-                        if episode.audioURL == nil, episode.link != nil {
+                        if episode.documentID != nil {
+                            if episode.link == nil {
+                                Button("View original PDF") { Task { await pdfAction(episode, delete: false) } }
+                            }
+                            Button("Delete PDF", role: .destructive) { deletingPDF = episode }
+                        }
+                        if episode.audioURL == nil, episode.link != nil, episode.documentID == nil {
                             Button("Replace saved text", systemImage: "arrow.clockwise") {
                                 replacing = episode
                             }.disabled(model.loading || model.replacing)
@@ -470,11 +491,10 @@ struct SavedView: View {
             .refreshable { await model.load() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        adding = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }.accessibilityLabel("Add link")
+                    Menu {
+                        Button("Add link") { adding = true }
+                        if pdfEnabled { Button("Import PDF", systemImage: "doc.badge.plus") { importingPDF = true } }
+                    } label: { Image(systemName: "plus") }.accessibilityLabel("Add to Saved")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -485,6 +505,18 @@ struct SavedView: View {
                 }
             }
             .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
+            .quickLookPreview($originalPDF)
+            .onChange(of: originalPDF) { previous, current in
+                if let previous, previous != current { try? FileManager.default.removeItem(at: previous) }
+            }
+            .onDisappear { originalPDF = nil }
+            .alert("PDF could not be updated", isPresented: Binding(get: { pdfError != nil }, set: { if !$0 { pdfError = nil } })) {
+                Button("OK") { pdfError = nil }
+            } message: { Text(pdfError ?? "") }
+            .confirmationDialog("Delete this PDF and its prepared text?", isPresented: Binding(get: { deletingPDF != nil }, set: { if !$0 { deletingPDF = nil } }), presenting: deletingPDF) { episode in
+                Button("Delete PDF", role: .destructive) { Task { await pdfAction(episode, delete: true) } }
+            }
+            .sheet(isPresented: $importingPDF) { PDFImportView() }
             .sheet(isPresented: $adding) {
                 NavigationStack {
                     Form {
@@ -523,7 +555,21 @@ struct SavedView: View {
                 }.presentationDetents([.medium])
             }
         }
-        .task { await model.load() }
+        .task {
+            if let session = CaptureSessionStore.read() {
+                var request = URLRequest(url: session.account.server.appendingPathComponent("documents/capability"))
+                request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+                if let (data, response) = try? await CaptureUploader.send(request), response.statusCode == 200,
+                   CaptureSessionStore.read() == session {
+                    pdfEnabled = (try? JSONDecoder().decode(PDFCapability.self, from: data).enabled) == true
+                }
+            }
+            await model.load()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
+                if model.episodes.contains(where: \.preparingPDF) { await model.load() }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulPositionReported)) { note in
             guard let report = note.object as? PositionReport,
                 let index = model.episodes.firstIndex(where: {
@@ -541,6 +587,25 @@ struct SavedView: View {
             Task { await model.load() }
         }
     }
+    private func pdfAction(_ episode: Episode, delete: Bool) async {
+        guard let id = episode.documentID, let session = CaptureSessionStore.read() else { return }
+        do {
+            var request = URLRequest(url: session.account.server.appendingPathComponent("documents/\(id)" + (delete ? "" : "/original")))
+            request.httpMethod = delete ? "DELETE" : "GET"
+            request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await CaptureUploader.send(request)
+            guard CaptureSessionStore.read() == session else { return }
+            guard (200..<300).contains(response.statusCode) else { throw PDFUploadInbox.Failure.message("The PDF could not be opened or deleted. Please retry.") }
+            if delete { await model.load() }
+            else {
+                if let originalPDF { try? FileManager.default.removeItem(at: originalPDF) }
+                let url = URL.temporaryDirectory.appendingPathComponent("Magpie-\(UUID().uuidString).pdf")
+                try data.write(to: url, options: [.atomic, .completeFileProtection])
+                originalPDF = url
+            }
+        } catch { pdfError = error.localizedDescription }
+    }
+
 }
 
 struct SaveArticleButton: View {

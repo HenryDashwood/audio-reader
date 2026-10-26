@@ -154,6 +154,8 @@ class EpisodeRead(BaseModel):
     content_id: int | None = None
     saved_at: datetime | None = None
     capture_error: str | None = None
+    document_id: str | None = None
+    document_status: str | None = None
 
     @field_validator("description")
     @classmethod

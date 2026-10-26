@@ -20,6 +20,8 @@ dependencies = [
     "nh3>=0.3.6",
     "latex2mathml>=3.77",
     "lxml>=5.3",
+    "pypdf>=6.0",
+    "pillow>=11",
 ]
 
 [dependency-groups]

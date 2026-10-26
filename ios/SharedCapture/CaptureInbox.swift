@@ -114,6 +114,7 @@ nonisolated struct CaptureInbox {
 
     func signOut() {
         if let account {
+            for pdf in PDFUploadInbox(directory: directory).pending(for: account) { try? PDFUploadInbox(directory: directory).remove(pdf) }
             for capture in pending(for: account) { try? remove(capture) }
         }
         if let directory {
