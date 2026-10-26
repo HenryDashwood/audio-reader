@@ -356,7 +356,7 @@ class TestArticleHtml:
 async def test_saved_downloads_are_independent_of_publication_budget(
     client, session, user, make_client, monkeypatch, source
 ):
-    episode = Episode(guid=f"private-{source}", title="Saved document", owner_user_id=user.id)
+    episode = Episode(guid=f"private-{source}", title="Saved document")
     session.add(episode)
     await session.flush()
     content = ArticleContent(
