@@ -4,6 +4,12 @@ import Testing
 
 private actor SavedLibraryTransport: DataTransport {
     var rows: [Episode]
+    var textStatus = 200
+    var textOffline = false
+    var wrongTextVersion = false
+    func setText(status: Int = 200, offline: Bool = false, wrongVersion: Bool = false) {
+        textStatus = status; textOffline = offline; wrongTextVersion = wrongVersion
+    }
     var rejectDeletion = false
     var suspendReplacement = false
     var replacementSucceeds = false
@@ -39,8 +45,14 @@ private actor SavedLibraryTransport: DataTransport {
                 status = 422
                 data = Data(#"{"detail":"Could not replace the text. Your saved copy is unchanged."}"#.utf8)
             }
+        } else if path == "/saved" && request.httpMethod == "POST" {
+            data = try JSONEncoder().encode(rows[0])
         } else if path == "/episodes/42/text" {
-            data = Data(#"{"episode_id":42,"title":"Saved article","text":"The complete saved article."}"#.utf8)
+            if textOffline { throw URLError(.notConnectedToInternet) }
+            status = textStatus
+            data = status == 200
+                ? try JSONEncoder().encode(EpisodeText(episodeID: wrongTextVersion ? 99 : 42, title: "Saved article", text: "The complete saved article."))
+                : Data(#"{"detail":{"spoken_response":"Download unavailable."}}"#.utf8)
         } else {
             data = try JSONEncoder().encode(rows)
         }
@@ -216,5 +228,58 @@ struct SavedLibraryTests {
         #expect(model.error == nil)
         #expect(inbox.pending(for: capture.account).isEmpty)
         #expect(await transport.requests.isEmpty)
+    }
+}
+
+@MainActor
+extension SavedLibraryTests {
+    @Test(arguments: [0, 408, 429, 503])
+    func temporaryDownloadFailureKeepsTheSaveAndRetriesOnlyTheDownload(status: Int) async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var ready = episode
+        ready.hasText = true
+        ready.captureError = nil
+        let transport = SavedLibraryTransport(episode: ready)
+        let (model, inbox, cache) = try setup(directory, transport: transport)
+        try inbox.save(url: ready.link!)
+        await transport.setText(status: status, offline: status == 0)
+        await model.load()
+        #expect(model.error == nil)
+        #expect(model.pending.isEmpty)
+        #expect(inbox.pending(for: try #require(inbox.account)).isEmpty)
+        #expect(model.availability(ready) == .waiting)
+        #expect(model.needsRetry)
+        #expect(cache.load([Episode].self, for: .savedArticles)?.map(\.id) == [42])
+        #expect(cache.article(episodeID: 42) == nil)
+        #expect(await transport.requests.filter { $0 == "GET /episodes/42/text" }.count == 1)
+        await transport.setText()
+        await model.retryIfDue(reset: true)
+        #expect(model.error == nil)
+        #expect(model.availability(ready) == .available)
+        #expect(!model.needsRetry)
+        #expect(cache.article(episodeID: 42)?.text == "The complete saved article.")
+        #expect(await transport.requests.filter { $0 == "POST /saved" }.count == 1)
+    }
+
+    @Test(arguments: [403, 404, 422, 200])
+    func permanentDownloadErrorsRemainVisibleWithoutUndoingTheSave(status: Int) async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var ready = episode
+        ready.hasText = true
+        ready.captureError = nil
+        let transport = SavedLibraryTransport(episode: ready)
+        let (model, inbox, cache) = try setup(directory, transport: transport)
+        try inbox.save(url: ready.link!)
+        await transport.setText(status: status, wrongVersion: status == 200)
+        await model.load()
+        #expect(model.error == nil)
+        #expect(model.pending.isEmpty)
+        guard case .failed = model.availability(ready) else {
+            Issue.record("Permanent download error was hidden")
+            return
+        }
+        #expect(cache.article(episodeID: 42) == nil)
     }
 }

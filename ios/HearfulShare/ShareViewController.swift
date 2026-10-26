@@ -233,7 +233,7 @@ private struct ShareConfirmationView: View {
                     "Magpie could not confidently capture this article. Return to Safari, check that the article has loaded and share again, or save only its link."
                 }
             case .saved(_, _, let preparing):
-                preparing ? "Your PDF is saved. Magpie is preparing it for reading and listening; you can close this pane." : "Your article is saved and ready for reading and listening in Magpie."
+                preparing ? "Your PDF is saved. Magpie is preparing it for reading and listening; you can close this pane." : "Your item is saved to Magpie. It will download for offline reading in the app."
             case .failed(let message): message
             }
         }

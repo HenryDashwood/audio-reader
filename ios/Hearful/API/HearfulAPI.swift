@@ -807,7 +807,7 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
         } catch {
             throw APIError(
                 spokenResponse: "I cannot reach the internet right now. Please try again shortly.",
-                underlying: error.localizedDescription)
+                underlying: error.localizedDescription, isConnectionFailure: true)
         }
 
         guard let http = response as? HTTPURLResponse else {

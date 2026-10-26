@@ -1,7 +1,7 @@
 import Foundation
 
 /// An extension-safe client for the existing save contract. No app lifecycle or
-/// playback dependencies; a capture remains durable until prepared text is verified.
+/// playback dependencies; a capture remains durable until the server confirms its save.
 nonisolated struct CaptureUploader: Sendable {
     typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
     let transport: Transport
@@ -62,7 +62,6 @@ nonisolated struct CaptureUploader: Sendable {
             let content_format: String?
         }
         struct Article: Decodable { let id: Int; let content_id: Int?; let capture_error: String?; let document_id: String?; let document_status: String? }
-        struct Prepared: Decodable { let episode_id: Int; let content_id: Int?; let text: String }
         struct Problem: Decodable { let detail: String }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -88,19 +87,9 @@ nonisolated struct CaptureUploader: Sendable {
         }
         if let error = article.capture_error, !error.isEmpty { throw Failure.preparation(error) }
         guard article.id > 0, let contentID = article.content_id, contentID > 0 else { throw Failure.response }
-        // Build the query separately: appendingPathComponent escapes a question mark.
-        try checkSession()
-        var components = URLComponents(url: capture.account.server.appendingPathComponent("episodes/\(article.id)/text"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "content_id", value: String(contentID))]
-        var textRequest = URLRequest(url: components.url!)
-        textRequest.timeoutInterval = 30
-        textRequest.setValue("Bearer \(credentials.token)", forHTTPHeaderField: "Authorization")
-        let (textData, textResponse) = try await transport(textRequest)
-        try checkSession()
-        guard textResponse.statusCode == 200 else { throw Failure.response }
-        let text = try JSONDecoder().decode(Prepared.self, from: textData)
-        guard text.episode_id == article.id, text.content_id == contentID,
-              !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Failure.response }
+        // The save receipt confirms durable prepared content. Downloading it
+        // here would discard the bytes and could turn a successful save into
+        // a false failure. The app downloads its own offline copy separately.
         return false
     }
 

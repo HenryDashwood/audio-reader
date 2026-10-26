@@ -18,7 +18,7 @@ final class SavedLibrary: ObservableObject {
         case waiting, downloading, available, failed(String)
         var label: String {
             switch self {
-            case .waiting: "Waiting to download"
+            case .waiting: "Saved · Waiting to download. Magpie will retry automatically."
             case .downloading: "Downloading for offline reading…"
             case .available: "Available offline"
             case .failed(let message): "Download failed: " + message
@@ -148,15 +148,16 @@ final class SavedLibrary: ObservableObject {
                 guard cache.save(episodes, for: .savedArticles) else {
                     throw CocoaError(.fileWriteUnknown)
                 }
-                if episode.documentID != nil {
-                    try inbox.remove(capture)
-                    continue
+                if episode.documentID == nil {
+                    if let message = episode.captureError, !message.isEmpty {
+                        throw APIError(spokenResponse: message, underlying: "Article preparation failed")
+                    }
+                    guard episode.hasText == true || episode.contentID != nil else {
+                        throw APIError(spokenResponse: "The link is saved, but its text is not ready. Retry from Saved.", underlying: "Article not prepared")
+                    }
                 }
-                await download(episode)
-                guard currentAccount == account, self.generation == generation else { return }
-                guard availability(episode) == .available else {
-                    throw APIError(spokenResponse: "Your capture is saved on this device. Its prepared text will download when connected.", underlying: "Download pending")
-                }
+                // The server save and local metadata are durable. Downloading
+                // text is a separate retryable operation, not another save.
                 try inbox.remove(capture)
             } catch {
                 guard currentAccount == account, self.generation == generation else { return }
@@ -198,7 +199,12 @@ final class SavedLibrary: ObservableObject {
             downloads[DownloadKey(episode)] = .available
         } catch {
             guard currentAccount == account, self.generation == generation else { return }
-            downloads[DownloadKey(episode)] = .failed((error as? APIError)?.spokenResponse ?? "Try again when connected.")
+            if error is CancellationError || error is VoiceTimeout
+                || (error as? APIError)?.isRetryableDownload == true {
+                downloads[DownloadKey(episode)] = .waiting
+            } else {
+                downloads[DownloadKey(episode)] = .failed((error as? APIError)?.spokenResponse ?? "Could not store the offline copy.")
+            }
         }
     }
 
@@ -432,7 +438,7 @@ struct SavedView: View {
                         {
                             Text(model.availability(episode).label)
                                 .font(.caption).foregroundStyle(.secondary)
-                            if case .failed = model.availability(episode) {
+                            if model.availability(episode) != .downloading {
                                 Button("Retry download") { Task { await model.download(episode) } }
                                     .accessibilityLabel("Retry download: \(episode.title)")
                             }

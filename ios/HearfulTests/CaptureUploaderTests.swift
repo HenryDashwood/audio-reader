@@ -18,7 +18,6 @@ private actor CaptureUploadTransport {
 struct CaptureUploaderTests {
     private let account = CaptureInbox.Account(userID: "alice", server: URL(string: "https://api.example")!)
     private let article = #"{"id":42,"content_id":7,"capture_error":null}"#
-    private let prepared = #"{"episode_id":42,"content_id":7,"text":"The complete article, including its final paragraph."}"#
     private func makeInbox() throws -> (CaptureInbox, CaptureInbox.Capture) {
         let inbox = CaptureInbox(directory: URL.temporaryDirectory.appending(path: UUID().uuidString))
         try inbox.configure(account)
@@ -27,33 +26,32 @@ struct CaptureUploaderTests {
         return (inbox, capture)
     }
 
-    @Test func completesPreparationBeforeAcknowledgingAndPreservesCapturePayload() async throws {
+    @Test func acknowledgesDurableSaveWithoutAnExtraDownloadAndPreservesCapturePayload() async throws {
         let (inbox, capture) = try makeInbox()
         defer { try? FileManager.default.removeItem(at: inbox.directory!) }
-        let transport = CaptureUploadTransport([(200, article), (200, prepared)])
+        let transport = CaptureUploadTransport([(200, article)])
         let credentials = CaptureSessionStore.Session(account: account, token: "test-token")
         let uploader = CaptureUploader(transport: { try await transport.send($0) }, session: { credentials })
         try await uploader.finish(capture, inbox: inbox)
         #expect(inbox.pending(for: account).isEmpty)
         let requests = await transport.requests
-        #expect(requests.count == 2)
+        #expect(requests.count == 1)
         #expect(requests[0].url?.path == "/saved/replace")
         let body = try #require(JSONSerialization.jsonObject(with: requests[0].httpBody!) as? [String: Any])
         #expect(body["html"] as? String == capture.html)
         #expect(body["content_format"] as? String == "article")
         #expect(body["saved_at"] != nil)
-        #expect(requests[1].url?.query == "content_id=7")
         #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Bearer test-token" })
     }
 
     @Test func onlyExplicitMissingSaveAllowsCreateFallback() async throws {
         let (inbox, capture) = try makeInbox()
         defer { try? FileManager.default.removeItem(at: inbox.directory!) }
-        let transport = CaptureUploadTransport([(404, #"{"detail":"Save this article before replacing its text."}"#), (200, article), (200, prepared)])
+        let transport = CaptureUploadTransport([(404, #"{"detail":"Save this article before replacing its text."}"#), (200, article)])
         let credentials = CaptureSessionStore.Session(account: account, token: "test-token")
         try await CaptureUploader(transport: { try await transport.send($0) }, session: { credentials }).finish(capture, inbox: inbox)
         let requests = await transport.requests
-        #expect(requests.map { $0.url!.path } == ["/saved/replace", "/saved", "/episodes/42/text"])
+        #expect(requests.map { $0.url!.path } == ["/saved/replace", "/saved"])
         #expect(requests[0].httpBody == requests[1].httpBody)
     }
 
@@ -69,13 +67,13 @@ struct CaptureUploaderTests {
         #expect(await transport.requests.count == 1)
     }
 
-    @Test(arguments: [#"{"episode_id":42,"content_id":7,"text":""}"#,
-                      #"{"episode_id":42,"content_id":8,"text":"Wrong version"}"#,
-                      #"{"episode_id":99,"content_id":7,"text":"Wrong article"}"#])
-    func invalidPreparedTextCannotReportSuccess(text: String) async throws {
+    @Test(arguments: [#"{"id":0,"content_id":7}"#,
+                      #"{"id":42,"content_id":0}"#,
+                      #"{"id":42}"#])
+    func invalidSaveReceiptKeepsTheOriginalCapture(metadata: String) async throws {
         let (inbox, capture) = try makeInbox()
         defer { try? FileManager.default.removeItem(at: inbox.directory!) }
-        let transport = CaptureUploadTransport([(200, article), (200, text)])
+        let transport = CaptureUploadTransport([(200, metadata)])
         let credentials = CaptureSessionStore.Session(account: account, token: "test-token")
         await #expect(throws: Error.self) {
             try await CaptureUploader(transport: { try await transport.send($0) }, session: { credentials }).finish(capture, inbox: inbox)
@@ -83,18 +81,19 @@ struct CaptureUploaderTests {
         #expect(inbox.pending(for: account).count == 1)
     }
 
-    @Test func retryAfterLostResponseKeepsOneCaptureUntilSuccessfulPreparation() async throws {
+    @Test func lostSaveResponseKeepsCaptureUntilTheServerAcknowledgesIt() async throws {
         let (inbox, capture) = try makeInbox()
         defer { try? FileManager.default.removeItem(at: inbox.directory!) }
         let credentials = CaptureSessionStore.Session(account: account, token: "test-token")
-        let offline = CaptureUploadTransport([(200, article)])
+        let offline = CaptureUploadTransport([])
         await #expect(throws: Error.self) {
             try await CaptureUploader(transport: { try await offline.send($0) }, session: { credentials }).finish(capture, inbox: inbox)
         }
         #expect(inbox.pending(for: account).map(\.id) == [capture.id])
-        let online = CaptureUploadTransport([(200, article), (200, prepared)])
+        let online = CaptureUploadTransport([(200, article)])
         try await CaptureUploader(transport: { try await online.send($0) }, session: { credentials }).finish(capture, inbox: inbox)
         #expect(inbox.pending(for: account).isEmpty)
+        #expect(await online.requests.count == 1)
     }
 
     @Test func changedAccountCannotReceiveFallbackOrAcknowledgeCapture() async throws {
