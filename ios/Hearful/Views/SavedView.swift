@@ -10,6 +10,7 @@ final class SavedLibrary: ObservableObject {
     static let shared = SavedLibrary()
     @Published var episodes: [Episode] = []
     @Published var pending: [CaptureInbox.Capture] = []
+    @Published var pendingPDFs: [PDFUploadInbox.Pending] = []
     @Published var error: String?
     @Published var loading = false
     @Published private(set) var replacing = false
@@ -77,7 +78,7 @@ final class SavedLibrary: ObservableObject {
     }
 
     var needsRetry: Bool {
-        !pending.isEmpty || error != nil || episodes.contains { availability($0) != .available }
+        !pending.isEmpty || !pendingPDFs.isEmpty || error != nil || episodes.contains { availability($0) != .available }
     }
     private var generation = 0
     private var schedule = OfflineRetrySchedule()
@@ -110,11 +111,13 @@ final class SavedLibrary: ObservableObject {
         }
         refreshAvailability()
         pending = inbox.pending(for: account)
-        for pdf in PDFUploadInbox.shared.pending(for: account) {
+        pendingPDFs = PDFUploadInbox.shared.pending(for: account)
+        for pdf in pendingPDFs {
             do { try await PDFUploadInbox.shared.upload(pdf) }
             catch { self.error = error.localizedDescription; break }
             guard currentAccount == account, self.generation == generation else { return }
         }
+        pendingPDFs = PDFUploadInbox.shared.pending(for: account)
         // Library display and preparation are independent of pending uploads.
         // A slow or bad capture must not hide everything already saved.
         do {
@@ -348,11 +351,13 @@ final class SavedLibrary: ObservableObject {
         episodes = []
         downloads = [:]
         pending = []
+        pendingPDFs = []
         error = nil
     }
 }
 
 struct SavedView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @Binding var showingVoice: Bool
     @Binding var openEpisode: Episode?
     @ObservedObject private var model = SavedLibrary.shared
@@ -387,12 +392,23 @@ struct SavedView: View {
                     Text("Finished").tag(true)
                 }.pickerStyle(.segmented).listRowSeparator(.hidden)
                 if let error = model.error {
-                    Text(error).font(.footnote).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(error).font(.footnote).foregroundStyle(.secondary)
+                        Button("Retry saving") { Task { await refreshPDFAccess(); await model.load() } }
+                            .disabled(model.loading)
+                    }
                 }
                 if !finished {
+                    ForEach(model.pendingPDFs) { pdf in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(pdf.filename.isEmpty ? "PDF document" : pdf.filename)
+                            Text("PDF saved on this device · Waiting to upload").font(.caption).foregroundStyle(.secondary)
+                            Button("Retry upload") { Task { await model.load() } }.disabled(model.loading)
+                        }
+                    }
                     ForEach(model.pending) { capture in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(capture.title ?? capture.url.host ?? "Saved link")
+                            Text(capture.displayTitle)
                             Text("Saved on this device · Waiting to sync").font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -461,7 +477,7 @@ struct SavedView: View {
                         }
                     }
                 }
-                if visible.isEmpty && model.pending.isEmpty && !model.loading {
+                if visible.isEmpty && model.pending.isEmpty && model.pendingPDFs.isEmpty && !model.loading {
                     ContentUnavailableView(
                         "Nothing here yet", systemImage: "bookmark",
                         description: Text(
@@ -488,7 +504,7 @@ struct SavedView: View {
             .onReceive(NotificationCenter.default.publisher(for: .hearfulRetryOffline)) { note in
                 Task { await model.retryIfDue(reset: note.object as? Bool == true) }
             }
-            .refreshable { await model.load() }
+            .refreshable { await refreshPDFAccess(); await model.load() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -556,14 +572,7 @@ struct SavedView: View {
             }
         }
         .task {
-            if let session = CaptureSessionStore.read() {
-                var request = URLRequest(url: session.account.server.appendingPathComponent("documents/capability"))
-                request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-                if let (data, response) = try? await CaptureUploader.send(request), response.statusCode == 200,
-                   CaptureSessionStore.read() == session {
-                    pdfEnabled = (try? JSONDecoder().decode(PDFCapability.self, from: data).enabled) == true
-                }
-            }
+            await refreshPDFAccess()
             await model.load()
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
@@ -580,13 +589,25 @@ struct SavedView: View {
             model.episodes[index].completed = report.completed
             OfflineCache.shared.save(model.episodes, for: .savedArticles)
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await refreshPDFAccess(); await model.load() } }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSavedChanged)) { _ in
-            Task { await model.load() }
+            Task { await refreshPDFAccess(); await model.load() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)) { _ in
             Task { await model.load() }
         }
     }
+    private func refreshPDFAccess() async {
+        guard let account = CaptureInbox.shared.account else { pdfEnabled = false; return }
+        do {
+            let capability = try await PDFImportAccess().request(for: account)
+            guard CaptureInbox.shared.account == account else { return }
+            pdfEnabled = capability.enabled
+        } catch { pdfEnabled = false }
+    }
+
     private func pdfAction(_ episode: Episode, delete: Bool) async {
         guard let id = episode.documentID, let session = CaptureSessionStore.read() else { return }
         do {

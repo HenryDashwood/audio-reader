@@ -56,13 +56,9 @@ async def enabled(session: AsyncSession, user: User) -> bool:
     )
 
 
-async def require_access(session: AsyncSession, user: User, *, consent: bool = True) -> None:
+async def require_access(session: AsyncSession, user: User) -> None:
     if not await enabled(session, user):
         raise HTTPException(403, "PDF importing is not enabled for this account.")
-    if consent and user.pdf_consent_version != CONSENT_VERSION:
-        raise HTTPException(
-            409, "Open Saved → Import PDF in Magpie to allow Datalab to process PDFs, then retry this share."
-        )
 
 
 async def probe_pdf(url: str) -> bool:

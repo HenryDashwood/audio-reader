@@ -2,6 +2,10 @@
 
 Design and implementation record, 26 October 2026.
 
+Updated interaction decision: saving a PDF is sufficient confirmation for
+Datalab processing. No separate permission step is required; the current
+behaviour is documented in [PDF imports](pdf-imports.md).
+
 The private beta implementation is described in [PDF imports](pdf-imports.md).
 The sections below retain the broader design, including future document-block
 navigation and richer technical narration. The implemented beta uses existing
@@ -47,11 +51,11 @@ same item. Extracted text and reader assets download through the offline system;
 downloading the original PDF is an explicit additional action. A failed-page
 warning must remain visible when conversion returns incomplete content.
 
-The first import explains that Datalab receives the PDF or its source URL and
-processes the document. Record a versioned
-PDF-processing consent separately from the existing voice AI consent, whose
-scope must not silently expand. Declining leaves the pending input local. Existing ready
-documents remain readable if the import flag is later disabled.
+The PDF save preview explains that Datalab receives the PDF or its source URL
+and processes the document. Tapping Save confirms the import; no separate
+permission or visit to the app is required. Existing voice AI consent remains
+independent. Existing ready documents remain readable if the import flag is
+later disabled.
 
 Browser PDF sharing is part of the initial beta. Detect PDFs from browser MIME
 metadata when available and a bounded server content check otherwise. A `.pdf`
@@ -92,7 +96,7 @@ Retain old capture decoding and the existing ordinary-article behaviour.
 
 ## Processing flow
 
-1. The client checks server capabilities and processing consent. It persists
+1. The client checks server capabilities. It persists
    either the shared browser URL or a protected copy of the selected file.
 2. For a URL, the server validates the destination, classifies it as a PDF and
    commits an account-owned queued job using the client's request UUID. It can
@@ -281,8 +285,8 @@ return not-found for other owners.
 | Route | Behaviour |
 | --- | --- |
 | `POST /captures/resolve` | Classify an ambiguous shared URL as PDF or webpage using a bounded, safe probe; return routing metadata without starting conversion. Known webpage captures can keep their current path. |
-| `POST /documents/from-url` | Accept a request UUID, source URL, optional title and processing-consent version; revalidate server-side and return 202 with a durable document job. |
-| `POST /documents` | Accept a request UUID, filename, declared size and processing-consent version; return a durable upload receipt. Replays return the same receipt. |
+| `POST /documents/from-url` | Accept a request UUID, source URL, optional title; revalidate server-side and return 202 with a durable document job. |
+| `POST /documents` | Accept a request UUID, filename, declared size; return a durable upload receipt. Replays return the same receipt. |
 | `PUT /documents/{id}/file` | Bounded raw PDF stream; validate and store it, then return 202 and queue conversion. A replay returns the existing state and cannot overwrite completed bytes. |
 | `GET /documents` | Recover pending and failed imports, with pagination. Ready items are also in Saved. |
 | `GET /documents/{id}` | State, safe error code, warnings and eventual episode/content IDs. |
@@ -379,7 +383,7 @@ failed pages, cleanup backlog and cost per successfully prepared page.
    Exercise direct PDF URLs, extensionless downloads, redirects, expired signed
    links, provider page caps and inaccessible browser-authenticated resources.
    Record redacted provider fixtures for offline contract tests.
-2. **Backend path.** Add models/migrations, ownership checks, flag, consent,
+2. **Backend path.** Add models/migrations, ownership checks, flag,
    storage, API routes, provider adapter, durable worker and normaliser. Suggested
    modules are `documents/service.py`, `documents/worker.py`,
    `documents/datalab.py`, `documents/normalise.py`, `documents/storage.py` and

@@ -116,7 +116,7 @@
 <p>
   Before Magpie sends a voice command or AI web search to an AI provider, the app explains what will
   be shared and asks you to choose <strong>Allow AI Data Sharing</strong>. If
-  you choose <strong>Not Now</strong>, those features send nothing to an AI provider. PDF processing has its own separate permission, described below.
+  you choose <strong>Not Now</strong>, those features send nothing to an AI provider. PDFs you choose to save are processed by Datalab as described below.
   Ordinary on-screen library and podcast-directory search does not use an AI
   provider. The separate <strong>Search the web</strong> fallback does, so it
   is unavailable until you allow sharing. You can allow it later, or turn it
@@ -348,8 +348,7 @@
 
 <h2>PDF imports</h2>
 <p>
-  PDF importing is initially an account-limited beta. Before importing, you must
-  allow Datalab processing in <strong>Saved → Import PDF</strong>. Magpie sends
+  PDF importing is initially an account-limited beta. When you choose to save a PDF, Magpie sends
   the selected PDF, or the PDF link you share from your browser, to Datalab to
   extract text, tables and images. A link can contain access tokens; these are
   included when needed to retrieve the document. Browser passwords and cookies
@@ -363,8 +362,8 @@
   file uploads stay on the device until acknowledged or removed.
 </p>
 <p>
-  You can stop future PDF submissions in <strong>Import PDF</strong>. Work already
-  submitted may finish. <strong>Delete PDF</strong> removes the stored document
+  PDFs are submitted when you save them, including retrying pending saves. Work
+  already submitted may finish. <strong>Delete PDF</strong> removes the stored document
   and its prepared content; removing an item from Saved alone keeps its content
   for progress restoration. Account deletion removes your PDF records. Magpie
   requests deletion of Datalab results after successful preparation or document

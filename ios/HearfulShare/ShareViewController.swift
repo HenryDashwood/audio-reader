@@ -107,8 +107,12 @@ final class ShareViewController: UIViewController {
         do {
             guard let input else { throw CaptureInbox.InboxError.invalidURL }
             pendingInput = input
-            show(.ready(title: input.title, url: input.url, preview: input.preview,
-                issue: input.captureFailure, hasText: input.html?.isEmpty == false))
+            if input.contentFormat == "pdf" || input.pdf != nil || input.url.pathExtension.lowercased() == "pdf" {
+                show(.pdfReady(title: input.title, url: input.url))
+            } else {
+                show(.ready(title: input.title, url: input.url, preview: input.preview,
+                    issue: input.captureFailure, hasText: input.html?.isEmpty == false))
+            }
         } catch {
             show(.failed(message: error.localizedDescription))
         }
@@ -195,6 +199,7 @@ private struct ShareConfirmationView: View {
         case uploading
         case queued(message: String)
         case ready(title: String?, url: URL, preview: String?, issue: String? = nil, hasText: Bool = true)
+        case pdfReady(title: String?, url: URL)
         case saved(title: String?, url: URL, preparing: Bool = false)
         case failed(message: String)
 
@@ -204,6 +209,7 @@ private struct ShareConfirmationView: View {
             case .uploading: "Saving to Magpie…"
             case .queued: "Save not finished"
             case .ready: "Save to Magpie"
+            case .pdfReady: "Save PDF to Magpie"
             case .saved: "Saved to Magpie"
             case .failed: "Couldn't save article"
             }
@@ -214,6 +220,8 @@ private struct ShareConfirmationView: View {
             case .saving: "Getting this page ready to save."
             case .uploading: "Saving to your account. Keep this pane open until saving finishes."
             case .queued(let message): message
+            case .pdfReady:
+                "Datalab receives this PDF or its link to prepare it for reading and listening. Your saved PDF stays private to your Magpie account."
             case .ready(_, _, _, let issue, let hasText):
                 if issue == "website-sign-in" {
                     "This page requires a website sign-in or subscription. Return to Safari, sign in and share the unlocked article again. You can also save only its link."
@@ -251,6 +259,7 @@ private struct ShareConfirmationView: View {
 
         var isReady: Bool {
             if case .ready = self { return true }
+            if case .pdfReady = self { return true }
             return false
         }
     }
@@ -304,6 +313,17 @@ private struct ShareConfirmationView: View {
                                 .buttonStyle(.plain)
                                 .foregroundStyle(.secondary)
                         }
+                    }
+
+                    if case .pdfReady(let title, let url) = state {
+                        articlePreview(title: title, url: url)
+                        Button("Save PDF", action: save)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                        Button("Cancel", action: done)
+                            .frame(minHeight: 44)
                     }
 
                     if !state.isReady {

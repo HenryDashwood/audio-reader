@@ -21,7 +21,6 @@ async def beta(session, user, monkeypatch):
     session.add(
         UserIdentity(user_id=user.id, provider="google", provider_subject="pdf-beta", email="hcndashwood@gmail.com")
     )
-    user.pdf_consent_version = service.CONSENT_VERSION
     await session.commit()
     return user
 
@@ -34,7 +33,9 @@ def pdf():
     return stream.getvalue()
 
 
-async def test_gate_uses_verified_identity_not_profile(client, session, user):
+async def test_gate_uses_verified_identity_not_profile(client, session, user, monkeypatch):
+    monkeypatch.setattr(settings, "datalab_api_key", "test-only")
+    monkeypatch.setattr(settings, "pdf_import_enabled", True)
     user.email = "hcndashwood@gmail.com"
     await session.commit()
     response = await client.post("/documents/file", content=pdf())
@@ -42,11 +43,10 @@ async def test_gate_uses_verified_identity_not_profile(client, session, user):
     assert not (await client.get("/documents/capability")).json()["enabled"]
 
 
-async def test_consent_required(client, beta, session):
+async def test_save_is_sufficient_without_separate_consent(client, beta, session):
     beta.pdf_consent_version = None
     await session.commit()
-    assert (await client.post("/documents/file", content=pdf())).status_code == 409
-    assert (await client.put("/documents/consent", json={"granted": True})).json()["consented"]
+    assert (await client.get("/documents/capability")).json()["consented"]
     response = await client.post("/documents/file?filename=Study.pdf", content=pdf())
     assert response.status_code == 202
     assert response.json()["document_status"] == "queued"
@@ -115,6 +115,7 @@ async def test_redirect_to_private_network_rejected(client, beta, monkeypatch):
 
 
 async def test_worker_publishes_immutable_private_content(client, beta, session, monkeypatch):
+    assert beta.pdf_consent_version is None
     row = (await client.post("/documents/file", content=pdf())).json()
     maker = async_sessionmaker(session.bind, expire_on_commit=False)
     submit = AsyncMock(return_value="test-request")
