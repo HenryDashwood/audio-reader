@@ -56,7 +56,7 @@ async def test_file_deduplication_and_private_access(client, beta, session, make
     first = (await client.post("/documents/file", content=pdf())).json()
     second = (await client.post("/documents/file", content=pdf())).json()
     assert first["id"] == second["id"]
-    assert len(list(await session.scalars(select(PDFUsage)))) == 1
+    assert list(await session.scalars(select(PDFUsage))) == []
     other = User(display_name="Other")
     session.add(other)
     await session.commit()
@@ -175,12 +175,26 @@ async def test_delete_removes_original_and_access(client, beta, session):
     assert (await client.get(f"/episodes/{row['id']}")).status_code == 404
     assert list(await session.scalars(select(PDFDocument))) == []
     assert list(await session.scalars(select(SavedArticle))) == []
-    assert len(list(await session.scalars(select(PDFUsage)))) == 1  # Cannot bypass quotas by deleting.
+    assert list(await session.scalars(select(PDFUsage))) == []
 
 
-async def test_quota_checked_before_submission(client, beta, monkeypatch):
-    monkeypatch.setattr(settings, "pdf_daily_pages", 0)
-    assert (await client.post("/documents/file", content=pdf())).status_code == 429
+@respx.mock
+@pytest.mark.parametrize("source", ["file", "url"])
+async def test_historical_usage_never_blocks_imports_or_retries(client, beta, session, source):
+    session.add(PDFUsage(user_id=beta.id, pages=10000))
+    await session.commit()
+    if source == "url":
+        respx.get("https://papers.example/new.pdf").mock(return_value=httpx.Response(200, content=pdf()))
+        response = await client.post("/documents/from-url", json={"url": "https://papers.example/new.pdf"})
+    else:
+        response = await client.post("/documents/file", content=pdf())
+    assert response.status_code == 202
+    document = await session.get(PDFDocument, response.json()["document_id"])
+    document.status = "failed"
+    await session.commit()
+    await service.retry(session, beta, document)
+    assert document.status == "queued"
+    assert list(await session.scalars(select(PDFUsage.pages))) == [10000]
 
 
 def test_normalisation_keeps_structure_and_warns_on_missing_pages():
@@ -278,6 +292,7 @@ async def test_account_deletion_erases_pdf_and_preserves_provider_cleanup(client
 
     row = (await client.post("/documents/file", content=pdf())).json()
     document = await session.get(PDFDocument, row["document_id"])
+    session.add(PDFUsage(user_id=beta.id, pages=200))
     document.request_id = "delete-account-result"
     await session.commit()
     await delete_user(session, beta)
@@ -292,6 +307,7 @@ async def test_account_merge_moves_private_pdf_and_requires_new_consent(client, 
     from audioreader.models import Feed
 
     row = (await client.post("/documents/file", content=pdf())).json()
+    session.add(PDFUsage(user_id=beta.id, pages=200))
     target = User(display_name="Combined", pdf_consent_version=service.CONSENT_VERSION)
     session.add(target)
     await session.flush()
@@ -314,4 +330,4 @@ async def test_explicit_retry_restarts_the_processing_timeout(client, beta, sess
     await service.retry(session, beta, document)
     assert document.status == "processing"
     assert document.created_at > utcnow() - timedelta(minutes=1)
-    assert len(list(await session.scalars(select(PDFUsage)))) == 1
+    assert list(await session.scalars(select(PDFUsage))) == []

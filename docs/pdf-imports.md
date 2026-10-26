@@ -136,14 +136,12 @@ separate unless their identity can be proven.
 
 ## Limits and deletion
 
-Defaults: 25 MiB per uploaded PDF, 200 pages, one active conversion, 500 reserved
-pages per rolling day, 2,000 reserved pages per calendar month, and 100 MiB stored
-original/result/reader content per account. URL submissions reserve 200 pages
-because the full source is not downloaded for preflight. Reservations survive
-retry and document deletion, so they cannot be bypassed. Balanced base-rate
-conversion is $4 per 1,000 pages at the time of implementation; the 2,000-page
-cap is approximately $8 before regional surcharges. This is a page allowance,
-not an invoice-level spending guarantee.
+There is no daily or monthly processing allowance for this private beta. Saving
+or retrying a PDF is not blocked by prior usage, including reservations left
+by the first beta implementation. Datalab's own account limits still apply.
+
+Resource limits remain 25 MiB and 200 pages per PDF, one active conversion, and
+100 MiB stored original/result/reader content per account.
 
 Upload validation rejects malformed/encrypted PDFs and out-of-range page counts.
 URL probes reject declared oversized responses, and Datalab receives `max_pages`.
@@ -160,7 +158,7 @@ to erase a disconnected device immediately.
 ## Verification and rollout
 
 `backend/tests/test_documents.py` covers the verified-identity gate, saving without separate consent,
-private access, deduplication, quota, browser detection, unsafe redirects, worker
+private access, deduplication, unrestricted cumulative processing, browser detection, unsafe redirects, worker
 recovery, deletion races, provider credential isolation and HTML normalisation.
 Native tests cover queued acknowledgements, file inbox isolation and signed PDF
 link routing. A live smoke test submitted the public W3C dummy PDF URL to Datalab,
