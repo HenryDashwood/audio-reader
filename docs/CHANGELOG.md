@@ -10,6 +10,11 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.6.5
+
+Improvements to saving and syncing items, with clearer titles and retry controls.
+Please check saving from your browser and reopening items in Saved.
+
 ## 1.6.4
 
 Saved articles now keep the complete story more reliably, including pages that
