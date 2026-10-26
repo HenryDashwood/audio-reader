@@ -22,7 +22,7 @@ data class RemoteEpisode(val id: Int, val title: String, val description: String
     val durationSeconds: Int? = null, val wordCount: Int? = null, val positionSeconds: Double = 0.0,
     val completed: Boolean = false, val dismissed: Boolean = false, val contentId: Int? = null,
     val captureError: String? = null, val progressRevision: String? = null, val articleBookmark: RemoteArticleBookmark? = null,
-    val publishedAt: String? = null, val imageUrl: String? = null, val author: String? = null)
+    val publishedAt: String? = null, val imageUrl: String? = null, val author: String? = null, val documentId: String? = null, val documentStatus: String? = null)
 data class RemoteText(val episodeId: Int, val contentId: Int?, val text: String, val html: String?, val wordCount: Int?,
     val articleProgress: ArticleProgressState? = null)
 
@@ -233,7 +233,7 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
                 val json = runCatching { JSONObject(result) }.getOrNull()
                 val message = runCatching { json?.optJSONObject("detail")?.optionalString("spoken_response") }.getOrNull()
                 val detail = json?.opt("detail") as? String
-                throw AccountFailure(status, message ?: if (status == 401) "Please sign in again to load your library." else if (status == 404 && path == "feeds/export") "Subscription export is unavailable on this server." else if (status == 404 && path.startsWith("subscription-imports")) "Subscription import is unavailable on this server, or this import has expired." else "Your library could not be updated. Please try again.", detail)
+                throw AccountFailure(status, message ?: detail ?: if (status == 401) "Please sign in again to load your library." else if (status == 404 && path == "feeds/export") "Subscription export is unavailable on this server." else if (status == 404 && path.startsWith("subscription-imports")) "Subscription import is unavailable on this server, or this import has expired." else "Your library could not be updated. Please try again.", detail)
             }
             result
         } finally { connection.disconnect() }
@@ -265,7 +265,8 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
             json.optDouble("position_seconds", 0.0).takeIf { it.isFinite() && it >= 0 } ?: 0.0,
             json.optBoolean("completed"), json.optBoolean("dismissed"), json.optionalInt("content_id"), json.optionalString("capture_error"), json.optionalString("progress_revision"),
             if (json.isNull("article_bookmark")) null else decodeArticleBookmark(json.getJSONObject("article_bookmark")),
-            json.optionalString("published_at"), https(json.optionalString("image_url")), json.optionalString("author"))
+            json.optionalString("published_at"), https(json.optionalString("image_url")), json.optionalString("author"),
+            json.optionalString("document_id"), json.optionalString("document_status"))
         fun decodeArticleBookmark(json: JSONObject) = RemoteArticleBookmark(json.getString("text_version"), json.strictOffset("offset_utf16"))
         fun decodeArticleProgress(json: JSONObject) = ArticleProgressState(json.getString("text_version"),
             (if (json.isNull("content_id")) null else json.strictOffset("content_id")), json.getString("revision"),

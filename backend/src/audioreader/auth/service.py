@@ -314,8 +314,10 @@ async def delete_user(session: AsyncSession, user: User) -> None:
     not hers, other subscribers still need them. Everything that identifies
     her, or records what she listened to, goes.
     """
+    from audioreader.documents.service import delete_all as delete_documents
     from audioreader.models import ArticleContent, Episode, SavedArticle
 
+    await delete_documents(session, user)
     saved_ids = list(await session.scalars(select(SavedArticle.episode_id).where(SavedArticle.user_id == user.id)))
     for table in (
         SavedArticle,

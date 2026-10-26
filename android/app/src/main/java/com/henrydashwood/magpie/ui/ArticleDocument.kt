@@ -105,7 +105,7 @@ object ArticleDocument {
         val document = Cleaner(safelist()).clean(parsed)
         document.outputSettings(Document.OutputSettings().prettyPrint(false))
         document.select("span[class]").forEach { span ->
-            if (span.hasClass("formula")) span.attr("class", "formula") else span.removeAttr("class")
+            if (span.hasClass("formula")) span.attr("class", "formula").attr("tabindex", "0") else span.removeAttr("class")
         }
         document.select("img").forEach { image ->
             val src = image.attr("src")
@@ -170,7 +170,7 @@ object ArticleDocument {
             pre { overflow-x: auto; padding: .75em; border: 1px solid $rule; border-radius: 8px; font-size: .9em; white-space: pre; overflow-wrap: normal; }
             code { font-family: monospace; }
             .formula, .table-scroll { overflow-x: auto; max-width: 100%; }
-            .formula { margin: 1.2em 0; padding-bottom: .25em; }
+            .formula { display: block; overflow-y: hidden; margin: 1.2em 0; padding-bottom: .25em; }
             .formula > math { width: max-content; margin: 0 auto; }
             table { border-collapse: collapse; } th, td { border: 1px solid $rule; padding: .4em .6em; text-align: start; }
             a { color: $link; } hr { border: 0; border-top: 1px solid $rule; margin: 2em 0; }

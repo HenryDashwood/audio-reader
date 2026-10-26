@@ -58,7 +58,9 @@ object SharedArticles {
         val preview = body?.let {
             Jsoup.parse(it).apply { select("script, style, form, input, textarea, button, nav, footer").remove() }.body().text().take(600)
         }?.takeIf { it.isNotBlank() }
-        return SharedArticle(urls.single(), title?.trim()?.take(500)?.takeIf { it.isNotBlank() }, body, preview = preview)
+        val pdf = runCatching { java.net.URI(urls.single()).path.lowercase().endsWith(".pdf") }.getOrDefault(false)
+        return SharedArticle(urls.single(), title?.trim()?.take(500)?.takeIf { it.isNotBlank() },
+            if (pdf) null else body, contentFormat = if (pdf) "pdf" else "page", preview = if (pdf) "PDF · Prepared privately with Datalab" else preview)
     }
     fun fromIntent(intent: Intent): SharedArticle {
         require(intent.action == Intent.ACTION_SEND && intent.type in listOf("text/plain", "text/html")) { "Share a web link or article to Magpie." }

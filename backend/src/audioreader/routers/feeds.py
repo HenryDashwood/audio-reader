@@ -672,7 +672,7 @@ async def get_episode_text(
                 content_id=content.id,
                 title=content.title,
                 text=content.text,
-                html=articles.rendered(content.html),
+                html=content.html if content.source == "pdf" else articles.rendered(content.html),
                 word_count=word_count(content.text),
             ),
         )

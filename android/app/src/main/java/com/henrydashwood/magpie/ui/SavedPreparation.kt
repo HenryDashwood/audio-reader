@@ -22,6 +22,7 @@ import java.net.URI
 @Composable
 fun SavedPreparationStatus(model: MagpieModel) {
     val state by model.savedPreparation.state.collectAsStateWithLifecycle()
+    PDFImportButton()
     val deviceLinks by model.deviceLinks.collectAsStateWithLifecycle()
     val importing by model.importingLinks.collectAsStateWithLifecycle()
     var reviewing by rememberSaveable(state.revision) { mutableStateOf(false) }
@@ -78,16 +79,17 @@ fun SavedArticlePreparation(item: LibraryItem, model: MagpieModel) {
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             val compact = PaddingValues(horizontal = 8.dp)
             FlowRow(Modifier.offset(x = (-8).dp)) {
-                TextButton(onClick = { model.savedPreparation.retry(item) }, enabled = !state.busy, contentPadding = compact,
+                TextButton(onClick = { model.savedPreparation.retry(item) }, enabled = !state.busy && item.documentStatus !in setOf("queued", "submitting", "processing"), contentPadding = compact,
                     modifier = Modifier.semantics { contentDescription = "Retry preparing ${item.title}" }) { Text("Retry") }
                 if (item.originalUrl != null) TextButton(onClick = {
                     try { context.startActivity(Intent(Intent.ACTION_VIEW, item.originalUrl.toUri())) }
                     catch (_: android.content.ActivityNotFoundException) { openError = "No browser is available to open the original page." }
                 }, contentPadding = compact) { Text("Open original") }
-                if (item.originalUrl != null) TextButton(onClick = { captureSavedPage(context, item) }, enabled = !state.busy, contentPadding = compact,
+                if (item.originalUrl != null && item.documentId == null) TextButton(onClick = { captureSavedPage(context, item) }, enabled = !state.busy, contentPadding = compact,
                     modifier = Modifier.semantics { contentDescription = "Capture page for ${item.title}" }) { Text("Capture page") }
             }
         }
+        DeletePDFButton(item)
         openError?.let { Text(it, Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
     }
 }

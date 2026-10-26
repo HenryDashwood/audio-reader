@@ -223,6 +223,7 @@ class User(Base):
     ai_consent_version: Mapped[int | None]
     ai_data_sharing_consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ai_data_sharing_withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pdf_consent_version: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     identities: Mapped[list["UserIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -514,3 +515,45 @@ class SubscriptionImportLease(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     token: Mapped[str]
     until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PDFDocument(Base):
+    """Private beta inputs and durable conversion receipts; blobs never enter catalogue rows."""
+
+    __tablename__ = "pdf_documents"
+    __table_args__ = (UniqueConstraint("user_id", "identity"),)
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), unique=True)
+    identity: Mapped[str]
+    source_url: Mapped[str | None] = mapped_column(Text)
+    filename: Mapped[str]
+    original: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    byte_count: Mapped[int] = mapped_column(default=0)
+    page_count: Mapped[int | None]
+    status: Mapped[str] = mapped_column(default="queued", index=True)
+    request_id: Mapped[str | None]
+    lease_token: Mapped[str | None]
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_poll_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    error: Mapped[str | None]
+    raw_result: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+
+
+class PDFUsage(Base):
+    """Reservations survive retries/deletions; no source content is retained here."""
+
+    __tablename__ = "pdf_usage"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    pages: Mapped[int]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PDFResultDeletion(Base):
+    """Provider cleanup survives document/account deletion and worker restarts."""
+
+    __tablename__ = "pdf_result_deletions"
+    request_id: Mapped[str] = mapped_column(primary_key=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

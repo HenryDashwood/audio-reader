@@ -565,6 +565,43 @@ struct ArticleDocumentTests {
         #expect(!control.isAvailable(for: 8))
     }
 
+    @Test func importedPDFEquationTypesetsAsMathWithoutPageScripts() async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 700), configuration: configuration)
+        let fixture = try #require(Bundle(for: ArticleWebViewLoadWaiter.self).url(
+            forResource: "PDFMath", withExtension: "html"))
+        let body = try String(contentsOf: fixture, encoding: .utf8)
+        let waiter = ArticleWebViewLoadWaiter()
+        await waiter.load(ArticleDocument.page(body: ArticleDocument.articleBody(body), pointSize: 24), in: webView)
+        let result = try await webView.callAsyncJavaScript(
+            """
+            const formula = document.querySelector(".formula");
+            formula.scrollLeft = 100;
+            const scrolls = formula.scrollLeft > 0;
+            const fraction = document.querySelector("mfrac");
+            const numerator = fraction.children[0].getBoundingClientRect();
+            const denominator = fraction.children[1].getBoundingClientRect();
+            const power = document.querySelector("msup");
+            const base = power.children[0].getBoundingClientRect();
+            const exponent = power.children[1].getBoundingClientRect();
+            return {
+                scrolls,
+                mathNamespace: fraction.namespaceURI,
+                stacked: numerator.bottom <= denominator.top,
+                raised: exponent.top < base.top,
+                root: !!document.querySelector("msqrt"),
+                contained: document.documentElement.scrollWidth <= document.documentElement.clientWidth
+            };
+            """, arguments: [:], in: nil, contentWorld: ArticleReadingMarkerScript.world)
+        let layout = try #require(result as? [String: Any])
+        #expect(layout["mathNamespace"] as? String == "http://www.w3.org/1998/Math/MathML")
+        for key in ["stacked", "raised", "root", "contained", "scrolls"] {
+            #expect(layout[key] as? Bool == true, "Expected \(key) in rendered PDF equation")
+        }
+    }
+
     @Test func thePageNeverScrollsSidewaysHoweverWideItsContent() async throws {
         // WebKit will neither wrap nor scroll MathML, and a sentence wrongly
         // taken for a formula once pushed a whole article sideways under the

@@ -19,7 +19,7 @@ from audioreader.feeds import articles
 from audioreader.feeds.artwork import artwork_url_in_html, favicon_url
 from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes
 from audioreader.feeds.images import normalise_images
-from audioreader.models import ArticleContent, Episode, Feed, PlaybackPosition, SavedArticle, User, utcnow
+from audioreader.models import ArticleContent, Episode, Feed, PDFDocument, PlaybackPosition, SavedArticle, User, utcnow
 from audioreader.page_capture import (
     flattened_article,
     missing_prose,
@@ -40,7 +40,7 @@ class SaveRequest(BaseModel):
     episode_id: int | None = None
     title: str | None = Field(default=None, max_length=500)
     html: str | None = Field(default=None, max_length=2_000_000)
-    content_format: Literal["page", "article"] = "page"
+    content_format: Literal["page", "article", "pdf"] = "page"
 
     @model_validator(mode="after")
     def one_identity(self):
@@ -76,6 +76,8 @@ def normalize_url(url: str) -> str:
 async def accessible_episode(session: AsyncSession, user: User, episode_id: int) -> Episode:
     episode = await session.get(Episode, episode_id, options=[joinedload(Episode.feed)])
     if episode is not None:
+        if episode.feed is not None and episode.feed.owner_user_id not in {None, user.id}:
+            raise HTTPException(404, detail="episode not found")
         if episode.feed is not None and episode.feed.owner_user_id in {None, user.id}:
             return episode
         if await session.get(SavedArticle, (user.id, episode_id)) is not None:
@@ -88,6 +90,21 @@ async def selection(session: AsyncSession, user: User, episode_id: int) -> Saved
 
 
 async def save(session: AsyncSession, user: User, body: SaveRequest, *, replace: bool = False) -> Episode:
+    from audioreader.documents import service as documents
+
+    if body.url and await documents.should_import(
+        session, user, str(body.url), body.html, body.content_format == "pdf"
+    ):
+        return await documents.enqueue(session, user, url=str(body.url), title=body.title)
+    if body.episode_id is not None:
+        document = await session.scalar(
+            select(PDFDocument).where(PDFDocument.episode_id == body.episode_id, PDFDocument.user_id == user.id)
+        )
+        if document:
+            record = await session.get_one(SavedArticle, (user.id, document.episode_id))
+            record.saved_at = record.saved_at or utcnow()
+            await session.commit()
+            return await documents.episode_for(session, document)
     # Serialize this user's duplicate captures, including retries from a share extension.
     await session.execute(select(User.id).where(User.id == user.id).with_for_update())
     if body.episode_id is not None:
@@ -410,6 +427,15 @@ async def decorate(session, user, read):
             read.has_text = False
         if read.image_url is None and read.audio_url is None:
             read.image_url = secure_url(favicon_url(read.link))
+    document = await session.scalar(
+        select(PDFDocument).where(PDFDocument.episode_id == read.id, PDFDocument.user_id == user.id)
+    )
+    if document:
+        read.document_id = document.id
+        read.document_status = document.status
+        read.link = document.source_url
+        read.image_url = None
+        read.feed_url = None
     return read
 
 

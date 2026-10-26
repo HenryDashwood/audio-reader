@@ -109,6 +109,16 @@ class Settings(BaseSettings):
 
     poll_interval_seconds: int = 900  # 0 disables the background poller
 
+    # Private PDF beta. Only a verified linked identity can match this allowlist.
+    pdf_import_enabled: bool = True
+    pdf_import_emails: tuple[str, ...] = ("hcndashwood@gmail.com",)
+    datalab_api_key: str = Field(default="", validation_alias="DATALAB_API_KEY", repr=False)
+    pdf_max_bytes: int = 25 * 1024 * 1024
+    pdf_max_pages: int = 200
+    pdf_daily_pages: int = 500
+    pdf_monthly_pages: int = 2000  # $8 at the base balanced rate; retries count too.
+    pdf_storage_bytes: int = 100 * 1024 * 1024
+
     # Consecutive failed polls before a feed is treated as broken rather than
     # briefly unreachable. At the default interval that is a bit over an hour,
     # which comfortably outlasts an ordinary blip.

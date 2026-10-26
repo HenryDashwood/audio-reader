@@ -730,9 +730,9 @@ private fun LibraryStoryRow(model: MagpieModel, item: LibraryItem, open: () -> U
     val saving by model.savedPreparation.state.collectAsStateWithLifecycle()
     val menu = if (list == RowList.Saved) listOfNotNull(
         StoryAction("Replace saved text", Icons.Rounded.Refresh, { model.savedPreparation.requestReplacement(item) }, !saving.busy)
-            .takeIf { live && item.kind == ContentKind.Article && item.originalUrl != null },
+            .takeIf { live && item.kind == ContentKind.Article && item.originalUrl != null && item.documentId == null },
         StoryAction("Capture page", Icons.Rounded.Language, { captureSavedPage(context, item) }, !saving.busy)
-            .takeIf { live && item.kind == ContentKind.Article && item.originalUrl != null },
+            .takeIf { live && item.kind == ContentKind.Article && item.originalUrl != null && item.documentId == null },
     ) + actions + StoryAction("Dismiss from Saved", Icons.Rounded.BookmarkRemove, { model.toggleSaved(item) })
     else actions + listOfNotNull(if (item.kind == ContentKind.Article) StoryAction(
         if (item.id in saved) "Dismiss from Saved" else "Save article",

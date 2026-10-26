@@ -21,14 +21,28 @@ import com.henrydashwood.magpie.ui.MagpieTheme
 
 class ShareActivity : ComponentActivity() {
     private val model by lazy { ViewModelProvider(this)[ShareModel::class.java] }
+    private var pdfIntent by mutableStateOf<Intent?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        model.receive(intent, savedInstanceState?.getBoolean("saved") == true, capture = capturing(intent))
-        setContent { MagpieTheme { ShareScreen(model, ::finish, ::openMagpie) } }
+        pdfIntent = intent.takeIf { it.type == "application/pdf" }
+        if (pdfIntent == null) model.receive(intent, savedInstanceState?.getBoolean("saved") == true, capture = capturing(intent))
+        setContent { MagpieTheme {
+            val incoming = pdfIntent
+            if (incoming != null) {
+                val uri = androidx.core.content.IntentCompat.getParcelableExtra(incoming, Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                    ?: incoming.clipData?.takeIf { it.itemCount == 1 }?.getItemAt(0)?.uri
+                key(incoming) {
+                    com.henrydashwood.magpie.ui.PDFImportDialog(initialUri = uri, onClose = ::finish)
+                }
+            } else ShareScreen(model, ::finish, ::openMagpie)
+        } }
     }
     override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent); setIntent(intent); model.receive(intent, fresh = true, capture = capturing(intent))
+        super.onNewIntent(intent); setIntent(intent)
+        pdfIntent = intent.takeIf { it.type == "application/pdf" }
+        if (pdfIntent == null) model.receive(intent, fresh = true, capture = capturing(intent))
     }
     override fun onSaveInstanceState(outState: Bundle) {
         // Never put page HTML in the activity bundle. After process death, an unconfirmed

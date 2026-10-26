@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from audioreader import saved
-from audioreader.models import Episode, SavedArticle
+from audioreader.models import Episode, PDFDocument, SavedArticle
 from audioreader.routers.feeds import CurrentUser, Session, check_feed_operation_limit, episodes_read
 from audioreader.schemas import EpisodeRead
 
@@ -35,7 +35,15 @@ async def retry(episode_id: int, session: Session, user: CurrentUser) -> Episode
     record = await saved.selection(session, user, episode_id)
     if record is None or record.saved_at is None:
         raise HTTPException(404, detail="saved article not found")
-    episode = await saved.save(session, user, saved.SaveRequest(episode_id=episode_id))
+    document = await session.scalar(
+        select(PDFDocument).where(PDFDocument.episode_id == episode_id, PDFDocument.user_id == user.id)
+    )
+    if document:
+        from audioreader.documents.service import retry as retry_document
+
+        episode = await retry_document(session, user, document)
+    else:
+        episode = await saved.save(session, user, saved.SaveRequest(episode_id=episode_id))
     return (await episodes_read(session, user, [episode]))[0]
 
 

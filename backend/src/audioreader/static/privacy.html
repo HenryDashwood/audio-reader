@@ -114,9 +114,9 @@
 
 <h2>When you use voice or AI web search</h2>
 <p>
-  Before Magpie sends anything to an AI provider, the app explains what will
+  Before Magpie sends a voice command or AI web search to an AI provider, the app explains what will
   be shared and asks you to choose <strong>Allow AI Data Sharing</strong>. If
-  you choose <strong>Not Now</strong>, nothing is sent to an AI provider.
+  you choose <strong>Not Now</strong>, those features send nothing to an AI provider. PDF processing has its own separate permission, described below.
   Ordinary on-screen library and podcast-directory search does not use an AI
   provider. The separate <strong>Search the web</strong> fallback does, so it
   is unavailable until you allow sharing. You can allow it later, or turn it
@@ -346,11 +346,39 @@
   described below, until you delete your account.
 </p>
 
+<h2>PDF imports</h2>
+<p>
+  PDF importing is initially an account-limited beta. Before importing, you must
+  allow Datalab processing in <strong>Saved → Import PDF</strong>. Magpie sends
+  the selected PDF, or the PDF link you share from your browser, to Datalab to
+  extract text, tables and images. A link can contain access tokens; these are
+  included when needed to retrieve the document. Browser passwords and cookies
+  are not forwarded. See <a href="https://www.datalab.to/terms/privacy">Datalab's privacy policy</a>.
+</p>
+<p>
+  Magpie keeps the uploaded original, converted content and processing records
+  privately in your account. Browser URL imports retain the source link and
+  converted content; they do not necessarily retain an original PDF. Prepared
+  content and images can be cached on your device for offline reading. Pending
+  file uploads stay on the device until acknowledged or removed.
+</p>
+<p>
+  You can stop future PDF submissions in <strong>Import PDF</strong>. Work already
+  submitted may finish. <strong>Delete PDF</strong> removes the stored document
+  and its prepared content; removing an item from Saved alone keeps its content
+  for progress restoration. Account deletion removes your PDF records. Magpie
+  requests deletion of Datalab results after successful preparation or document
+  deletion and retries failed cleanup requests. Provider retention follows
+  Datalab's policy. We exclude PDF text, filenames and source links from PDF
+  worker diagnostic messages.
+</p>
+
 <h2>What other companies can see</h2>
 <p>
   OpenAI, Railway, Pydantic Logfire and Cloudflare are service providers: they
   process data on our behalf, to run Magpie, and we do not share your data with
-  anyone for their own use. Apple, Google and publishers are described below.
+  anyone for their own use. PDF processing by Datalab is described above.
+  Apple, Google and publishers are described below.
 </p>
 <ul>
   <li>

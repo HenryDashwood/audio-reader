@@ -36,6 +36,18 @@ def aware(value: datetime) -> datetime:
 
 
 async def combine_accounts(session: AsyncSession, target: User, source: User) -> None:
+    from audioreader.models import PDFDocument, PDFUsage
+
+    # Preserve both saved versions when the same PDF exists in both libraries.
+    for document in list(await session.scalars(select(PDFDocument).where(PDFDocument.user_id == source.id))):
+        duplicate = await session.scalar(
+            select(PDFDocument.id).where(PDFDocument.user_id == target.id, PDFDocument.identity == document.identity)
+        )
+        if duplicate:
+            document.identity += ":merged:" + document.id
+        document.user_id = target.id
+    await session.execute(update(PDFUsage).where(PDFUsage.user_id == source.id).values(user_id=target.id))
+    target.pdf_consent_version = None
     await _subscriptions(session, target, source)
     await _saved_and_positions(session, target, source)
 

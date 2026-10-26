@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SharedArticlesTest {
+    @Test fun pdfLinksPreserveSignedQueriesAndBypassPageHtml() {
+        val input = SharedArticles.parse("https://example.com/Study.PDF?signature=secret#page=2", html = "<p>Browser PDF viewer</p>")
+        assertEquals("pdf", input.contentFormat)
+        assertNull(input.html)
+        assertEquals("https://example.com/Study.PDF?signature=secret#page=2", input.pending().url)
+        assertEquals("pdf", input.pending().contentFormat)
+        assertEquals("page", SharedArticles.parse("https://example.com/article").contentFormat)
+    }
+
     @Test fun acceptsExactLinksAndExtractsOneLinkFromBrowserText() {
         assertEquals("https://example.com/story?q=one#part", SharedArticles.parse(" https://example.com/story?q=one#part ").url)
         assertEquals("https://example.com/story", SharedArticles.parse("Read this: (https://example.com/story).").url)

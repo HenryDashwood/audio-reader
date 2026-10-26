@@ -830,6 +830,7 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
             audioUrl = audioUrl, wordCount = wordCount, textLoaded = podcast,
             remotePositionMs = if (completed) 0 else (positionSeconds * 1000).toLong().coerceAtLeast(0),
             completed = completed, dismissed = dismissed, captureError = captureError,
+            documentId = documentId, documentStatus = documentStatus,
             durationSeconds = durationSeconds?.takeIf { it > 0 }, progressRevision = progressRevision, articleBookmark = articleBookmark, publishedAt = publishedAt, imageUrl = imageUrl, author = author)
     }
     private fun merge(existing: List<LibraryItem>, rows: List<LibraryItem>): List<LibraryItem> {

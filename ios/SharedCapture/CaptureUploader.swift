@@ -25,14 +25,17 @@ nonisolated struct CaptureUploader: Sendable {
         }
     }
 
-    func finish(_ capture: CaptureInbox.Capture, inbox: CaptureInbox) async throws {
-        try await upload(capture)
+    @discardableResult
+    func finish(_ capture: CaptureInbox.Capture, inbox: CaptureInbox) async throws -> Bool {
+        let preparing = try await upload(capture)
         try Task.checkCancellation()
         do { try inbox.remove(capture) }
         catch let error as CocoaError where error.code == .fileNoSuchFile { }
+        return preparing
     }
 
-    func upload(_ capture: CaptureInbox.Capture) async throws {
+    @discardableResult
+    func upload(_ capture: CaptureInbox.Capture) async throws -> Bool {
         guard let credentials = session(), credentials.account == capture.account else { throw Failure.signIn }
         func checkSession() throws {
             try Task.checkCancellation()
@@ -58,7 +61,7 @@ nonisolated struct CaptureUploader: Sendable {
             let saved_at: Date
             let content_format: String?
         }
-        struct Article: Decodable { let id: Int; let content_id: Int?; let capture_error: String? }
+        struct Article: Decodable { let id: Int; let content_id: Int?; let capture_error: String?; let document_id: String?; let document_status: String? }
         struct Prepared: Decodable { let episode_id: Int; let content_id: Int?; let text: String }
         struct Problem: Decodable { let detail: String }
         let encoder = JSONEncoder()
@@ -72,9 +75,17 @@ nonisolated struct CaptureUploader: Sendable {
         }
         guard (200..<300).contains(response.statusCode) else {
             if response.statusCode == 401 { throw Failure.signIn }
-            throw Failure.response
+            let problem = try? JSONDecoder().decode(Problem.self, from: data)
+            throw Failure.preparation(problem?.detail ?? "Could not save this item. Please retry.")
         }
         let article = try JSONDecoder().decode(Article.self, from: data)
+        if let documentID = article.document_id {
+            guard article.id > 0, !documentID.isEmpty,
+                  let status = article.document_status,
+                  ["queued", "submitting", "processing", "ready", "failed"].contains(status) else { throw Failure.response }
+            if status == "failed" { throw Failure.preparation(article.capture_error ?? "PDF preparation failed. Retry from Saved.") }
+            return status != "ready"
+        }
         if let error = article.capture_error, !error.isEmpty { throw Failure.preparation(error) }
         guard article.id > 0, let contentID = article.content_id, contentID > 0 else { throw Failure.response }
         // Build the query separately: appendingPathComponent escapes a question mark.
@@ -90,6 +101,7 @@ nonisolated struct CaptureUploader: Sendable {
         let text = try JSONDecoder().decode(Prepared.self, from: textData)
         guard text.episode_id == article.id, text.content_id == contentID,
               !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Failure.response }
+        return false
     }
 
     private final class NoRedirects: NSObject, URLSessionTaskDelegate, Sendable {
