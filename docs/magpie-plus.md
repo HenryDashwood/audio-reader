@@ -52,21 +52,19 @@ alone cannot make the products available for purchase.
   `$rc_monthly` package. **Keep with original App User ID** is saved and verified.
   The optional App Store Connect API connection is not configured, so automated
   product import/status lookup is unavailable; the product was registered manually.
-- Apple notification URLs are not yet saved. The production URL form is prepared
-  with RevenueCat's app-specific receiver; saving production and sandbox receivers
-  awaits explicit confirmation. Leave **Track new purchases from server-to-server
+- Apple production and sandbox notification URLs both point to RevenueCat's
+  app-specific receiver, saved with the owner's approval and verified after a
+  page reload. Delivery itself still needs a sandbox transaction. Leave **Track new purchases from server-to-server
   notifications** off because the app uses non-UUID RevenueCat identities and
   **Keep with original App User ID**. See RevenueCat's
   [notification guidance](https://www.revenuecat.com/docs/platform-resources/server-notifications/apple-server-notifications).
 - Google connection `appae62406bc8` can read the product and subscription catalogs,
   but purchase validation still needs attention. The service account has app
   access and the financial/orders permissions in Play Console. Play Console also
-  requires the owner to complete the merchant payment profile before a subscription
-  can be created. No Google product or base plan has been created yet.
-- Apple Business still lists the Paid Apps Agreement as **New**, with a required
-  legal-entity confirmation before signing. The account holder must complete that
-  confirmation, the agreement, and subsequent banking/tax requirements. Sandbox
-  purchases cannot be verified until the paid agreement is active.
+  merchant payment profile has been completed by the owner; bank verification is
+  awaiting Google's small deposit. No Google product or base plan has been created yet.
+- Apple Business lists the Paid Apps Agreement, bank account, and both required
+  U.S. tax forms as **Active**, verified after the owner completed the setup.
   App-level EU trader status currently says non-trader; the owner should review
   that declaration before launching paid subscriptions. The subscription currently
   inherits the parent app's tax category.
