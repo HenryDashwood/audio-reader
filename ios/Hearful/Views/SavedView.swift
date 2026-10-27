@@ -610,7 +610,7 @@ struct SavedView: View {
         do {
             let capability = try await PDFImportAccess().request(for: account)
             guard CaptureInbox.shared.account == account else { return }
-            pdfEnabled = capability.enabled
+            pdfEnabled = capability.enabled || capability.subscription_available == true
         } catch { pdfEnabled = false }
     }
 

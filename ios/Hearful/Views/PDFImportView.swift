@@ -34,7 +34,12 @@ struct PDFImportView: View {
                             }
                         }
                     } else {
-                        Text("PDF importing is not enabled for this account.")
+                        if capability.subscription_available == true {
+                            NavigationLink("Get Magpie Plus") { PlusView() }
+                            Button("Check access") { Task { await load() } }
+                        } else {
+                            Text("PDF importing is not available yet.")
+                        }
                     }
                 }
                 if busy { ProgressView("Saving PDF…") }

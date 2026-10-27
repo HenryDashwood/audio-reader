@@ -55,6 +55,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXBuildFile section */
+        EE0000000000000000000001 = {isa = PBXBuildFile; productRef = EE0000000000000000000002; };
         DD0000000000000000000001 = {isa = PBXBuildFile; productRef = DD0000000000000000000002; };
         DD0000000000000000000003 = {isa = PBXBuildFile; productRef = DD0000000000000000000004; };
         BB0000000000000000000001 = {isa = PBXBuildFile; fileRef = BB0000000000000000000002; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -99,6 +100,7 @@
 			buildActionMask = 2147483647;
 			files = (
                 DD0000000000000000000001,
+                EE0000000000000000000001,
                 DD0000000000000000000003,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -163,6 +165,7 @@
 			name = Hearful;
 			packageProductDependencies = (
                 DD0000000000000000000002,
+                EE0000000000000000000002,
                 DD0000000000000000000004,
 			);
 			productName = Hearful;
@@ -227,6 +230,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
                 DD0000000000000000000005,
+                EE0000000000000000000003,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA00000000000000000000C2 /* Products */;
@@ -569,6 +573,8 @@
         DD0000000000000000000005 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/google/GoogleSignIn-iOS"; requirement = {kind = exactVersion; version = 9.0.0; }; };
         DD0000000000000000000002 = {isa = XCSwiftPackageProductDependency; package = DD0000000000000000000005; productName = GoogleSignIn; };
         DD0000000000000000000004 = {isa = XCSwiftPackageProductDependency; package = DD0000000000000000000005; productName = GoogleSignInSwift; };
+        EE0000000000000000000003 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/RevenueCat/purchases-ios-spm.git"; requirement = {kind = exactVersion; version = 5.91.0; }; };
+        EE0000000000000000000002 = {isa = XCSwiftPackageProductDependency; package = EE0000000000000000000003; productName = RevenueCat; };
 	};
 	rootObject = AA00000000000000000000C0 /* Project object */;
 }

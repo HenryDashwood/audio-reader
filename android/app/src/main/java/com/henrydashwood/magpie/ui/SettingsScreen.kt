@@ -46,6 +46,8 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onDownloads
     val preferences by model.settings.collectAsStateWithLifecycle()
     val conversation by model.conversationSettings.collectAsStateWithLifecycle()
     val diagnostics by model.diagnosticsEnabled.collectAsStateWithLifecycle()
+    var showingPlus by remember { mutableStateOf(false) }
+    if (showingPlus) PlusDialog { showingPlus = false }
     var showingExport by rememberSaveable { mutableStateOf(false) }
     SubscriptionExportDialog(model, showingExport) { showingExport = false }
     var showingWait by remember { mutableStateOf(false) }
@@ -72,6 +74,11 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onDownloads
     val selectedVoice = if (preferences.voiceId == null) "Automatic · English"
         else voices.voices.find { it.id == preferences.voiceId }?.label ?: if (voices.loading) "Loading voice…" else "Selected voice unavailable"
     LazyColumn(Modifier.fillMaxSize().testTag("settings-list"), contentPadding = PaddingValues(bottom = 24.dp)) {
+        if (library.live) item {
+            SettingsSection("Magpie Plus") {
+                SettingsAction("Magpie Plus", Icons.Rounded.Star) { showingPlus = true }
+            }
+        }
         item {
             SettingsSection("Playback Speed", top = 8.dp, footer = "Magpie remembers separate speeds for podcasts and articles. Article speed also applies to spoken replies and newsletter addresses.") {
                 SpeedSetting("Podcasts", preferences.podcastSpeed) { model.setSpeed(ContentKind.Podcast, it) }
@@ -258,7 +265,7 @@ internal fun AccountActions(state: com.henrydashwood.magpie.auth.AccountState, s
     }
     if (confirmingDelete) AlertDialog(onDismissRequest = { confirmingDelete = false },
         title = { Text("Delete your account?") },
-        text = { Text("This removes your account, the shows you follow, and your place in every episode. It cannot be undone.") },
+        text = { Text("This removes your account, the shows you follow, and your place in every episode. It cannot be undone. Deleting your account does not cancel Magpie Plus. Cancel your subscription in the App Store or Google Play to stop renewal.") },
         confirmButton = { TextButton(onClick = { confirmingDelete = false; delete() }) { Text("Delete Account", color = MaterialTheme.colorScheme.error) } },
         dismissButton = { TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") } })
 }

@@ -113,6 +113,17 @@ class Settings(BaseSettings):
     pdf_import_enabled: bool = True
     pdf_import_emails: tuple[str, ...] = ("hcndashwood@gmail.com",)
     datalab_api_key: str = Field(default="", validation_alias="DATALAB_API_KEY", repr=False)
+    # Purchases remain unavailable until both stores and RevenueCat are configured.
+    billing_enabled: bool = False
+    revenuecat_api_key: str = Field(default="", repr=False)
+    revenuecat_webhook_secret: str = Field(default="", repr=False)
+    revenuecat_apple_sdk_key: str = ""
+    revenuecat_google_sdk_key: str = ""
+    revenuecat_entitlement: str = "magpie_plus"
+    revenuecat_offering: str = "magpie_plus"
+    revenuecat_products: tuple[str, ...] = ("magpie_plus_monthly", "magpie_plus:monthly")
+    billing_sandbox_emails: tuple[str, ...] = ()
+    plus_monthly_pages: int = 500
     pdf_max_bytes: int = 25 * 1024 * 1024
     pdf_max_pages: int = 200
     pdf_storage_bytes: int = 100 * 1024 * 1024

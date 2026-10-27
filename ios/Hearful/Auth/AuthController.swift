@@ -31,7 +31,11 @@ final class AuthController: ObservableObject {
             if let user {
                 let account = CaptureInbox.Account(userID: user.id, server: AppConfiguration.apiBaseURL)
                 if !TestEnvironment.isRunningTests, let token = readToken() {
-                    do { try CaptureSessionStore.write(.init(account: account, token: token)) }
+                    do {
+                        let session = CaptureSessionStore.Session(account: account, token: token)
+                        try CaptureSessionStore.write(session)
+                        Task { _ = try? await PlusStore.shared.perform(session: session, configureOnly: true) }
+                    }
                     catch { CaptureSessionStore.clear() }
                 }
                 try? CaptureInbox.shared.configure(account)

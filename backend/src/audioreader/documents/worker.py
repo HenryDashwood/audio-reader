@@ -11,9 +11,10 @@ from datetime import timedelta
 import httpx
 from sqlalchemy import func, or_, select
 
+from audioreader import billing
 from audioreader.config import settings
 from audioreader.documents import datalab, normalise, service
-from audioreader.models import ArticleContent, PDFDocument, PDFResultDeletion, SavedArticle, User, utcnow
+from audioreader.models import ArticleContent, PDFDocument, PDFPageUsage, PDFResultDeletion, SavedArticle, User, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,13 @@ async def step(maker) -> bool:
             await session.commit()
             return True
         user = await session.get(User, doc.user_id)
-        if doc.status == "queued" and (user is None or not await service.enabled(session, user)):
+        reservation = await session.get(PDFPageUsage, doc.id)
+        admitted = reservation is not None and reservation.user_id == doc.user_id and reservation.state != "released"
+        if doc.status == "queued" and (
+            user is None
+            or not settings.pdf_import_enabled
+            or (not admitted and not await billing.unlimited(session, user))
+        ):
             doc.status = "failed"
             doc.error = "PDF importing is not enabled for this account."
             saved = await session.get(SavedArticle, (doc.user_id, doc.episode_id))
@@ -67,9 +74,11 @@ async def step(maker) -> bool:
             doc.page_count,
         )
         original = None
-        if submitting and not url:
+        if submitting:
             await session.refresh(doc, attribute_names=["original"])
             original = doc.original
+            if original is not None:
+                url = None
         await session.commit()
     provider_id = None
     result = None
@@ -135,6 +144,9 @@ async def step(maker) -> bool:
             return True
         saved = await session.get(SavedArticle, (doc.user_id, doc.episode_id))
         if expired:
+            usage = await session.get(PDFPageUsage, doc.id)
+            if usage:
+                usage.state = "released"
             await service.queue_cleanup(session, doc.request_id)
             doc.request_id = None
         if error:
@@ -183,6 +195,9 @@ async def step(maker) -> bool:
             if saved:
                 saved.content_id = content.id
                 saved.capture_error = None
+            usage = await session.get(PDFPageUsage, doc.id)
+            if usage:
+                usage.state = "used"
             doc.status = "ready"
             doc.page_count = result.get("page_count") or known_pages
             # Retain the raw structured result privately for re-normalisation and diagnostics.
