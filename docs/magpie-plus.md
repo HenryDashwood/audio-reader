@@ -109,6 +109,22 @@ alone cannot make the products available for purchase.
   coverage exercises webhook delivery, duplicate delivery, restore, and rollover
   with a nonzero page debit. Live page consumption/reset, cancellation/refund and
   Google purchase checks remain outstanding.
+- Follow-up cancellation coverage verifies that cancelling auto-renew preserves
+  a consumed page and access until the verified expiry. Repeated restore and
+  duplicate saves do not reset that balance. After expiry, the next access check
+  blocks new imports even without an expiry webhook, while the saved reader text
+  and original PDF remain accessible. The full backend gate passes (1,276 backend
+  tests and 188 repository-script tests). This is automated coverage with mocked
+  store/provider responses, not a completed Apple cancellation on the phone.
+- Live allowance testing exposed Safari hiding Magpie when sharing the one-page
+  W3C dummy PDF. iOS logs showed two extension items: the PDF/file URL and its
+  source webpage/URL. The previous activation rule rejected that combination.
+  Declaring a maximum of two attachments, while retaining the existing file and
+  webpage limits, made Magpie visible for the identical payload in the iOS 27
+  simulator. The corrected Release build was installed and launched on the
+  physical iPhone against staging; the phone save/allowance check is pending.
+  Both iOS 27 and iOS 26.5 suites passed 707 tests with one skipped and no
+  compiler warnings; the simulator and physical Release builds also passed.
 - A development-signed Release build is installed on the owner's iPhone and
   launched against staging. Use **Sign in with Google** with the reviewer Gmail
   account for the ordinary Magpie account. Separately sign into the Apple sandbox
