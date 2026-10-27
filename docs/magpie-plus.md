@@ -107,8 +107,8 @@ alone cannot make the products available for purchase.
   pages early. Refunds, missing/expired entitlements, unauthorized production
   sandbox purchases and genuine gaps in access still fail closed. Regression
   coverage exercises webhook delivery, duplicate delivery, restore, and rollover
-  with a nonzero page debit. Live page consumption/reset, cancellation/refund and
-  Google purchase checks remain outstanding.
+  with a nonzero page debit. Live allowance reset, cancellation/refund and Google
+  purchase checks remain outstanding.
 - Follow-up cancellation coverage verifies that cancelling auto-renew preserves
   a consumed page and access until the verified expiry. Repeated restore and
   duplicate saves do not reset that balance. After expiry, the next access check
@@ -122,9 +122,21 @@ alone cannot make the products available for purchase.
   Declaring a maximum of two attachments, while retaining the existing file and
   webpage limits, made Magpie visible for the identical payload in the iOS 27
   simulator. The corrected Release build was installed and launched on the
-  physical iPhone against staging; the phone save/allowance check is pending.
+  physical iPhone against staging. The owner confirmed the PDF saved and the
+  ordinary reviewer account displayed **499 pages remaining**. Staging recorded
+  exactly one used page for ready document `3d763ce5-b40a-44fd-9e71-eaedb5c3f3b6`
+  (episode `10155`), imported at 12:48:44 UTC during the 12:45:14–12:50:14 period.
   Both iOS 27 and iOS 26.5 suites passed 707 tests with one skipped and no
   compiler warnings; the simulator and physical Release builds also passed.
+- The second phone save reached subscription expiry rather than proving duplicate
+  saving while active. RevenueCat recorded billing issue
+  `4f287ef4-f79c-45b7-9095-61365de8b792` and expiry
+  `aee74896-7d60-4f3a-b085-c30a0167097c` at 12:50 UTC. The receipt reported
+  `billing_issues_detected_at=2026-10-27T12:50:18Z`, with no cancellation or refund.
+  Staging blocked the new import and retained one document/one page debit. The
+  owner was asked to check the sandbox renewal setting and resubscribe before
+  repeating duplicate-save and intentional-cancellation checks. Do not count
+  this expired period as a successful live allowance reset or cancellation test.
 - A development-signed Release build is installed on the owner's iPhone and
   launched against staging. Use **Sign in with Google** with the reviewer Gmail
   account for the ordinary Magpie account. Separately sign into the Apple sandbox
