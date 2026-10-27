@@ -46,17 +46,37 @@ alone cannot make the products available for purchase.
   Availability is configured for all 175 territories with Apple-derived local
   prices. Family Sharing and multiseat purchasing are off. Nothing has been
   submitted for review; the first subscription needs a new app version and a
-  review screenshot.
+  review screenshot. Draft review notes explain the Settings > Magpie Plus
+  purchase/restore flow and the page allowance.
 - RevenueCat Apple product `prodc56f19ad5b` is attached to `magpie_plus` and its
   `$rc_monthly` package. **Keep with original App User ID** is saved and verified.
   The optional App Store Connect API connection is not configured, so automated
   product import/status lookup is unavailable; the product was registered manually.
+- Apple notification URLs are not yet saved. The production URL form is prepared
+  with RevenueCat's app-specific receiver; saving production and sandbox receivers
+  awaits explicit confirmation. Leave **Track new purchases from server-to-server
+  notifications** off because the app uses non-UUID RevenueCat identities and
+  **Keep with original App User ID**. See RevenueCat's
+  [notification guidance](https://www.revenuecat.com/docs/platform-resources/server-notifications/apple-server-notifications).
 - Google connection `appae62406bc8` can read the product and subscription catalogs,
   but purchase validation still needs attention. The service account has app
   access and the financial/orders permissions in Play Console. Play Console also
   requires the owner to complete the merchant payment profile before a subscription
   can be created. No Google product or base plan has been created yet.
-- Backend RevenueCat credentials, environment webhooks, native sandbox purchases,
+- Apple Business still lists the Paid Apps Agreement as **New**, with a required
+  legal-entity confirmation before signing. The account holder must complete that
+  confirmation, the agreement, and subsequent banking/tax requirements. Sandbox
+  purchases cannot be verified until the paid agreement is active.
+  App-level EU trader status currently says non-trader; the owner should review
+  that declaration before launching paid subscriptions. The subscription currently
+  inherits the parent app's tax category.
+- The existing public Apple/Google SDK keys have been saved to the ignored local
+  file `build/magpie-plus/revenuecat-config.env`, with billing disabled. Live API
+  smoke checks using `magpie_setup_connection_check_20261027` succeeded for both
+  keys. Apple's offering returns `$rc_monthly` / `magpie_plus_monthly`; Google's
+  package list is empty until its product is configured. This verifies connection
+  and catalog configuration, not a purchase or paid entitlement.
+- Deployment of the prepared RevenueCat configuration, environment webhooks, native sandbox purchases,
   and store review remain outstanding. Billing remains disabled. These dashboard
   changes do not deploy the backend or release an app build.
 
@@ -66,7 +86,12 @@ Set separately for staging and production using the normal secret-management
 workflow; never commit secret values:
 
 - `AUDIOREADER_BILLING_ENABLED=true` only once the setup and sandbox checks pass.
-- `AUDIOREADER_REVENUECAT_API_KEY`: server-only RevenueCat key with subscriber read access.
+- `AUDIOREADER_REVENUECAT_API_KEY`: a RevenueCat API v1-compatible key from the
+  same project. The existing public Apple SDK key is sufficient for the backend's
+  `GET /subscribers/{id}` call (verified against the live API). It returns customer
+  subscription state across the project; the backend does not need subscriber
+  attributes or privileged grant/delete operations. An unrestricted secret key
+  is therefore unnecessary for this implementation. Never accept a key from the client.
 - `AUDIOREADER_REVENUECAT_WEBHOOK_SECRET`: a long random Authorization header value.
 - `AUDIOREADER_REVENUECAT_APPLE_SDK_KEY`: public `appl_…` key.
 - `AUDIOREADER_REVENUECAT_GOOGLE_SDK_KEY`: public `goog_…` key.
