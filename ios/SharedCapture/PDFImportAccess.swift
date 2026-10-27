@@ -3,6 +3,7 @@ import Foundation
 nonisolated struct PDFCapability: Decodable, Sendable {
     let enabled: Bool
     let consented: Bool
+    var subscription_available: Bool? = nil
 }
 
 /// Account-bound capability checks shared by the app and share extension.

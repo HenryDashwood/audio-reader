@@ -106,6 +106,7 @@ android {
 }
 
 dependencies {
+    implementation("com.revenuecat.purchases:purchases:10.29.0")
     val composeBom = platform("androidx.compose:compose-bom:2025.08.01")
     implementation(composeBom)
     androidTestImplementation(composeBom)

@@ -557,3 +557,31 @@ class PDFResultDeletion(Base):
     __tablename__ = "pdf_result_deletions"
     request_id: Mapped[str] = mapped_column(primary_key=True)
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BillingCustomer(Base):
+    """Opaque store identity; multiple identities survive an account merge."""
+
+    __tablename__ = "billing_customers"
+    id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    product_id: Mapped[str | None]
+    store: Mapped[str | None]
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    access_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PDFPageUsage(Base):
+    """One allowance debit per document, retained after document deletion."""
+
+    __tablename__ = "pdf_page_usage"
+    document_id: Mapped[str] = mapped_column(primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    pages: Mapped[int]
+    state: Mapped[str] = mapped_column(default="reserved")
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

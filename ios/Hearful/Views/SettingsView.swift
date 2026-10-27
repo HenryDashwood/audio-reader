@@ -21,6 +21,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section { NavigationLink("Magpie Plus") { PlusView() } }
                 Section {
                     Picker(
                         "Podcasts",
@@ -218,7 +219,8 @@ struct SettingsView: View {
             } message: {
                 Text(
                     "This removes your account, the shows you follow, and your place in every "
-                        + "episode. It cannot be undone."
+                        + "episode. It cannot be undone. Deleting your account does not cancel Magpie Plus. "
+                        + "Cancel your subscription in the App Store or Google Play to stop renewal."
                 )
             }
             // An alert is centred and unambiguously modal. A confirmation

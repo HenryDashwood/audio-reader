@@ -72,6 +72,15 @@ open class MagpieApplication : Application() {
             PodcastProgressQueue(FilePodcastProgressStore(this)), com.henrydashwood.magpie.voice.FileConversationStore(this), ArticleProgressQueue(FileArticleProgressStore(this)), createTelemetryStore(), { diagnosticsEnabled.value }).also { repository ->
             observeDiagnostics(repository, scope)
             scope.launch {
+                accounts.accessToken.collectLatest { token ->
+                    if (token != null) try {
+                        com.henrydashwood.magpie.billing.PlusBilling.perform(this@MagpieApplication, token,
+                            { accounts.accessToken.value == token }, configureOnly = true)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { /* Offline billing checks must never prevent reading. */ }
+                }
+            }
+            scope.launch {
                 while (kotlinx.coroutines.currentCoroutineContext().isActive) {
                     kotlinx.coroutines.delay(30_000)
                     try { repository.flushProgress(); repository.telemetry?.flush() }

@@ -12,6 +12,7 @@ from pypdf import PdfReader
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audioreader import billing
 from audioreader.config import settings
 from audioreader.feeds.fetcher import (
     FEED_USER_AGENT,
@@ -22,15 +23,16 @@ from audioreader.feeds.fetcher import (
 )
 from audioreader.models import (
     ArticleContent,
+    BillingCustomer,
     Episode,
     Feed,
     PDFDocument,
+    PDFPageUsage,
     PDFResultDeletion,
     PDFUsage,
     PlaybackPosition,
     SavedArticle,
     User,
-    UserIdentity,
     utcnow,
 )
 
@@ -41,23 +43,14 @@ ACTIVE = {"queued", "submitting", "processing"}
 async def enabled(session: AsyncSession, user: User) -> bool:
     if not settings.pdf_import_enabled or not settings.datalab_api_key:
         return False
-    # Identity emails originate in verified provider tokens, never request/profile fields.
-    return bool(
-        await session.scalar(
-            select(UserIdentity.id)
-            .where(
-                UserIdentity.user_id == user.id,
-                UserIdentity.provider.in_(["google", "apple"]),
-                func.lower(UserIdentity.email).in_([e.lower() for e in settings.pdf_import_emails]),
-            )
-            .limit(1)
-        )
-    )
+    return await billing.has_access(session, user)
 
 
 async def require_access(session: AsyncSession, user: User) -> None:
     if not await enabled(session, user):
-        raise HTTPException(403, "PDF importing is not enabled for this account.")
+        raise HTTPException(
+            403, "Magpie Plus is required to import PDFs. Subscribe or restore purchases in Magpie Settings."
+        )
 
 
 async def probe_pdf(url: str) -> bool:
@@ -148,7 +141,13 @@ async def enqueue(
     )
     if active:
         raise HTTPException(409, "Please wait for your current PDF to finish preparing.")
-    if url:
+    if url and not await billing.unlimited(session, user):
+        try:
+            async with asyncio.timeout(45):
+                raw = await download_pdf(url)
+        except (httpx.HTTPError, FeedFetchError, TimeoutError):
+            raise HTTPException(422, "Magpie could not access this PDF. Share the downloaded file instead.") from None
+    if url and raw is None:
         try:
             async with asyncio.timeout(20):
                 valid = await probe_pdf(url)
@@ -202,6 +201,7 @@ async def enqueue(
         page_count=pages,
     )
     session.add(document)
+    await billing.reserve(session, user, document_id, pages or 0)
     await session.commit()
     return await episode_for(session, document)
 
@@ -223,6 +223,10 @@ async def retry(session: AsyncSession, user: User, document: PDFDocument) -> Epi
     )
     if active:
         raise HTTPException(409, "Please wait for your current PDF to finish preparing.")
+    if not await billing.unlimited(session, user):
+        if not document.page_count:
+            raise HTTPException(422, "Share this PDF again to confirm its page count.")
+        await billing.reserve(session, user, document.id, document.page_count)
     # A known receipt resumes polling; an explicit retry of an uncertain submission may charge again.
     if document.request_id:
         document.status = "processing"
@@ -259,4 +263,28 @@ async def delete_document(session: AsyncSession, document: PDFDocument) -> None:
 async def delete_all(session: AsyncSession, user: User) -> None:
     for doc in list(await session.scalars(select(PDFDocument).where(PDFDocument.user_id == user.id))):
         await delete_document(session, doc)
-    await session.execute(delete(PDFUsage).where(PDFUsage.user_id == user.id))
+    for model in (PDFUsage, PDFPageUsage, BillingCustomer):
+        await session.execute(delete(model).where(model.user_id == user.id))
+
+
+async def download_pdf(url: str) -> bytes:
+    """Count and convert the same bounded bytes; signed URLs never reach RevenueCat."""
+    with private_request():
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False) as client:
+            for _ in range(MAX_REDIRECTS + 1):
+                await validate_public_url(url)
+                async with client.stream("GET", url) as response:
+                    if response.is_redirect:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise FeedFetchError("Invalid PDF redirect")
+                        url = urljoin(url, location)
+                        continue
+                    response.raise_for_status()
+                    raw = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=65536):
+                        raw.extend(chunk)
+                        if len(raw) > settings.pdf_max_bytes:
+                            raise HTTPException(413, "Choose a PDF no larger than 25 MiB.")
+                    return bytes(raw)
+    raise FeedFetchError("Too many PDF redirects")

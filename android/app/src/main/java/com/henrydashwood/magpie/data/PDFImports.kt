@@ -15,7 +15,7 @@ import java.util.UUID
 
 const val PDF_MAX_BYTES = 25 * 1024 * 1024
 
-data class PDFCapability(val enabled: Boolean, val consented: Boolean)
+data class PDFCapability(val enabled: Boolean, val consented: Boolean, val subscriptionAvailable: Boolean = false)
 data class PendingPDF(val id: String, val owner: String, val filename: String)
 
 class PDFClient(private val baseUrl: String, private val token: String,
@@ -32,7 +32,7 @@ class PDFClient(private val baseUrl: String, private val token: String,
         require(id.matches(Regex("[a-zA-Z0-9-]+")))
         request(id, "DELETE")
     }
-    private fun decode(json: JSONObject) = PDFCapability(json.optBoolean("enabled"), json.optBoolean("consented"))
+    private fun decode(json: JSONObject) = PDFCapability(json.optBoolean("enabled"), json.optBoolean("consented"), json.optBoolean("subscription_available"))
     private suspend fun request(path: String, method: String = "GET", bytes: ByteArray? = null,
         contentType: String = "application/json"): JSONObject = withContext(Dispatchers.IO) {
         val url = URI(baseUrl.trimEnd('/') + "/documents/" + path)

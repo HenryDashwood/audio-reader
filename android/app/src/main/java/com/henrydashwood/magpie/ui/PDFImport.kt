@@ -31,7 +31,7 @@ fun PDFImportButton() {
     var open by remember(library.owner, token) { mutableStateOf(false) }
     LaunchedEffect(library.owner, token) {
         val credential = token ?: return@LaunchedEffect
-        try { enabled = PDFClient(BuildConfig.ACCOUNT_API_URL, credential).capability().enabled }
+        try { enabled = PDFClient(BuildConfig.ACCOUNT_API_URL, credential).capability().let { it.enabled || it.subscriptionAvailable } }
         catch (_: Exception) { }
         while (true) {
             delay(5_000)
@@ -51,12 +51,20 @@ fun PDFImportDialog(initialUri: Uri? = null, onClose: () -> Unit) {
     val owner = library.owner
     val inbox = remember { PDFUploadInbox(app) }
     val client = remember(token) { token?.let { PDFClient(BuildConfig.ACCOUNT_API_URL, it) } }
+    var showingPlus by remember(owner, token) { mutableStateOf(false) }
     var capability by remember(owner, token) { mutableStateOf<PDFCapability?>(null) }
     var error by remember(owner, token) { mutableStateOf<String?>(null) }
     var busy by remember(owner, token) { mutableStateOf(false) }
     var queued by remember(owner, token) { mutableStateOf<List<PendingPDF>>(emptyList()) }
     var selected by remember(owner, token) { mutableStateOf(initialUri) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { selected = it }
+    if (showingPlus) PlusDialog {
+        showingPlus = false
+        scope.launch {
+            try { val refreshed = client?.capability(); if (owner == app.library.state.value.owner && token == app.accounts.accessToken.value) capability = refreshed }
+            catch (_: Exception) { }
+        }
+    }
     fun current() = owner != null && owner == app.library.state.value.owner && token == app.accounts.accessToken.value
     fun upload(item: PendingPDF) {
         scope.launch {
@@ -89,7 +97,10 @@ fun PDFImportDialog(initialUri: Uri? = null, onClose: () -> Unit) {
             Text("Datalab receives the PDF or its source link to prepare readable text and images. Imported PDFs stay private to your Magpie account.")
             Text("Up to 25 MiB and 200 pages. Preparation continues after the server accepts the PDF.")
             if (client == null) Text("Open Magpie and sign in first.")
-            else if (capability?.enabled == false) Text("PDF importing is not enabled for this account.")
+            else if (capability?.enabled == false) {
+                if (capability?.subscriptionAvailable == true) TextButton(onClick = { showingPlus = true }) { Text("Get Magpie Plus") }
+                else Text("PDF importing is not available yet.")
+            }
             else if (capability?.enabled == true) {
                 TextButton(onClick = { picker.launch(arrayOf("application/pdf")) }, enabled = !busy) { Text("Choose PDF") }
                 if (selected != null) TextButton(onClick = {

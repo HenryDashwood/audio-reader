@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import select
 
+from audioreader import billing
 from audioreader.config import settings
 from audioreader.documents import service
 from audioreader.feeds.fetcher import FeedFetchError
@@ -42,8 +43,10 @@ async def resolve(body: URLImport, session: Session, user: CurrentUser):
 @router.get("/capability")
 async def capability(session: Session, user: CurrentUser):
     enabled = await service.enabled(session, user)
+    await session.commit()
     return {
         "enabled": enabled,
+        "subscription_available": billing.purchases_available(),
         # Retained for older beta clients: saving a PDF is the processing confirmation.
         "consented": enabled,
         "max_bytes": settings.pdf_max_bytes,

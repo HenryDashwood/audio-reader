@@ -17,7 +17,17 @@ from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_f
 from audioreader.imports.service import run as run_imports
 from audioreader.newsletters.companions import attach_missing_companions
 from audioreader.newsletters.service import prune_newsletters, tell_left_senders
-from audioreader.routers import auth, commands, events, feeds, inbound, newsletters, saved, subscription_imports
+from audioreader.routers import (
+    auth,
+    billing,
+    commands,
+    events,
+    feeds,
+    inbound,
+    newsletters,
+    saved,
+    subscription_imports,
+)
 from audioreader.settings_types import LLMProvider
 
 logging.basicConfig(level=logging.INFO)
@@ -137,6 +147,10 @@ def create_app() -> FastAPI:
         """
         return FileResponse(STATIC_DIR / "privacy.html", media_type="text/html")
 
+    @app.get("/terms", include_in_schema=False)
+    async def terms() -> FileResponse:
+        return FileResponse(STATIC_DIR / "terms.html", media_type="text/html")
+
     @app.get("/support", include_in_schema=False)
     async def support() -> FileResponse:
         """Public help and contact details for the App Store listing."""
@@ -158,6 +172,7 @@ def create_app() -> FastAPI:
     app.include_router(apple_browser.router)
     app.include_router(subscription_imports.router)
     app.include_router(auth.router)
+    app.include_router(billing.router)
     app.include_router(saved.router)
     app.include_router(feeds.router)
     app.include_router(feeds.episodes_router)
