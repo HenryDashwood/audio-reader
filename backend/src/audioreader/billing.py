@@ -93,6 +93,8 @@ def apply_subscriber(row: BillingCustomer, subscriber: dict, *, sandbox_allowed:
     end = date(subscription.get("expires_date"))
     access = date(entitlement.get("expires_date"))
     grace = date(subscription.get("grace_period_expires_date"))
+    access_until = max(access, grace or access) if access else None
+    now = utcnow()
     valid = (
         product in settings.revenuecat_products
         and subscription.get("store") in {"app_store", "play_store"}
@@ -101,16 +103,38 @@ def apply_subscriber(row: BillingCustomer, subscriber: dict, *, sandbox_allowed:
         and start is not None
         and end is not None
         and access is not None
-        and start <= utcnow()
         and start < end
         and end - start <= timedelta(days=35)
     )
+    future_period = valid and start is not None and start > now
+    if (
+        future_period
+        and start is not None
+        and access_until is not None
+        and access_until > now
+        and row.product_id == product
+        and row.store == subscription.get("store")
+        and row.period_start is not None
+        and aware(row.period_start) <= now
+        and row.period_end is not None
+        and row.access_until is not None
+        and aware(row.access_until) > now
+    ):
+        # Apple can report a renewal before its new period starts. Keep the
+        # already verified allowance, without extending access or resetting it
+        # early. Expiry forces reconciliation when the next period begins.
+        row.access_until = min(aware(row.access_until), start, access_until)
+        row.checked_at = now
+        return
+    valid = valid and start is not None and start <= now
     row.product_id = product if valid else None
     row.store = subscription.get("store") if valid else None
     row.period_start = start if valid else None
     row.period_end = end if valid else None
-    row.access_until = max(access, grace or access) if valid and access else None
-    row.checked_at = utcnow()
+    row.access_until = access_until if valid else None
+    # A future purchase without current access must be checked again rather
+    # than cached as an absent subscription for five minutes after it starts.
+    row.checked_at = None if future_period else now
 
 
 async def current(
