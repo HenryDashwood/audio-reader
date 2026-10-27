@@ -74,16 +74,57 @@ alone cannot make the products available for purchase.
   keys. Apple's offering returns `$rc_monthly` / `magpie_plus_monthly`; Google's
   package list is empty until its product is configured. This verifies connection
   and catalog configuration, not a purchase or paid entitlement.
-- Deployment of the prepared RevenueCat configuration, environment webhooks, native sandbox purchases,
-  and store review remain outstanding. Billing remains disabled. These dashboard
-  changes do not deploy the backend or release an app build.
+- Staging has the RevenueCat configuration and a dedicated webhook authorization
+  secret. Its webhook `whintgr4663f9506b` sends sandbox events only to
+  `https://audio-reader-staging.up.railway.app/billing/webhook`. The owner's
+  verified email remains the sole unlimited account. Production is unchanged.
+  PR #26 passed backend, released-client compatibility, Android, iOS 26 and iOS 27
+  checks and merged as `97415491739bd9ba0ce1eeddd2ddb3ea271c321c`. Main CI run
+  `40496773569` passed and deployed staging as
+  `1103d0a9-7d67-445e-ac6d-e076a2a17c28`. The billing migration and startup succeeded.
+  Health/sign-in checks, webhook authentication, duplicate delivery and malformed
+  event rejection passed against the live deployment. RevenueCat's dashboard
+  test event returned HTTP 200 with `{"received":true}`.
+- Apple sandbox initial purchase passed on the physical iPhone on 27 October:
+  RevenueCat event `075c7f07-a7d9-4d38-8a90-29527eff68d5` records
+  `magpie_plus_monthly`, offering/entitlement `magpie_plus`, country `GB`, currency
+  `GBP`, and a purchased price of `3.99`. Its staging webhook received HTTP 200.
+  The owner confirmed the ordinary reviewer account displayed **500 pages
+  remaining**. The app initially displayed a dollar price, but the verified
+  purchase used GBP; RevenueCat documents this
+  [Apple sandbox metadata inconsistency](https://www.revenuecat.com/docs/test-and-launch/sandbox/apple-app-store).
+  Do not hardcode GBP over StoreKit's localized price.
+- The same Apple sandbox subscription renewed from 11:53:36–11:58:36 UTC to
+  11:58:36–12:03:36 UTC. RevenueCat's API confirmed the new active period with
+  no refund, cancellation or billing issue. Restore initially reported no active
+  subscription near that boundary; after the renewal was visible, the owner
+  confirmed both Refresh and Restore succeeded with 500 pages. Investigation of
+  renewal event `b91e3839-94a2-4421-a3a3-bf385cd244e2` found Apple delivered it at
+  11:57:44 UTC with a future purchase date of 11:58:36 UTC. The old validation
+  rejected that future period and cleared the still-valid current subscription.
+  The regression fix preserves only already verified access and its current page
+  usage until the new period begins; it neither grants future access nor resets
+  pages early. Refunds, missing/expired entitlements, unauthorized production
+  sandbox purchases and genuine gaps in access still fail closed. Regression
+  coverage exercises webhook delivery, duplicate delivery, restore, and rollover
+  with a nonzero page debit. Live page consumption/reset, cancellation/refund and
+  Google purchase checks remain outstanding.
+- A development-signed Release build is installed on the owner's iPhone and
+  launched against staging. Use **Sign in with Google** with the reviewer Gmail
+  account for the ordinary Magpie account. Separately sign into the Apple sandbox
+  tester in **Settings > Developer > Sandbox Apple Account**; this account handles
+  the test payment and is not a Magpie sign-in method. Leave the normal iCloud
+  account signed in. The owner account hides checkout because it is unlimited.
+  Apple lists the owner's dedicated UK sandbox tester; its password is separate
+  from the reviewer Google account password.
 
 ## Backend configuration
 
 Set separately for staging and production using the normal secret-management
 workflow; never commit secret values:
 
-- `AUDIOREADER_BILLING_ENABLED=true` only once the setup and sandbox checks pass.
+- `AUDIOREADER_BILLING_ENABLED=true` in staging for sandbox testing; enable in
+  production only once store setup and purchase checks pass.
 - `AUDIOREADER_REVENUECAT_API_KEY`: a RevenueCat API v1-compatible key from the
   same project. The existing public Apple SDK key is sufficient for the backend's
   `GET /subscribers/{id}` call (verified against the live API). It returns customer

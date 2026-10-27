@@ -116,6 +116,74 @@ async def test_webhook_auth_and_duplicates(client, paid, monkeypatch):
     assert not (await client.get("/billing/status")).json()["active"]
 
 
+@pytest.mark.parametrize("gap_seconds", [0, 30])
+async def test_early_renewal_preserves_current_allowance_until_new_period(
+    client, session, user, paid, monkeypatch, gap_seconds
+):
+    now = utcnow()
+    current_end = now + timedelta(seconds=60)
+    next_start = current_end + timedelta(seconds=gap_seconds)
+    monkeypatch.setattr(billing, "utcnow", lambda: now)
+    monkeypatch.setattr(settings, "revenuecat_webhook_secret", "Bearer renewal-test")
+    product = paid["subscriptions"]["magpie_plus_monthly"]
+    entitlement = paid["entitlements"]["magpie_plus"]
+    product["expires_date"] = entitlement["expires_date"] = current_end.isoformat()
+    await billing.reserve(session, user, "current-period-document", 123)
+    await session.commit()
+    initial = (await client.get("/billing/status")).json()
+    assert initial["active"] and initial["remaining_pages"] == 377
+
+    # Apple's sandbox can publish the next period before its purchase_date.
+    product["purchase_date"] = next_start.isoformat()
+    product["expires_date"] = entitlement["expires_date"] = (next_start + timedelta(minutes=5)).isoformat()
+    for _ in range(2):
+        webhook = await client.post(
+            "/billing/webhook",
+            json={"event": {"app_user_id": initial["customer_id"]}},
+            headers={"Authorization": "Bearer renewal-test"},
+        )
+        assert webhook.status_code == 200
+        restored = (await client.post("/billing/sync")).json()
+        assert restored["active"] and restored["remaining_pages"] == 377
+        assert restored["period_end"] == initial["period_end"]
+
+    if gap_seconds:
+        monkeypatch.setattr(billing, "utcnow", lambda: current_end + timedelta(seconds=1))
+        gap = (await client.get("/billing/status")).json()
+        assert not gap["active"] and gap["remaining_pages"] == 0
+
+    monkeypatch.setattr(billing, "utcnow", lambda: next_start + timedelta(seconds=1))
+    renewed = (await client.get("/billing/status")).json()
+    assert renewed["active"] and renewed["remaining_pages"] == 500
+    assert renewed["period_end"] != initial["period_end"]
+
+
+async def test_future_purchase_cannot_grant_initial_access(client, paid, monkeypatch):
+    start = utcnow() + timedelta(minutes=1)
+    paid["subscriptions"]["magpie_plus_monthly"]["purchase_date"] = start.isoformat()
+    status = (await client.post("/billing/sync")).json()
+    assert not status["active"] and status["remaining_pages"] == 0
+    monkeypatch.setattr(billing, "utcnow", lambda: start + timedelta(seconds=1))
+    assert (await client.get("/billing/status")).json()["active"]
+
+
+@pytest.mark.parametrize("invalid", ["refund", "sandbox", "missing_entitlement", "expired_entitlement"])
+async def test_early_renewal_cannot_preserve_revoked_access(client, paid, monkeypatch, invalid):
+    assert (await client.post("/billing/sync")).json()["active"]
+    product = paid["subscriptions"]["magpie_plus_monthly"]
+    product["purchase_date"] = (utcnow() + timedelta(minutes=1)).isoformat()
+    if invalid == "refund":
+        product["refunded_at"] = utcnow().isoformat()
+    elif invalid == "sandbox":
+        monkeypatch.setattr(settings, "environment", "production")
+        product["is_sandbox"] = True
+    elif invalid == "expired_entitlement":
+        paid["entitlements"]["magpie_plus"]["expires_date"] = (utcnow() - timedelta(seconds=1)).isoformat()
+    else:
+        paid["entitlements"] = {}
+    assert not (await client.post("/billing/sync")).json()["active"]
+
+
 async def test_paid_url_counts_and_stores_exact_bytes(client, session, paid, monkeypatch):
     raw = pdf()
     monkeypatch.setattr(service, "download_pdf", AsyncMock(return_value=raw))
