@@ -195,6 +195,66 @@ async def test_paid_url_counts_and_stores_exact_bytes(client, session, paid, mon
     assert (await client.get("/billing/status")).json()["remaining_pages"] == 499
 
 
+async def test_cancellation_preserves_paid_pages_until_expiry_and_saved_content_afterwards(
+    client, session, user, paid, monkeypatch
+):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from audioreader.documents import datalab, worker
+
+    now = utcnow()
+    end = now + timedelta(minutes=5)
+    monkeypatch.setattr(billing, "utcnow", lambda: now)
+    product = paid["subscriptions"]["magpie_plus_monthly"]
+    product["expires_date"] = paid["entitlements"]["magpie_plus"]["expires_date"] = end.isoformat()
+    row = (await client.post("/documents/file", content=pdf())).json()
+    maker = async_sessionmaker(session.bind, expire_on_commit=False)
+    submit = AsyncMock(return_value="cancel-test-request")
+    monkeypatch.setattr(datalab, "submit", submit)
+    monkeypatch.setattr(
+        datalab,
+        "poll",
+        AsyncMock(
+            return_value={"status": "complete", "success": True, "html": "<p>Saved research remains readable.</p>"}
+        ),
+    )
+    assert await worker.step(maker)
+
+    async with maker() as fresh:
+        document = await fresh.get_one(PDFDocument, row["document_id"])
+        document.next_poll_at = utcnow() - timedelta(seconds=1)
+        await fresh.commit()
+    assert await worker.step(maker)
+
+    ready = (await client.get(f"/documents/{row['document_id']}")).json()
+    assert ready["document_status"] == "ready"
+
+    # Cancelling auto-renew is not a refund: restore retains access and the debit.
+    product["unsubscribe_detected_at"] = now.isoformat()
+    for _ in range(2):
+        restored = (await client.post("/billing/sync")).json()
+        assert restored["active"] and restored["remaining_pages"] == 499
+        assert restored["period_end"] == end.isoformat()
+    duplicate = await client.post("/documents/file", content=pdf())
+    assert duplicate.status_code == 202 and duplicate.json()["document_id"] == row["document_id"]
+    assert (await client.get("/billing/status")).json()["remaining_pages"] == 499
+
+    # Even without an expiry webhook, the first access check refreshes the receipt.
+    monkeypatch.setattr(billing, "utcnow", lambda: end + timedelta(seconds=1))
+    expired = (await client.get("/billing/status")).json()
+    assert not expired["active"] and expired["remaining_pages"] == 0
+    assert not (await client.post("/billing/sync")).json()["active"]
+    assert (await client.post("/documents/file", content=pdf())).status_code == 403
+    assert (await client.get(f"/documents/{row['document_id']}/original")).content == pdf()
+    text = await client.get(f"/episodes/{row['id']}/text")
+    assert text.status_code == 200 and "Saved research remains readable." in text.json()["text"]
+    assert any(item["id"] == row["id"] for item in (await client.get("/saved")).json())
+    usage = await session.get_one(PDFPageUsage, row["document_id"])
+    await session.refresh(usage)
+    assert usage.pages == 1 and usage.state == "used"
+    submit.assert_awaited_once()
+
+
 async def test_provider_outage_cannot_grant_new_access(client, paid, monkeypatch):
     monkeypatch.setattr(billing, "fetch_subscriber", AsyncMock(side_effect=HTTPException(503, "Unavailable")))
     assert (await client.post("/documents/file", content=pdf())).status_code == 503

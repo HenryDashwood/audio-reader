@@ -107,8 +107,48 @@ alone cannot make the products available for purchase.
   pages early. Refunds, missing/expired entitlements, unauthorized production
   sandbox purchases and genuine gaps in access still fail closed. Regression
   coverage exercises webhook delivery, duplicate delivery, restore, and rollover
-  with a nonzero page debit. Live page consumption/reset, cancellation/refund and
-  Google purchase checks remain outstanding.
+  with a nonzero page debit. Subsequent live checks below cover allowance reset
+  and cancellation; refund and Google purchase checks remain outstanding.
+- Follow-up cancellation coverage verifies that cancelling auto-renew preserves
+  a consumed page and access until the verified expiry. Repeated restore and
+  duplicate saves do not reset that balance. After expiry, the next access check
+  blocks new imports even without an expiry webhook, while the saved reader text
+  and original PDF remain accessible. The full backend gate passes (1,276 backend
+  tests and 188 repository-script tests). This is automated coverage with mocked
+  store/provider responses; it is separate from the live checks below.
+- Live allowance testing exposed Safari hiding Magpie when sharing the one-page
+  W3C dummy PDF. iOS logs showed two extension items: the PDF/file URL and its
+  source webpage/URL. The previous activation rule rejected that combination.
+  Declaring a maximum of two attachments, while retaining the existing file and
+  webpage limits, made Magpie visible for the identical payload in the iOS 27
+  simulator. The corrected Release build was installed and launched on the
+  physical iPhone against staging. The owner confirmed the PDF saved and the
+  ordinary reviewer account displayed **499 pages remaining**. Staging recorded
+  exactly one used page for ready document `3d763ce5-b40a-44fd-9e71-eaedb5c3f3b6`
+  (episode `10155`), imported at 12:48:44 UTC during the 12:45:14–12:50:14 period.
+  Both iOS 27 and iOS 26.5 suites passed 707 tests with one skipped and no
+  compiler warnings; the simulator and physical Release builds also passed.
+- The second phone save reached subscription expiry rather than proving duplicate
+  saving while active. RevenueCat recorded billing issue
+  `4f287ef4-f79c-45b7-9095-61365de8b792` and expiry
+  `aee74896-7d60-4f3a-b085-c30a0167097c` at 12:50 UTC. The receipt reported
+  `billing_issues_detected_at=2026-10-27T12:50:18Z`, with no cancellation or refund.
+  Staging blocked the new import and retained one document/one page debit. The
+  owner confirmed sandbox purchases/renewals were already enabled. This expired
+  period is not evidence of an allowance reset or cancellation test.
+- Apple subsequently recorded renewal `14cd5628-49bd-4d81-b025-01ee601a913f`
+  for 12:54:21–12:59:21 UTC. Both the phone and staging showed a fresh 500-page
+  allowance, with the previous one-page debit retained in its original period.
+  Sharing the same PDF again left 500 pages, confirmed on the phone; staging
+  retained exactly one ready document and one used-page ledger entry.
+- Cancellation `ce7e90cd-8f41-46e1-87a5-87a98dd77d18` arrived at 12:54:36 UTC
+  with reason `UNSUBSCRIBE`; its staging webhook returned HTTP 200. RevenueCat
+  and staging retained access until 12:59:21. At 12:59:25 the receipt and staging
+  both showed expired access, with the saved PDF and debit unchanged. The owner
+  confirmed that Refresh offered Subscribe again and the saved PDF still opened
+  on the physical iPhone after expiry.
+  The iOS allowance date now says **Current period ends** instead of **Renews**,
+  because a verified active period does not imply auto-renew is still enabled.
 - A development-signed Release build is installed on the owner's iPhone and
   launched against staging. Use **Sign in with Google** with the reviewer Gmail
   account for the ordinary Magpie account. Separately sign into the Apple sandbox

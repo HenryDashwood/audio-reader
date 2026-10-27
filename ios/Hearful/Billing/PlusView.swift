@@ -22,7 +22,7 @@ struct PlusView: View {
                 } else if status.active {
                     Section("Your allowance") {
                         Text("\(status.remainingPages ?? 0) of \(status.monthlyPages) pages remaining")
-                        if let date = renewalDate(status.periodEnd) { Text("Renews \(date, style: .date)") }
+                        if let date = renewalDate(status.periodEnd) { Text("Current period ends \(date, style: .date)") }
                         if status.store == "play_store" {
                             Link("Manage on Google Play", destination: URL(string: "https://play.google.com/store/account/subscriptions")!)
                         } else {
