@@ -144,8 +144,9 @@ alone cannot make the products available for purchase.
 - Cancellation `ce7e90cd-8f41-46e1-87a5-87a98dd77d18` arrived at 12:54:36 UTC
   with reason `UNSUBSCRIBE`; its staging webhook returned HTTP 200. RevenueCat
   and staging retained access until 12:59:21. At 12:59:25 the receipt and staging
-  both showed expired access, with the saved PDF and debit unchanged. Final
-  phone confirmation of the expired paywall and continued reader access is pending.
+  both showed expired access, with the saved PDF and debit unchanged. The owner
+  confirmed that Refresh offered Subscribe again and the saved PDF still opened
+  on the physical iPhone after expiry.
   The iOS allowance date now says **Current period ends** instead of **Renews**,
   because a verified active period does not imply auto-renew is still enabled.
 - A development-signed Release build is installed on the owner's iPhone and
