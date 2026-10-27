@@ -37,6 +37,29 @@ Store financial agreements, tax/bank setup, product review and Google Play base
 plan activation must be completed by the account holder. RevenueCat SDK setup
 alone cannot make the products available for purchase.
 
+### Setup status (27 October 2026)
+
+- Apple app connection `app4085822f6f` has validated In-App Purchase credentials.
+  Subscription group `22517313` contains draft subscription `6827365515`
+  (`magpie_plus_monthly`): one month, £3.99 UK price, English (U.K.) name
+  **Magpie Plus**, and description **Import 500 PDF pages each month to read and listen.**
+  Availability is configured for all 175 territories with Apple-derived local
+  prices. Family Sharing and multiseat purchasing are off. Nothing has been
+  submitted for review; the first subscription needs a new app version and a
+  review screenshot.
+- RevenueCat Apple product `prodc56f19ad5b` is attached to `magpie_plus` and its
+  `$rc_monthly` package. **Keep with original App User ID** is saved and verified.
+  The optional App Store Connect API connection is not configured, so automated
+  product import/status lookup is unavailable; the product was registered manually.
+- Google connection `appae62406bc8` can read the product and subscription catalogs,
+  but purchase validation still needs attention. The service account has app
+  access and the financial/orders permissions in Play Console. Play Console also
+  requires the owner to complete the merchant payment profile before a subscription
+  can be created. No Google product or base plan has been created yet.
+- Backend RevenueCat credentials, environment webhooks, native sandbox purchases,
+  and store review remain outstanding. Billing remains disabled. These dashboard
+  changes do not deploy the backend or release an app build.
+
 ## Backend configuration
 
 Set separately for staging and production using the normal secret-management
