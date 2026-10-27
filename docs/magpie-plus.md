@@ -3,7 +3,7 @@
 The first paid feature is PDF importing: **£3.99 per month, 500 pages per billing
 month, no rollover**. Apple and Google provide the localized checkout price.
 This change does not publish a subscription or enable sales automatically.
-`BILLING_ENABLED` defaults to false until the store configuration and purchase
+`AUDIOREADER_BILLING_ENABLED` defaults to false until the store configuration and purchase
 checks below are complete. Do not advertise PDF importing in release notes yet.
 
 ## RevenueCat and store configuration
@@ -42,17 +42,17 @@ alone cannot make the products available for purchase.
 Set separately for staging and production using the normal secret-management
 workflow; never commit secret values:
 
-- `BILLING_ENABLED=true` only once the setup and sandbox checks pass.
-- `REVENUECAT_API_KEY`: server-only RevenueCat key with subscriber read access.
-- `REVENUECAT_WEBHOOK_SECRET`: a long random Authorization header value.
-- `REVENUECAT_APPLE_SDK_KEY`: public `appl_…` key.
-- `REVENUECAT_GOOGLE_SDK_KEY`: public `goog_…` key.
-- `REVENUECAT_ENTITLEMENT=magpie_plus` and `REVENUECAT_OFFERING=magpie_plus`.
-- `REVENUECAT_PRODUCTS=["magpie_plus_monthly","magpie_plus:monthly"]`.
-- `PLUS_MONTHLY_PAGES=500`.
-- `PDF_IMPORT_EMAILS=["hcndashwood@gmail.com"]`: verified Apple/Google identity
+- `AUDIOREADER_BILLING_ENABLED=true` only once the setup and sandbox checks pass.
+- `AUDIOREADER_REVENUECAT_API_KEY`: server-only RevenueCat key with subscriber read access.
+- `AUDIOREADER_REVENUECAT_WEBHOOK_SECRET`: a long random Authorization header value.
+- `AUDIOREADER_REVENUECAT_APPLE_SDK_KEY`: public `appl_…` key.
+- `AUDIOREADER_REVENUECAT_GOOGLE_SDK_KEY`: public `goog_…` key.
+- `AUDIOREADER_REVENUECAT_ENTITLEMENT=magpie_plus` and `AUDIOREADER_REVENUECAT_OFFERING=magpie_plus`.
+- `AUDIOREADER_REVENUECAT_PRODUCTS=["magpie_plus_monthly","magpie_plus:monthly"]`.
+- `AUDIOREADER_PLUS_MONTHLY_PAGES=500`.
+- `AUDIOREADER_PDF_IMPORT_EMAILS=["hcndashwood@gmail.com"]`: verified Apple/Google identity
   emails only. This account has unlimited pages even without a purchase.
-- `BILLING_SANDBOX_EMAILS=[]` in production. Add only verified, explicitly
+- `AUDIOREADER_BILLING_SANDBOX_EMAILS=[]` in production. Add only verified, explicitly
   approved test accounts when paid-allowance sandbox testing against production
   is necessary. The owner's unlimited exemption is independent of this list.
 

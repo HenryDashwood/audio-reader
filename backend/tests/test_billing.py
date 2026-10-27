@@ -248,3 +248,12 @@ async def test_non_ascii_webhook_authorization_is_rejected(client, paid, monkeyp
     monkeypatch.setattr(settings, "revenuecat_webhook_secret", "Bearer secret")
     response = await client.post("/billing/webhook", content=b"{}", headers={b"Authorization": b"\xff"})
     assert response.status_code == 401
+
+
+async def test_misconfigured_secret_never_leaks_through_public_sdk_fields(client, paid, monkeypatch):
+    monkeypatch.setattr(settings, "revenuecat_apple_sdk_key", "sk_apple-secret")
+    monkeypatch.setattr(settings, "revenuecat_google_sdk_key", "sk_google-secret")
+    response = await client.get("/billing/status")
+    assert response.json()["apple_sdk_key"] == ""
+    assert response.json()["google_sdk_key"] == ""
+    assert "sk_" not in response.text

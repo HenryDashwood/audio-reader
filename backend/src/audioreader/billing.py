@@ -159,8 +159,12 @@ async def status(session: AsyncSession, user: User, *, refresh: bool = False) ->
         "active": bool(active),
         "unlimited": owner,
         "customer_id": rows[0].id,
-        "apple_sdk_key": settings.revenuecat_apple_sdk_key if configured() else "",
-        "google_sdk_key": settings.revenuecat_google_sdk_key if configured() else "",
+        "apple_sdk_key": settings.revenuecat_apple_sdk_key
+        if configured() and settings.revenuecat_apple_sdk_key.startswith("appl_")
+        else "",
+        "google_sdk_key": settings.revenuecat_google_sdk_key
+        if configured() and settings.revenuecat_google_sdk_key.startswith("goog_")
+        else "",
         "entitlement_id": settings.revenuecat_entitlement,
         "offering_id": settings.revenuecat_offering,
         "monthly_pages": settings.plus_monthly_pages,
