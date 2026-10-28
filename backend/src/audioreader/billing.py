@@ -89,6 +89,18 @@ def apply_subscriber(row: BillingCustomer, subscriber: dict, *, sandbox_allowed:
     entitlement = subscriber.get("entitlements", {}).get(settings.revenuecat_entitlement) or {}
     product = entitlement.get("product_identifier")
     subscription = subscriber.get("subscriptions", {}).get(product) or {}
+    # RevenueCat's v1 subscriber API keys Google subscriptions by product ID,
+    # while webhook events use product:base-plan. Match the approved plan too.
+    approved_product = product
+    plan = subscription.get("product_plan_identifier")
+    if (
+        isinstance(product, str)
+        and product not in settings.revenuecat_products
+        and subscription.get("store") == "play_store"
+        and isinstance(plan, str)
+        and plan
+    ):
+        approved_product = f"{product}:{plan}"
     start = date(subscription.get("purchase_date"))
     end = date(subscription.get("expires_date"))
     access = date(entitlement.get("expires_date"))
@@ -96,7 +108,7 @@ def apply_subscriber(row: BillingCustomer, subscriber: dict, *, sandbox_allowed:
     access_until = max(access, grace or access) if access else None
     now = utcnow()
     valid = (
-        product in settings.revenuecat_products
+        approved_product in settings.revenuecat_products
         and subscription.get("store") in {"app_store", "play_store"}
         and not subscription.get("refunded_at")
         and (subscription.get("is_sandbox") is False or sandbox_allowed)
@@ -112,7 +124,7 @@ def apply_subscriber(row: BillingCustomer, subscriber: dict, *, sandbox_allowed:
         and start is not None
         and access_until is not None
         and access_until > now
-        and row.product_id == product
+        and row.product_id == approved_product
         and row.store == subscription.get("store")
         and row.period_start is not None
         and aware(row.period_start) <= now
@@ -127,7 +139,7 @@ def apply_subscriber(row: BillingCustomer, subscriber: dict, *, sandbox_allowed:
         row.checked_at = now
         return
     valid = valid and start is not None and start <= now
-    row.product_id = product if valid else None
+    row.product_id = approved_product if valid else None
     row.store = subscription.get("store") if valid else None
     row.period_start = start if valid else None
     row.period_end = end if valid else None
