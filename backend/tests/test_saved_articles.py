@@ -196,6 +196,66 @@ async def test_multiple_private_captures_keep_selection_and_progress(client, ses
     assert (await client.get(f"/episodes/{first['id']}")).json()["position_seconds"] == 42
 
 
+@pytest.mark.parametrize("route", ["/saved", "/saved/replace"])
+@pytest.mark.parametrize("with_html", [False, True])
+async def test_browser_resave_reopens_finished_article_and_rejects_stale_progress(
+    client, route, with_html, respx_mock
+):
+    first = await capture(client)
+    episode_id = first["id"]
+    text_url = f"/episodes/{episode_id}/text"
+    initial = (await client.get(text_url)).json()["article_progress"]
+    completion = {
+        "request_id": "finish-before-resave",
+        "expected_revision": initial["revision"],
+        "text_version": initial["text_version"],
+        "content_id": first["content_id"],
+        "offset_utf16": 20,
+        "completed": True,
+    }
+    progress_url = f"/episodes/{episode_id}/article-progress"
+    completed = await client.put(progress_url, json=completion)
+    assert completed.status_code == 200
+    finished = completed.json()["progress"]
+    respx_mock.get(URL).respond(200, text=page())
+    response = await client.post(route, json={"url": URL, **({"html": page()} if with_html else {})})
+    assert response.status_code == 200, response.text
+    reopened = response.json()
+    assert reopened["id"] == episode_id
+    assert reopened["content_id"] == first["content_id"]
+    assert reopened["saved_at"] == first["saved_at"]
+    assert not reopened["completed"]
+    assert reopened["position_seconds"] == 0
+    assert reopened["article_bookmark"] is None
+    assert (await client.get("/saved")).json() == [reopened]
+    progress = (await client.get(text_url)).json()["article_progress"]
+    assert progress["revision"] != finished["revision"]
+    assert progress["bookmark"] is None
+    # Neither a queued old completion nor a replayed receipt can finish it again.
+    stale = completion | {"request_id": "late-finish", "expected_revision": finished["revision"]}
+    assert (await client.put(progress_url, json=stale)).status_code == 409
+    replay = (await client.put(progress_url, json=completion)).json()
+    assert not replay["episode"]["completed"]
+    assert replay["progress"] == progress
+
+
+async def test_retrying_preparation_does_not_reopen_finished_article(client):
+    first = await capture(client)
+    state = await client.put(f"/episodes/{first['id']}/state", json={"played": True})
+    assert state.status_code == 204
+    response = await client.post(f"/saved/{first['id']}/retry")
+    assert response.status_code == 200
+    assert response.json()["completed"]
+
+
+async def test_failed_browser_replacement_does_not_reopen_finished_article(client):
+    first = await capture(client)
+    await client.put(f"/episodes/{first['id']}/state", json={"played": True})
+    response = await client.post("/saved/replace", json={"url": URL, "html": "<p>Sign in to read</p>"})
+    assert response.status_code == 422
+    assert (await client.get(f"/episodes/{first['id']}")).json()["completed"]
+
+
 async def test_explicit_replacement_preserves_identity_date_and_old_version(client, session):
     first = await capture(client)
     await client.put(

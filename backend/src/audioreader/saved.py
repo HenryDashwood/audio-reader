@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from audioreader import positions
 from audioreader.feeds import articles
 from audioreader.feeds.artwork import artwork_url_in_html, favicon_url
 from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes
@@ -89,6 +90,15 @@ async def selection(session: AsyncSession, user: User, episode_id: int) -> Saved
     return await session.get(SavedArticle, (user.id, episode_id), options=[joinedload(SavedArticle.content)])
 
 
+async def reopen_finished(session: AsyncSession, user: User, episode_id: int) -> None:
+    """A fresh browser save returns a finished item to the reading list."""
+    position = (await positions.positions_for(session, user, [episode_id])).get(episode_id)
+    if position is not None and position.completed:
+        # Use the normal restore path to clear the end bookmark and invalidate
+        # older devices' progress revisions, while retaining unfinished progress.
+        await positions.set_episode_state(session, user, episode_id, played=False, commit=False)
+
+
 async def save(session: AsyncSession, user: User, body: SaveRequest, *, replace: bool = False) -> Episode:
     from audioreader.documents import service as documents
 
@@ -151,6 +161,8 @@ async def save(session: AsyncSession, user: User, body: SaveRequest, *, replace:
     # Capturing new material does not switch a selected snapshot, even before playback.
     if replace or body.html or saved.content_id is None:
         await capture(session, user, episode, saved, body, replace=replace)
+    if body.url:
+        await reopen_finished(session, user, episode.id)
     await session.commit()
     # Ensure the nullable feed relationship is available to response rendering.
     await session.refresh(episode, attribute_names=["feed"])

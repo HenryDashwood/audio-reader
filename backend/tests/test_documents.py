@@ -99,6 +99,24 @@ async def test_pdf_browser_html_is_not_captured_as_article(client, beta):
     assert response.json()["content_id"] is None
 
 
+@pytest.mark.parametrize("route", ["/saved", "/saved/replace"])
+@respx.mock
+async def test_browser_resave_reopens_finished_pdf_without_another_import(client, beta, route):
+    url = "https://papers.example/a.pdf"
+    respx.get(url).mock(return_value=httpx.Response(200, content=pdf()))
+    first = (await client.post("/saved", json={"url": url})).json()
+    state = await client.put(f"/episodes/{first['id']}/state", json={"played": True})
+    assert state.status_code == 204
+    response = await client.post(route, json={"url": url})
+    assert response.status_code == 200
+    reopened = response.json()
+    assert reopened["id"] == first["id"]
+    assert reopened["document_id"] == first["document_id"]
+    assert reopened["saved_at"] == first["saved_at"]
+    assert not reopened["completed"]
+    assert reopened["position_seconds"] == 0
+
+
 @respx.mock
 async def test_redirect_to_private_network_rejected(client, beta, monkeypatch):
     from audioreader.feeds import fetcher

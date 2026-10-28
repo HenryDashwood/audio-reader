@@ -17,6 +17,7 @@ private actor SavedLibraryTransport: DataTransport {
     private(set) var requests: [String] = []
 
     init(episode: Episode) { rows = [episode] }
+    func setCompleted(_ value: Bool) { rows[0].completed = value }
     func failDeletion() { rejectDeletion = true }
     func holdReplacement(succeeds: Bool) { suspendReplacement = true; replacementSucceeds = succeeds }
     func releaseReplacement() { replacement?.resume(); replacement = nil }
@@ -76,6 +77,22 @@ struct SavedLibraryTests {
         let model = SavedLibrary(api: HearfulAPI(baseURL: server, transport: transport),
                                  inbox: inbox, cache: cache, isSignedIn: { true })
         return (model, inbox, cache)
+    }
+
+    @Test func refreshMovesBrowserResavedArticleOutOfFinishedEvenWithCachedFinishedCopy() async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var finished = episode
+        finished.completed = true
+        let transport = SavedLibraryTransport(episode: finished)
+        let (model, _, cache) = try setup(directory, transport: transport)
+        await model.load()
+        #expect(model.episodes.first?.completed == true)
+        await transport.setCompleted(false)
+        await model.load()
+        #expect(model.episodes.map(\.id) == [finished.id])
+        #expect(model.episodes.first?.completed == false)
+        #expect(cache.load([Episode].self, for: .savedArticles)?.first?.completed == false)
     }
 
     @Test func readerLinkIsPersistedBeforeAnyNetworkPreparation() throws {

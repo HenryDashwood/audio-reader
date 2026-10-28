@@ -410,6 +410,20 @@ class AccountLibraryTest {
         assertFalse(state.items.any { it.id == "walking" })
         assertEquals(0, api.texts) // Full articles are fetched on demand.
     }
+    @Test fun refreshMovesBrowserResavedArticleOutOfFinishedWithoutCreatingADuplicate() = runTest {
+        val api = Api()
+        api.savedRows = api.savedRows.map { it.copy(completed = true, positionSeconds = 42.0) }
+        val library = AccountLibrary(api, "server")
+        library.changeSession("alice")
+        val id = library.state.value.savedIds.single()
+        assertTrue(library.state.value.items.first { it.id == id }.completed)
+        api.savedRows = api.savedRows.map { it.copy(completed = false, positionSeconds = 0.0) }
+        library.refresh()
+        val reopened = library.state.value.items.first { it.id == id }
+        assertEquals(listOf(id), library.state.value.savedIds)
+        assertFalse(reopened.completed)
+        assertEquals(0L, reopened.remotePositionMs)
+    }
     @Test fun replacementInvalidatesTextButFailedReplacementPreservesTheLoadedCopy() = runTest {
         val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
         val old = library.content(library.state.value.savedIds.single())

@@ -117,7 +117,7 @@ def inspect_file(raw: bytes) -> int:
 async def enqueue(
     session: AsyncSession, user: User, *, url: str | None = None, raw: bytes | None = None, title: str | None = None
 ) -> Episode:
-    from audioreader.saved import normalize_url
+    from audioreader.saved import normalize_url, reopen_finished
 
     await require_access(session, user)
     try:
@@ -134,6 +134,8 @@ async def enqueue(
     if existing:
         saved = await session.get_one(SavedArticle, (user.id, existing.episode_id))
         saved.saved_at = saved.saved_at or utcnow()
+        if url:
+            await reopen_finished(session, user, existing.episode_id)
         await session.commit()
         return await episode_for(session, existing)
     active = await session.scalar(

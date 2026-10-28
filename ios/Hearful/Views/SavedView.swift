@@ -483,7 +483,8 @@ struct SavedView: View {
                         }
                     }
                 }
-                if visible.isEmpty && model.pending.isEmpty && model.pendingPDFs.isEmpty && !model.loading {
+                // Keep the empty state visible while refreshing an empty library.
+                if visible.isEmpty && model.pending.isEmpty && model.pendingPDFs.isEmpty {
                     ContentUnavailableView(
                         "Nothing here yet", systemImage: "bookmark",
                         description: Text(
