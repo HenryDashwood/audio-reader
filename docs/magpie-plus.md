@@ -160,6 +160,193 @@ alone cannot make the products available for purchase.
 
 ## Backend configuration
 
+### iOS production preparation (27 October 2026)
+
+- Promoted verified staging deployment `262d3a2a-20d2-4ebb-9e36-839790345de7`
+  through production workflow `40528958637`. Production deployment
+  `96436437-bea4-409f-8257-04a7fcff4453` reached `SUCCESS` at commit
+  `4d3d858dc89f9483a4c13558fc6c344bab16921e`. Runtime settings were checked
+  inside that deployment; health returned 200 and unauthenticated account and
+  billing requests returned 401.
+- Production billing is enabled for Apple with a 500-page monthly allowance.
+  The Google SDK key is empty and the accepted product list contains only
+  `magpie_plus_monthly`. The Android client cannot configure Google checkout
+  without its key. Do not populate it or add Google's product until Google
+  configuration and purchase testing are complete.
+- `hcndashwood@gmail.com` remains the sole unlimited verified identity.
+  `magpiereview0@gmail.com` is the only production sandbox exception, verified
+  against its linked Google identity; it is not unlimited. A profile email alone
+  cannot grant either exception.
+- RevenueCat webhook `whintgra6c6bd41e2` sends Apple events to production using
+  its separate authorization secret. Both real and sandbox Apple events are
+  delivered so the approved review account can test renewal/refund delivery.
+  Customer IDs are environment-prefixed: staging identities have no production
+  owner and are ignored. This does not allow other production accounts to spend
+  sandbox entitlements. Google's app is excluded from this webhook.
+  RevenueCat test event `47C74CF0-C42C-4DC3-A9C5-4D3620BA530F` received HTTP 200;
+  missing authorization returned 401 and malformed authenticated events 422.
+- Production `/privacy` and `/terms` are live; the privacy page includes
+  RevenueCat. Public release notes are unchanged and do not advertise PDFs.
+- Additional regressions exercise real PDF uploads totalling exactly 500 pages,
+  rejection before provider submission, duplicate saves at zero balance, refund
+  webhook delivery and restore, preserved saved content after a refund, and the
+  production owner/reviewer/Apple-only configuration. `make backend-check`
+  passed 1,280 backend and 188 repository-script tests. These use mocked store
+  and conversion services; they do not prove a live Apple refund.
+- Internal TestFlight workflow `40528972580` succeeded for version 1.6.5 (332)
+  from the promoted commit. Apple marked build
+  `d0cb2cc9-58b7-4ef6-a136-22cb1eb77128` `VALID` at 15:26 UTC and App Store
+  Connect shows it in the Internal group with two testers. It was not submitted
+  to external beta review or App Review. Its public test notes do not mention
+  PDFs or subscriptions. Device purchase/refund verification against production
+  remains separate from upload and Apple processing.
+- The owner completed the production TestFlight purchase and confirmed **500
+  pages remaining**. At 15:45 UTC, the production database and RevenueCat agreed
+  on the reviewer customer's Apple sandbox period, 15:44:53–15:49:53 UTC.
+  Initial purchase event `bc2a2505-057c-40ac-a93d-6d6201bc0732` recorded country
+  `GB`, currency `GBP`, price `3.99`, and received HTTP 200 from the production
+  webhook. The reviewer is not unlimited; the owner-only exemption and empty
+  Google SDK key were verified again.
+- The owner confirmed Restore succeeded with 500 pages, the one-page Safari
+  share reduced the balance to 499, and sharing it again retained 499. At
+  15:49:40 UTC, production contained exactly one ready document
+  `9d65e5a0-137a-4b36-acdf-c5dd39e845ff` (episode `161128`) and one used-page
+  entry, charged to the 15:44:53–15:49:53 period. RevenueCat had already supplied
+  the future 15:49:53–15:54:53 renewal; the backend correctly retained the
+  current period until its boundary. Renewal event
+  `76f24fb3-69c4-42a8-ae97-bc5480d50b1b` received HTTP 200.
+- The owner cancelled the production test subscription and confirmed access
+  remained available. Cancellation event `41284b60-5749-488e-b9c3-00a88d97176d`
+  recorded `UNSUBSCRIBE` at 15:53:17 UTC and received HTTP 200. At 15:53:55,
+  RevenueCat and production retained access until 15:54:53, with the ready PDF
+  and its single page debit unchanged. Expiration event
+  `d69f3e8c-cffd-4174-9f4f-c1d3b9cb2d4d` subsequently recorded `UNSUBSCRIBE`
+  and received HTTP 200 at 15:55 UTC. A 15:55:20 read confirmed expired access
+  in both the receipt and production record, with the ready document and single
+  used-page ledger entry retained. Post-expiry phone checks and the live refund
+  test remain in progress.
+- The subsequent attempt to resubscribe in TestFlight at about 15:57 UTC
+  displayed RevenueCat's invalid-receipt error: the purchased product was
+  missing from the receipt. A 15:58:10 read still showed only the expired
+  subscription, with no new purchase or refund. The app resolves RevenueCat
+  5.91.0 and uses its default StoreKit 2 path; do not prescribe a StoreKit 2
+  migration as a fix. The owner was asked to refresh the existing sandbox
+  tester's sign-in, restore, and retry once. Resubscription and live refund
+  verification are blocked until a valid new purchase is observed. No purchase
+  history was cleared, entitlement granted manually, or access policy relaxed.
+- After refreshing the sandbox login, **Restore purchases** reported another
+  subscriber using the receipt; the owner confirmed it was the restore action,
+  not a new Subscribe attempt. At 16:09 UTC, the production customer still had
+  only its original expired purchase and no aliases/transfers. The dashboard's
+  earlier staging customer also had expired access. The conflicting transaction
+  is not identified by this error; do not claim its owner is proven or that it
+  represents an active charge. A direct Subscribe retry after the refreshed
+  Apple login is pending, with the original restore policy unchanged.
+- The direct retry also failed. A Release device diagnostic at 16:20 UTC
+  confirmed Magpie's session is the production reviewer, while StoreKit's
+  verified transaction history contains the **staging** original transaction
+  `2000001257928722`, including a new transaction `2000001258048028` from
+  16:14:03 and its renewal. The successful production purchase instead used
+  original transaction `2000001258037020`. This identifies the conflicting
+  receipt lineage; the tester shown in Settings still needs to be checked to
+  distinguish a wrong login from stale Apple purchase history. Do not transfer
+  the staging receipt or grant production access to work around it.
+  The development diagnostic build now replaces TestFlight on the connected
+  phone without uninstalling it. The diagnostic intentionally failed its
+  assertion rejecting the known staging receipt; the refund test was skipped.
+  Compilation had no warnings. Physical tests require the existing development
+  team override (`DEVELOPMENT_TEAM=67F2439F4X`) and `ENABLE_TESTABILITY=YES`.
+  Select the full `HearfulTests/SubscriptionRefundDeviceTests` suite: selecting
+  the bare Swift method name ran zero tests despite a successful build.
+- The owner confirmed Settings was signed into the original
+  `magpiereview0@gmail.com` sandbox tester, then switched it to
+  `magpiereview0+production@gmail.com`. The same physical-device diagnostic
+  passed at 16:25 UTC (one passed, refund skipped, no warnings). StoreKit now
+  returned only the two known production transactions, original ID
+  `2000001258037020`, and no staging receipt. No transfer-policy change or
+  purchase-history deletion was needed.
+- After that correction, the owner confirmed a new purchase succeeded and
+  displayed 500 pages. Production and RevenueCat independently confirmed the
+  new sandbox period 16:26:31–16:31:31 UTC, with no cancellation, refund or
+  billing issue. The earlier saved PDF and its single ledger entry remain
+  intact. The live refund test is now running against that active purchase;
+  opening/submitting Apple's sheet is not yet proof of delivered revocation.
+- The guarded physical-device refund test returned Apple's `.success` on
+  submission (one passed, diagnostic skipped, no compiler warnings). The test
+  runner then closed the host app; the owner perceived this as a possible crash,
+  but the test session completed successfully. At 16:29 UTC, RevenueCat event
+  `03e20606-8956-41a2-8651-28a717ba453e` recorded only `CANCELLATION` /
+  `UNSUBSCRIBE`, delivered to production with HTTP 200. `refunded_at` was null.
+  A fresh on-device read at 16:30 still showed transaction `2000001258052861`
+  with `revocationDate=nil`. Refund submission passed; refund approval and
+  revocation delivery have **not** yet passed. Do not count cancellation as a
+  successful refund check.
+- The app was relaunched normally after the test runner exited. The owner
+  confirmed Refresh offers Subscribe again and the existing dummy PDF remains
+  readable after the 16:31:31 expiry. This verifies post-expiry behaviour on the
+  phone, but does not substitute for a refund/revocation event.
+- At 16:34:04 UTC, RevenueCat still reported `refunded_at=null`. Expiration
+  event `5811316d-df3b-4fca-a652-423e1fabcaf8` received HTTP 200 but had reason
+  `UNKNOWN`, not a refund signal. Live refund approval/delivery remains an open
+  release verification item. The owner-only unlimited exemption and disabled
+  Google checkout were verified unchanged in that read.
+- Follow-up at 16:47:26 UTC confirmed the refund: RevenueCat records
+  `refunded_at=2026-10-27T16:38:03Z`. Event
+  `18bf96d8-a76b-436c-b03d-84f7bc72b370` is `CANCELLATION` with
+  `cancel_reason=CUSTOMER_SUPPORT`, transaction `2000001258052861`, and
+  GBP -3.99; production acknowledged it with HTTP 200. The production customer
+  has no active entitlement, while the ready PDF and single page debit remain.
+  This verifies refund approval/delivery after expiry, not immediate revocation
+  of a still-active period. Owner-only unlimited access and disabled Google
+  checkout were reverified unchanged.
+- App Store version 1.6.5 is a saved draft with build 332 and manual release.
+  Public release notes remain neutral. Dedicated reviewer login and private
+  subscription instructions are saved; the owner entered the password directly
+  in App Store Connect. Purchase History was added to the published privacy
+  label for App Functionality, linked to identity, not tracking.
+
+For production test purchases, use a separate Apple sandbox tester from staging.
+RevenueCat's **Keep with original App User ID** also applies to new purchases
+on a receipt already associated with another identity. The Gmail alias
+`magpiereview0+production@gmail.com` uses the existing inbox and does not require
+another Google account. The Magpie Google sign-in remains
+`magpiereview0@gmail.com`; only the Apple test-payment login changes.
+For TestFlight, signing into Developer's Sandbox Apple Account alone is not
+enough while the normal Media & Purchases account remains signed in. After
+installing the build, sign out of **Media & Purchases only**, retain the normal
+iCloud login, and sign into the dedicated tester under **Settings > Developer >
+Sandbox Apple Account**. This corrected the owner's normal-account checkout
+prompt and enabled the verified test purchase. See
+[Apple's TestFlight account instructions](https://developer.apple.com/documentation/storekit/testing-in-app-purchases-with-sandbox).
+The development phone can retain its staging-server override across an update:
+use **Settings > Use the normal server** before the production TestFlight check,
+then sign in again as needed. Never uninstall the app to switch environments.
+
+The manual device test
+`HearfulTests/SubscriptionRefundDeviceTests/requestSandboxRefund` presents Apple's
+refund sheet only when `HEARFUL_TEST_SANDBOX_REFUND=1` is explicitly passed to the
+test runner, together with `HEARFUL_TEST_REFUND_ORIGINAL_TRANSACTION` matching
+the freshly verified production tester's original transaction ID. It requires
+an active Apple-verified sandbox transaction for the exact monthly product and
+refuses real purchases or another tester's receipt. It compiles on iOS 26.5 and 27 and
+is skipped by default; test bundles do not ship in TestFlight/App Store builds.
+Use a Release device test and complete the sheet on the phone. A successful
+request still requires verification of Apple's refund event, RevenueCat delivery,
+and the backend's revoked access with preserved saved PDFs.
+
+The same suite has an opt-in read-only receipt diagnostic,
+`sandboxReceiptIdentity`, enabled by `HEARFUL_TEST_RECEIPT_DIAGNOSTICS=1` with
+`HEARFUL_TEST_EXPECTED_USER` and `HEARFUL_TEST_STAGING_TRANSACTION`. It checks
+the current production session and rejects the known staging receipt lineage.
+It logs only transaction IDs/dates, never receipt signatures, tokens or keys.
+Keep the refund flag unset when running this diagnostic.
+
+Before App Review, supply the subscription review screenshot, attach the first
+subscription/group to the version submission, and have the owner review the
+trader declaration (currently non-trader). The draft has not been submitted.
+Do not broaden sandbox access or declare review/release complete merely because
+the production backend is running.
+
 Set separately for staging and production using the normal secret-management
 workflow; never commit secret values:
 
@@ -184,8 +371,9 @@ workflow; never commit secret values:
   is necessary. The owner's unlimited exemption is independent of this list.
 
 Configure one RevenueCat webhook per environment at `/billing/webhook`, with
-its corresponding secret Authorization header. Filter sandbox events to staging
-and production events to production. Events refresh authoritative subscriber
+its corresponding secret Authorization header. Staging receives sandbox events;
+production receives Apple production and sandbox events for the restricted
+reviewer checks described above. Events refresh authoritative subscriber
 state, rather than trusting the event's entitlement payload. Unknown/deleted
 identities are ignored. Duplicate or out-of-order delivery is safe. Reconciliation
 also occurs on purchase/restore and on access checks after a five-minute cache.

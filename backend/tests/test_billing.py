@@ -385,3 +385,158 @@ async def test_misconfigured_secret_never_leaks_through_public_sdk_fields(client
     assert response.json()["apple_sdk_key"] == ""
     assert response.json()["google_sdk_key"] == ""
     assert "sk_" not in response.text
+
+
+@pytest.fixture
+async def billing_request_client(session, user):
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from audioreader.auth.dependencies import get_current_user
+    from audioreader.db import get_session
+    from audioreader.main import create_app
+
+    maker = async_sessionmaker(session.bind, expire_on_commit=False)
+
+    async def request_session():
+        # Match production: rejected requests close and roll back their transaction.
+        async with maker() as fresh:
+            yield fresh
+
+    app = create_app()
+    app.dependency_overrides[get_session] = request_session
+    app.dependency_overrides[get_current_user] = lambda: user
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        yield client
+
+
+async def test_file_imports_enforce_exact_monthly_boundary_before_provider_submission(
+    billing_request_client, paid, session, monkeypatch
+):
+    import io
+
+    from pypdf import PdfWriter
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from audioreader.documents import datalab, worker
+
+    client = billing_request_client
+
+    def document(pages, width):
+        writer = PdfWriter()
+        for _ in range(pages):
+            writer.add_blank_page(width=width, height=400)
+        stream = io.BytesIO()
+        writer.write(stream)
+        return stream.getvalue()
+
+    submit = AsyncMock(return_value="provider-request")
+    monkeypatch.setattr(datalab, "submit", submit)
+    monkeypatch.setattr(
+        datalab,
+        "poll",
+        AsyncMock(return_value={"status": "complete", "html": "<p>This PDF has readable content.</p>"}),
+    )
+
+    async def finish(document_id):
+        maker = async_sessionmaker(session.bind, expire_on_commit=False)
+        assert await worker.step(maker)
+        doc = await session.get_one(PDFDocument, document_id)
+        await session.refresh(doc)
+        doc.next_poll_at = utcnow() - timedelta(seconds=1)
+        await session.commit()
+        assert await worker.step(maker)
+        await session.refresh(doc)
+        assert doc.status == "ready"
+
+    # Real PDF page counts, through the same upload endpoint as the share extension.
+    for pages, width in [(200, 300), (200, 301), (99, 302)]:
+        response = await client.post("/documents/file", content=document(pages, width))
+        assert response.status_code == 202
+        await finish(response.json()["document_id"])
+    assert (await client.get("/billing/status")).json()["remaining_pages"] == 1
+    denied = await client.post("/documents/file", content=document(2, 303))
+    assert denied.status_code == 409
+    assert "1 pages left" in denied.json()["detail"]
+    assert len(list(await session.scalars(select(PDFDocument)))) == 3
+    last = document(1, 304)
+    accepted = await client.post("/documents/file", content=last)
+    assert accepted.status_code == 202
+    await finish(accepted.json()["document_id"])
+    assert (await client.get("/billing/status")).json()["remaining_pages"] == 0
+    duplicate = await client.post("/documents/file", content=last)
+    assert duplicate.json()["document_id"] == accepted.json()["document_id"]
+    assert (await client.post("/documents/file", content=document(1, 305))).status_code == 409
+    rows = list(await session.scalars(select(PDFPageUsage)))
+    assert len(rows) == 4 and sum(row.pages for row in rows) == 500
+    assert submit.await_count == 4
+
+
+async def test_production_sandbox_exception_is_verified_and_does_not_make_reviewer_unlimited(
+    client, session, user, paid, monkeypatch
+):
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "billing_sandbox_emails", ("magpiereview0@gmail.com",))
+    paid["subscriptions"]["magpie_plus_monthly"]["is_sandbox"] = True
+    user.email = "magpiereview0@gmail.com"
+    assert not (await client.post("/billing/sync")).json()["active"]
+    session.add(UserIdentity(user_id=user.id, provider="google", provider_subject="reviewer", email=user.email))
+    await session.commit()
+    status = (await client.post("/billing/sync")).json()
+    assert status["active"] and not status["unlimited"] and status["remaining_pages"] == 500
+    assert (await client.post("/documents/file", content=pdf())).status_code == 202
+    assert (await client.get("/billing/status")).json()["remaining_pages"] == 499
+
+
+async def test_apple_only_configuration_withholds_android_key_and_rejects_google_receipts(client, paid, monkeypatch):
+    monkeypatch.setattr(settings, "revenuecat_products", ("magpie_plus_monthly",))
+    monkeypatch.setattr(settings, "revenuecat_apple_sdk_key", "appl_public-test")
+    monkeypatch.setattr(settings, "revenuecat_google_sdk_key", "")
+    status = (await client.post("/billing/sync")).json()
+    assert status["available"] and status["active"]
+    assert status["apple_sdk_key"] == "appl_public-test" and status["google_sdk_key"] == ""
+    paid["subscriptions"]["magpie_plus:monthly"] = paid["subscriptions"].pop("magpie_plus_monthly")
+    paid["subscriptions"]["magpie_plus:monthly"]["store"] = "play_store"
+    paid["entitlements"]["magpie_plus"]["product_identifier"] = "magpie_plus:monthly"
+    assert not (await client.post("/billing/sync")).json()["active"]
+
+
+async def test_refund_webhook_revokes_new_imports_but_preserves_paid_document(client, paid, session, monkeypatch):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from audioreader.documents import datalab, worker
+
+    response = await client.post("/documents/file", content=pdf())
+    saved = response.json()
+    maker = async_sessionmaker(session.bind, expire_on_commit=False)
+    monkeypatch.setattr(datalab, "submit", AsyncMock(return_value="refund-test-request"))
+    monkeypatch.setattr(
+        datalab,
+        "poll",
+        AsyncMock(return_value={"status": "complete", "html": "<p>Previously saved PDF remains readable.</p>"}),
+    )
+    assert await worker.step(maker)
+    doc = await session.get_one(PDFDocument, saved["document_id"])
+    await session.refresh(doc)
+    doc.next_poll_at = utcnow() - timedelta(seconds=1)
+    await session.commit()
+    assert await worker.step(maker)
+    before = (await client.get("/billing/status")).json()
+    assert before["active"] and before["remaining_pages"] == 499
+    paid["subscriptions"]["magpie_plus_monthly"]["refunded_at"] = utcnow().isoformat()
+    monkeypatch.setattr(settings, "revenuecat_webhook_secret", "Bearer refund-test")
+    for _ in range(2):
+        reply = await client.post(
+            "/billing/webhook",
+            json={"event": {"app_user_id": before["customer_id"], "type": "CANCELLATION"}},
+            headers={"Authorization": "Bearer refund-test"},
+        )
+        assert reply.status_code == 200
+    assert not (await client.post("/billing/sync")).json()["active"]
+    assert (await client.post("/documents/file", content=pdf())).status_code == 403
+    text = await client.get(f"/episodes/{saved['id']}/text")
+    assert text.status_code == 200 and "remains readable" in text.text
+    assert (await client.get(f"/documents/{saved['document_id']}/original")).status_code == 200
+    usage = await session.get_one(PDFPageUsage, saved["document_id"])
+    await session.refresh(usage)
+    assert usage.pages == 1 and usage.state == "used"
