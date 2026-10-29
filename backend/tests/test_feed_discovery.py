@@ -374,6 +374,146 @@ class TestRankedDiscovery:
             await discovery.discover_feeds("https://slow.example")
 
 
+class TestWordPressDiscovery:
+    async def test_custom_articles_beat_stale_default_feed_and_work_when_cached(
+        self, client, respx_mock, article_xml, monkeypatch
+    ):
+        monkeypatch.setattr(discovery, "SAME_ORIGIN_PROBE_DELAY_SECONDS", 0)
+        homepage = """
+        <html><head><link rel="https://api.w.org/" href="/wp-json/"></head>
+        <body><a href="/article/sewers">Latest article</a>
+        <a href="/article/shipping">Another article</a></body></html>
+        """
+        respx_mock.get(f"{SITE_URL}/").respond(text=homepage, content_type="text/html")
+        registry = respx_mock.get(f"{SITE_URL}/wp-json/wp/v2/types").respond(
+            json={
+                "post": {"name": "Posts"},
+                "article": {"name": "Articles", "has_archive": False},
+                "sponsor": {"name": "Sponsors"},
+            }
+        )
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+        custom_url = f"{SITE_URL}/feed/?post_type=article"
+        articles = article_xml.replace(b"/p/", b"/article/")
+        respx_mock.get(custom_url).respond(content=articles, content_type="application/rss+xml")
+        respx_mock.route().respond(status_code=404)
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 200
+        candidates = response.json()["candidates"]
+        assert [candidate["feed_url"] for candidate in candidates] == [custom_url, FEED_URL]
+        assert candidates[0]["is_primary"] is True
+        assert registry.call_count == 1
+        assert len(respx_mock.calls) <= 2 + discovery.MAX_CANDIDATES
+        resolved, _ = await discovery.resolve_feed(SITE_URL)
+        assert resolved == custom_url
+        assert registry.call_count == 1
+
+    async def test_type_keys_can_differ_from_link_paths_in_a_subdirectory(
+        self, client, respx_mock, article_xml, monkeypatch
+    ):
+        monkeypatch.setattr(discovery, "SAME_ORIGIN_PROBE_DELAY_SECONDS", 0)
+        homepage = """
+        <html><head><link rel="https://api.w.org/" href="/journal/wp-json/"></head>
+        <body><a href="/journal/recipes/soup/">Soup</a></body></html>
+        """
+        respx_mock.get(f"{SITE_URL}/journal/").respond(text=homepage, content_type="text/html")
+        respx_mock.get(f"{SITE_URL}/journal/wp-json/wp/v2/types").respond(
+            json={
+                "food_recipe": {"name": "Recipes", "rest_base": "recipes", "has_archive": False},
+            }
+        )
+        custom_url = f"{SITE_URL}/journal/feed/?post_type=food_recipe"
+        respx_mock.get(custom_url).respond(content=article_xml, content_type="application/rss+xml")
+        respx_mock.route().respond(status_code=404)
+
+        response = await client.post("/feeds/discover", json={"url": f"{SITE_URL}/journal/"})
+
+        assert response.status_code == 200
+        assert response.json()["candidates"][0]["feed_url"] == custom_url
+
+    @pytest.mark.parametrize("metadata", [None, [], {"article": "bad record"}])
+    async def test_unavailable_or_invalid_registry_preserves_normal_discovery(
+        self, client, respx_mock, article_xml, monkeypatch, metadata
+    ):
+        monkeypatch.setattr(discovery, "SAME_ORIGIN_PROBE_DELAY_SECONDS", 0)
+        homepage = HOMEPAGE.replace(b"</head>", b'<link rel="https://api.w.org/" href="/wp-json/"></head>')
+        respx_mock.get(f"{SITE_URL}/").respond(content=homepage, content_type="text/html")
+        registry = respx_mock.get(f"{SITE_URL}/wp-json/wp/v2/types")
+        if metadata is None:
+            registry.respond(status_code=403)
+        else:
+            registry.respond(json=metadata)
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 200
+        assert response.json()["candidates"][0]["feed_url"] == FEED_URL
+
+    async def test_registry_timeout_does_not_lose_the_advertised_feed(
+        self, client, respx_mock, article_xml, monkeypatch
+    ):
+        monkeypatch.setattr(discovery, "SAME_ORIGIN_PROBE_DELAY_SECONDS", 0)
+        monkeypatch.setattr(discovery, "WORDPRESS_METADATA_TIMEOUT_SECONDS", 0.001)
+        homepage = HOMEPAGE.replace(b"</head>", b'<link rel="https://api.w.org/" href="/wp-json/"></head>')
+        respx_mock.get(f"{SITE_URL}/").respond(content=homepage, content_type="text/html")
+
+        async def slow_registry(request):
+            await asyncio.sleep(1)
+            return httpx.Response(200, json={})
+
+        respx_mock.get(f"{SITE_URL}/wp-json/wp/v2/types").mock(side_effect=slow_registry)
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 200
+        assert response.json()["candidates"][0]["feed_url"] == FEED_URL
+
+    @pytest.mark.parametrize(
+        "api_link",
+        [
+            '<link rel="https://api.w.org/" href="https://other.example/wp-json/">',
+            '</head><body><link rel="https://api.w.org/" href="/wp-json/">',
+        ],
+    )
+    async def test_body_or_external_api_links_do_not_trigger_registry_requests(
+        self, client, respx_mock, article_xml, monkeypatch, api_link
+    ):
+        monkeypatch.setattr(discovery, "SAME_ORIGIN_PROBE_DELAY_SECONDS", 0)
+        homepage = HOMEPAGE.replace(b"</head>", api_link.encode() + b"</head>")
+        respx_mock.get(f"{SITE_URL}/").respond(content=homepage, content_type="text/html")
+        respx_mock.get(FEED_URL).respond(content=article_xml, content_type="application/rss+xml")
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 200
+        assert len(respx_mock.calls) == 2
+
+    async def test_probes_only_bounded_linked_custom_types(self, client, respx_mock, article_xml, monkeypatch):
+        monkeypatch.setattr(discovery, "SAME_ORIGIN_PROBE_DELAY_SECONDS", 0)
+        types = {f"story{i}": {"name": f"Stories {i}"} for i in range(20)}
+        types.update({"wp_template": {}, "page": {}, "unlinked": {}, "bad&type": {}})
+        links = "".join(f'<a href="/{slug}/entry/">Entry</a>' for slug in types if slug != "unlinked")
+        homepage = '<head><link rel="https://api.w.org/" href="/wp-json/"></head><body>' + links
+        respx_mock.get(f"{SITE_URL}/").respond(text=homepage, content_type="text/html")
+        respx_mock.get(f"{SITE_URL}/wp-json/wp/v2/types").respond(json=types)
+        # Identical non-feed responses for guesses should never turn into choices.
+        respx_mock.route().respond(status_code=404)
+
+        response = await client.post("/feeds/discover", json={"url": SITE_URL})
+
+        assert response.status_code == 422
+        custom = [
+            call.request.url.params["post_type"] for call in respx_mock.calls if "post_type" in call.request.url.params
+        ]
+        assert len(custom) == discovery.MAX_WORDPRESS_FEEDS
+        assert all(slug.startswith("story") for slug in custom)
+        assert len(respx_mock.calls) <= 2 + discovery.MAX_CANDIDATES
+
+
 BARE_SITE = "https://wrongside.example.com"
 WWW_SITE = "https://www.wrongside.example.com"
 

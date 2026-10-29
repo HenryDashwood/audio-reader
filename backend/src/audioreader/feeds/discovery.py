@@ -13,13 +13,14 @@ what she actually said before anything is trusted.
 
 import asyncio
 import ipaddress
+import json
 import logging
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from time import monotonic
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -65,6 +66,8 @@ BLOCKED_HOMEPAGE_STATUSES = {401, 403}
 #: Hard cap on candidate fetches per resolution, so one bad page cannot turn
 #: into a crawl.
 MAX_CANDIDATES = 12
+MAX_WORDPRESS_FEEDS = 3
+WORDPRESS_METADATA_TIMEOUT_SECONDS = 4
 DISCOVERY_DEADLINE_SECONDS = 25
 DISCOVERY_CONCURRENCY = 3
 SAME_ORIGIN_PROBE_DELAY_SECONDS = 0.2
@@ -100,19 +103,26 @@ class _FeedLinkFinder(HTMLParser):
         self.links: list[tuple[str, str, str | None]] = []
         self.base_href: str | None = None
         self.in_body = False
+        self.wordpress_api_root: str | None = None
+        self.page_links: set[str] = set()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.casefold()
+        by_name = {name.casefold(): (value or "") for name, value in attrs}
+        if tag == "a" and by_name.get("href"):
+            self.page_links.add(by_name["href"])
         if tag == "body":
             self.in_body = True
             return
         if self.in_body:
             return
-        by_name = {name.casefold(): (value or "") for name, value in attrs}
         if tag == "base" and self.base_href is None and by_name.get("href"):
             self.base_href = by_name["href"]
             return
         if tag != "link":
+            return
+        if "https://api.w.org/" in by_name.get("rel", "").split():
+            self.wordpress_api_root = self.wordpress_api_root or by_name.get("href")
             return
         if "alternate" not in by_name.get("rel", "").casefold().split():
             return
@@ -367,6 +377,76 @@ async def _shared_link_target(url: str, country: str | None = None) -> str:
         raise FeedFetchError("could not resolve the podcast sharing link") from exc
 
 
+async def _wordpress_feed_locations(html: str, homepage_url: str) -> tuple[list[_CandidateLocation], set[str]]:
+    """Probe custom types linked on a WordPress page, never arbitrary guessed types.
+
+    WordPress's normal feed excludes custom post types. Its advertised REST
+    root identifies the installation (including subdirectories), and the
+    types registry supplies the real post_type keys rather than URL slugs.
+    This costs at most one metadata request and three additional feed probes.
+    """
+    finder = _FeedLinkFinder()
+    try:
+        finder.feed(html)
+        finder.close()
+        base = urljoin(homepage_url, finder.base_href) if finder.base_href else homepage_url
+        page_links: set[str] = set()
+        for href in finder.page_links:
+            try:
+                link = urljoin(base, href)
+                if _origin_key(link) == _origin_key(homepage_url):
+                    page_links.add(_without_fragment(link))
+            except ValueError:
+                continue
+        api_root = urljoin(base, finder.wordpress_api_root or "")
+        api = urlsplit(api_root)
+        if (
+            not finder.wordpress_api_root
+            or _origin_key(api_root) != _origin_key(homepage_url)
+            or api.username is not None
+            or api.password is not None
+            or api.query
+            or not api.path.rstrip("/").endswith("/wp-json")
+        ):
+            return [], page_links
+        site_root = urljoin(api_root.rstrip("/") + "/", "../")
+        await asyncio.sleep(SAME_ORIGIN_PROBE_DELAY_SECONDS)
+        result = await asyncio.wait_for(
+            fetch_feed_resource(api_root.rstrip("/") + "/wp/v2/types"),
+            timeout=WORDPRESS_METADATA_TIMEOUT_SECONDS,
+        )
+        types = json.loads(result.content or b"{}")
+    except (FeedFetchError, TimeoutError, ValueError):
+        return [], set()
+    if not isinstance(types, dict):
+        return [], page_links
+
+    linked_paths = [urlsplit(link).path for link in page_links]
+    matched = []
+    for slug, record in types.items():
+        if (
+            not isinstance(record, dict)
+            or not re.fullmatch(r"[a-z0-9_-]{1,20}", slug)
+            or slug in {"post", "page", "attachment", "nav_menu_item"}
+            or slug.startswith("wp_")
+        ):
+            continue
+        prefixes = {
+            urlsplit(site_root).path + name.strip("/") + "/"
+            for name in (slug, record.get("rest_base"), record.get("has_archive"))
+            if isinstance(name, str) and re.fullmatch(r"[a-z0-9_/-]+", name)
+        }
+        count = sum(any(path.startswith(prefix) for prefix in prefixes) for path in linked_paths)
+        if count:
+            title = record.get("name")
+            matched.append((count, slug, title if isinstance(title, str) else None))
+    matched.sort(key=lambda item: (-item[0], item[1]))
+    return [
+        _CandidateLocation(site_root + "feed/?" + urlencode({"post_type": slug}), "common_path", title, 0)
+        for _, slug, title in matched[:MAX_WORDPRESS_FEEDS]
+    ], page_links
+
+
 async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
     initial_fetch_failure: FeedFetchError | None = None
     try:
@@ -422,6 +502,12 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
             replace(location, order=len(common_locations) + index) for index, location in enumerate(locations)
         ]
 
+    wordpress_locations, page_links = await _wordpress_feed_locations(html, homepage_url)
+    wordpress_urls = {location.url for location in wordpress_locations}
+    locations += [
+        replace(location, order=len(locations) + index) for index, location in enumerate(wordpress_locations)
+    ]
+
     unique: list[_CandidateLocation] = []
     seen = {_request_key(homepage_url)}
     for location in locations:
@@ -458,14 +544,24 @@ async def _discover_uncached(url: str) -> list[_ResolvedCandidate]:
         except FeedParseError as exc:
             logger.info("feed discovery candidate was not a feed at %s: %s", location.url, exc)
             return None
+        if location.url in wordpress_urls and not parsed.items:
+            return None
         parsed = supplement_feed_artwork_from_html(parsed, html, homepage_url)
-        return _resolved_candidate(
+        resolved = _resolved_candidate(
             parsed,
             result.final_url,
             location.source,
             location.title,
             location.order,
         )
+        # A legacy default feed can still parse successfully while omitting
+        # everything on today's homepage. Prefer a conventional feed whose
+        # actual entries are linked there; explicit feed metadata still wins.
+        if location.source == "common_path" and any(
+            item.link and _without_fragment(item.link) in page_links for item in parsed.items
+        ):
+            resolved = replace(resolved, base_score=resolved.base_score + 60)
+        return resolved
 
     async def inspect_origin(locations: list[_CandidateLocation]) -> list[_ResolvedCandidate | None]:
         async with semaphore:
