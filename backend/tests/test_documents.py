@@ -11,16 +11,16 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from audioreader.config import settings
 from audioreader.documents import datalab, normalise, service, worker
-from audioreader.models import PDFDocument, PDFUsage, SavedArticle, User, UserIdentity, utcnow
+from audioreader.models import FeatureFlag, PDFDocument, PDFUsage, SavedArticle, User, UserFeatureFlag, utcnow
 
 
 @pytest.fixture
 async def beta(session, user, monkeypatch):
     monkeypatch.setattr(settings, "datalab_api_key", "test-only")
     monkeypatch.setattr(settings, "pdf_import_enabled", True)
-    session.add(
-        UserIdentity(user_id=user.id, provider="google", provider_subject="pdf-beta", email="hcndashwood@gmail.com")
-    )
+    session.add(FeatureFlag(key="pdf_unlimited", description="Test unlimited PDF access"))
+    await session.flush()
+    session.add(UserFeatureFlag(user_id=user.id, flag_key="pdf_unlimited", enabled=True))
     await session.commit()
     return user
 
@@ -33,14 +33,33 @@ def pdf():
     return stream.getvalue()
 
 
-async def test_gate_uses_verified_identity_not_profile(client, session, user, monkeypatch):
+async def test_gate_requires_flag_not_profile_email(client, session, user, monkeypatch):
     monkeypatch.setattr(settings, "datalab_api_key", "test-only")
     monkeypatch.setattr(settings, "pdf_import_enabled", True)
-    user.email = "hcndashwood@gmail.com"
+    user.email = "reader@example.test"
     await session.commit()
     response = await client.post("/documents/file", content=pdf())
     assert response.status_code == 403
     assert not (await client.get("/documents/capability")).json()["enabled"]
+
+
+async def test_revoking_account_flag_blocks_imports_and_queued_submissions(client, beta, session, monkeypatch):
+    row = (await client.post("/documents/file", content=pdf())).json()
+    grant = await session.get_one(UserFeatureFlag, (beta.id, "pdf_unlimited"))
+    grant.enabled = False
+    await session.commit()
+    assert not (await client.get("/documents/capability")).json()["enabled"]
+    assert (await client.post("/documents/file", content=pdf())).status_code == 403
+    submit = AsyncMock()
+    monkeypatch.setattr(datalab, "submit", submit)
+    maker = async_sessionmaker(session.bind, expire_on_commit=False)
+    assert await worker.step(maker)
+    submit.assert_not_awaited()
+    async with maker() as fresh:
+        document = await fresh.get_one(PDFDocument, row["document_id"])
+        assert document.status == "failed"
+    # Revoking new imports never removes access to an already saved original.
+    assert (await client.get(f"/documents/{row['document_id']}/original")).status_code == 200
 
 
 async def test_save_is_sufficient_without_separate_consent(client, beta, session):

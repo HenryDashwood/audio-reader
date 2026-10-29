@@ -24,6 +24,7 @@ from audioreader.models import (
     SavedArticle,
     Subscription,
     User,
+    UserFeatureFlag,
     UserIdentity,
     VoiceCommandReceipt,
     VoiceUndo,
@@ -52,6 +53,21 @@ async def combine_accounts(session: AsyncSession, target: User, source: User) ->
     target.pdf_consent_version = None
     await _subscriptions(session, target, source)
     await _saved_and_positions(session, target, source)
+
+    # Preserve targeted access across linked sign-ins. An explicit denial on
+    # either account wins when both accounts have an override for the same flag.
+    overrides = {
+        row.flag_key: row
+        for row in await session.scalars(select(UserFeatureFlag).where(UserFeatureFlag.user_id == target.id))
+    }
+    for row in await session.scalars(select(UserFeatureFlag).where(UserFeatureFlag.user_id == source.id)):
+        existing = overrides.get(row.flag_key)
+        if existing is None:
+            row.user_id = target.id
+        else:
+            existing.enabled = existing.enabled and row.enabled
+            await session.delete(row)
+    await session.flush()
 
     # Keep every immutable capture, including a duplicate's unselected version.
     for table, owner in ((ArticleContent, ArticleContent.owner_user_id), (Feed, Feed.owner_user_id)):

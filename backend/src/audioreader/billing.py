@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audioreader import feature_flags
 from audioreader.config import settings
 from audioreader.models import BillingCustomer, PDFPageUsage, User, UserIdentity, utcnow
 
@@ -39,7 +40,7 @@ async def verified_email(session: AsyncSession, user: User, emails: tuple[str, .
 
 
 async def unlimited(session: AsyncSession, user: User) -> bool:
-    return await verified_email(session, user, settings.pdf_import_emails)
+    return await feature_flags.enabled(session, user, feature_flags.PDF_UNLIMITED)
 
 
 async def customers(session: AsyncSession, user: User) -> list[BillingCustomer]:

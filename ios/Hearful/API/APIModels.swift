@@ -254,12 +254,17 @@ nonisolated struct UserInfo: Decodable, Equatable {
     let id: String
     let displayName: String?
     let aiDataSharingConsented: Bool
+    let featureFlags: [String: Bool]
 
-    init(id: String, displayName: String?, aiDataSharingConsented: Bool = false) {
+    init(id: String, displayName: String?, aiDataSharingConsented: Bool = false,
+         featureFlags: [String: Bool] = [:]) {
         self.id = id
         self.displayName = displayName
         self.aiDataSharingConsented = aiDataSharingConsented
+        self.featureFlags = featureFlags
     }
+
+    func isFeatureEnabled(_ key: String) -> Bool { featureFlags[key] == true }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -273,12 +278,14 @@ nonisolated struct UserInfo: Decodable, Equatable {
                 Bool.self,
                 forKey: .aiDataSharingConsented
             ) ?? false
+        featureFlags = try container.decodeIfPresent([String: Bool].self, forKey: .featureFlags) ?? [:]
     }
 
     enum CodingKeys: String, CodingKey {
         case id
         case displayName = "display_name"
         case aiDataSharingConsented = "ai_data_sharing_consented"
+        case featureFlags = "feature_flags"
     }
 }
 

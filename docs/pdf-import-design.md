@@ -17,8 +17,9 @@ PDFs should become private items in Saved, with the same reading, listening,
 offline access and progress behaviour as saved articles. Datalab handles document
 conversion; Magpie owns durable processing state, uploaded originals and the
 version of the content the user reads. Browser PDFs can be submitted by URL
-through the existing share experience. The initial beta is available only to the
-account associated with `hcndashwood@gmail.com`.
+through the existing share experience. Unlimited beta access is assigned to
+specific accounts through the `pdf_unlimited` database flag. Paid PDF access
+remains a separate entitlement.
 
 The recommended implementation is a small document ingestion path feeding the
 existing article system. It needs private object storage and a database-backed
@@ -260,13 +261,14 @@ iframes, remote tracking images and unsafe link schemes from PDF content.
 ## Account feature flag
 
 Use an environment kill switch plus a server-owned account grant for
-`pdf_import`. At enablement, resolve the verified linked identity for
-`hcndashwood@gmail.com` to its internal user ID and grant that ID. Do not trust a
+`pdf_unlimited`. At enablement, use the private admin command to resolve a
+verified linked identity to its internal user ID and grant that ID. Do not trust a
 client-supplied address or match mutable display email on every request. If the
 verified identity does not resolve uniquely, leave access off until it does.
 
-Expose `capabilities.pdf_import` through the existing auth response and
-`GET /me`; missing capability means false on both clients. Refresh on login,
+Expose `feature_flags.pdf_unlimited` through the existing auth response and
+`GET /me`; missing flags mean false on both clients. See
+[feature flags](feature-flags.md) for the implemented contract. Refresh on login,
 account changes and foregrounding. Include effective upload limits in the
 capability response so UI copy matches server enforcement.
 

@@ -173,7 +173,9 @@ alone cannot make the products available for purchase.
   `magpie_plus_monthly`. The Android client cannot configure Google checkout
   without its key. Do not populate it or add Google's product until Google
   configuration and purchase testing are complete.
-- `hcndashwood@gmail.com` remains the sole unlimited verified identity.
+- At that deployment, the legacy verified-email allowlist granted unlimited
+  access to one account. Current code replaces that allowlist with
+  `pdf_unlimited`; see [feature flags](feature-flags.md) for transition steps.
   `magpiereview0@gmail.com` is the only production sandbox exception, verified
   against its linked Google identity; it is not unlimited. A profile email alone
   cannot grant either exception.
@@ -364,8 +366,9 @@ workflow; never commit secret values:
 - `AUDIOREADER_REVENUECAT_ENTITLEMENT=magpie_plus` and `AUDIOREADER_REVENUECAT_OFFERING=magpie_plus`.
 - `AUDIOREADER_REVENUECAT_PRODUCTS=["magpie_plus_monthly","magpie_plus:monthly"]`.
 - `AUDIOREADER_PLUS_MONTHLY_PAGES=500`.
-- `AUDIOREADER_PDF_IMPORT_EMAILS=["hcndashwood@gmail.com"]`: verified Apple/Google identity
-  emails only. This account has unlimited pages even without a purchase.
+- `pdf_unlimited`: a database feature flag granting unlimited pages without a
+  purchase. Assign it with the [private admin command](feature-flags.md). The
+  former `AUDIOREADER_PDF_IMPORT_EMAILS` setting is no longer read.
 - `AUDIOREADER_BILLING_SANDBOX_EMAILS=[]` in production. Add only verified, explicitly
   approved test accounts when paid-allowance sandbox testing against production
   is necessary. The owner's unlimited exemption is independent of this list.

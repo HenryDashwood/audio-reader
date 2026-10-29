@@ -8,7 +8,7 @@ from sqlalchemy import select
 from audioreader import billing
 from audioreader.config import settings
 from audioreader.documents import service
-from audioreader.models import PDFDocument, PDFPageUsage, UserIdentity, utcnow
+from audioreader.models import FeatureFlag, PDFDocument, PDFPageUsage, UserFeatureFlag, UserIdentity, utcnow
 from test_documents import pdf
 
 
@@ -48,11 +48,11 @@ async def test_purchase_sync_requires_verified_entitlement(client, paid, session
     assert (await client.post("/documents/file", content=pdf())).status_code == 403
 
 
-async def test_owner_unlimited_even_with_billing_disabled(client, session, user, monkeypatch):
+async def test_flag_grants_unlimited_even_with_billing_disabled(client, session, user, monkeypatch):
     monkeypatch.setattr(settings, "billing_enabled", False)
-    session.add(
-        UserIdentity(user_id=user.id, provider="google", provider_subject="owner", email="hcndashwood@gmail.com")
-    )
+    session.add(FeatureFlag(key="pdf_unlimited", description="Test unlimited PDF access"))
+    await session.flush()
+    session.add(UserFeatureFlag(user_id=user.id, flag_key="pdf_unlimited", enabled=True))
     await session.commit()
     status = (await client.get("/billing/status")).json()
     assert status["unlimited"] and status["remaining_pages"] is None
@@ -60,7 +60,7 @@ async def test_owner_unlimited_even_with_billing_disabled(client, session, user,
 
 
 async def test_profile_email_cannot_bypass_allowance(client, user, paid):
-    user.email = "hcndashwood@gmail.com"
+    user.email = "reader@example.test"
     assert not (await client.get("/billing/status")).json()["unlimited"]
 
 

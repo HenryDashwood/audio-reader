@@ -294,6 +294,7 @@ class UserRead(BaseModel):
     id: uuid.UUID
     display_name: str | None
     ai_data_sharing_consented: bool = False
+    feature_flags: dict[str, bool] = Field(default_factory=dict)
 
 
 class AIDataSharingConsentUpdate(BaseModel):

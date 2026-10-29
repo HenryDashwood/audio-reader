@@ -16,7 +16,7 @@ class AccountSessionTest {
     }
     private class Api : AccountApi {
         var failure: AccountFailure? = null
-        val user = AccountUser("same-account", null)
+        var user = AccountUser("same-account", null)
         var linked = setOf("apple", "google")
         var loginCount = 0
         var linkCount = 0
@@ -36,6 +36,25 @@ class AccountSessionTest {
         override suspend fun logout(token: String) { loggedOut += token }
         override suspend fun delete(token: String) { failure?.let { throw it } }
     }
+    @Test fun flagsFollowTheAccountRefreshAndAreClearedOnSignOut() = runTest {
+        val api = Api()
+        api.user = AccountUser("same-account", null, mapOf("experiment" to true, "denied" to false))
+        val session = AccountSession(api, Store())
+        session.signInGoogle { "proof" }
+        assertTrue(session.state.value.user!!.isFeatureEnabled("experiment"))
+        assertFalse(session.state.value.user!!.isFeatureEnabled("denied"))
+        assertFalse(session.state.value.user!!.isFeatureEnabled("unknown"))
+        api.user = AccountUser("same-account", null, mapOf("experiment" to false))
+        session.refresh()
+        assertFalse(session.state.value.user!!.isFeatureEnabled("experiment"))
+        session.signOut()
+        assertNull(session.state.value.user)
+        // A different/older server response cannot inherit the previous grants.
+        api.user = AccountUser("other-account", null)
+        session.signInGoogle { "proof" }
+        assertTrue(session.state.value.user!!.featureFlags.isEmpty())
+    }
+
     @Test fun googleLoginRestoresSameUserAndLinkedProviders() = runTest {
         val api = Api(); val store = Store(); val session = AccountSession(api, store)
         session.signInGoogle { "proof" }

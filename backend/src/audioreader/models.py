@@ -229,6 +229,22 @@ class User(Base):
     identities: Mapped[list["UserIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
+class FeatureFlag(Base):
+    __tablename__ = "feature_flags"
+
+    key: Mapped[str] = mapped_column(primary_key=True)
+    description: Mapped[str]
+    default_enabled: Mapped[bool] = mapped_column(default=False, server_default=false())
+
+
+class UserFeatureFlag(Base):
+    __tablename__ = "user_feature_flags"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    flag_key: Mapped[str] = mapped_column(ForeignKey("feature_flags.key", ondelete="CASCADE"), primary_key=True)
+    enabled: Mapped[bool]
+
+
 class NewsletterInboxAlias(Base):
     """Keep a combined account's old address and private feed namespace working."""
 

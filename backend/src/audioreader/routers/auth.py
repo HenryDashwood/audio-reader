@@ -1,10 +1,11 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audioreader import feature_flags
 from audioreader.auth import service
 from audioreader.auth.apple import (
     AppleRevoker,
@@ -54,11 +55,12 @@ def has_current_ai_data_sharing_consent(user: User) -> bool:
     )
 
 
-def user_read(user: User) -> UserRead:
+async def user_read(user: User, session: AsyncSession) -> UserRead:
     return UserRead(
         id=user.id,
         display_name=user.display_name,
         ai_data_sharing_consented=has_current_ai_data_sharing_consent(user),
+        feature_flags=await feature_flags.for_user(session, user),
     )
 
 
@@ -79,7 +81,7 @@ async def apple_login(body: AppleLoginRequest, session: Session, verifier: Verif
             logger.warning("no refresh token obtained; this account cannot be revoked with Apple")
 
     user, token = await service.login(session, identity, refresh_token=refresh_token)
-    return AuthResponse(token=token, user=user_read(user))
+    return AuthResponse(token=token, user=await user_read(user, session))
 
 
 @router.post("/auth/logout", status_code=204)
@@ -109,7 +111,7 @@ async def verified_google(body: GoogleLoginRequest, verifier: GoogleTokenVerifie
 async def google_login(body: GoogleLoginRequest, session: Session, verifier: GoogleVerifier) -> AuthResponse:
     identity = await verified_google(body, verifier)
     user, token = await service.login(session, identity, provider="google")
-    return AuthResponse(token=token, user=user_read(user))
+    return AuthResponse(token=token, user=await user_read(user, session))
 
 
 @router.get("/me/identities", response_model=LinkedIdentitiesRead)
@@ -161,10 +163,17 @@ async def link_apple(
 
 
 @router.get("/me")
-async def me(user: CurrentUser) -> UserRead:
+async def me(user: CurrentUser, session: Session, response: Response) -> UserRead:
     """Cheap session probe: the app calls this at launch to notice a revoked
     or stale token before the user tries anything else."""
-    return user_read(user)
+    response.headers["Cache-Control"] = "private, no-store"
+    return await user_read(user, session)
+
+
+@router.get("/me/features", response_model=dict[str, bool])
+async def features(user: CurrentUser, session: Session, response: Response) -> dict[str, bool]:
+    response.headers["Cache-Control"] = "private, no-store"
+    return await feature_flags.for_user(session, user)
 
 
 @router.put("/me/ai-data-sharing", response_model=UserRead)
@@ -185,7 +194,7 @@ async def set_ai_data_sharing(body: AIDataSharingConsentUpdate, session: Session
         # gate checks withdrawn_at, so this does not preserve permission.
         user.ai_data_sharing_withdrawn_at = utcnow()
     await session.commit()
-    return user_read(user)
+    return await user_read(user, session)
 
 
 @router.delete("/me", status_code=204)

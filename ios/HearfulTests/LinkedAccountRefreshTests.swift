@@ -18,12 +18,12 @@ struct LinkedAccountRefreshTests {
             let json: String
             switch request.url!.path {
             case "/auth/google":
-                json = #"{"token":"link-test","user":{"id":"current","ai_data_sharing_consented":true}}"#
+                json = #"{"token":"link-test","user":{"id":"current","ai_data_sharing_consented":true,"feature_flags":{"experiment":true}}}"#
             case "/me/identities/google":
                 connected = true
                 json = #"{"providers":["apple","google"]}"#
             case "/me":
-                json = "{\"id\":\"current\",\"ai_data_sharing_consented\":\(!connected)}"
+                json = "{\"id\":\"current\",\"ai_data_sharing_consented\":\(!connected),\"feature_flags\":{\"experiment\":\(!connected)}}"
             default:
                 json = "{}"
             }
@@ -47,6 +47,7 @@ struct LinkedAccountRefreshTests {
         #expect(storedToken == "link-test")
         #expect(ShortcutScope.current == originalScope)
         #expect(auth.user?.aiDataSharingConsented == true)
+        #expect(auth.user?.isFeatureEnabled("experiment") == true)
         let notifications = Notifications()
         let observers = [Notification.Name.hearfulSubscriptionsChanged, .hearfulSavedChanged].map { name in
             center.addObserver(forName: name, object: nil, queue: .main) { _ in
@@ -58,6 +59,7 @@ struct LinkedAccountRefreshTests {
         #expect(auth.linkedProviders == ["apple", "google"])
         #expect(auth.user?.id == "current")
         #expect(auth.user?.aiDataSharingConsented == false)
+        #expect(auth.user?.isFeatureEnabled("experiment") == false)
         #expect(notifications.names == [.hearfulSubscriptionsChanged, .hearfulSavedChanged])
         #expect(ShortcutScope.current == originalScope)
     }

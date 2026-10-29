@@ -300,7 +300,7 @@ async def complete(body: BrowserProof, session: Session, credentials: Credential
     user, token = await service.login(
         session, identity, refresh_token=refresh_token, refresh_token_client_id=settings.apple_services_id
     )
-    return BrowserResult(status="complete", auth=AuthResponse(token=token, user=user_read(user)))
+    return BrowserResult(status="complete", auth=AuthResponse(token=token, user=await user_read(user, session)))
 
 
 _verifier: AppleTokenVerifier | None = None

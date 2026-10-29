@@ -12,12 +12,12 @@ The server requires all of the following before accepting or submitting a PDF:
 
 - `AUDIOREADER_PDF_IMPORT_ENABLED` is true (the default).
 - `DATALAB_API_KEY` is configured on that server.
-- A linked Apple/Google identity has an email in
-  `AUDIOREADER_PDF_IMPORT_EMAILS`. Its default is exactly
-  `hcndashwood@gmail.com`; this is not matched against editable profile data.
+- The account has a valid paid PDF entitlement or the database-owned
+  `pdf_unlimited` flag enabled. See [feature flags](feature-flags.md) for grants
+  and the transition from the former email allowlist.
 
-The allowlist is evaluated on the server on every import and again before a
-queued job is submitted. Development tokens do not bypass it. Existing readable
+Access is evaluated on the server on every import and again before a queued
+job is submitted. Development tokens do not bypass it. Existing readable
 PDFs remain accessible if importing is disabled. Saving a PDF confirms processing;
 there is no separate consent step or requirement to open the app from the share
 pane. Both clients explain Datalab processing alongside PDF import controls.

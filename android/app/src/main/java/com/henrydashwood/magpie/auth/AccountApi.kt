@@ -10,7 +10,9 @@ import java.io.IOException
 import com.henrydashwood.magpie.BuildConfig
 
 // Provider credentials are exchanged for a Magpie session; email is never an account key.
-data class AccountUser(val id: String, val displayName: String?)
+data class AccountUser(val id: String, val displayName: String?, val featureFlags: Map<String, Boolean> = emptyMap()) {
+    fun isFeatureEnabled(key: String) = featureFlags[key] == true
+}
 data class AccountLogin(val token: String, val user: AccountUser)
 /** [detail] is the server's plain-text `detail`, for matching specific refusals; never shown. */
 class AccountFailure(val status: Int, override val message: String, val detail: String? = null) : Exception(message)
@@ -57,8 +59,12 @@ class HttpAccountApi(private val baseUrl: String) : AccountApi {
     override suspend fun logout(token: String) { request("auth/logout", "POST", token) }
     override suspend fun delete(token: String) { request("me", "DELETE", token) }
 
-    private fun user(json: JSONObject) = AccountUser(json.getString("id"),
-        if (json.isNull("display_name")) null else json.getString("display_name"))
+    internal fun user(json: JSONObject): AccountUser {
+        val flags = json.optJSONObject("feature_flags")
+        val evaluated = flags?.keys()?.asSequence()?.associateWith { flags.getBoolean(it) } ?: emptyMap()
+        return AccountUser(json.getString("id"),
+            if (json.isNull("display_name")) null else json.getString("display_name"), evaluated)
+    }
     private fun providers(json: JSONObject): Set<String> {
         val values = json.getJSONArray("providers")
         return (0 until values.length()).map { values.getString(it) }.toSet()

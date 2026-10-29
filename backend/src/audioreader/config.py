@@ -109,9 +109,8 @@ class Settings(BaseSettings):
 
     poll_interval_seconds: int = 900  # 0 disables the background poller
 
-    # Private PDF beta. Only a verified linked identity can match this allowlist.
+    # Operational PDF switch; per-account unlimited access lives in feature_flags.
     pdf_import_enabled: bool = True
-    pdf_import_emails: tuple[str, ...] = ("hcndashwood@gmail.com",)
     datalab_api_key: str = Field(default="", validation_alias="DATALAB_API_KEY", repr=False)
     # Purchases remain unavailable until both stores and RevenueCat are configured.
     billing_enabled: bool = False
