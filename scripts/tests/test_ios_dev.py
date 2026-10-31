@@ -306,7 +306,7 @@ def test_index_clean_uses_separate_output_even_with_normal_override(ios_runner, 
     assert str(tmp_path / "normal output") not in calls["clean"]
 
 
-def runtime(version, *, build="24A437", available=True):
+def runtime(version, *, build="24B52", available=True):
     return {
         "identifier": f"com.apple.CoreSimulator.SimRuntime.iOS-{version.replace('.', '-')}",
         "version": version,
@@ -317,15 +317,15 @@ def runtime(version, *, build="24A437", available=True):
 
 @pytest.mark.parametrize(
     ("target", "expected"),
-    [("ios-test", "27.0"), ("ios-test-compatibility", "26.2"), ("ios-test-latest", "28.0")],
+    [("ios-test", "27.2"), ("ios-test-compatibility", "26.2"), ("ios-test-latest", "28.0")],
 )
 def test_runtime_policy_and_preferred_phone(ios_runner, target, expected):
     runtimes = [
         runtime("28.0", build="25A5000a"),
         runtime("26.10"),
-        runtime("27.0"),
+        runtime("27.2"),
         runtime("26.2"),
-        runtime("27.1", build="24B5000a"),
+        runtime("27.3", build="24D5000a"),
         runtime("26.0", available=False),
     ]
     devices = {
@@ -344,10 +344,10 @@ def test_runtime_policy_and_preferred_phone(ios_runner, target, expected):
 @pytest.mark.parametrize(
     ("target", "runtimes", "required"),
     [
-        ("ios-test", [runtime("26.5"), runtime("28.0")], "27.0"),
-        ("ios-test", [runtime("27.0", build="24A5000a")], "27.0"),
-        ("ios-test", [runtime("27.0", available=False)], "27.0"),
-        ("ios-test-compatibility", [runtime("27.0")], "26"),
+        ("ios-test", [runtime("26.5"), runtime("28.0")], "27.2"),
+        ("ios-test", [runtime("27.2", build="24A5000a")], "27.2"),
+        ("ios-test", [runtime("27.2", available=False)], "27.2"),
+        ("ios-test-compatibility", [runtime("27.2")], "26"),
         ("ios-test-compatibility", [runtime("26.0", build="23A5000a")], "26"),
     ],
 )
