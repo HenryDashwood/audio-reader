@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 
-def runtime(version, *, available=True, build="24A434"):
+def runtime(version, *, available=True, build="24B52"):
     return {
         "identifier": f"com.apple.CoreSimulator.SimRuntime.iOS-{version.replace('.', '-')}",
         "version": version,
@@ -91,7 +91,7 @@ def phones(runtimes):
 
 
 def test_installed_runtimes_and_devices_are_reused(prepare):
-    inventory = [runtime("27.0"), runtime("26.5")]
+    inventory = [runtime("27.2"), runtime("26.5")]
     for _ in range(2):
         result, calls = prepare(inventory, devices=phones(inventory), status=70)
         assert result.returncode == 0, result.stderr
@@ -101,7 +101,7 @@ def test_installed_runtimes_and_devices_are_reused(prepare):
 
 @pytest.mark.parametrize("status", [0, 70])
 def test_existing_ios27_does_not_prevent_installing_ios26(prepare, status):
-    initial = [runtime("27.0")]
+    initial = [runtime("27.2")]
     installed = initial + [runtime("26.5")]
     result, calls = prepare(initial, downloads={"26.5": installed}, devices=phones(initial), status=status)
     assert result.returncode == 0, result.stderr
@@ -110,29 +110,29 @@ def test_existing_ios27_does_not_prevent_installing_ios26(prepare, status):
 
 @pytest.mark.parametrize("status", [0, 70])
 def test_download_without_available_runtime_still_fails(prepare, status):
-    initial = [runtime("27.0")]
+    initial = [runtime("27.2")]
     result, calls = prepare(initial, devices=phones(initial), status=status)
     assert result.returncode != 0
     assert f"released iOS 26.5 is not available after download (exit {status})" in result.stderr
     assert calls == ["download 26.5"]
 
 
-@pytest.mark.parametrize("unusable", [runtime("27.0", available=False), runtime("27.0", build="24A5000a")])
+@pytest.mark.parametrize("unusable", [runtime("27.2", available=False), runtime("27.2", build="24A5000a")])
 def test_unavailable_or_beta_runtime_requires_installation(prepare, unusable):
-    installed = [runtime("27.0"), runtime("26.5")]
-    result, calls = prepare([unusable, runtime("26.5")], downloads={"27.0": installed}, devices=phones(installed))
+    installed = [runtime("27.2"), runtime("26.5")]
+    result, calls = prepare([unusable, runtime("26.5")], downloads={"27.2": installed}, devices=phones(installed))
     assert result.returncode == 0, result.stderr
-    assert calls == ["download 27.0"]
+    assert calls == ["download 27.2"]
 
 
 def test_device_creation_failure_is_not_hidden(prepare):
-    result, calls = prepare([runtime("27.0"), runtime("26.5")], create_status=42)
+    result, calls = prepare([runtime("27.2"), runtime("26.5")], create_status=42)
     assert result.returncode == 42
-    assert calls == ["create com.apple.CoreSimulator.SimRuntime.iOS-27-0"]
+    assert calls == ["create com.apple.CoreSimulator.SimRuntime.iOS-27-2"]
 
 
 def test_a_requested_version_prepares_only_that_runtime(prepare):
-    initial = [runtime("27.0")]
+    initial = [runtime("27.2")]
     installed = initial + [runtime("26.5")]
     result, calls = prepare(initial, downloads={"26.5": installed}, versions=["26.5"])
     assert result.returncode == 0, result.stderr
@@ -141,8 +141,8 @@ def test_a_requested_version_prepares_only_that_runtime(prepare):
 
 
 def test_requesting_ios27_does_not_download_ios26(prepare):
-    initial = [runtime("27.0")]
-    result, calls = prepare(initial, devices=phones(initial), versions=["27.0"])
+    initial = [runtime("27.2")]
+    result, calls = prepare(initial, devices=phones(initial), versions=["27.2"])
     assert result.returncode == 0, result.stderr
     assert calls == []
     assert result.stdout.count("Ready:") == 1
