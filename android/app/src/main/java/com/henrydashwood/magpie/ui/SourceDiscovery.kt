@@ -135,10 +135,10 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, o
                             val address = SourceDiscovery.isAddress(state.query)
                             val local = if (!shows || state.query.isBlank() || address) emptyList()
                                 else library.feeds.filter { it.title.contains(state.query.trim(), ignoreCase = true) }
-                            val sources = if (!shows) emptyList() else state.sources.filter { source -> local.none { it.url == source.url || it.title.equals(source.title, ignoreCase = true) } }
+                            val found = SourceDiscovery.directoryResults(state.query, local,
+                                if (shows) state.sources else emptyList(), state.web.takeIf { shows })
                             val episodeIds = if (episodes) state.itemIds else emptyList()
-                            val web = state.web.takeIf { shows }
-                            val nothing = local.isEmpty() && sources.isEmpty() && episodeIds.isEmpty() && web == null
+                            val nothing = local.isEmpty() && found.isEmpty && episodeIds.isEmpty()
                             if (state.query.isBlank()) item {
                                 Text("Search for a podcast or publication, or paste a website or feed address.", Modifier.padding(16.dp))
                                 TextButton(onClick = { controller.close(); model.subscriptionImport.open() }, modifier = Modifier.testTag("import-subscriptions")) { Text("Import subscriptions") }
@@ -152,7 +152,7 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, o
                                 Text("Magpie will check the address and find its RSS or Atom feed before adding it.", Modifier.padding(16.dp),
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            // iOS order: your library, its episodes, the podcast directory, then the web.
+                            // iOS order: your library, its episodes, publications and podcasts, then the web.
                             if (local.isNotEmpty()) item { DiscoveryHeading("In your library") }
                             items(local, key = { "local:${it.id}" }) { feed ->
                                 SourceResultRow(SourceResult(feed.title, feed.url ?: "", count = feed.count, imageUrl = feed.imageUrl)) { controller.close(); openSource(feed.id) }
@@ -162,9 +162,13 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, o
                                 DiscoveryEpisodeRow(item, playback.item?.id == id && playback.playing,
                                     { controller.close(); openItem(item) }, { if (playback.item?.id == id && playback.playing) model.pause() else model.play(item) })
                             } }
-                            if (sources.isNotEmpty()) item { DiscoveryHeading("Podcasts") }
-                            items(sources, key = { "directory:${it.url}" }) { source -> SourceResultRow(source) { controller.select(source) } }
-                            web?.let { source ->
+                            // The server ranks both kinds together; whichever holds its best match comes first.
+                            val sections = listOf("Publications" to found.publications, "Podcasts" to found.podcasts)
+                            for ((heading, sources) in if (found.publicationsFirst) sections else sections.reversed()) {
+                                if (sources.isNotEmpty()) item { DiscoveryHeading(heading) }
+                                items(sources, key = { "directory:${it.url}" }) { source -> SourceResultRow(source) { controller.select(source) } }
+                            }
+                            found.web?.let { source ->
                                 item { DiscoveryHeading("Found on the web") }
                                 item { SourceResultRow(source) { controller.select(source) } }
                             }
@@ -173,11 +177,15 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, o
                             if (!address && state.loading && nothing) item { Text("Searching your library and podcasts…", Modifier.padding(16.dp)) }
                             if (state.searched && !state.loading && state.error == null && nothing && !address) item {
                                 Text("No matches", Modifier.padding(horizontal = 16.dp).semantics { heading(); liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.titleMedium)
-                                Text("Nothing in your library or the podcast directory matches “${state.query.trim()}”.", Modifier.padding(16.dp))
+                                Text("No podcast, publication or item in your library matches “${state.query.trim()}”.", Modifier.padding(16.dp))
                             }
-                            // Offered only when nothing matched, as on iOS.
-                            if (shows && nothing && state.searched && !state.loading && state.query.trim().length >= 2 && !address) item {
+                            // Apple answers almost anything with a loosely related podcast, so, as on iOS, this is
+                            // offered whenever nothing listed is plausibly what she typed, not only when nothing is.
+                            if (shows && found.offersWebSearch && state.web == null && state.searched && !state.loading &&
+                                state.query.trim().length >= 2 && !address) item {
                                 TextButton(onClick = controller::searchWeb, enabled = !state.loading) { Text("Search the web for a publication") }
+                                Text("Not listed? Magpie can look for a blog or newsletter on the web.", Modifier.padding(horizontal = 16.dp),
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }

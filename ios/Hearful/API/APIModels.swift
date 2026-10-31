@@ -494,11 +494,15 @@ nonisolated struct PodcastResult: Decodable, Identifiable, Equatable, Hashable, 
     var country: String? = nil
     var primaryGenre: String? = nil
     var latestReleaseDate: Date? = nil
+    /// "publication" for a written feed found by search. Absent for a
+    /// podcast, and for anything from a server older than the field.
+    var kind: String? = nil
 
     var id: URL { feedURL }
+    var isPublication: Bool { kind == "publication" }
 
     enum CodingKeys: String, CodingKey {
-        case title, publisher, country
+        case title, publisher, country, kind
         case feedURL = "feed_url"
         case episodeCount = "episode_count"
         case artworkURL = "artwork_url"

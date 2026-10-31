@@ -1,10 +1,11 @@
-"""Find podcasts through Apple's public directory.
+"""Find podcasts through Apple's public directory, and newsletters through Substack's.
 
-The directory is deliberately only one search source. This module makes that
-source dependable enough to sit behind typed and spoken search: requests are
-cached and coalesced, temporary failures are retried, malformed rows ignored,
+Apple's directory knows almost nothing written, so typed search also asks
+Substack, where most newsletters live. This module makes both sources
+dependable enough to sit behind typed and spoken search: requests are cached
+and coalesced, temporary failures are retried, malformed rows ignored,
 aliases deduplicated, and ranking is ours rather than blindly trusting the
-order Apple happened to return.
+order either directory happened to return.
 """
 
 import asyncio
@@ -23,6 +24,9 @@ from audioreader.ratelimit import SlidingWindow
 
 SEARCH_URL = "https://itunes.apple.com/search"
 LOOKUP_URL = "https://itunes.apple.com/lookup"
+# Undocumented: the endpoint behind substack.com's own search box. It mixes
+# profiles, posts and comments, so publications are picked out of all three.
+SUBSTACK_SEARCH_URL = "https://substack.com/api/v1/top/search"
 
 # Apple's published guidance describes an approximate twenty-call-per-minute
 # limit per public address. Keep two calls in reserve for retries and other
@@ -48,6 +52,12 @@ class PodcastMatch(BaseModel):
     country: str | None = None
     primary_genre: str | None = None
     latest_release_date: datetime | None = None
+    #: "publication" for a written feed; None means a podcast, which is what
+    #: every client released before publications were searchable assumes.
+    kind: str | None = None
+    #: Other addresses of the same feed, such as a Substack's own subdomain
+    #: when it has a custom domain. Used to merge sources; never sent.
+    aliases: tuple[str, ...] = ()
 
 
 class _ApplePodcast(BaseModel):
@@ -71,6 +81,17 @@ class _AppleResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     results: list[_ApplePodcast] = Field(default_factory=list)
+
+
+class _SubstackPublication(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    name: str | None = None
+    subdomain: str | None = None
+    custom_domain: str | None = None
+    logo_url: str | None = None
+    author_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +141,22 @@ async def search_podcasts(
         params["country"] = country
     matches = await _cached_request(key, lambda: _apple_request(SEARCH_URL, params))
     return _prepare(matches, query, strict=strict)
+
+
+async def search_substack(query: str, limit: int = 5) -> list[PodcastMatch]:
+    """Substack publications every meaningful word of the query identifies.
+
+    Always strict: Substack answers a two-word query with dozens of loosely
+    related writers, and a list of strangers' newsletters hides the one she
+    meant rather than helping her find it.
+    """
+
+    query = query.strip()
+    if not query:
+        return []
+    key = ("substack", _normalise(query))
+    matches = await _cached_request(key, lambda: _substack_request({"query": query}))
+    return _prepare(matches, query, strict=True)[:limit]
 
 
 async def podcast_for_itunes_id(itunes_id: int, country: str | None = None) -> PodcastMatch | None:
@@ -263,6 +300,83 @@ async def _apple_request(url: str, params: dict[str, str]) -> list[PodcastMatch]
     raise PodcastSearchError(f"could not search podcasts: {last_error}") from last_error
 
 
+async def _substack_request(params: dict[str, str]) -> list[PodcastMatch]:
+    decision = _upstream_window.check("substack")
+    if not decision.allowed:
+        raise PodcastSearchError(f"publication directory is busy; retry in {decision.retry_after} seconds")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(SUBSTACK_SEARCH_URL, params=params)
+            response.raise_for_status()
+            body = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise PodcastSearchError(f"could not search publications: {exc}") from exc
+    return _substack_matches(body)
+
+
+def _substack_matches(body: object) -> list[PodcastMatch]:
+    """Publications named anywhere in a search response, in the order seen.
+
+    A writer's profile carries their own publication; a post or comment
+    carries the publication it appeared in. Anything malformed is skipped:
+    the shape is undocumented and may change without notice.
+    """
+
+    found: list[tuple[object, str | None]] = []
+    for item in _dicts(body.get("items") if isinstance(body, dict) else None):
+        if item.get("type") == "profileSearchResults":
+            for profile in _dicts(item.get("results")):
+                writer = profile.get("name") if isinstance(profile.get("name"), str) else None
+                found.append((profile.get("primaryPublication"), writer))
+                found.extend(
+                    (membership.get("publication"), writer) for membership in _dicts(profile.get("publicationUsers"))
+                )
+        else:
+            found.append((item.get("publication"), None))
+
+    matches: list[PodcastMatch] = []
+    seen: set[int] = set()
+    for raw, writer in found:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            publication = _SubstackPublication.model_validate(raw)
+        except ValidationError:
+            continue
+        if publication.id in seen:
+            continue
+        seen.add(publication.id)
+        addresses = [
+            f"https://{host}/feed"
+            for host in (
+                publication.custom_domain,
+                f"{publication.subdomain}.substack.com" if publication.subdomain else None,
+            )
+            if host and _HOSTNAME.fullmatch(host)
+        ]
+        addresses = [address for address in addresses if _is_public_web_url(address)]
+        if not addresses or not (publication.name or "").strip():
+            continue
+        artwork = publication.logo_url if publication.logo_url and _is_public_web_url(publication.logo_url) else None
+        matches.append(
+            PodcastMatch(
+                title=(publication.name or "").strip(),
+                # The custom domain is the publication's own address, and the
+                # one its feed names itself by; the subdomain redirects to it.
+                feed_url=addresses[0],
+                publisher=publication.author_name or writer,
+                artwork_url=artwork,
+                kind="publication",
+                aliases=tuple(addresses[1:]),
+            )
+        )
+    return matches
+
+
+def _dicts(value: object) -> list[dict]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
 def _retry_delay(error: Exception, fallback: float) -> float:
     if isinstance(error, httpx.HTTPStatusError):
         raw = error.response.headers.get("retry-after")
@@ -298,7 +412,7 @@ def _prepare(matches: list[PodcastMatch], query: str, strict: bool) -> list[Podc
     deduplicated: list[PodcastMatch] = []
     seen: set[str] = set()
     for match in matches:
-        key = _feed_key(match.feed_url)
+        key = feed_key(match.feed_url)
         if key in seen:
             continue
         seen.add(key)
@@ -306,7 +420,7 @@ def _prepare(matches: list[PodcastMatch], query: str, strict: bool) -> list[Podc
             deduplicated.append(match)
     ranked = sorted(
         enumerate(deduplicated),
-        key=lambda pair: _rank_key(pair[1], query, pair[0]),
+        key=lambda pair: rank_key(pair[1], query, pair[0]),
     )
     return [match for _, match in ranked]
 
@@ -370,7 +484,7 @@ def _is_relevant(match: PodcastMatch, query: str) -> bool:
     return bool(spoken) and all(_word_in(word, haystack) for word in spoken)
 
 
-def _rank_key(match: PodcastMatch, query: str, original_index: int) -> tuple[object, ...]:
+def rank_key(match: PodcastMatch, query: str, original_index: int) -> tuple[object, ...]:
     query_words = _identifying_words(query)
     title_words = _words(match.title)
     publisher_words = _words(match.publisher or "")
@@ -441,7 +555,7 @@ def _within_one_edit(left: str, right: str) -> bool:
     return shorter[index:] == longer[index + 1 :]
 
 
-def _feed_key(url: str) -> str:
+def feed_key(url: str) -> str:
     parsed = urlsplit(url)
     host = (parsed.hostname or "").casefold()
     port = parsed.port
@@ -469,6 +583,9 @@ def _is_public_web_url(value: str) -> bool:
         and parsed.password is None
         and port in {None, 80, 443}
     )
+
+
+_HOSTNAME = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+", re.IGNORECASE)
 
 
 def _country_code(value: str | None) -> str | None:

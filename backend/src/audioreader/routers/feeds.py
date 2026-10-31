@@ -23,7 +23,8 @@ from audioreader.feeds.discovery import (
 from audioreader.feeds.fetcher import FeedFetchError, FeedRateLimitedError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.poller import feed_is_failing
-from audioreader.feeds.search import PodcastSearchError, search_podcasts
+from audioreader.feeds.search import PodcastSearchError
+from audioreader.feeds.source_search import search_sources
 from audioreader.llm.client import LLMClient
 from audioreader.llm.provider import get_discovery_llm_client
 from audioreader.models import (
@@ -470,25 +471,27 @@ search_router = APIRouter(prefix="/search", tags=["search"])
 )
 async def search_directory(
     q: Annotated[str, Query(max_length=200)],
+    session: Session,
     user: CurrentUser,
     country: Annotated[str | None, Query(min_length=2, max_length=2)] = None,
 ) -> list[PodcastSearchResult]:
-    """Typed search against the public podcast directory.
+    """Typed search for podcasts and written publications.
 
-    Unlike the voice path, no relevance guard: the results are on screen, so
-    loose matches help rather than mislead.
+    Unlike the voice path, no relevance guard on podcasts: the results are on
+    screen, so loose matches help rather than mislead. Publications are
+    always matched strictly; see source_search.
     """
     query = q.strip()
     if not query:
         return []
     try:
-        matches = await search_podcasts(query, limit=25, strict=False, country=country)
+        matches = await search_sources(session, query, limit=25, country=country)
     except PodcastSearchError as exc:
         raise HTTPException(
             status_code=502,
             detail={"spoken_response": "The podcast directory is unavailable right now. Please try again shortly."},
         ) from exc
-    return [PodcastSearchResult(**match.model_dump()) for match in matches]
+    return [PodcastSearchResult(**match.model_dump(exclude={"aliases"})) for match in matches]
 
 
 @search_router.get("/episodes")

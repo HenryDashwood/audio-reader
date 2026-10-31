@@ -7,6 +7,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.net.URI
+import java.text.Normalizer
 
 data class DiscoveryState(val showing: Boolean = false, val query: String = "", val searched: Boolean = false,
     val loading: Boolean = false, val following: Boolean = false, val error: String? = null,
@@ -14,6 +16,12 @@ data class DiscoveryState(val showing: Boolean = false, val query: String = "", 
     val candidates: List<SourceResult>? = null, val selected: SourceResult? = null,
     val preview: SourcePreview? = null, val web: SourceResult? = null, val webMessage: String? = null,
     val askingConsent: Boolean = false, val signup: NewsletterSignup? = null)
+
+/** What typed search lists from the directories, once what she follows or another source listed is gone. */
+data class DirectoryResults(val publications: List<SourceResult> = emptyList(), val podcasts: List<SourceResult> = emptyList(),
+    val web: SourceResult? = null, val publicationsFirst: Boolean = false, val offersWebSearch: Boolean = true) {
+    val isEmpty get() = publications.isEmpty() && podcasts.isEmpty() && web == null
+}
 
 /** UI requests and replies belong to both a query generation and the repository session. */
 class SourceDiscovery(private val scope: CoroutineScope, private val repository: SourceRepository) {
@@ -129,5 +137,47 @@ class SourceDiscovery(private val scope: CoroutineScope, private val repository:
             return text.contains("://") || (text.contains('.') && text.none(Char::isWhitespace))
         }
         fun address(query: String) = validateLink(query.trim().let { if (it.contains("://")) it else "https://$it" })
+
+        /** As on iOS: one row per feed, and the web search offered unless something listed is plausibly what she typed. */
+        fun directoryResults(query: String, local: List<LibraryFeed>, sources: List<SourceResult>, web: SourceResult?): DirectoryResults {
+            val listed = mutableSetOf<String>()
+            val fresh = sources.filter { source ->
+                local.none { it.url == source.url || it.title.equals(source.title, ignoreCase = true) } && listed.add(feedIdentity(source.url))
+            }
+            // A web find that is already listed is the row she can already see.
+            val found = web?.takeUnless { result -> feedIdentity(result.url) in listed || local.any { it.title.equals(result.title, ignoreCase = true) } }
+            val named = local.map { it.title } + fresh.map { it.title } + listOfNotNull(found?.title)
+            return DirectoryResults(fresh.filter { it.publication }, fresh.filterNot { it.publication }, found,
+                fresh.firstOrNull()?.publication == true, named.none { titleNames(it, query) })
+        }
+
+        /** Does the title contain every word she typed, allowing for a typo? */
+        fun titleNames(title: String, query: String): Boolean {
+            val terms = words(query)
+            val titleWords = words(title)
+            return terms.isNotEmpty() && terms.all { term -> titleWords.any { it.startsWith(term) || withinOneEdit(term, it) } }
+        }
+
+        private fun words(value: String) = Normalizer.normalize(value.lowercase(), Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "").split(Regex("[^\\p{L}\\p{N}]+")).filter { it.isNotEmpty() }
+
+        private fun withinOneEdit(left: String, right: String): Boolean {
+            if (left == right) return true
+            if (minOf(left.length, right.length) < 4 || kotlin.math.abs(left.length - right.length) > 1) return false
+            if (left.length == right.length) {
+                val differences = left.indices.filter { left[it] != right[it] }
+                return differences.size == 1 || (differences.size == 2 && differences[1] == differences[0] + 1 &&
+                    left[differences[0]] == right[differences[1]] && left[differences[1]] == right[differences[0]])
+            }
+            val (shorter, longer) = if (left.length < right.length) left to right else right to left
+            val index = shorter.indices.firstOrNull { shorter[it] != longer[it] } ?: shorter.length
+            return shorter.substring(index) == longer.substring(index + 1)
+        }
+
+        /** HTTP and HTTPS spellings of a feed are the same feed. */
+        private fun feedIdentity(url: String) = runCatching {
+            val uri = URI(url)
+            URI("https", uri.rawAuthority?.lowercase(), uri.rawPath, uri.rawQuery, null).toString()
+        }.getOrDefault(url)
     }
 }
