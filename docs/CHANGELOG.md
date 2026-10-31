@@ -10,6 +10,19 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.6.6
+
+You can now turn any saved article or newsletter into a PDF. Use Share in the
+reader and choose Export as PDF, then send or save it from the share pane.
+Articles without a link go straight to the share pane once the PDF is ready.
+
+Searching by name now finds newsletters and other written publications, not
+just podcasts. They are listed in their own section, and the web search
+option appears whenever nothing listed matches what you typed.
+
+The Save to Magpie share pane has a clearer, simpler layout. Please check
+saving from Safari, exporting a PDF, and searching for a newsletter by name.
+
 ## 1.6.5
 
 Improvements to saving and syncing items, with clearer titles and retry controls.
