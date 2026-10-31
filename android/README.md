@@ -158,6 +158,11 @@ Check the XML test counts as well as the build result: a crashed emulator system
 process can leave zero executed tests even when Gradle reports success. If Android
 is globally unresponsive, close the development emulator and cold-start the same
 AVD without wiping its data; verify the installed CLI help for the startup options.
+`android-test` checks for a focused crash/ANR dialog before and after instrumentation.
+A System UI error can cover the app while Compose semantics continue to work behind
+it: real gestures, foreground-only clipboard reads and system confirmations then
+fail. The helper reports this as an emulator problem with cold-start instructions.
+Application crash dialogs instead direct you to the app's crash/ANR logs.
 The same recovery applies when instrumentation reports `UiAutomationService ...
 already registered!` after restoring a snapshot. Use
 `./scripts/android-dev.sh cli emulator start --cold AVD_NAME` after stopping it.

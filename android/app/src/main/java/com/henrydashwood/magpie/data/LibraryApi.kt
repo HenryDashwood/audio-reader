@@ -9,6 +9,9 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
 import java.io.ByteArrayOutputStream
+import java.io.File
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 data class LibraryFeed(val id: String, val title: String, val count: Int, val articles: Boolean,
     val url: String? = null, val sources: List<String> = emptyList(), val description: String? = null,
@@ -47,9 +50,63 @@ interface LibraryApi {
 
 /** Uses the existing Swift/backend wire contract. Authorization never follows redirects. */
 class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (String) -> Unit = {},
-    private val connect: (java.net.URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }) : com.henrydashwood.magpie.telemetry.TelemetryApi, LibraryApi, SubscriptionImportApi, SubscriptionExportApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, NewsletterApi, PodcastProgressApi, ArticleProgressApi,
+    private val connect: (java.net.URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }) : com.henrydashwood.magpie.telemetry.TelemetryApi, LibraryApi, ArticleExportApi, SubscriptionImportApi, SubscriptionExportApi, DiscoveryApi, SourceManagementApi, SavedArticleApi, NewsletterApi, PodcastProgressApi, ArticleProgressApi,
     com.henrydashwood.magpie.voice.VoiceApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized),
     LibraryActionApi by com.henrydashwood.magpie.voice.HttpVoiceApi(baseUrl, unauthorized) {
+    override suspend fun exportArticle(token: String, episodeId: Int, contentId: Int?, textVersion: String?, destination: File) = withContext(Dispatchers.IO) {
+        require(episodeId > 0 && (contentId == null || contentId > 0))
+        require(textVersion == null || textVersion.matches(Regex("[a-f0-9]{64}")))
+        val base = URI(baseUrl)
+        require(base.scheme == "https" && base.host != null && base.userInfo == null)
+        val query = listOfNotNull(contentId?.let { "content_id=$it" }, textVersion?.let { "text_version=$it" }).joinToString("&")
+        val path = "episodes/$episodeId/export.pdf" + if (query.isBlank()) "" else "?$query"
+        val connection = connect(URI(baseUrl.trimEnd('/') + "/" + path).toURL())
+        var complete = false
+        try {
+            connection.requestMethod = "GET"
+            connection.instanceFollowRedirects = false
+            connection.useCaches = false
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 60_000
+            connection.setRequestProperty("Accept", "application/pdf")
+            connection.setRequestProperty("Authorization", "Bearer $token")
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                if (status == 401) withContext(Dispatchers.Main) { unauthorized(token) }
+                val bytes = connection.errorStream?.use { readBounded(it, 65_536) } ?: byteArrayOf()
+                val json = runCatching { JSONObject(bytes.toString(Charsets.UTF_8)) }.getOrNull()
+                val message = runCatching { json?.optJSONObject("detail")?.optionalString("spoken_response") }.getOrNull()
+                throw AccountFailure(status, message ?: if (status == 404) "PDF export is unavailable for this article on this server."
+                    else "The PDF couldn’t be prepared. Please try again.")
+            }
+            val maximum = 32L * 1024 * 1024
+            require(connection.contentType?.substringBefore(';')?.lowercase() == "application/pdf" && connection.contentLengthLong <= maximum) {
+                "The server didn’t return a readable PDF. Please try again."
+            }
+            connection.inputStream.use { input ->
+                destination.outputStream().use { output ->
+                    val signature = readBounded(input, 5)
+                    require(signature.contentEquals("%PDF-".toByteArray())) { "The server didn’t return a readable PDF. Please try again." }
+                    output.write(signature)
+                    var total = signature.size.toLong()
+                    val buffer = ByteArray(16_384)
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        require(total <= maximum) { "This PDF is too large to share." }
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
+            currentCoroutineContext().ensureActive()
+            complete = true
+        } finally {
+            connection.disconnect()
+            if (!complete) destination.delete()
+        }
+    }
     override suspend fun exportSubscriptions(token: String): String =
         request(token, "feeds/export", accept = "text/x-opml")
     override suspend fun currentImport(token: String): ImportJob? {
@@ -239,6 +296,16 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
         } finally { connection.disconnect() }
     }
     companion object {
+        private fun readBounded(input: java.io.InputStream, limit: Int): ByteArray {
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(minOf(8192, limit))
+            while (output.size() < limit) {
+                val count = input.read(buffer, 0, minOf(buffer.size, limit - output.size()))
+                if (count < 0) break
+                output.write(buffer, 0, count)
+            }
+            return output.toByteArray()
+        }
         const val SAVE_BEFORE_REPLACE = "Save this article before replacing its text."
         fun captureBody(article: PendingArticle) = JSONObject().put("url", article.url).put("saved_at", article.savedAt)
             .put("title", article.title).put("html", article.html).put("content_format", article.contentFormat)

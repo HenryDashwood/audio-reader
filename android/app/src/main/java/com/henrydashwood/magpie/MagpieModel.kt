@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeout
@@ -55,6 +56,18 @@ data class LinkCaptureState(val showing: Boolean = false, val url: String = "", 
 
 class MagpieModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as MagpieApplication).library
+    suspend fun exportArticle(item: LibraryItem): android.net.Uri {
+        val context = getApplication<Application>()
+        val file = withContext(Dispatchers.IO) { com.henrydashwood.magpie.sharing.articlePdfDestination(context, item.title) }
+        try {
+            repository.exportArticle(item, file)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            return com.henrydashwood.magpie.sharing.articlePdfUri(context, file)
+        } catch (error: Exception) {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { file.parentFile?.deleteRecursively() }
+            throw error
+        }
+    }
     private val mutableSubscriptionExport = MutableStateFlow<com.henrydashwood.magpie.data.SubscriptionExportFile?>(null)
     val pendingSubscriptionExport = mutableSubscriptionExport.asStateFlow()
     suspend fun exportSubscriptions() {

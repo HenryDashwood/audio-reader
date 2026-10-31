@@ -260,7 +260,10 @@ fun MagpieApp(model: MagpieModel, appleReturn: Int = 0, savedReturn: Int = 0,
                         ReaderToolbarActions(selectedItem, isPlaying, showingSearch,
                             { if (isPlaying) model.pause() else model.play(selectedItem) },
                             { showingSearch = !showingSearch; query = "" }, onAsk = { model.ask(selectedItem.episodeId) },
-                            download = if (snapshot.live && selectedItem.audioUrl != null) { { DownloadButton(model, selectedItem) } } else null)
+                            download = if (snapshot.live && selectedItem.audioUrl != null) { { DownloadButton(model, selectedItem) } } else null,
+                            exportPDF = if (snapshot.live && selectedItem.kind == ContentKind.Article && selectedItem.episodeId != null)
+                                { { model.exportArticle(selectedItem) } } else null,
+                            shareSession = "${snapshot.owner}:${snapshot.revision}")
                     } else if (selectedSource != null || destination == Destination.Following || destination == Destination.Saved) {
                         IconButton(onClick = { showingSearch = !showingSearch; query = "" }) {
                             Icon(if (showingSearch) Icons.Rounded.Close else Icons.Rounded.Search,

@@ -138,46 +138,43 @@ private struct ArticleReaderView: View {
         // to it, leaving for it, sharing it, looking through it, then asking for
         // something else entirely.
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                // Keep the controls in one item so the navigation bar does
-                // not move Find and Ask into its automatic overflow menu.
-                HStack(spacing: 12) {
-                    ArticlePlaybackButton(episode: episode)
-                    // A podcast episode's web page is rarely wanted, and the
-                    // bar has no room for both: downloading takes its place,
-                    // and the link stays reachable through Share.
-                    if episode.audioURL != nil {
-                        DownloadButton(episode: episode)
-                    } else if let link = episode.link {
-                        Link(destination: link) {
-                            Image(systemName: "safari")
-                                .frame(width: 44, height: 44)
-                        }
-                        .accessibilityLabel("Open the original")
-                        .accessibilityHint("Opens this page in your browser")
+            // Native items keep every action available on iOS 26 as well as
+            // newer runtimes, and provide the toolbar's standard hit targets.
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                ArticlePlaybackButton(episode: episode)
+                // A podcast episode's web page is rarely wanted, and the
+                // bar has no room for both: downloading takes its place,
+                // and the link stays reachable through Share.
+                if episode.audioURL != nil {
+                    DownloadButton(episode: episode)
+                } else if let link = episode.link {
+                    Link(destination: link) {
+                        Image(systemName: "safari")
+                            .frame(width: 24, height: 24)
                     }
-                    if let link = episode.link {
-                        ArticleShareButton(episode: episode, link: link)
-                    }
-                    Button {
-                        articleWebView?.findInteraction?.presentFindNavigator(showingReplace: false)
-                    } label: {
-                        Label("Find in this page", systemImage: "magnifyingglass")
-                            .frame(width: 44, height: 44)
-                    }
-                    .disabled(articleWebView == nil)
-                    Button {
-                        Feedback.shared.play(.opened)
-                        NotificationCenter.default.post(name: .hearfulAskByVoice, object: nil)
-                    } label: {
-                        Label("Ask Magpie", systemImage: "mic.fill")
-                            .frame(width: 44, height: 44)
-                    }
+                    .accessibilityLabel("Open the original")
+                    .accessibilityHint("Opens this page in your browser")
                 }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.plain)
-                .font(.title3)
-                .fixedSize()
+                if episode.link != nil || episode.audioURL == nil {
+                    ArticleShareButton(episode: episode, contentID: model.exportContentID,
+                                       textVersion: model.exportTextVersion, pdfReady: model.exportTextVersion != nil)
+                }
+                Button {
+                    articleWebView?.findInteraction?.presentFindNavigator(showingReplace: false)
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .frame(width: 24, height: 24)
+                }
+                .accessibilityLabel("Find in this page")
+                .disabled(articleWebView == nil)
+                Button {
+                    Feedback.shared.play(.opened)
+                    NotificationCenter.default.post(name: .hearfulAskByVoice, object: nil)
+                } label: {
+                    Image(systemName: "mic.fill")
+                        .frame(width: 24, height: 24)
+                }
+                .accessibilityLabel("Ask Magpie")
             }
         }
         // Both bars get out of the way when she scrolls, and the capsule with
@@ -331,7 +328,7 @@ private struct ArticlePlaybackButton: View {
             if isPlayingThis { player.toggle() } else { player.playReportingFailure(episode) }
         } label: {
             Image(systemName: isPlayingThis ? "pause.fill" : "play.fill")
-                .frame(width: 44, height: 44)
+                .frame(width: 24, height: 24)
         }
         .accessibilityLabel(isPlayingThis ? "Pause" : "Listen")
         .accessibilityHint(isPlayingThis ? "Stops reading this aloud" : "Reads this aloud")
@@ -1278,6 +1275,8 @@ final class ArticleTextModel: ObservableObject {
     /// network, so the view can say so — and warn that its pictures, which
     /// are still fetched from the web, will not be there.
     @Published private(set) var isOffline = false
+    @Published private(set) var exportContentID: Int?
+    @Published private(set) var exportTextVersion: String?
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
 
@@ -1297,8 +1296,14 @@ final class ArticleTextModel: ObservableObject {
         isLoading = true
         defer { if generation == loadGeneration { isLoading = false } }
         if let cached = cache.article(episodeID: episodeID, contentID: contentID) {
+            exportContentID = cached.contentID
+            exportTextVersion = ArticleScript.textVersion(cached.text)
             state = .loaded(Article(text: cached.text, html: cached.html))
-        } else { state = .loading }
+        } else {
+            exportContentID = nil
+            exportTextVersion = nil
+            state = .loading
+        }
         do {
             let article = try await api.articleText(episodeID: episodeID, contentID: contentID)
             guard generation == loadGeneration, !Task.isCancelled, ShortcutScope.current == scope else { return nil }
@@ -1309,6 +1314,8 @@ final class ArticleTextModel: ObservableObject {
                 throw APIError(underlying: "The article has no readable text yet")
             }
             cache.saveArticle(article)
+            exportContentID = article.contentID
+            exportTextVersion = ArticleScript.textVersion(article.text)
             isOffline = false
             state = .loaded(Article(text: article.text, html: article.html))
             return article.wordCount
@@ -1321,10 +1328,14 @@ final class ArticleTextModel: ObservableObject {
                 let cached = cache.article(episodeID: episodeID, contentID: contentID)
             {
                 isOffline = true
+                exportContentID = cached.contentID
+                exportTextVersion = ArticleScript.textVersion(cached.text)
                 state = .loaded(Article(text: cached.text, html: cached.html))
                 return cached.wordCount
             } else {
                 isOffline = false
+                exportContentID = nil
+                exportTextVersion = nil
                 state = .failed(message)
                 return nil
             }
@@ -1342,6 +1353,8 @@ final class ArticleTextModel: ObservableObject {
     func recoverCached(episodeID: Int, contentID: Int?) {
         if case .loaded = state { return }
         guard let cached = cache.article(episodeID: episodeID, contentID: contentID) else { return }
+        exportContentID = cached.contentID
+        exportTextVersion = ArticleScript.textVersion(cached.text)
         state = .loaded(Article(text: cached.text, html: cached.html))
         isOffline = true
     }

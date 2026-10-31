@@ -53,6 +53,19 @@ select_emulator() {
     fi
     [[ "$("$adb" -s "$ANDROID_SERIAL" shell getprop sys.boot_completed | tr -d '\r')" == 1 ]] || fail 'The emulator is still booting. Wait for boot to finish and retry.'
 }
+require_test_window() {
+    local focus
+    # sys.boot_completed can be 1 while a crashed System UI covers the app.
+    # Compose semantics may still work underneath it, but physical gestures,
+    # clipboard reads and launcher confirmations will then fail misleadingly.
+    focus=$("$adb" -s "$ANDROID_SERIAL" shell dumpsys window | sed -n '/mCurrentFocus=/p')
+    [[ -n "$focus" ]] || fail 'Could not inspect emulator window focus. Check the device bridge before retrying Android tests.'
+    if [[ "$focus" == *'Application Not Responding: com.android.systemui'* ]]; then
+        fail 'An Android System UI error dialog is covering the test emulator. Stop it and cold-start the same AVD with scripts/android-dev.sh cli emulator start --cold AVD_NAME, without wiping its data, then retry. Test results from this run are not reliable.'
+    elif [[ "$focus" == *'Application Not Responding:'* || "$focus" == *'Application Error:'* ]]; then
+        fail 'An Android application error dialog is covering the test emulator. Inspect the app crash/ANR logs before retrying the tests.'
+    fi
+}
 # Phone commands mirror the emulator ones but never select an emulator.
 select_phone() {
     require_adb
@@ -138,16 +151,22 @@ case "${1:-doctor}" in
         ;;
     test)
         select_emulator
+        require_test_window
         args=(connectedDebugAndroidTest)
         [[ -z "${TEST:-}" ]] || args+=("-Pandroid.testInstrumentationRunnerArguments.class=$TEST")
         # Restrict connected tests to the selected emulator, including when a phone is attached.
         results="$root/android/app/build/outputs/androidTest-results/connected/debug"
         started="$(mktemp)"
-        ANDROID_SERIAL="$ANDROID_SERIAL" gradle "${args[@]}"
+        if ! ANDROID_SERIAL="$ANDROID_SERIAL" gradle "${args[@]}"; then
+            rm -f "$started"
+            require_test_window
+            fail 'Android instrumentation tests failed. See android/app/build/reports/androidTests/connected/debug/index.html.'
+        fi
         # Gradle reports success when the APK fails to install (for example, a full emulator)
         # and no test runs at all. Only fresh results with at least one test count as a pass.
         fresh="$(find "$results" -name 'TEST-*.xml' -newer "$started" 2>/dev/null | head -1 || true)"
         rm -f "$started"
+        require_test_window
         [[ -n "$fresh" ]] || fail 'No instrumentation results were written; the test APK may not have installed. Check the Gradle output above (for example, INSTALL_FAILED_INSUFFICIENT_STORAGE).'
         ! grep -q '<testsuites tests="0"' "$fresh" || fail 'No instrumentation tests ran. Check the TEST filter and the Gradle output above.'
         ;;
