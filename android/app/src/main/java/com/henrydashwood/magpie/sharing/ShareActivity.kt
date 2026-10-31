@@ -92,7 +92,8 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true,
         confirmValueChange = { it != SheetValue.Hidden || !busy })
     val colours = sheetColours()
-    ModalBottomSheet(onDismissRequest = { if (!state.busy) close() }, sheetState = sheet, containerColor = colours.sheet) {
+    ModalBottomSheet(onDismissRequest = { if (!state.busy) close() }, sheetState = sheet,
+        containerColor = colours.sheet, contentColor = MaterialTheme.colorScheme.onSurface) {
         SheetContent(state, library.live, library.owner != null, model, close, openMagpie, colours)
     }
 }
@@ -105,7 +106,8 @@ private fun SheetContent(state: ShareState, live: Boolean, loaded: Boolean, mode
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF111318)).padding(5.dp)) {
+            Box(Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF111318))
+                .border(1.dp, colours.cardBorder, RoundedCornerShape(12.dp)).padding(5.dp)) {
                 Image(painterResource(R.drawable.magpie_mark), contentDescription = null)
             }
             Text(when { state.saved -> "Saved to Magpie"; blocked -> "Can't save this"; else -> "Save to Magpie" },
@@ -142,7 +144,9 @@ private fun SheetContent(state: ShareState, live: Boolean, loaded: Boolean, mode
                     PrimaryButton("Open Magpie", onClick = openMagpie)
                     SecondaryButton("Done", onClick = close)
                 }
-                blocked -> FilledTonalButton(onClick = close, Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Close", style = buttonText) }
+                blocked -> FilledTonalButton(onClick = close, Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer)) { Text("Close", style = buttonText) }
                 article == null -> SecondaryButton("Cancel", onClick = close)
                 state.accountChanged -> {
                     PrimaryButton("Review again", onClick = model::reviewAccount)
