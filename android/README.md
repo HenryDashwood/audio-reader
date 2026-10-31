@@ -767,9 +767,13 @@ HTTP(S) URL without credentials. Multiple links, arbitrary content/file URIs,
 unsupported types, and payloads over 2 MB UTF-8 are rejected with an explanation.
 Shared HTML is previewed as plain text; it never executes in the share screen.
 
+The share screen is a Material bottom sheet over the sending app (a translucent
+activity, light and dark). Every state has the same structure: the Magpie mark and
+a heading, a card naming the item and its site, one status line, then the actions.
 A shared link to a PDF (a `.pdf` path, or one the account API recognises as a
-PDF) skips page capture. The screen names the file and its site, notes that
+PDF) skips page capture. The sheet names the file and its site, notes that
 Datalab prepares the text privately, and offers only **Save** and **Cancel**.
+A share Magpie cannot use at all shows why, with only **Close**.
 
 For other HTTPS pages, the share screen always offers **Sign in or capture page**,
 including pages that appear readable but contain only a preview. A detected

@@ -114,7 +114,7 @@ class IncomingSharingTest {
         val owner = checkNotNull(library.state.value.owner)
         assertTrue(runBlocking { app.articleInbox.pending(owner) }.isEmpty())
         scenario!!.recreate()
-        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.onNodeWithText("Save").performScrollTo().performClick()
         compose.waitUntil(10_000) { model.state.value.saved }
         val stored = runBlocking { ArticleInboxStore(app, "magpie_test_account_captures").pending(owner) }.single()
         assertEquals(html, stored.html); assertEquals("page", stored.contentFormat); assertTrue(stored.replaceExisting)
@@ -158,11 +158,12 @@ class IncomingSharingTest {
         val alice = checkNotNull(library.state.value.owner)
         runBlocking(Dispatchers.Main) { library.changeSession("bob") }
         compose.waitUntil(10_000) { model.state.value.accountChanged }
-        compose.onNodeWithText("Save article").assertDoesNotExist()
+        compose.onNodeWithText("Save").assertDoesNotExist()
         scenario!!.onActivity { model.save() }
         assertTrue(runBlocking { app.articleInbox.pending(alice) }.isEmpty())
         compose.onNodeWithText("Review again").performClick()
-        compose.onNodeWithText("Save link only").performScrollTo().performClick()
+        // The page was still being read, so only its link remains to save.
+        compose.onNodeWithText("Save").performScrollTo().performClick()
         compose.waitUntil(10_000) { model.state.value.saved }
         assertTrue(runBlocking { app.articleInbox.pending(alice) }.isEmpty())
         assertEquals(1, runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.size)
@@ -170,7 +171,7 @@ class IncomingSharingTest {
     @Test fun signedOutInvalidAndClipSharesHaveExplicitOutcomes() {
         runBlocking(Dispatchers.Main) { library.changeSession(null) }
         launch()
-        compose.onNodeWithText("Save article").assertDoesNotExist()
+        compose.onNodeWithText("Save").assertDoesNotExist()
         compose.onNodeWithText("Open Magpie").assertExists()
         assertEquals("https://example.com/clip", SharedArticles.fromIntent(Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"; clipData = ClipData.newPlainText("link", "https://example.com/clip")
@@ -199,7 +200,7 @@ class IncomingSharingTest {
     @Test fun openMagpieAfterConfirmationPreparesTheQueuedArticleInSaved() {
         api.offline = false
         launch(html = "<article><p>Confirmed shared content.</p></article>")
-        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.onNodeWithText("Save").performScrollTo().performClick()
         compose.waitUntil(10_000) { model.state.value.saved }
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val monitor = instrumentation.addMonitor(MainActivity::class.java.name, null, false)
@@ -240,7 +241,7 @@ class IncomingSharingTest {
         launch(url)
         // Saving before the page is read waits for it rather than storing a bare link.
         compose.onNodeWithText("Reading the page…").assertExists()
-        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.onNodeWithText("Save").performScrollTo().performClick()
         compose.waitUntil(20_000) { model.state.value.saved }
         val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
         assertEquals(url, stored.url); assertEquals("article", stored.contentFormat); assertEquals("A quiet walk", stored.title)
@@ -258,7 +259,7 @@ class IncomingSharingTest {
             "<div><p>Outside feed. $prose</p>$recommendations</div></main></body></html>"
         launch(url)
         compose.waitUntil(20_000) { !model.state.value.preparing }
-        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.onNodeWithText("Save").performScrollTo().performClick()
         compose.waitUntil(10_000) { model.state.value.saved }
         val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
         val body = org.jsoup.Jsoup.parse(checkNotNull(stored.html)).body()
@@ -292,7 +293,7 @@ class IncomingSharingTest {
             "</div></article></body></html>"
         launch(url)
         compose.waitUntil(20_000) { !model.state.value.preparing }
-        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.onNodeWithText("Save").performScrollTo().performClick()
         compose.waitUntil(10_000) { model.state.value.saved }
         val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
         val body = org.jsoup.Jsoup.parse(checkNotNull(stored.html)).body()
@@ -329,7 +330,7 @@ class IncomingSharingTest {
             "</div></div></main></body></html>"
         launch(url)
         compose.waitUntil(20_000) { !model.state.value.preparing }
-        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.onNodeWithText("Save").performScrollTo().performClick()
         compose.waitUntil(10_000) { model.state.value.saved }
         val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
         val body = org.jsoup.Jsoup.parse(checkNotNull(stored.html)).body()
@@ -362,7 +363,7 @@ class IncomingSharingTest {
         assertFalse(model.state.value.saveRequested)
         assertTrue(runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.isEmpty())
         compose.onNodeWithText("Open page to capture").assertExists()
-        compose.onNodeWithText("Save article").assertDoesNotExist()
+        compose.onNodeWithText("Save").assertDoesNotExist()
         compose.onNodeWithText("Save link only").performScrollTo().performClick()
         compose.waitUntil(10_000) { model.state.value.saved }
         assertNull(runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single().html)
@@ -388,7 +389,7 @@ class IncomingSharingTest {
             assertEquals(clean, model.state.value.article!!.url)
             assertEquals("article", model.state.value.article!!.contentFormat)
             assertTrue(model.state.value.article!!.html!!.contains("quiet walk"))
-            compose.onNodeWithText("Save article").performScrollTo().performClick()
+            compose.onNodeWithText("Save").performScrollTo().performClick()
             compose.waitUntil(10_000) { model.state.value.saved }
             val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
             assertEquals("article", stored.contentFormat)
@@ -420,7 +421,7 @@ class IncomingSharingTest {
         compose.waitUntil(15_000) { compose.onAllNodesWithText("Use link instead").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Magpie could not match this page to its article address. Reload the page and try again.").assertExists()
         assertTrue(model.state.value.browser)
-        compose.onNodeWithText("Save article").assertDoesNotExist()
+        compose.onNodeWithText("Save").assertDoesNotExist()
         assertTrue(runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.isEmpty())
         compose.onNodeWithText("Use link instead").performClick()
         assertFalse(model.state.value.browser)
@@ -435,7 +436,7 @@ class IncomingSharingTest {
         compose.waitUntil(15_000) { compose.onAllNodes(hasText("Preview article") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Preview article").performClick()
         compose.waitUntil(15_000) { !model.state.value.browser }
-        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.onNodeWithText("Save").performScrollTo().performClick()
         compose.waitUntil(10_000) { model.state.value.saved }
         val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
         assertEquals(url, stored.url)
@@ -451,7 +452,7 @@ class IncomingSharingTest {
         compose.waitUntil(15_000) { compose.onAllNodes(hasText("Preview article") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Preview article").performClick()
         compose.waitUntil(15_000) { !model.state.value.browser }
-        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.onNodeWithText("Save").performScrollTo().performClick()
         compose.waitUntil(10_000) { model.state.value.saved }
         val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
         assertEquals(url, stored.url)
@@ -585,7 +586,7 @@ class IncomingSharingTest {
         assertFalse(model.state.value.saved)
         assertFalse(model.state.value.saveRequested)
         assertTrue(runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.isEmpty())
-        compose.onNodeWithText("Save article").assertDoesNotExist()
+        compose.onNodeWithText("Save").assertDoesNotExist()
         compose.onNodeWithText("Sign in to website").performClick()
         compose.waitUntil(15_000) { compose.onAllNodes(hasText("Preview article") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Preview article").performClick()
@@ -597,7 +598,7 @@ class IncomingSharingTest {
         compose.waitUntil(15_000) { compose.onAllNodes(hasText("Preview article") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("Preview article").performClick()
         compose.waitUntil(15_000) { !model.state.value.browser }
-        compose.onNodeWithText("Save article").performScrollTo().performClick()
+        compose.onNodeWithText("Save").performScrollTo().performClick()
         compose.waitUntil(10_000) { model.state.value.saved }
         val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
         assertEquals("article", stored.contentFormat)
@@ -645,7 +646,7 @@ class IncomingSharingTest {
             screenshot("capture-extraction-failure")
             throw AssertionError(compose.onRoot().printToString(), failure)
         }
-        compose.onNodeWithText("Save article").assertExists()
+        compose.onNodeWithText("Save").assertExists()
         screenshot("captured-article-preview")
         val article = model.state.value.article!!
         assertEquals("article", article.contentFormat); assertTrue(article.html!!.contains("quiet walk"))
@@ -661,7 +662,7 @@ class IncomingSharingTest {
                 MagpieTheme(darkTheme = true) { ShareScreen(model, activity::finish, {}) }
             }
         } }
-        compose.onNodeWithText("Save article").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Save").performScrollTo().assertIsDisplayed()
         screenshot("incoming-share-large-dark")
         compose.onNodeWithText("Cancel").performScrollTo().assertIsDisplayed()
     }
