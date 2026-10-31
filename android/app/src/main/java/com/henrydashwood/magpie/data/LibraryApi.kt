@@ -244,7 +244,8 @@ class HttpLibraryApi(private val baseUrl: String, private val unauthorized: (Str
             .put("title", article.title).put("html", article.html).put("content_format", article.contentFormat)
         private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
         fun decodeSource(json: JSONObject) = SourceResult(json.getString("title"), validateLink(json.getString("feed_url")),
-            json.optionalString("publisher"), json.optionalInt("episode_count"), imageUrl = https(json.optionalString("artwork_url")))
+            json.optionalString("publisher"), json.optionalInt("episode_count"), imageUrl = https(json.optionalString("artwork_url")),
+            publication = json.optionalString("kind") == "publication")
         fun decodeCandidate(json: JSONObject) = SourceResult(json.getString("title"), validateLink(json.getString("feed_url")),
             count = json.optInt("item_count"), description = json.optionalString("description"), format = json.optionalString("format"),
             audioCount = json.optInt("audio_item_count"), recentTitle = json.optJSONArray("recent_item_titles")?.optString(0)?.takeIf { it.isNotBlank() },

@@ -204,15 +204,14 @@ private struct AddSourcesView: View {
         let localShows =
             searchScope.includesShows
             ? showsMatching(shows, query: searchText) : []
-        let localTitles = Set(localShows.map { searchIdentity($0.title) })
-        let directoryResults =
-            searchScope.includesShows
-            ? searchModel.podcasts.filter { !localTitles.contains(searchIdentity($0.title)) } : []
+        let found = directorySearchResults(
+            query: searchText,
+            library: localShows,
+            directory: searchScope.includesShows ? searchModel.podcasts : [],
+            web: searchScope.includesShows ? searchModel.webPublication : nil)
         let episodeResults = searchScope.includesEpisodes ? searchModel.episodes : []
-        let webResult = searchScope.includesShows ? searchModel.webPublication : nil
         let hasResults =
-            pastedFeed != nil || !localShows.isEmpty || !directoryResults.isEmpty
-            || !episodeResults.isEmpty || webResult != nil
+            pastedFeed != nil || !localShows.isEmpty || !found.isEmpty || !episodeResults.isEmpty
 
         if let pastedFeed {
             List {
@@ -253,25 +252,23 @@ private struct AddSourcesView: View {
                     }
                 }
 
-                if !directoryResults.isEmpty {
-                    Section("Podcasts") {
-                        ForEach(directoryResults) { result in
-                            NavigationLink(value: result) { PodcastResultRow(result: result) }
-                        }
-                    }
+                // The server ranks both kinds together; whichever holds its
+                // best match comes first.
+                if found.publicationsFirst {
+                    directorySection("Publications", found.publications)
+                    directorySection("Podcasts", found.podcasts)
+                } else {
+                    directorySection("Podcasts", found.podcasts)
+                    directorySection("Publications", found.publications)
                 }
 
-                if let webResult {
+                if let webResult = found.web {
                     Section("Found on the web") {
                         NavigationLink(value: webResult) { PodcastResultRow(result: webResult) }
                     }
                 }
 
-                searchStatusRows(
-                    localShows: localShows,
-                    directoryResults: directoryResults,
-                    episodeResults: episodeResults
-                )
+                searchStatusRows(offersWebSearch: found.offersWebSearch)
             }
             .listStyle(.plain)
         }
@@ -302,7 +299,7 @@ private struct AddSourcesView: View {
                 if let message = searchModel.webMessage {
                     Text(message)
                 } else {
-                    Text("Nothing in your library or the podcast directory matches “\(searchText)”.")
+                    Text("No podcast, publication or item in your library matches “\(searchText)”.")
                 }
             } actions: {
                 if searchScope.includesShows { webSearchButton }
@@ -311,9 +308,18 @@ private struct AddSourcesView: View {
     }
 
     @ViewBuilder
-    private func searchStatusRows(
-        localShows: [Show], directoryResults: [PodcastResult], episodeResults: [Episode]
-    ) -> some View {
+    private func directorySection(_ title: String, _ results: [PodcastResult]) -> some View {
+        if !results.isEmpty {
+            Section(title) {
+                ForEach(results) { result in
+                    NavigationLink(value: result) { PodcastResultRow(result: result) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func searchStatusRows(offersWebSearch: Bool) -> some View {
         if searchModel.state == .searching {
             Section { ProgressView("Updating results…") }
         }
@@ -336,11 +342,17 @@ private struct AddSourcesView: View {
         if let message = searchModel.webMessage {
             Section { Text(message).font(.footnote).foregroundStyle(.secondary) }
         }
-        if searchScope.includesShows, localShows.isEmpty, directoryResults.isEmpty,
-            episodeResults.isEmpty,
+        // Apple answers almost any query with some loosely related podcast,
+        // so the web search is offered whenever nothing listed is plausibly
+        // what she typed, not only when the list is empty.
+        if searchScope.includesShows, offersWebSearch, searchModel.state != .searching,
             searchModel.webPublication == nil
         {
-            Section { webSearchButton }
+            Section {
+                webSearchButton
+            } footer: {
+                Text("Not listed? Magpie can look for a blog or newsletter on the web.")
+            }
         }
     }
 
@@ -517,6 +529,65 @@ nonisolated func showsMatching(_ shows: [Show], query: String) -> [Show] {
             }
         }
     }
+}
+
+/// What typed search lists from the directories once anything she already
+/// follows, or that another source already listed, has been taken out.
+nonisolated struct DirectorySearchResults: Equatable {
+    var publications: [PodcastResult] = []
+    var podcasts: [PodcastResult] = []
+    var web: PodcastResult?
+    var publicationsFirst = false
+    /// False when something on screen is plausibly what she typed.
+    var offersWebSearch = true
+
+    var isEmpty: Bool { publications.isEmpty && podcasts.isEmpty && web == nil }
+}
+
+nonisolated func directorySearchResults(
+    query: String, library: [Show], directory: [PodcastResult], web: PodcastResult?
+) -> DirectorySearchResults {
+    let followedTitles = Set(library.map { searchIdentity($0.title) })
+    let followedURLs = Set(library.flatMap { $0.sources ?? [] }.map(\.url))
+    var listed = Set<String>()
+    let fresh = directory.filter { result in
+        !followedTitles.contains(searchIdentity(result.title))
+            && !followedURLs.contains(result.feedURL.absoluteString)
+            && listed.insert(feedIdentity(result.feedURL)).inserted
+    }
+    // The web search may well find a feed that is already listed; it is
+    // then the row she can already see, not a second one.
+    let web = web.flatMap { result in
+        listed.contains(feedIdentity(result.feedURL))
+            || followedTitles.contains(searchIdentity(result.title)) ? nil : result
+    }
+    let named = library.map(\.title) + fresh.map(\.title) + (web.map { [$0.title] } ?? [])
+    return DirectorySearchResults(
+        publications: fresh.filter(\.isPublication),
+        podcasts: fresh.filter { !$0.isPublication },
+        web: web,
+        publicationsFirst: fresh.first?.isPublication == true,
+        offersWebSearch: !named.contains { titleNames($0, query: query) })
+}
+
+/// Does the title contain every word she typed, allowing for a typo?
+nonisolated func titleNames(_ title: String, query: String) -> Bool {
+    let terms = searchWords(query)
+    guard !terms.isEmpty else { return false }
+    let words = searchWords(title)
+    return terms.allSatisfy { term in
+        words.contains { word in word.hasPrefix(term) || withinOneSearchEdit(term, word) }
+    }
+}
+
+/// HTTP and HTTPS spellings of a feed are the same feed.
+nonisolated private func feedIdentity(_ url: URL) -> String {
+    guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+        return url.absoluteString
+    }
+    components.scheme = "https"
+    components.host = components.host?.lowercased()
+    return components.string ?? url.absoluteString
 }
 
 nonisolated func searchIdentity(_ value: String) -> String {

@@ -131,4 +131,32 @@ class SourceDiscoveryTest {
         model.edit("file:///private/secret"); model.submit(); runCurrent()
         assertNull(repo.discovered); assertTrue(repo.queries.isEmpty()); assertNotNull(model.state.value.error)
     }
+
+    @Test fun looseDirectoryMatchesStillOfferTheWebSearch() {
+        val found = SourceDiscovery.directoryResults("Construction physics", emptyList(),
+            listOf(SourceResult("Creepy", "https://a.example/feed"), SourceResult("Constructive Interference", "https://b.example/feed")), null)
+        assertEquals(2, found.podcasts.size)
+        assertTrue(found.offersWebSearch)
+    }
+
+    @Test fun aNamedPublicationIsListedFirstAndNeedsNoWebSearch() {
+        val found = SourceDiscovery.directoryResults("constructoin physics", emptyList(), listOf(
+            SourceResult("Construction Physics", "https://www.construction-physics.com/feed", publication = true),
+            SourceResult("Creepy", "https://a.example/feed")), null)
+        assertEquals(listOf("Construction Physics"), found.publications.map { it.title })
+        assertEquals(listOf("Creepy"), found.podcasts.map { it.title })
+        assertTrue(found.publicationsFirst)
+        assertFalse(found.offersWebSearch)
+    }
+
+    @Test fun eachFeedAppearsOnceWhateverFoundIt() {
+        val followed = LibraryFeed("1", "The Rest Is History", 10, false, url = "https://rest.example/feed")
+        val found = SourceDiscovery.directoryResults("history", listOf(followed), listOf(
+            SourceResult("The Rest Is History", "https://rest.example/feed"),
+            SourceResult("History Extra", "http://extra.example/feed"),
+            SourceResult("History Extra", "https://extra.example/feed")),
+            SourceResult("History Extra", "https://EXTRA.example/feed", publication = true))
+        assertEquals(listOf("http://extra.example/feed"), found.podcasts.map { it.url })
+        assertNull(found.web)
+    }
 }

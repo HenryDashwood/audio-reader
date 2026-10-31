@@ -188,7 +188,7 @@ class EpisodeTextRead(BaseModel):
 
 
 class PodcastSearchResult(BaseModel):
-    """One show from the public directory, not yet in our catalog."""
+    """One show or publication found by search, not necessarily in our catalog."""
 
     title: str
     feed_url: str
@@ -199,6 +199,9 @@ class PodcastSearchResult(BaseModel):
     country: str | None = None
     primary_genre: str | None = None
     latest_release_date: datetime | None = None
+    #: "publication" for a written feed. Absent for a podcast, so the rows a
+    #: released client already understood are byte-for-byte unchanged.
+    kind: Literal["publication"] | None = None
 
     @field_validator("artwork_url")
     @classmethod

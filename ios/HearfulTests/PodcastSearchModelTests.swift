@@ -327,3 +327,60 @@ struct LocalShowSearchTests {
         #expect(followedShowsMatching([], query: "h").isEmpty)
     }
 }
+
+@Suite struct DirectorySearchResultsTests {
+    private func found(
+        _ title: String, url: String, kind: String? = nil
+    ) -> PodcastResult {
+        PodcastResult(
+            title: title, feedURL: URL(string: url)!, publisher: nil, episodeCount: nil,
+            artworkURL: nil, kind: kind)
+    }
+
+    private let followed = Show(
+        id: 1, title: "The Rest Is History", description: nil, artworkURL: nil, episodeCount: 10)
+
+    @Test func looseDirectoryMatchesStillOfferTheWebSearch() {
+        let results = directorySearchResults(
+            query: "Construction physics", library: [],
+            directory: [
+                found("Creepy", url: "https://a.example/feed"),
+                found("Constructive Interference", url: "https://b.example/feed"),
+            ],
+            web: nil)
+
+        #expect(results.podcasts.count == 2)
+        #expect(results.offersWebSearch)
+    }
+
+    @Test func aNamedPublicationIsListedFirstAndNeedsNoWebSearch() {
+        let results = directorySearchResults(
+            query: "constructoin physics", library: [],
+            directory: [
+                found(
+                    "Construction Physics", url: "https://www.construction-physics.com/feed",
+                    kind: "publication"),
+                found("Creepy", url: "https://a.example/feed"),
+            ],
+            web: nil)
+
+        #expect(results.publications.map(\.title) == ["Construction Physics"])
+        #expect(results.podcasts.map(\.title) == ["Creepy"])
+        #expect(results.publicationsFirst)
+        #expect(!results.offersWebSearch)
+    }
+
+    @Test func eachFeedAppearsOnceWhateverFoundIt() {
+        let results = directorySearchResults(
+            query: "history", library: [followed],
+            directory: [
+                found("The Rest Is History", url: "https://rest.example/feed"),
+                found("History Extra", url: "http://extra.example/feed"),
+                found("History Extra", url: "https://extra.example/feed"),
+            ],
+            web: found("History Extra", url: "https://EXTRA.example/feed", kind: "publication"))
+
+        #expect(results.podcasts.map(\.feedURL.absoluteString) == ["http://extra.example/feed"])
+        #expect(results.web == nil)
+    }
+}
