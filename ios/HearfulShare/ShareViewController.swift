@@ -13,7 +13,7 @@ final class ShareViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = .systemGroupedBackground
         let confirmation = UIHostingController(rootView: makeConfirmation(state: .saving))
         self.confirmation = confirmation
         addChild(confirmation)
@@ -98,7 +98,7 @@ final class ShareViewController: UIViewController {
                         }
                         continuation.resume(returning: Input(url: URL(fileURLWithPath: url.lastPathComponent),
                             title: url.lastPathComponent, html: nil, pdf: data,
-                            preview: "PDF · Prepared privately with Datalab", contentFormat: "pdf"))
+                            contentFormat: "pdf"))
                     }
                 }
                 if input != nil { break }
@@ -205,13 +205,11 @@ private struct ShareConfirmationView: View {
 
         var heading: String {
             switch self {
-            case .saving: "Preparing article…"
+            case .saving, .ready, .pdfReady: "Save to Magpie"
             case .uploading: "Saving to Magpie…"
             case .queued: "Save not finished"
-            case .ready: "Save to Magpie"
-            case .pdfReady: "Save PDF to Magpie"
             case .saved: "Saved to Magpie"
-            case .failed: "Couldn't save article"
+            case .failed: "Can't save this"
             }
         }
 
@@ -221,16 +219,18 @@ private struct ShareConfirmationView: View {
             case .uploading: "Saving to your account. Keep this pane open until saving finishes."
             case .queued(let message): message
             case .pdfReady:
-                "Datalab receives this PDF or its link to prepare it for reading and listening. Your saved PDF stays private to your Magpie account."
+                "Magpie turns this PDF into text you can listen to. Datalab prepares it privately for your account."
             case .ready(_, _, _, let issue, let hasText):
                 if issue == "website-sign-in" {
-                    "This page requires a website sign-in or subscription. Return to Safari, sign in and share the unlocked article again. You can also save only its link."
+                    "This site only shows the full article after you sign in. Sign in to it in Safari, then share the article again."
                 } else if issue == "page-identity" {
-                    "The page does not match its article address. Return to Safari, reload it and share again, or save only its link."
+                    "The page does not match its article address. Reload it in Safari and share it again."
+                } else if issue != nil {
+                    "Magpie could not capture this article. Check that it has loaded in Safari and share it again."
                 } else if hasText {
-                    "Article text captured. Check the opening before saving; a website may still supply only a preview."
+                    "Article text found. Saving again updates your copy."
                 } else {
-                    "Magpie could not confidently capture this article. Return to Safari, check that the article has loaded and share again, or save only its link."
+                    "Magpie will fetch the article from this link when it saves."
                 }
             case .saved(_, _, let preparing):
                 preparing ? "Your PDF is saved. Magpie is preparing it for reading and listening; you can close this pane." : "Your item is saved to Magpie. It will download for offline reading in the app."
@@ -262,7 +262,15 @@ private struct ShareConfirmationView: View {
             if case .pdfReady = self { return true }
             return false
         }
+
+        /// A capture problem Safari can fix: the person can go back, or keep just the link.
+        var needsSafari: Bool {
+            if case .ready(_, _, _, let issue, _) = self { return issue != nil }
+            return false
+        }
     }
+
+    private enum Tone { case progress, good, info, warning, error }
 
     let state: Phase
     var save: () -> Void = {}
@@ -271,140 +279,222 @@ private struct ShareConfirmationView: View {
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
-                VStack(spacing: 28) {
-                    VStack(spacing: 20) {
-                        statusIcon
-                        VStack(spacing: 10) {
-                            Text(state.heading)
-                                .font(.title2.bold())
-                                .foregroundStyle(.primary)
-                                .accessibilityAddTraits(.isHeader)
-                            Text(state.message)
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                        }
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 18) {
+                    header
+                    if let item {
+                        ItemCard(title: item.title, url: item.url, preview: item.preview, isPDF: item.pdf)
                     }
-
-                    if case .saved(let title, let url, _) = state {
-                        articlePreview(title: title, url: url)
-                    }
-
-                    if case .ready(let title, let url, let preview, _, let hasText) = state {
-                        articlePreview(title: title, url: url, preview: preview)
-                        VStack(spacing: 16) {
-                            Text("Already saved? This updates your copy. If the text changes, listening starts from the beginning.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button(action: save) {
-                                Text(hasText ? "Save article" : "Save to Magpie")
-                                    .font(.headline)
-                                    .frame(maxWidth: .infinity, minHeight: 32)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .buttonBorderShape(.roundedRectangle(radius: 16))
-                            .controlSize(.large)
-                            Button("Cancel", action: done)
-                                .font(.body)
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                                .buttonStyle(.plain)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
-                    if case .pdfReady(let title, let url) = state {
-                        articlePreview(title: title, url: url)
-                        Button("Save PDF", action: save)
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
-                        Button("Cancel", action: done)
-                            .frame(minHeight: 44)
-                    }
-
-                    if !state.isReady {
-                        if case .queued = state {
-                            Button(action: save) {
-                                Text("Retry")
-                                    .font(.headline)
-                                    .frame(maxWidth: .infinity, minHeight: 32)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .buttonBorderShape(.roundedRectangle(radius: 16))
-                            .controlSize(.large)
-                        }
-                        Button(action: done) {
-                            Text(state.isSaving ? "Finish later" : "Done")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity, minHeight: 32)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .buttonBorderShape(.roundedRectangle(radius: 16))
-                        .controlSize(.large)
-                        .disabled({ if case .saving = state { return true }; return false }())
-                    }
+                    status
+                    actions
+                        .padding(.top, 4)
                 }
-                .padding(28)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
                 .frame(maxWidth: 476)
-                .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .top)
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .background(Color(uiColor: .systemBackground))
+        .background(Color(uiColor: .systemGroupedBackground))
     }
 
-    private var statusIcon: some View {
+    private var header: some View {
         ZStack {
-            Circle()
-                .fill(Color(uiColor: state.isSaved ? .systemGreen : .secondaryLabel).opacity(0.12))
-            if state.isSaving {
-                ProgressView()
-                    .controlSize(.large)
-            } else {
-                Image(systemName: state.isReady ? "doc.text" : (state.isSaved ? "checkmark" : "exclamationmark"))
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(Color(uiColor: state.isSaved ? .systemGreen : .label))
+            HStack(spacing: 8) {
+                MagpieIcon(size: 28)
+                Text(state.heading)
+                    .font(.headline)
+                    .lineLimit(2)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            .padding(.horizontal, 52)
+            HStack {
+                Button(action: done) {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 30, height: 30)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel(state.isSaving ? "Finish later" : (state.isReady ? "Cancel" : "Close"))
+                .disabled({ if case .saving = state { return true }; return false }())
+                Spacer()
             }
         }
-        .frame(width: 72, height: 72)
-        .accessibilityHidden(true)
+        .frame(minHeight: 44)
     }
 
-    private func articlePreview(title: String?, url: URL, preview: String? = nil) -> some View {
-        let title = title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let host = url.host() ?? url.absoluteString
-        let source = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    private var item: (title: String?, url: URL, preview: String?, pdf: Bool)? {
+        switch state {
+        case .ready(let title, let url, let preview, _, _): (title, url, preview, false)
+        case .pdfReady(let title, let url): (title, url, nil, true)
+        case .saved(let title, let url, let preparing): (title, url, nil, preparing)
+        default: nil
+        }
+    }
 
-        return VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                if let title, !title.isEmpty {
-                    Text(title)
+    private var tone: Tone {
+        switch state {
+        case .saving, .uploading: .progress
+        case .queued: .warning
+        case .failed: .error
+        case .saved: .good
+        case .pdfReady: .info
+        case .ready(_, _, _, let issue, let hasText): issue != nil ? .warning : (hasText ? .good : .info)
+        }
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        switch tone {
+        case .warning, .error:
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: tone == .error ? "exclamationmark.circle" : (state.needsSafari ? "lock" : "exclamationmark.triangle"))
+                    .foregroundStyle(tone == .error ? Color.red : Color.orange)
+                Text(state.message)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background((tone == .error ? Color.red : Color.orange).opacity(0.14), in: .rect(cornerRadius: 20))
+            .accessibilityElement(children: .combine)
+        default:
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                if tone == .progress {
+                    ProgressView()
+                } else {
+                    Image(systemName: tone == .good ? "checkmark.circle" : (isPDF ? "lock" : "link"))
+                        .foregroundStyle(.tint)
+                }
+                Text(state.message)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.subheadline)
+            .padding(.horizontal, 6)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var isPDF: Bool {
+        if case .pdfReady = state { return true }
+        return false
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        VStack(spacing: 6) {
+            switch state {
+            case .ready where state.needsSafari:
+                PrimaryButton(title: "Back to Safari", action: done)
+                Button("Save link only", action: save)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+            case .ready, .pdfReady:
+                PrimaryButton(title: "Save", action: save)
+            case .queued:
+                PrimaryButton(title: "Retry", action: save)
+            case .saved:
+                PrimaryButton(title: "Done", action: done)
+            case .failed:
+                Button(action: done) {
+                    Text("Close").font(.headline).frame(maxWidth: .infinity, minHeight: 40)
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+                .tint(.secondary)
+            case .saving, .uploading:
+                EmptyView()
+            }
+        }
+    }
+}
+
+private struct PrimaryButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title).font(.headline).frame(maxWidth: .infinity, minHeight: 40)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+    }
+}
+
+/// The app icon's mark on its dark tile, so the pane is recognisably Magpie in light and dark.
+private struct MagpieIcon: View {
+    let size: CGFloat
+
+    var body: some View {
+        Image("MagpieMark")
+            .resizable()
+            .scaledToFit()
+            .padding(size * 0.12)
+            .frame(width: size, height: size)
+            .background(Color(red: 0.067, green: 0.075, blue: 0.094), in: .rect(cornerRadius: size * 0.26))
+            .accessibilityHidden(true)
+    }
+}
+
+private struct ItemCard: View {
+    let title: String?
+    let url: URL
+    let preview: String?
+    let isPDF: Bool
+
+    private var pdf: Bool { isPDF || url.pathExtension.lowercased() == "pdf" }
+    private var source: String? {
+        guard let host = url.host(), !host.isEmpty else { return nil }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+    private var name: String {
+        if let title = title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { return title }
+        if pdf, !url.lastPathComponent.isEmpty, url.lastPathComponent != "/" { return url.lastPathComponent }
+        return source ?? url.absoluteString
+    }
+    private var detail: String {
+        if pdf { return source.map { "PDF from \($0)" } ?? "PDF document" }
+        return source.map { "Article from \($0)" } ?? url.absoluteString
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(spacing: 4) {
+                    Image(systemName: pdf ? "doc.text" : "doc.plaintext")
+                        .font(.title3)
+                    Text(pdf ? "PDF" : "PAGE")
+                        .font(.caption2.weight(.bold))
+                }
+                .foregroundStyle(.tint)
+                .frame(width: 52, height: 64)
+                .background(Color.accentColor.opacity(0.14), in: .rect(cornerRadius: 12))
+                .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(name)
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(source)
+                    Text(detail)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                } else {
-                    Text(source)
-                        .font(.headline)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             if let preview, !preview.isEmpty {
                 Divider()
                 Text(preview)
-                    .font(.body)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(3)
                     .accessibilityLabel("Article begins: \(preview)")
             }
         }
-        .padding(18)
-        .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 18))
+        .padding(16)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 26))
         .accessibilityElement(children: .combine)
     }
 }
@@ -438,4 +528,17 @@ private struct ShareConfirmationView: View {
 
 #Preview("Unable to save") {
     ShareConfirmationView(state: .failed(message: CaptureInbox.InboxError.signedOut.localizedDescription)) {}
+}
+
+#Preview("PDF") {
+    ShareConfirmationView(
+        state: .pdfReady(title: "2205.14135v2.pdf", url: URL(string: "https://arxiv.org/pdf/2205.14135")!)
+    ) {}
+}
+
+#Preview("Needs website sign-in") {
+    ShareConfirmationView(
+        state: .ready(title: "Why we still write letters", url: URL(string: "https://members.example.com/letters")!,
+            preview: nil, issue: "website-sign-in", hasText: false)
+    ) {}
 }

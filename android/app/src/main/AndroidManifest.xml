@@ -37,7 +37,7 @@
             </intent-filter>
         </activity>
         <!-- A separate share task keeps the unconfirmed preview available while signing in. -->
-        <activity android:name=".sharing.ShareActivity" android:exported="true"
+        <activity android:name=".sharing.ShareActivity" android:exported="true" android:theme="@style/Theme.Magpie.Share"
             android:launchMode="singleTask" android:taskAffinity="${applicationId}.share">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
