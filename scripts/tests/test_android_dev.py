@@ -32,7 +32,7 @@ def android_runner(tmp_path: Path):
         'if [[ " $* " == *" connectedDebugAndroidTest "* && -z "${NO_RESULTS:-}" ]]; then\n'
         '    out="$(dirname "$0")/app/build/outputs/androidTest-results/connected/debug"\n'
         '    mkdir -p "$out"; printf \'<testsuites tests="%s">\' "${TEST_COUNT:-1}" > "$out/TEST-device.xml"\n'
-        'fi\n',
+        "fi\n",
     )
     executable(
         sdk / "platform-tools/adb",
@@ -44,12 +44,20 @@ elif [[ "$3" == get-state ]]; then
     echo "${DEVICE_STATE:-device}"
 elif [[ "$3" == shell && "$4" == getprop ]]; then
     echo "${BOOT_COMPLETED:-1}"
+elif [[ "$3" == shell && "$4" == dumpsys && "$5" == window ]]; then
+    if [[ -n "${WINDOW_AFTER_TESTS:-}" ]] && grep -q 'arg=connectedDebugAndroidTest' "$CALLS"; then
+        printf '%s\n' "$WINDOW_AFTER_TESTS"
+    else
+        printf '%s\n' "${WINDOW_DUMP-mCurrentFocus=healthy}"
+    fi
 fi
 """,
     )
 
     def run(target, **overrides):
-        overrides.setdefault("MAGPIE_RELEASE_PROPERTIES", str(tmp_path / "no-release.properties"))
+        overrides.setdefault(
+            "MAGPIE_RELEASE_PROPERTIES", str(tmp_path / "no-release.properties")
+        )
         env = {
             key: value
             for key, value in os.environ.items()
@@ -109,6 +117,59 @@ def test_unready_emulator_never_installs(android_runner, overrides):
     assert result.returncode != 0
     assert "gradle" not in calls
     assert "install" not in calls
+
+
+@pytest.mark.parametrize(
+    "window",
+    [
+        "mCurrentFocus=Window{1 u0 Application Not Responding: com.android.systemui}",
+        "mCurrentFocus=Window{1 u0 Application Error: com.example.app}",
+    ],
+)
+def test_error_dialog_blocks_tests_before_gradle_without_erasing_data(
+    android_runner, window
+):
+    result, calls = android_runner(
+        "android-test", ANDROID_SERIAL="emulator-5556", WINDOW_DUMP=window
+    )
+    assert result.returncode != 0
+    assert "error dialog is covering" in result.stderr
+    if "com.android.systemui" in window:
+        assert "--cold AVD_NAME" in result.stderr
+    else:
+        assert "Inspect the app crash/ANR logs" in result.stderr
+    assert "gradle" not in calls
+    assert not any(action in calls for action in ["uninstall", "clear", "wipe"])
+
+
+def test_crashed_system_ui_after_tests_cannot_be_reported_as_a_pass(android_runner):
+    result, calls = android_runner(
+        "android-test",
+        ANDROID_SERIAL="emulator-5556",
+        WINDOW_AFTER_TESTS="mCurrentFocus=Window{1 u0 Application Not Responding: com.android.systemui}",
+    )
+    assert "arg=connectedDebugAndroidTest" in calls
+    assert result.returncode != 0
+    assert "Test results from this run are not reliable" in result.stderr
+
+
+def test_historical_anr_does_not_block_a_healthy_focused_window(android_runner):
+    result, calls = android_runner(
+        "android-test",
+        ANDROID_SERIAL="emulator-5556",
+        WINDOW_DUMP="Last ANR: Application Not Responding: com.android.systemui\nmCurrentFocus=Window{1 u0 com.example.app}",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "arg=connectedDebugAndroidTest" in calls
+
+
+def test_unreadable_window_state_stops_before_running_tests(android_runner):
+    result, calls = android_runner(
+        "android-test", ANDROID_SERIAL="emulator-5556", WINDOW_DUMP=""
+    )
+    assert result.returncode != 0
+    assert "Could not inspect emulator window focus" in result.stderr
+    assert "gradle" not in calls
 
 
 def test_run_updates_existing_install_on_explicit_emulator(android_runner):
@@ -237,7 +298,9 @@ def test_phone_screenshot_is_saved_from_the_phone(android_runner):
     assert "adb -s pixel-physical exec-out screencap -p" in calls
 
 
-def test_release_signing_values_reach_gradle_from_the_private_properties_file(android_runner, tmp_path):
+def test_release_signing_values_reach_gradle_from_the_private_properties_file(
+    android_runner, tmp_path
+):
     properties = tmp_path / "gradle.properties"
     properties.write_text(
         "# private\n"
@@ -246,29 +309,42 @@ def test_release_signing_values_reach_gradle_from_the_private_properties_file(an
         "MAGPIE_RELEASE_STORE_PASSWORD=pa=ss word\r\n"
         "MAGPIE_RELEASE_OAUTH_SHA1=AB:CD"
     )
-    result, calls = android_runner("android-release-check", MAGPIE_RELEASE_PROPERTIES=str(properties))
+    result, calls = android_runner(
+        "android-release-check", MAGPIE_RELEASE_PROPERTIES=str(properties)
+    )
     assert result.returncode == 0
     assert "env=ORG_GRADLE_PROJECT_MAGPIE_RELEASE_KEY_ALIAS=magpie-upload\n" in calls
     assert "env=ORG_GRADLE_PROJECT_MAGPIE_RELEASE_STORE_PASSWORD=pa=ss word\n" in calls
     assert "env=ORG_GRADLE_PROJECT_MAGPIE_RELEASE_OAUTH_SHA1=AB:CD\n" in calls
     assert "jvmargs" not in calls
     # Secrets travel in the environment, never as visible command-line arguments.
-    assert "pa=ss" not in "".join(line for line in calls.splitlines(True) if line.startswith("arg="))
+    assert "pa=ss" not in "".join(
+        line for line in calls.splitlines(True) if line.startswith("arg=")
+    )
 
 
 def test_debug_commands_do_not_load_release_signing_values(android_runner, tmp_path):
     properties = tmp_path / "gradle.properties"
     properties.write_text("MAGPIE_RELEASE_STORE_PASSWORD=secret\n")
-    result, calls = android_runner("android-build", MAGPIE_RELEASE_PROPERTIES=str(properties))
+    result, calls = android_runner(
+        "android-build", MAGPIE_RELEASE_PROPERTIES=str(properties)
+    )
     assert result.returncode == 0
     assert "secret" not in calls
 
 
-@pytest.mark.parametrize(("overrides", "message"), [
-    ({"NO_RESULTS": "1"}, "No instrumentation results were written"),
-    ({"TEST_COUNT": "0"}, "No instrumentation tests ran"),
-])
-def test_instrumentation_without_results_fails_even_when_gradle_succeeds(android_runner, overrides, message):
-    result, _ = android_runner("android-test", ANDROID_SERIAL="emulator-5556", **overrides)
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"NO_RESULTS": "1"}, "No instrumentation results were written"),
+        ({"TEST_COUNT": "0"}, "No instrumentation tests ran"),
+    ],
+)
+def test_instrumentation_without_results_fails_even_when_gradle_succeeds(
+    android_runner, overrides, message
+):
+    result, _ = android_runner(
+        "android-test", ANDROID_SERIAL="emulator-5556", **overrides
+    )
     assert result.returncode != 0
     assert message in result.stderr
