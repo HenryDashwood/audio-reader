@@ -9,7 +9,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from audioreader import article_progress, episode_search, positions, saved
+from audioreader import article_progress, episode_search, positions, reading, saved
 from audioreader.auth.dependencies import get_current_user
 from audioreader.config import settings
 from audioreader.db import get_session
@@ -660,48 +660,8 @@ async def get_episode_text(
     sanitised HTML behind it — extracted on first request and cached. Like
     get_episode, a subscription is deliberately not required: articles can be
     played from previews and old voice picks."""
-    episode = await saved.accessible_episode(session, user, episode_id)
-    if episode is None:
-        raise HTTPException(status_code=404, detail="episode not found")
-    content = await saved.selected_content(session, user, episode_id, content_id)
-    if content is not None:
-        from audioreader.text import word_count
-
-        return await article_progress.decorate_text(
-            session,
-            user,
-            episode,
-            EpisodeTextRead(
-                episode_id=episode.id,
-                content_id=content.id,
-                title=content.title,
-                text=content.text,
-                html=content.html if content.source == "pdf" else articles.rendered(content.html),
-                word_count=word_count(content.text),
-            ),
-        )
-    if episode.feed_id is None:
-        raise HTTPException(
-            422, detail={"spoken_response": "The link is saved, but the article is not ready. Retry from Saved."}
-        )
-    text, html = await articles.content_for(session, episode)
-    if not text:
-        raise HTTPException(
-            status_code=422,
-            detail={"spoken_response": "Sorry, I could not get the text of that article."},
-        )
-    return await article_progress.decorate_text(
-        session,
-        user,
-        episode,
-        EpisodeTextRead(
-            episode_id=episode.id,
-            title=episode.title,
-            text=text,
-            word_count=articles.known_word_count(episode),
-            html=html,
-        ),
-    )
+    episode, article = await reading.article(session, user, episode_id, content_id)
+    return await article_progress.decorate_text(session, user, episode, article)
 
 
 @episodes_router.put("/{episode_id}/state", status_code=204)

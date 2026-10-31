@@ -1,0 +1,50 @@
+[
+  {
+    "file": "NotoSansCJKsc-Regular.otf",
+    "bytes": 16437364,
+    "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b",
+    "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf"
+  },
+  {
+    "file": "NotoSansArabic.ttf",
+    "bytes": 844676,
+    "sha256": "63111b5b2e074dd48cc67692e0a2726d86ee94c1c37fe8598257b7b4e87e869e",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansarabic/NotoSansArabic%5Bwdth,wght%5D.ttf"
+  },
+  {
+    "file": "NotoEmoji.ttf",
+    "bytes": 1982596,
+    "sha256": "de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/notoemoji/NotoEmoji%5Bwght%5D.ttf"
+  },
+  {
+    "file": "CJK-LICENSE.txt",
+    "bytes": 4301,
+    "sha256": "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2",
+    "source": "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/LICENSE"
+  },
+  {
+    "file": "Arabic-OFL.txt",
+    "bytes": 4382,
+    "sha256": "07fc70bfeb985cc1a87a8587d0a0c80bab11c86c9dc3fd95b6f0cb332f983e96",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansarabic/OFL.txt"
+  },
+  {
+    "file": "Emoji-OFL.txt",
+    "bytes": 4330,
+    "sha256": "500bb1ccf43df7bbb522112f9133a52b16e1c35e809632f5d8609b179152de5b",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/notoemoji/OFL.txt"
+  },
+  {
+    "file": "Inter-Variable.ttf",
+    "bytes": 876576,
+    "sha256": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031",
+    "source": "Fullbleed 2.6.0a14 wheel: fullbleed_assets/fonts/Inter-Variable.ttf (upstream https://github.com/rsms/inter)"
+  },
+  {
+    "file": "Inter-OFL.txt",
+    "bytes": 4380,
+    "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a",
+    "source": "https://raw.githubusercontent.com/rsms/inter/master/LICENSE.txt"
+  }
+]

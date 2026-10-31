@@ -13,6 +13,7 @@ from audioreader.auth import service as auth_service
 from audioreader.config import redacted_database_url, settings
 from audioreader.db import SessionMaker
 from audioreader.documents.worker import run as run_documents
+from audioreader.exports.service import Exporter
 from audioreader.feeds.poller import poll_all_feeds, poll_lock, prune_orphaned_feeds
 from audioreader.imports.service import run as run_imports
 from audioreader.newsletters.companions import attach_missing_companions
@@ -22,6 +23,7 @@ from audioreader.routers import (
     billing,
     commands,
     events,
+    exports,
     feeds,
     inbound,
     newsletters,
@@ -120,6 +122,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="audioreader", lifespan=lifespan)
+    app.state.pdf_exporter = Exporter()
     telemetry.instrument_app(app)
 
     @app.get("/health", tags=["health"])
@@ -176,6 +179,7 @@ def create_app() -> FastAPI:
     app.include_router(saved.router)
     app.include_router(feeds.router)
     app.include_router(feeds.episodes_router)
+    app.include_router(exports.router)
     app.include_router(feeds.search_router)
     app.include_router(commands.router)
     app.include_router(events.router)

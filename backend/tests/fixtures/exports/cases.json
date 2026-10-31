@@ -1,0 +1,196 @@
+[
+  {
+    "slug": "case-blocks",
+    "title": "Block boundaries",
+    "group": "synthetic",
+    "kind": "fixture",
+    "markers": [
+      "Alpha block.",
+      "Beta block.",
+      "Gamma block.",
+      "Definition two"
+    ]
+  },
+  {
+    "slug": "case-fragments",
+    "title": "Footnotes and fragment links",
+    "group": "synthetic",
+    "kind": "fixture",
+    "internal_links": 3
+  },
+  {
+    "slug": "case-tables",
+    "title": "Spans and multi-row headers",
+    "group": "synthetic",
+    "kind": "fixture",
+    "markers": [
+      "Region",
+      "North",
+      "2025",
+      "2026",
+      "13"
+    ]
+  },
+  {
+    "slug": "case-long-table",
+    "title": "Repeated headers over page breaks",
+    "group": "synthetic",
+    "kind": "fixture",
+    "markers": [
+      "Row 001",
+      "Row 150",
+      "Measurement 22500"
+    ],
+    "repeated_header": "Record ID"
+  },
+  {
+    "slug": "case-code",
+    "title": "Long code and URLs",
+    "group": "synthetic",
+    "kind": "fixture",
+    "markers": [
+      "first_line",
+      "last_line"
+    ]
+  },
+  {
+    "slug": "case-lists",
+    "title": "List numbering and malformed attributes",
+    "group": "synthetic",
+    "kind": "fixture",
+    "markers": [
+      "Safe fallback",
+      "Nested"
+    ]
+  },
+  {
+    "slug": "case-image-failures",
+    "title": "Unavailable and malformed images",
+    "group": "synthetic",
+    "kind": "fixture",
+    "markers": [
+      "Before images.",
+      "Missing chart",
+      "Invalid chart",
+      "After images."
+    ]
+  },
+  {
+    "slug": "case-large-images",
+    "title": "Oversized portrait image",
+    "group": "synthetic",
+    "kind": "fixture",
+    "markers": [
+      "Before portrait.",
+      "After portrait."
+    ]
+  },
+  {
+    "slug": "case-inline-images",
+    "title": "Data URI image inside a link",
+    "group": "synthetic",
+    "kind": "fixture",
+    "external_links": 1
+  },
+  {
+    "slug": "case-svg",
+    "title": "SVG case-sensitive attributes",
+    "group": "synthetic",
+    "kind": "fixture"
+  },
+  {
+    "slug": "case-hidden",
+    "title": "Hidden content and media alternatives",
+    "group": "synthetic",
+    "kind": "fixture",
+    "markers": [
+      "VISIBLE START",
+      "VISIBLE END",
+      "Video transcript unavailable."
+    ],
+    "forbidden": [
+      "HIDDEN ATTRIBUTE",
+      "HIDDEN DISPLAY",
+      "HIDDEN VISIBILITY",
+      "HIDDEN SCRIPT"
+    ]
+  },
+  {
+    "slug": "case-unicode",
+    "title": "International text and symbols",
+    "group": "synthetic",
+    "kind": "fixture",
+    "font_probe": true
+  },
+  {
+    "slug": "case-unknown",
+    "title": "Unknown visible elements",
+    "group": "synthetic",
+    "kind": "fixture",
+    "markers": [
+      "Custom visible content",
+      "Address content",
+      "AFTER UNKNOWN"
+    ]
+  },
+  {
+    "slug": "case-math-fences",
+    "title": "Fences and math variants",
+    "group": "synthetic",
+    "kind": "fixture"
+  },
+  {
+    "slug": "case-math-structures",
+    "title": "Matrices, accents and enclosure",
+    "group": "synthetic",
+    "kind": "fixture"
+  },
+  {
+    "slug": "case-latex-01",
+    "title": "Backend MathML conversion example 1",
+    "group": "synthetic",
+    "kind": "fixture"
+  },
+  {
+    "slug": "case-latex-02",
+    "title": "Backend MathML conversion example 2",
+    "group": "synthetic",
+    "kind": "fixture"
+  },
+  {
+    "slug": "case-latex-03",
+    "title": "Backend MathML conversion example 3",
+    "group": "synthetic",
+    "kind": "fixture"
+  },
+  {
+    "slug": "case-latex-04",
+    "title": "Backend MathML conversion example 4",
+    "group": "synthetic",
+    "kind": "fixture"
+  },
+  {
+    "slug": "case-latex-05",
+    "title": "Backend MathML conversion example 5",
+    "group": "synthetic",
+    "kind": "fixture"
+  },
+  {
+    "slug": "case-latex-06",
+    "title": "Backend MathML conversion example 6",
+    "group": "synthetic",
+    "kind": "fixture"
+  },
+  {
+    "slug": "case-latex-07",
+    "title": "Backend MathML conversion example 7",
+    "group": "synthetic",
+    "kind": "fixture"
+  },
+  {
+    "slug": "case-latex-08",
+    "title": "Backend MathML conversion example 8",
+    "group": "synthetic",
+    "kind": "fixture"
+  }
+]

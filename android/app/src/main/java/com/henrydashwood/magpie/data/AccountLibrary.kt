@@ -25,6 +25,18 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     conversationStore: com.henrydashwood.magpie.voice.ConversationStore? = null, private val articleQueue: ArticleProgressQueue? = null,
     telemetryStore: com.henrydashwood.magpie.telemetry.TelemetryStore? = null,
     private val telemetryEnabled: () -> Boolean = { true }) : SubscriptionImportRepository, SourceRepository, SourceManagementRepository, SavedArticleRepository, NewsletterRepository {
+    suspend fun exportArticle(item: LibraryItem, destination: java.io.File) {
+        val (credential, version) = credentials()
+        require(item.kind == ContentKind.Article && item.episodeId != null) { "Open a saved article to export it." }
+        val source = api as? ArticleExportApi ?: throw IllegalStateException("PDF export is unavailable on this server.")
+        source.exportArticle(credential, item.episodeId, item.contentId,
+            item.contentVersion.takeIf { item.textLoaded && it.matches(Regex("[a-f0-9]{64}")) }, destination)
+        check(version)
+        val current = state.value.items.firstOrNull { it.id == item.id }
+        if (current == null || current.contentId != item.contentId || current.contentVersion != item.contentVersion)
+            throw CancellationException("The article changed")
+    }
+
     suspend fun exportSubscriptions(): String {
         val (credential, version) = credentials()
         val result = checkNotNull(api as? SubscriptionExportApi).exportSubscriptions(credential)

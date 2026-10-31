@@ -1,0 +1,12 @@
+#set page(paper: "a4", margin: 18mm)
+#set text(font: ("Inter", "Noto Sans Arabic", "Noto Sans CJK SC", "Noto Emoji"), size: 11pt, lang: "en")
+#set par(leading: 8pt, spacing: 9pt, first-line-indent: 0pt)
+#set heading(numbering: none)
+#show heading.where(level: 1): set text(size: 22pt)
+#show heading.where(level: 2): set text(size: 16pt)
+#show heading.where(level: 3): set text(size: 13pt)
+#show link: set text(fill: rgb("#185ca4"))
+#show link: underline
+#set table(stroke: 0.5pt + rgb("#aaaaaa"), inset: 5pt)
+#show raw: set text(size: 9pt)
+#let horizontalrule = line(length: 100%, stroke: 0.5pt)

@@ -13,6 +13,30 @@ import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AccountLibraryTest {
+    @Test fun pdfExportCannotEscapeTheInitiatingAccount() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val tokens = mutableListOf<String>()
+        val base = Api()
+        val api = object : LibraryApi by base, ArticleExportApi {
+            override suspend fun exportArticle(token: String, episodeId: Int, contentId: Int?, textVersion: String?, destination: java.io.File) {
+                tokens += token
+                gate.await()
+            }
+        }
+        val library = AccountLibrary(api, "https://export.invalid")
+        library.changeSession("alice")
+        val item = library.state.value.items.first().copy(kind = ContentKind.Article)
+        var shared = false
+        val task = launch { library.exportArticle(item, java.io.File("unused.pdf")); shared = true }
+        runCurrent()
+        library.changeSession("bob")
+        gate.complete(Unit)
+        task.join()
+        assertEquals(listOf("alice"), tokens)
+        assertTrue(task.isCancelled)
+        assertFalse(shared)
+    }
+
     @Test fun exportUsesCapturedCredentialsAndDiscardsLateAccountResults() = runTest {
         val gate = CompletableDeferred<String>()
         val tokens = mutableListOf<String>()
