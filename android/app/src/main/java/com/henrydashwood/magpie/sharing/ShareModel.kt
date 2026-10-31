@@ -57,7 +57,7 @@ class ShareModel(application: Application) : AndroidViewModel(application) {
                 if (article.html == null && article.contentFormat != "pdf" && token != null) {
                     try {
                         val pdfClient = com.henrydashwood.magpie.data.PDFClient(com.henrydashwood.magpie.BuildConfig.ACCOUNT_API_URL, token)
-                        if (pdfClient.resolve(article.url)) article = article.copy(contentFormat = "pdf", preview = "PDF · Prepared privately with Datalab")
+                        if (pdfClient.resolve(article.url)) article = article.copy(contentFormat = "pdf", preview = null)
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (_: Exception) { /* The ordinary webpage flow remains available. */ }
                 }

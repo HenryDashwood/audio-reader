@@ -60,7 +60,7 @@ object SharedArticles {
         }?.takeIf { it.isNotBlank() }
         val pdf = runCatching { java.net.URI(urls.single()).path.lowercase().endsWith(".pdf") }.getOrDefault(false)
         return SharedArticle(urls.single(), title?.trim()?.take(500)?.takeIf { it.isNotBlank() },
-            if (pdf) null else body, contentFormat = if (pdf) "pdf" else "page", preview = if (pdf) "PDF · Prepared privately with Datalab" else preview)
+            if (pdf) null else body, contentFormat = if (pdf) "pdf" else "page", preview = if (pdf) null else preview)
     }
     fun fromIntent(intent: Intent): SharedArticle {
         require(intent.action == Intent.ACTION_SEND && intent.type in listOf("text/plain", "text/html")) { "Share a web link or article to Magpie." }

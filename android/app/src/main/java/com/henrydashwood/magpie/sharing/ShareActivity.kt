@@ -80,7 +80,11 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
             if (state.preparing) Text(if (state.saveRequested) "Reading the page before saving…" else "Reading the page…",
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
-            state.article?.let { article ->
+            state.article?.takeIf { it.contentFormat == "pdf" }?.let { article ->
+                Text(article.title ?: pdfFileName(article.url), style = MaterialTheme.typography.titleLarge)
+                Text(pdfSource(article.url))
+                if (!state.saved) Text("Magpie prepares readable text privately with Datalab. It stays private to your account.")
+            } ?: state.article?.let { article ->
                 article.title?.let { Text(it, style = MaterialTheme.typography.titleLarge) }
                 Text(article.url)
                 article.preview?.let { Text(it, Modifier.semantics { contentDescription = "Article begins: $it" }) }
@@ -109,6 +113,7 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
                     } else if (state.article != null) {
                         val article = state.article!!
                         when {
+                            article.contentFormat == "pdf" -> Button(onClick = model::save, enabled = !state.busy) { Text("Save") }
                             article.captureIssue != null -> {
                                 if (captureWebUrl(article.url)) Button(onClick = model::openBrowser, enabled = !state.busy) {
                                     Text(if (article.requiresWebsiteSignIn) "Sign in to website" else "Open page to capture")
@@ -118,7 +123,7 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
                             article.html == null && !state.preparing -> Button(onClick = model::saveLink, enabled = !state.busy) { Text("Save link only") }
                             else -> Button(onClick = model::save, enabled = !state.busy && !state.saveRequested) { Text("Save article") }
                         }
-                        if (article.captureIssue == null && captureWebUrl(article.url)) {
+                        if (article.contentFormat != "pdf" && article.captureIssue == null && captureWebUrl(article.url)) {
                             TextButton(onClick = model::openBrowser, enabled = !state.busy) { Text("Sign in or capture page") }
                         }
                     }
@@ -128,3 +133,11 @@ fun ShareScreen(model: ShareModel, close: () -> Unit, openMagpie: () -> Unit) {
         }
     }
 }
+
+/** A shared PDF link has no readable preview, so the sheet names the file and where it comes from. */
+internal fun pdfFileName(url: String): String = runCatching {
+    java.net.URI(url).path.substringAfterLast('/').takeIf { it.isNotBlank() }
+}.getOrNull() ?: "PDF document"
+
+internal fun pdfSource(url: String): String = runCatching { java.net.URI(url).host?.removePrefix("www.") }.getOrNull()
+    ?.takeIf { it.isNotBlank() }?.let { "PDF from $it" } ?: "PDF document"

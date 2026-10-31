@@ -132,6 +132,18 @@ class IncomingSharingTest {
         assertEquals(html, api.captures.single().html)
         assertEquals(42, library.state.value.items.single().episodeId)
     }
+    @Test fun pdfSharesOfferOneSimpleSave() {
+        launch(text = "https://arxiv.org/pdf/2205.14135v2.pdf")
+        assertFalse("A PDF link is not read as a web page", model.state.value.preparing)
+        compose.onNodeWithText("PDF from arxiv.org").assertIsDisplayed()
+        compose.onNodeWithText("Save link only").assertDoesNotExist()
+        compose.onNodeWithText("Sign in or capture page").assertDoesNotExist()
+        compose.onNodeWithText("Cancel").assertExists()
+        compose.onNodeWithText("Save").performScrollTo().performClick()
+        compose.waitUntil(10_000) { model.state.value.saved }
+        val stored = runBlocking { app.articleInbox.pending(checkNotNull(library.state.value.owner)) }.single()
+        assertEquals("pdf", stored.contentFormat); assertNull(stored.html)
+    }
     @Test fun cancelAndNewIntentsCannotAccidentallySaveOrReuseOldContent() {
         launch(html = "<p>Old content</p>")
         scenario!!.onActivity { it.onNewIntentForTest(Intent(Intent.ACTION_SEND).apply { type = "text/html"; putExtra(Intent.EXTRA_TEXT, "https://example.com/second") }) }

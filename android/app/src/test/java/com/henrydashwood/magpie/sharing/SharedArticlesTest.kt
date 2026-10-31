@@ -10,7 +10,15 @@ class SharedArticlesTest {
         assertNull(input.html)
         assertEquals("https://example.com/Study.PDF?signature=secret#page=2", input.pending().url)
         assertEquals("pdf", input.pending().contentFormat)
+        assertNull("A PDF has no article opening to preview", input.preview)
         assertEquals("page", SharedArticles.parse("https://example.com/article").contentFormat)
+    }
+    @Test fun pdfSheetNamesTheFileAndItsSite() {
+        assertEquals("2205.14135v2.pdf", pdfFileName("https://arxiv.org/pdf/2205.14135v2.pdf"))
+        assertEquals("Annual report.pdf", pdfFileName("https://www.example.com/files/Annual%20report.pdf?x=1"))
+        assertEquals("PDF document", pdfFileName("https://example.com/"))
+        assertEquals("PDF from arxiv.org", pdfSource("https://arxiv.org/pdf/2205.14135v2.pdf"))
+        assertEquals("PDF from example.com", pdfSource("https://www.example.com/a.pdf"))
     }
 
     @Test fun acceptsExactLinksAndExtractsOneLinkFromBrowserText() {
