@@ -351,3 +351,70 @@ async def test_older_client_never_receives_multiple_actions(session, user):
     assert result.action == Action.UNKNOWN
     assert result.actions == []
     assert "update Magpie" in result.spoken_response
+
+
+async def test_publication_directory_answers_before_web_search(session, user, monkeypatch):
+    from audioreader.feeds.search import PodcastMatch
+
+    async def directory(_session, query, **options):
+        assert query == "construction physics"
+        assert options["podcasts"] is False
+        return [
+            PodcastMatch(
+                title="Construction Physics",
+                feed_url="https://www.construction-physics.com/feed",
+                publisher="Brian Potter",
+                kind="publication",
+            )
+        ]
+
+    async def subscribe(_session, url, _user):
+        assert url == "https://www.construction-physics.com/feed"
+        return Feed(id=44, url=url, title="Construction Physics")
+
+    monkeypatch.setattr("audioreader.commands.conversation.search_sources", directory)
+    monkeypatch.setattr("audioreader.commands.conversation.feed_service.subscribe", subscribe)
+    client = ScriptedResponsesClient(
+        [
+            [
+                ResponseCompleted(
+                    {
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "name": "search_publication_directory",
+                                "call_id": "call_1",
+                                "arguments": '{"query":"construction physics"}',
+                            }
+                        ]
+                    }
+                )
+            ],
+            [
+                ResponseCompleted(
+                    {
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "name": "subscribe_to_feed",
+                                "call_id": "call_2",
+                                "arguments": '{"feed_url":"https://www.construction-physics.com/feed"}',
+                            }
+                        ]
+                    }
+                )
+            ],
+        ]
+    )
+
+    events = [
+        event async for event in converse(session, client, transcript="Subscribe to Construction Physics", user=user)
+    ]
+
+    finished = next(event for event in events if isinstance(event, ConversationFinished))
+    assert finished.result.action is Action.SUBSCRIBED
+    tool_output = next(item for item in client.requests[1][1] if item.get("type") == "function_call_output")["output"]
+    assert "Brian Potter" in tool_output
+    tools = client.requests[0][2]
+    publication_tool = next(tool for tool in tools if tool.get("name") == "search_publication_directory")
+    assert "before web search" in publication_tool["description"]

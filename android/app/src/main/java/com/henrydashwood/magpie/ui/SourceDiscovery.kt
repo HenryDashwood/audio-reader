@@ -38,6 +38,9 @@ import kotlinx.coroutines.launch
 @Composable
 fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, openSource: (String) -> Unit = {}) {
     var scope by rememberSaveable { mutableIntStateOf(0) } // All, Sources, Episodes — as iOS search scopes
+    // Result groups she has folded away, as on iOS: a long podcast list must not bury what follows it.
+    var collapsed by rememberSaveable { mutableStateOf(setOf<String>()) }
+    fun toggle(group: String) { collapsed = if (group in collapsed) collapsed - group else collapsed + group }
     val controller = model.discovery
     val state by controller.state.collectAsStateWithLifecycle()
     val library by model.libraryState.collectAsStateWithLifecycle()
@@ -153,20 +156,20 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, o
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             // iOS order: your library, its episodes, publications and podcasts, then the web.
-                            if (local.isNotEmpty()) item { DiscoveryHeading("In your library") }
-                            items(local, key = { "local:${it.id}" }) { feed ->
+                            if (local.isNotEmpty()) item { ResultGroupHeading("In your library", local.size, "In your library" in collapsed) { toggle("In your library") } }
+                            if ("In your library" !in collapsed) items(local, key = { "local:${it.id}" }) { feed ->
                                 SourceResultRow(SourceResult(feed.title, feed.url ?: "", count = feed.count, imageUrl = feed.imageUrl)) { controller.close(); openSource(feed.id) }
                             }
-                            if (episodeIds.isNotEmpty()) item { DiscoveryHeading("Episodes in your library") }
-                            items(episodeIds, key = { "episode:$it" }) { id -> library.items.find { it.id == id }?.let { item ->
+                            if (episodeIds.isNotEmpty()) item { ResultGroupHeading("Episodes in your library", episodeIds.size, "Episodes in your library" in collapsed) { toggle("Episodes in your library") } }
+                            if ("Episodes in your library" !in collapsed) items(episodeIds, key = { "episode:$it" }) { id -> library.items.find { it.id == id }?.let { item ->
                                 DiscoveryEpisodeRow(item, playback.item?.id == id && playback.playing,
                                     { controller.close(); openItem(item) }, { if (playback.item?.id == id && playback.playing) model.pause() else model.play(item) })
                             } }
                             // The server ranks both kinds together; whichever holds its best match comes first.
                             val sections = listOf("Publications" to found.publications, "Podcasts" to found.podcasts)
                             for ((heading, sources) in if (found.publicationsFirst) sections else sections.reversed()) {
-                                if (sources.isNotEmpty()) item { DiscoveryHeading(heading) }
-                                items(sources, key = { "directory:${it.url}" }) { source -> SourceResultRow(source) { controller.select(source) } }
+                                if (sources.isNotEmpty()) item(key = "group:$heading") { ResultGroupHeading(heading, sources.size, heading in collapsed) { toggle(heading) } }
+                                if (heading !in collapsed) items(sources, key = { "directory:${it.url}" }) { source -> SourceResultRow(source) { controller.select(source) } }
                             }
                             found.web?.let { source ->
                                 item { DiscoveryHeading("Found on the web") }
@@ -194,6 +197,22 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, o
         }
     }
     if (state.askingConsent) AIConsentDialog(state.loading, state.error, controller::allowAI, controller::declineAI)
+}
+
+@Composable
+private fun ResultGroupHeading(title: String, count: Int, collapsed: Boolean, toggle: () -> Unit) {
+    val results = if (count == 1) "1 result" else "$count results"
+    Row(Modifier.fillMaxWidth().clickable(onClickLabel = if (collapsed) "Show these results" else "Hide these results", onClick = toggle)
+        .padding(16.dp).semantics(mergeDescendants = true) {
+            heading()
+            contentDescription = "$title, $results"
+            stateDescription = if (collapsed) "Collapsed" else "Expanded"
+        }, verticalAlignment = Alignment.CenterVertically) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text(" $count", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.weight(1f))
+        Icon(if (collapsed) Icons.Rounded.ExpandMore else Icons.Rounded.ExpandLess, null)
+    }
 }
 
 @Composable

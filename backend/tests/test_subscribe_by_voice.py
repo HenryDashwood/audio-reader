@@ -154,3 +154,60 @@ class TestSubscribeDoesNotBreakPlayback:
 
         assert result.action == Action.PLAY_EPISODE
         assert result.episode is not None
+
+
+SUBSTACK_URL = "https://substack.com/api/v1/top/search"
+NEWSLETTER_FEED = "https://www.notesonprogress.example/feed"
+
+
+class TestSubscribeToNewslettersByVoice:
+    """Voice asks the same directories as the search box, before any model."""
+
+    async def test_a_substack_newsletter_needs_no_web_search(
+        self, session, user, respx_mock, substack_directory, article_xml
+    ):
+        respx_mock.get(SEARCH_URL).respond(json=itunes(show("Notes from the Field", "https://f.example/x")))
+        respx_mock.get(SUBSTACK_URL).respond(
+            json={
+                "items": [
+                    {
+                        "type": "post",
+                        "publication": {
+                            "id": 7,
+                            "name": "Notes on Progress",
+                            "subdomain": "notesonprogress",
+                            "custom_domain": "www.notesonprogress.example",
+                        },
+                    }
+                ]
+            }
+        )
+        respx_mock.get(NEWSLETTER_FEED).respond(content=article_xml, content_type="application/rss+xml")
+        llm = FakeLLMClient(subscribe_decision("notes on progress"))
+
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to notes on progress")
+
+        assert result.action == Action.SUBSCRIBED
+        assert result.spoken_response == "Subscribed to Notes on Progress."
+        assert await session.scalar(select(Feed.url)) == NEWSLETTER_FEED
+        # One call: interpreting the command. No web discovery was needed.
+        assert len(llm.calls) == 1
+
+    async def test_a_newsletter_another_listener_follows_is_found(self, session, user, respx_mock, article_xml):
+        from audioreader.models import Episode, Subscription, User
+
+        feed = Feed(url=NEWSLETTER_FEED, title="Notes on Progress")
+        feed.episodes.append(Episode(guid="1", title="A post", content_html="<p>Words.</p>"))
+        other = User(display_name="Another listener")
+        session.add_all([feed, other])
+        await session.flush()
+        session.add(Subscription(user_id=other.id, feed_id=feed.id))
+        await session.commit()
+        respx_mock.get(SEARCH_URL).respond(json=itunes())
+        respx_mock.get(NEWSLETTER_FEED).respond(content=article_xml, content_type="application/rss+xml")
+        llm = FakeLLMClient(subscribe_decision("notes on progress"))
+
+        result = await service.interpret(session, llm, user=user, transcript="subscribe to notes on progress")
+
+        assert result.action == Action.SUBSCRIBED
+        assert len(llm.calls) == 1

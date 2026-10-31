@@ -41,10 +41,10 @@ from audioreader.feeds.search import (
     mentions_substack,
     publication_display_name,
     publication_name,
-    search_podcasts,
     select_unambiguous_match,
 )
 from audioreader.feeds.service import AlreadySubscribedError
+from audioreader.feeds.source_search import search_sources
 from audioreader.models import FEED_SOURCE_EMAIL, PLAYABLE_EPISODE, Episode, Feed, Subscription, User, utcnow
 from audioreader.newsletters import companions
 from audioreader.newsletters import service as newsletters
@@ -742,6 +742,7 @@ _VOICE_DISCOVERY_TIMEOUT_SECONDS = 15.0
 
 
 async def _find_show(
+    session: AsyncSession,
     query: str,
     transcript: str,
     discovery_llm,
@@ -754,8 +755,9 @@ async def _find_show(
     outranked by a similarly-named show in the podcast directory. The
     transcript is checked as well as the model's extracted query, because
     the model sometimes strips the domain down to a bare name. Otherwise:
-    the directory first (fast, covers essentially every podcast), then LLM
-    web discovery for blogs and newsletters the directory does not know.
+    the directories first, as typed search asks them (Apple for podcasts,
+    Substack and the catalogue for newsletters; fast, and no model call),
+    then LLM web discovery for whatever none of them knows.
     """
     for domain in spoken_domains(f"{transcript} {query}"):
         try:
@@ -766,10 +768,10 @@ async def _find_show(
 
     lookup_query = publication_name(query)
     try:
-        matches = await search_podcasts(lookup_query, country=country)
+        matches = await search_sources(session, lookup_query, country=country, limit=5, strict=True)
     except PodcastSearchError as exc:
-        # The directory being down does not stop web discovery from working.
-        logger.warning("podcast search failed for %r: %s", lookup_query, exc)
+        # The directories being down does not stop web discovery from working.
+        logger.warning("directory search failed for %r: %s", lookup_query, exc)
         matches = []
     if matches:
         if chosen := select_unambiguous_match(matches, lookup_query):
@@ -823,7 +825,7 @@ async def _subscribe(
 
     display_name = publication_display_name(query)
     try:
-        found = await _find_show(query, transcript, discovery_llm, country=country)
+        found = await _find_show(session, query, transcript, discovery_llm, country=country)
     except AmbiguousShowError as exc:
         return _asking(_ambiguous_show_question(exc.matches))
     if found is None:
@@ -882,7 +884,7 @@ async def _play_from_show(
         return _asking("Which show would you like to hear?")
 
     try:
-        found = await _find_show(show_query, transcript, discovery_llm, country=country)
+        found = await _find_show(session, show_query, transcript, discovery_llm, country=country)
     except AmbiguousShowError as exc:
         return _asking(_ambiguous_show_question(exc.matches))
     if found is None:

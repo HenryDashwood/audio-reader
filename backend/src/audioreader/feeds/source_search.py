@@ -41,19 +41,30 @@ async def search_sources(
     *,
     country: str | None = None,
     limit: int = 25,
+    strict: bool = False,
+    podcasts: bool = True,
 ) -> list[PodcastMatch]:
-    """Podcasts and publications for a typed query, one row per feed.
+    """Podcasts and publications for a typed or spoken name, one row per feed.
 
     Each directory is best-effort: Substack being down must not hide Apple's
     answer, nor the reverse. A failure is reported only when nothing was
     found, since "no matches" would then be a guess rather than an answer.
+
+    ``strict`` is the voice path's guard, applied to Apple as well: acting
+    on a loosely related podcast is worse than asking. Publications are
+    always matched strictly. ``podcasts=False`` leaves Apple out, for a
+    caller that already knows she asked for something written.
     """
 
     query = query.strip()
     if not query:
         return []
+
+    async def no_podcasts() -> list[PodcastMatch]:
+        return []
+
     apple, substack = await asyncio.gather(
-        search_podcasts(query, limit=limit, strict=False, country=country),
+        search_podcasts(query, limit=limit, strict=strict, country=country) if podcasts else no_podcasts(),
         search_substack(publication_name(query)),
         return_exceptions=True,
     )
