@@ -24,7 +24,7 @@
 - The app is `ios/Hearful.xcodeproj`, scheme `Hearful`, written in Swift 6 and SwiftUI with an iOS 26 deployment target.
 - The product's user-facing name is **Magpie** (display name, Siri phrases, store metadata, spoken strings). The Xcode project, scheme, target, module, folder names, bundle identifier, and `UserDefaults`/Keychain keys deliberately remain `Hearful`; do not rename them.
 - Run `make ios-doctor` when diagnosing the local Apple toolchain. Use `make ios-build` for a compile check and `make ios-test` for the full Swift Testing suite. `make ios-test-compatibility` checks the oldest installed released iOS 26 runtime; `make ios-test-latest` is optional preview coverage, including betas.
-- The commands default to released iOS 27.0, pinned in `scripts/ios-dev.sh`; update that pin deliberately after public releases. CI and TestFlight build validation require both iOS 27 and iOS 26 checks to pass. Set `IOS_SIMULATOR_ID` to target a particular simulator.
+- The commands default to released iOS 27.2, pinned in `scripts/ios-dev.sh`; update that pin deliberately after public releases. CI and TestFlight build validation require both iOS 27 and iOS 26 checks to pass. Set `IOS_SIMULATOR_ID` to target a particular simulator.
 - Files below `ios/Hearful/` and `ios/HearfulTests/` belong to Xcode file-system synchronized groups. Do not hand-edit `project.pbxproj` merely to add or remove source files.
 - Keep Swift concurrency checks clean. Do not silence Sendable or actor-isolation diagnostics without explaining why the underlying access is safe.
 - Accessibility is a product requirement: preserve VoiceOver semantics, Dynamic Type, sufficient contrast, and non-visual feedback when changing UI or playback flows.
