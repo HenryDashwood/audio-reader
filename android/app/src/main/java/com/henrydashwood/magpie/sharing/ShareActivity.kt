@@ -117,7 +117,7 @@ private fun SheetContent(state: ShareState, live: Boolean, loaded: Boolean, mode
         if (article != null) ItemCard(article, preview = !state.saved && article.contentFormat != "pdf", colours)
         when {
             state.saved -> Status(Icons.Outlined.CheckCircle, "Saved on this device. Open Magpie to prepare it for reading and listening.")
-            blocked -> Notice(Icons.Outlined.ErrorOutline, state.error!!, colours.errorContainer, colours.onErrorContainer)
+            blocked -> Notice(Icons.Outlined.ErrorOutline, state.error, colours.errorContainer, colours.onErrorContainer)
             article == null -> LinearProgressIndicator(Modifier.fillMaxWidth())
             state.accountChanged -> Notice(Icons.Outlined.Info, state.error ?: "Your account changed. Review this again before saving.",
                 colours.warningContainer, colours.onWarningContainer)
