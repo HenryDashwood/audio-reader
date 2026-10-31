@@ -8,7 +8,7 @@ scheme="Hearful"
 derived_data="${IOS_DERIVED_DATA_PATH:-$repo_root/build/DerivedData}"
 minimum_os="${IOS_MINIMUM_OS:-26.0}"
 # Advance this deliberately after a public release, never from installed betas.
-stable_runtime="27.2"
+stable_runtime="27.0"
 preferred_name="${IOS_SIMULATOR_NAME:-iPhone 17}"
 device_derived_data="${IOS_DEVICE_DERIVED_DATA_PATH:-$repo_root/build/Device}"
 bundle_id="com.henrydashwood.hearful"
