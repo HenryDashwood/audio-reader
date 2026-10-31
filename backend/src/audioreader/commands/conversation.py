@@ -38,6 +38,7 @@ from audioreader.feeds.fetcher import FeedFetchError
 from audioreader.feeds.parser import FeedParseError
 from audioreader.feeds.search import PodcastSearchError, search_podcasts
 from audioreader.feeds.service import AlreadySubscribedError
+from audioreader.feeds.source_search import search_sources
 from audioreader.llm.client import LLMError
 from audioreader.llm.openai_responses import (
     OpenAIResponsesClient,
@@ -63,9 +64,10 @@ for the literal transcript when its intended meaning is clear.
 
 Resolve material ambiguity BEFORE taking any action in a compound request.
 Prefer completing a request in one turn. Publications can use a custom domain
-even when the user calls them a Substack: use web search to identify a named
-newsletter, blog, publication, or person's writing, then inspect its real site
-to find its feed. Use the podcast directory only for podcasts. Do not invent a
+even when the user calls them a Substack. For a named newsletter, blog,
+publication, or person's writing, search the publication directory first; if
+it has no clear match, use web search to identify it, then inspect its real
+site to find its feed. Use the podcast directory only for podcasts. Do not invent a
 hostname from a person's or publication's name. Do not ask for confirmation
 when one candidate is overwhelmingly more likely than the others. Ask one
 short clarification only when genuine uncertainty would materially change the
@@ -127,6 +129,23 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "type": "function",
+        "name": "search_publication_directory",
+        "description": (
+            "Search Substack's directory and the written feeds other Magpie listeners follow for a "
+            "newsletter, blog, Substack or other publication by name. Use this before web search "
+            "for anything written. Only publications whose name or writer contains every word of "
+            "the query are returned. Returns candidates for you to interpret."
+        ),
+        "strict": True,
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "type": "function",
         "name": "inspect_publication",
         "description": (
             "Inspect a website or feed URL and return its verified canonical feed and title. "
@@ -146,7 +165,8 @@ TOOLS: list[dict[str, Any]] = [
         "name": "subscribe_to_feed",
         "description": (
             "Subscribe the user to a verified podcast or publication feed URL returned by "
-            "inspect_publication or the podcast directory. Never construct or guess the URL."
+            "inspect_publication, the podcast directory or the publication directory. "
+            "Never construct or guess the URL."
         ),
         "strict": True,
         "parameters": {
@@ -1183,6 +1203,25 @@ async def _execute_tool(
 
         if name == "search_podcast_directory":
             matches = await search_podcasts(str(args["query"]), limit=8, strict=False, country=country)
+            return _ToolResult(
+                {
+                    "ok": True,
+                    "results": [
+                        {
+                            "title": match.title,
+                            "publisher": match.publisher,
+                            "feed_url": match.feed_url,
+                        }
+                        for match in matches
+                    ],
+                }
+            )
+
+        if name == "search_publication_directory":
+            try:
+                matches = await search_sources(session, str(args["query"]), limit=8, podcasts=False)
+            except PodcastSearchError:
+                matches = []
             return _ToolResult(
                 {
                     "ok": True,

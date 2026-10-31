@@ -127,6 +127,9 @@ private struct AddSourcesView: View {
     @State private var searchScope: LibrarySearchScope = .all
     @State private var showingAIConsent = false
     @State private var openEpisode: Episode?
+    /// Result groups she has folded away. Kept while the sheet is open, so a
+    /// long podcast list stays out of the way as she refines the query.
+    @State private var collapsedGroups: Set<String> = []
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -231,7 +234,7 @@ private struct AddSourcesView: View {
         } else {
             List {
                 if !localShows.isEmpty {
-                    Section("In your library") {
+                    resultGroup("In your library", count: localShows.count) {
                         ForEach(localShows) { show in
                             NavigationLink(value: show) { ShowRow(show: show) }
                         }
@@ -239,7 +242,7 @@ private struct AddSourcesView: View {
                 }
 
                 if !episodeResults.isEmpty {
-                    Section("Episodes in your library") {
+                    resultGroup("Episodes in your library", count: episodeResults.count) {
                         ForEach(episodeResults) { episode in
                             EpisodeRow(
                                 episode: episode,
@@ -310,11 +313,48 @@ private struct AddSourcesView: View {
     @ViewBuilder
     private func directorySection(_ title: String, _ results: [PodcastResult]) -> some View {
         if !results.isEmpty {
-            Section(title) {
+            resultGroup(title, count: results.count) {
                 ForEach(results) { result in
                     NavigationLink(value: result) { PodcastResultRow(result: result) }
                 }
             }
+        }
+    }
+
+    /// A section whose header folds its rows away, so a long list of loosely
+    /// matching podcasts cannot bury the groups and buttons beneath it.
+    private func resultGroup<Rows: View>(
+        _ title: String, count: Int, @ViewBuilder rows: () -> Rows
+    ) -> some View {
+        let collapsed = collapsedGroups.contains(title)
+        return Section {
+            if !collapsed { rows() }
+        } header: {
+            Button {
+                withAnimation {
+                    if collapsed {
+                        collapsedGroups.remove(title)
+                    } else {
+                        collapsedGroups.insert(title)
+                    }
+                }
+            } label: {
+                HStack {
+                    Text(title)
+                    Text("\(count)").foregroundStyle(.secondary)
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .rotationEffect(.degrees(collapsed ? -90 : 0))
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(title), \(count) \(count == 1 ? "result" : "results")")
+            .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
+            .accessibilityHint(collapsed ? "Shows these results" : "Hides these results")
+            .accessibilityAddTraits([.isHeader, .isButton])
         }
     }
 

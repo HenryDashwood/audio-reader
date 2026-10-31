@@ -39,6 +39,28 @@ def isolated_podcast_directory():
     discovery.clear_discovery_cache()
 
 
+_real_substack_request = search._substack_request
+
+
+@pytest.fixture(autouse=True)
+def quiet_substack_directory(monkeypatch):
+    """Substack is asked alongside Apple on every name lookup, typed or
+    spoken. Tests that are not about it see an empty directory rather than
+    an unmocked request; tests about it ask for `substack_directory`."""
+
+    async def nothing(_params: dict[str, str]) -> list:
+        return []
+
+    monkeypatch.setattr(search, "_substack_request", nothing)
+
+
+@pytest.fixture
+def substack_directory(monkeypatch):
+    """The real Substack request, for tests that mock its HTTP endpoint."""
+
+    monkeypatch.setattr(search, "_substack_request", _real_substack_request)
+
+
 @pytest.fixture
 async def session() -> AsyncIterator[AsyncSession]:
     # Each test gets a fresh in-memory database: full isolation, no cleanup.

@@ -11,7 +11,7 @@ SUBSTACK_URL = "https://substack.com/api/v1/top/search"
 
 
 @pytest.fixture(autouse=True)
-def quiet_substack(respx_mock):
+def quiet_substack(respx_mock, substack_directory):
     """Substack is asked on every typed search; most tests want it empty."""
 
     return respx_mock.get(SUBSTACK_URL).respond(json={"items": []})
