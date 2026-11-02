@@ -61,7 +61,7 @@ async def webhook(request: Request, session: Session):
         for key in ("aliases", "transferred_from", "transferred_to"):
             ids.extend(event.get(key) or [])
         ids = [value for value in ids if isinstance(value, str)][:100]
-    except (ValueError, KeyError, TypeError, AttributeError):
+    except ValueError, KeyError, TypeError, AttributeError:
         raise HTTPException(422, "Invalid webhook") from None
     owners = list(await session.scalars(select(BillingCustomer.user_id).where(BillingCustomer.id.in_(ids)).distinct()))
     for owner in sorted(owners):

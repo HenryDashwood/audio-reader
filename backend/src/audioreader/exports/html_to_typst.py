@@ -150,7 +150,7 @@ class Converter:
     def image(self, node: etree._Element) -> str:
         try:
             return self.image_checked(node)
-        except (ValueError, binascii.Error, UnicodeError):
+        except ValueError, binascii.Error, UnicodeError:
             self.warnings.add("Invalid image data replaced by its alternative text")
             return "text(" + quote("[Image unavailable: " + (node.get("alt") or "Article illustration") + "]") + ")"
 

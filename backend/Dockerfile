@@ -1,4 +1,4 @@
-FROM python:3.13-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 # uv from PyPI rather than a separate registry: one less place the build can
 # fail for reasons unrelated to this project.

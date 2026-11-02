@@ -118,7 +118,7 @@ async def recoverable_events(
                             # Slow or disconnected consumers must not block completion.
                             if not queue.full():
                                 queue.put_nowait(line)
-            except (CommandCancelled, asyncio.CancelledError):
+            except CommandCancelled, asyncio.CancelledError:
                 final = error_line("That request was stopped. Any changes already completed remain in your library.")
             except Exception as exc:
                 logger.warning("Voice command failed: %s", type(exc).__name__)

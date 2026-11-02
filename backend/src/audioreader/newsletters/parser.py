@@ -248,7 +248,7 @@ def _sent_at(message: Message) -> datetime | None:
         return None
     try:
         sent = parsedate_to_datetime(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
     if sent.tzinfo is None:
         sent = sent.replace(tzinfo=UTC)
@@ -263,7 +263,7 @@ def _body(message: Message, subtype: str) -> str | None:
         return None
     try:
         content = part.get_content()
-    except (LookupError, UnicodeDecodeError, KeyError):
+    except LookupError, UnicodeDecodeError, KeyError:
         # An unknown or mislabelled charset. The bytes are still there; read
         # them leniently rather than lose the whole issue over one accent.
         payload = part.get_payload(decode=True)

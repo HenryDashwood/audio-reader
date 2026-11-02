@@ -97,7 +97,7 @@ class AppleTokenVerifier:
         for entry in payload.get("keys", []):
             try:
                 keys[entry["kid"]] = jwt.PyJWK.from_dict(entry)
-            except (KeyError, jwt.PyJWKError):
+            except KeyError, jwt.PyJWKError:
                 logger.warning("skipping unusable Apple JWK entry")
         self._keys = keys
         self._fetched_at = time.monotonic()

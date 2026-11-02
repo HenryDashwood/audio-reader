@@ -343,9 +343,9 @@ async def process_one(maker: async_sessionmaker[AsyncSession]) -> bool:
                     error, retryable = "The publisher is unavailable for an extended period. Import it later.", False
                 else:
                     cooldown = max(2.0, delay)
-            except (FeedParseError, FeedDiscoveryError):
+            except FeedParseError, FeedDiscoveryError:
                 error = "No supported feed was found at this address."
-            except (FeedFetchError, TimeoutError):
+            except FeedFetchError, TimeoutError:
                 error, retryable = "The publisher is temporarily unavailable.", True
             except IntegrityError:
                 error, retryable = "This subscription changed while importing. Try again.", True

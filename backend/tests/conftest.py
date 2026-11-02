@@ -1,5 +1,5 @@
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -113,7 +113,7 @@ def make_client(session: AsyncSession, fake_llm: FakeLLMClient):
     need two users against the same database."""
 
     @contextlib.asynccontextmanager
-    async def factory(as_user: User) -> AsyncIterator[AsyncClient]:
+    async def factory(as_user: User) -> AsyncGenerator[AsyncClient]:
         app = create_app()
         app.dependency_overrides[get_session] = lambda: session
         app.dependency_overrides[get_llm_client] = lambda: fake_llm

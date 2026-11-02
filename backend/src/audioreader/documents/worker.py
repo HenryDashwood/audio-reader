@@ -228,7 +228,7 @@ async def cleanup(maker) -> None:
         await session.commit()
     try:
         await datalab.delete_result(identifier)
-    except (httpx.HTTPError, datalab.ConversionError, ValueError):
+    except httpx.HTTPError, datalab.ConversionError, ValueError:
         return
     async with maker() as session:
         row = await session.get(PDFResultDeletion, identifier)

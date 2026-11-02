@@ -149,7 +149,7 @@ def protect_graphics(source: str) -> tuple[str, dict[str, str]]:
                 )
                 if svg.tag != f"{{{_NS}}}svg":
                     raise ValueError("Not an SVG image")
-            except (ValueError, binascii.Error, etree.XMLSyntaxError):
+            except ValueError, binascii.Error, etree.XMLSyntaxError:
                 node.drop_tree()
                 continue
         data = static_svg(svg)

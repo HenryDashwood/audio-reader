@@ -36,7 +36,7 @@ async def resolve(body: URLImport, session: Session, user: CurrentUser):
     try:
         async with asyncio.timeout(15):
             return {"pdf": await service.probe_pdf(str(body.url))}
-    except (httpx.HTTPError, FeedFetchError, TimeoutError):
+    except httpx.HTTPError, FeedFetchError, TimeoutError:
         return {"pdf": False}
 
 

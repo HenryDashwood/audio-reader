@@ -357,7 +357,7 @@ def _retry_delay_seconds(value: str | None) -> float:
     except ValueError:
         try:
             retry_at = parsedate_to_datetime(value)
-        except (TypeError, ValueError, OverflowError):
+        except TypeError, ValueError, OverflowError:
             return DEFAULT_RETRY_DELAY_SECONDS
         if retry_at.tzinfo is None:
             retry_at = retry_at.replace(tzinfo=UTC)

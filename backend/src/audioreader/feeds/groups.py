@@ -118,6 +118,8 @@ async def _catalog(session: AsyncSession, user_id: uuid.UUID) -> Catalog:
     ).all()
     buckets: dict[tuple[int, str | int], list[tuple[int, int, int]]] = {}
     for item_id, feed_id, link, content, description, _ in rows:
+        if feed_id is None:  # Excluded by the query; this narrows the type.
+            continue
         root = result.roots[feed_id]
         result.episode_feeds[item_id] = feed_id
         key = (root, article_key(link) or item_id)

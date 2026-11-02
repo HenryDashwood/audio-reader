@@ -2,11 +2,13 @@
 name = "audioreader"
 version = "0.1.0"
 description = "Backend API for the voice-controlled podcast and RSS reader"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-    "sqlalchemy[asyncio]>=2.0",
+    # Held below 2.1 until opentelemetry-instrumentation-sqlalchemy supports it:
+    # Logfire refuses to instrument a newer SQLAlchemy and the app fails to start.
+    "sqlalchemy[asyncio]>=2.0,<2.1",
     "asyncpg>=0.30",
     "alembic>=1.14",
     "feedparser>=6.0.11",
@@ -47,6 +49,7 @@ python = "./.venv"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 # So tests can import `evals`, which is a development tool rather than part of
 # the shipped package. The eval corpus itself is never collected: it calls a
