@@ -33,7 +33,7 @@ def _cipher() -> Fernet | None:
         return None
     try:
         return Fernet(settings.apple_token_encryption_key.encode())
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         # A malformed key is a deployment mistake worth shouting about, but not
         # one that should stop anybody signing in.
         logger.error("AUDIOREADER_APPLE_TOKEN_ENCRYPTION_KEY is not a valid Fernet key")

@@ -72,7 +72,7 @@ async def fetch_subscriber(customer_id: str) -> dict:
             if not isinstance(payload.get("subscriber"), dict):
                 raise ValueError("Invalid subscriber response")
             return payload["subscriber"]
-    except (httpx.HTTPError, ValueError):
+    except httpx.HTTPError, ValueError:
         raise HTTPException(503, "Subscription status is temporarily unavailable. Please try again.") from None
 
 

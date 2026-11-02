@@ -416,7 +416,7 @@ async def _wordpress_feed_locations(html: str, homepage_url: str) -> tuple[list[
             timeout=WORDPRESS_METADATA_TIMEOUT_SECONDS,
         )
         types = json.loads(result.content or b"{}")
-    except (FeedFetchError, TimeoutError, ValueError):
+    except FeedFetchError, TimeoutError, ValueError:
         return [], set()
     if not isinstance(types, dict):
         return [], page_links
@@ -931,7 +931,7 @@ async def find_feed_by_name(
         tried.append(guess)
         try:
             feed_url, parsed = await resolve_feed(guess, preference=query)
-        except (FeedFetchError, FeedParseError):
+        except FeedFetchError, FeedParseError:
             continue
         if loosely_identifies(query, f"{parsed.title} {feed_url}"):
             return DiscoveredFeed(feed_url=feed_url, title=parsed.title)
@@ -960,7 +960,7 @@ async def find_feed_by_name(
             tried.append(url)
             try:
                 feed_url, parsed = await resolve_feed(url, preference=query)
-            except (FeedFetchError, FeedParseError):
+            except FeedFetchError, FeedParseError:
                 continue
             # The guard against a confidently wrong model: the feed counts
             # only if what she said identifies it. Loose matching, because

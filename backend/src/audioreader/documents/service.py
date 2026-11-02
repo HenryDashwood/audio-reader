@@ -98,7 +98,7 @@ async def should_import(session: AsyncSession, user: User, url: str, html: str |
         return False
     try:
         return await probe_pdf(url)
-    except (httpx.HTTPError, FeedFetchError):
+    except httpx.HTTPError, FeedFetchError:
         return False  # Existing article capture supplies its usual recovery message.
 
 
@@ -147,7 +147,7 @@ async def enqueue(
         try:
             async with asyncio.timeout(45):
                 raw = await download_pdf(url)
-        except (httpx.HTTPError, FeedFetchError, TimeoutError):
+        except httpx.HTTPError, FeedFetchError, TimeoutError:
             raise HTTPException(422, "Magpie could not access this PDF. Share the downloaded file instead.") from None
     if url and raw is None:
         try:
@@ -157,7 +157,7 @@ async def enqueue(
                 raise HTTPException(
                     422, "This link did not return a PDF. Download it in your browser and share the file."
                 )
-        except (httpx.HTTPError, FeedFetchError, TimeoutError):
+        except httpx.HTTPError, FeedFetchError, TimeoutError:
             raise HTTPException(
                 422, "Magpie could not access this PDF link. Download it in your browser and share the file."
             ) from None

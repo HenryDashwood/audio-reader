@@ -596,7 +596,7 @@ async def _with_clarification(session, client, *, clarification_id=None, selecte
                     if call.get("name") == "resolve_answer":
                         try:
                             resolution = json.loads(call.get("arguments", "{}"))["choice"]
-                        except (ValueError, KeyError, TypeError):
+                        except ValueError, KeyError, TypeError:
                             pass
         selected = resolution if resolution in choices else None
         cancel, new_request = resolution == "cancel", resolution == "new_request"
@@ -914,7 +914,7 @@ async def _converse(
             )
             return
         raise LLMError("OpenAI exceeded the app tool-call limit")
-    except (LLMError, TimeoutError):
+    except LLMError, TimeoutError:
         if not completed_actions:
             raise
         yield ConversationFinished(
@@ -1003,7 +1003,7 @@ async def _call_tool(session, **kwargs) -> _ToolResult:
     try:
         args = json.loads(kwargs["arguments"])
         before = await undo.snapshot(session, kwargs["user"], kwargs["name"], args)
-    except (ValueError, TypeError, AttributeError):
+    except ValueError, TypeError, AttributeError:
         before = None
     result = await _execute_tool(session, **kwargs)
     if (

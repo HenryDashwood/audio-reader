@@ -39,7 +39,7 @@ class Observed:
     episode_show: str | None = None
     episode_title: str | None = None
     speed: float | None = None
-    steps: tuple["Observed", ...] = ()
+    steps: tuple[Observed, ...] = ()
     subscribed_added: frozenset[str] = frozenset()
     subscribed_removed: frozenset[str] = frozenset()
     status: CommandStatus = CommandStatus.COMPLETED
@@ -52,7 +52,7 @@ class Observed:
         result: InterpretResult,
         before: frozenset[str],
         after: frozenset[str],
-    ) -> "Observed":
+    ) -> Observed:
         episode = result.episode
         return cls(
             steps=tuple(cls.of(step, before, after) for step in result.actions),

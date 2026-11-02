@@ -89,7 +89,7 @@ async def advertised_publicly(url: str, fetched: FeedFetchResult) -> bool:
         links = feed_links_in_html(page.content.decode("utf-8", errors="replace"), page.final_url)
         links += [link.url for link in feed_links_in_headers(page.link_headers, page.final_url)]
         return url in links
-    except (FeedFetchError, TimeoutError):
+    except FeedFetchError, TimeoutError:
         # A blocked or unavailable homepage must not block the import.
         return False
 

@@ -99,7 +99,7 @@ def require_configuration() -> AppleRevoker:
             and not uri.fragment
             and uri.path == "/auth/apple/browser/callback"
         )
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         valid = False
     if not valid or revoker is None:
         raise fail("Apple sign-in is not available on Android yet. Please try again later.", 503)
@@ -185,7 +185,7 @@ async def callback(request: Request, session: Session) -> HTMLResponse:
         fields = parse_qs(data.decode(), keep_blank_values=True, max_num_fields=8)
         if any(len(values) != 1 for values in fields.values()):
             return callback_page(None, 400)
-    except (UnicodeError, ValueError):
+    except UnicodeError, ValueError:
         return callback_page(None, 400)
     state = fields.get("state", [""])[0]
     if len(state) != 43:

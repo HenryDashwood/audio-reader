@@ -62,7 +62,7 @@ async def fetch(source: str, base: str, root: Path) -> dict[str, str]:
                 relative = "downloads/" + hashlib.sha256(url.encode()).hexdigest()
                 await asyncio.to_thread((root / relative).write_bytes, raw)
                 destinations[url] = relative
-            except (fetcher.FeedFetchError, TimeoutError):
+            except fetcher.FeedFetchError, TimeoutError:
                 # A missing figure gets a visible alternative; it must not
                 # prevent sharing all of the readable article.
                 return
@@ -211,7 +211,7 @@ def prepare(source: str, base: str, downloads: dict[str, str], root: Path, title
                     node.set("width", str(width))
                 if height:
                     node.set("height", str(height))
-        except (ValueError, OSError, etree.XMLSyntaxError, Image.DecompressionBombError):
+        except ValueError, OSError, etree.XMLSyntaxError, Image.DecompressionBombError:
             fallback = html.Element("span")
             fallback.text = f"[Image unavailable: {alt}]"
             fallback.tail = node.tail

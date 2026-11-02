@@ -161,7 +161,7 @@ class InterpretResult:
     #: either strands a question nobody can answer, or opens the microphone
     #: after a remark that was the end of the matter.
     expects_reply: bool = False
-    actions: list["InterpretResult"] = field(default_factory=list)
+    actions: list[InterpretResult] = field(default_factory=list)
 
     status: CommandStatus = CommandStatus.COMPLETED
     clarification: Clarification | None = None

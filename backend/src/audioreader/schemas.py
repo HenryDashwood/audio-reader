@@ -457,7 +457,7 @@ class CommandRequest(BaseModel):
 class CommandResponse(BaseModel):
     status: CommandStatus = CommandStatus.COMPLETED
     clarification: Clarification | None = None
-    actions: list["CommandResponse"] = Field(default_factory=list)
+    actions: list[CommandResponse] = Field(default_factory=list)
     action: str
     spoken_response: str
     episode: EpisodeRead | None = None

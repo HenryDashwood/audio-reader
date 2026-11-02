@@ -117,8 +117,8 @@ class Feed(Base):
     last_modified: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    episodes: Mapped[list["Episode"]] = relationship(back_populates="feed", passive_deletes=True)
-    aliases: Mapped[list["FeedAlias"]] = relationship(back_populates="feed", passive_deletes=True)
+    episodes: Mapped[list[Episode]] = relationship(back_populates="feed", passive_deletes=True)
+    aliases: Mapped[list[FeedAlias]] = relationship(back_populates="feed", passive_deletes=True)
 
 
 class FeedAlias(Base):
@@ -226,7 +226,7 @@ class User(Base):
     pdf_consent_version: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    identities: Mapped[list["UserIdentity"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    identities: Mapped[list[UserIdentity]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class FeatureFlag(Base):

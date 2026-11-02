@@ -90,7 +90,7 @@ class Expect:
     #: content of the sentence is the behaviour, as when it must ask which of
     #: two shows she meant.
     says: tuple[str, ...] = ()
-    steps: tuple["Expect", ...] = ()
+    steps: tuple[Expect, ...] = ()
     latest_overall: bool = False
 
     @property
