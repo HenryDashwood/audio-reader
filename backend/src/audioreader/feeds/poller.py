@@ -3,9 +3,10 @@
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import TypedDict
 
 from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,6 +91,14 @@ async def refresh_stale_feed(session: AsyncSession, feed: Feed) -> None:
         logger.warning("could not refresh cached feed %s: %s", feed.id, exc)
 
 
+class _RetryOptions(TypedDict, total=False):
+    """Rate-limit handling shared by the public and personal feed fetchers."""
+
+    max_retries: int
+    max_retry_delay: float
+    wait_out_rate_limits: bool
+
+
 async def poll_feed(
     session: AsyncSession, feed: Feed, *, only_if_stale: bool = False, wait_out_rate_limits: bool = False
 ) -> int:
@@ -105,7 +114,7 @@ async def poll_feed(
     ):
         await session.commit()
         return 0
-    retry = (
+    retry: _RetryOptions = (
         {
             "max_retries": settings.feed_poll_rate_limit_retries,
             "max_retry_delay": settings.feed_poll_rate_limit_wait_seconds,
@@ -184,7 +193,7 @@ class PollSummary:
 
 
 @contextlib.asynccontextmanager
-async def poll_lock(session: AsyncSession) -> AsyncIterator[bool]:
+async def poll_lock(session: AsyncSession) -> AsyncGenerator[bool]:
     """Hold the cluster-wide right to run a poll pass, if this is Postgres.
 
     The poller lives inside the web process, so two replicas would otherwise
@@ -195,7 +204,7 @@ async def poll_lock(session: AsyncSession) -> AsyncIterator[bool]:
     On SQLite (tests, and any single-process run) there is nothing to
     coordinate, so the lock is granted unconditionally.
     """
-    if session.bind.dialect.name != "postgresql":
+    if session.get_bind().dialect.name != "postgresql":
         yield True
         return
 

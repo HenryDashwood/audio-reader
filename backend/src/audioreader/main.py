@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -80,7 +80,7 @@ async def _poll_forever(interval_seconds: int) -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # First thing in the logs, so a misconfigured deployment is obvious
     # immediately rather than as a connection error further down.
     if settings.llm_provider is LLMProvider.OPENROUTER:

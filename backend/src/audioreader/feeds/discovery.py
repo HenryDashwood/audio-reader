@@ -888,9 +888,7 @@ def spoken_domains(text: str) -> list[str]:
             joined = word + joined
             joins.append(joined)
         candidates.extend(reversed(joins))
-    seen: set[str] = set()
-    unique = [c for c in candidates if not (c in seen or seen.add(c))]
-    return unique[:5]
+    return list(dict.fromkeys(candidates))[:5]
 
 
 def substack_guesses(query: str) -> list[str]:

@@ -15,7 +15,7 @@ before any of this existed.
 
 import logging
 import os
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -130,7 +130,7 @@ _llm_usage: ContextVar[_LLMUsage | None] = ContextVar("_llm_usage", default=None
 
 
 @contextmanager
-def collect_llm_usage() -> Iterator[None]:
+def collect_llm_usage() -> Generator[None]:
     """Accumulate what the model cost across one request.
 
     A spoken request is not always one model call: picking an episode from a
