@@ -1244,6 +1244,26 @@ impl G2P {
                                 None => part_of(&group[i]),
                             })
                             .collect();
+                        // merge_tokens spaces a part off only when it has phonemes of its own; an unresolved part's
+                        // `unk` joins the part before it (`1–2` is wˈʌn❓ tˈu, not wˈʌn ❓ tˈu). Magpie's fix.
+                        let mut resolved: Vec<bool> =
+                            res.iter().enumerate().map(|(i, r)| r.is_some() || group[i].phonemes.is_some()).collect();
+                        // A number then 's is one number with a suffix to misaki (`get_number` peels "'s" and
+                        // applies `_s`): `3's` is θɹˈiz, not θɹˈi s. Magpie's fix.
+                        // The ending arrives as parts `'` and `s`, the span lookup having put s on the apostrophe.
+                        if text.ends_with("'s") || text.ends_with("’s") {
+                            let ending = |t: &str| matches!(t, "'" | "’" | "s" | "'s" | "’s");
+                            if let Some(j) = (0..group.len()).rev().find(|&k| !ending(&group[k].text)) {
+                                let digits = !group[j].text.is_empty() && group[j].text.chars().all(|c| c.is_ascii_digit());
+                                if digits && !parts[j].is_empty() {
+                                    parts[j] = self.lexicon.append_s(&parts[j]);
+                                    for k in j + 1..group.len() {
+                                        parts[k] = String::new();
+                                        resolved[k] = false;
+                                    }
+                                }
+                            }
+                        }
                         // `resolve_tokens` RETURNS before rebalancing when the
                         // parts are space-separated:
                         //
@@ -1284,11 +1304,12 @@ impl G2P {
                         }
 
                         let mut out = String::new();
-                        for part in parts {
+                        for (i, part) in parts.into_iter().enumerate() {
                             if prespace
                                 && !out.is_empty()
                                 && !out.ends_with(char::is_whitespace)
                                 && !part.is_empty()
+                                && resolved[i]
                             {
                                 out.push(' ');
                             }
@@ -1508,6 +1529,13 @@ impl G2P {
         if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit() || c == '.') {
             return None;
         }
+        // misaki's `Lexicon.is_currency`: one point at most, and fewer than three digits after it. (Its `set(cents)
+        // == {0}` compares characters with an integer, so it never holds.) "$0.042" is a number, not 4.2 cents.
+        // Magpie's fix: the port read it as forty two cents.
+        match rest.split_once('.') {
+            Some((_, cents)) if cents.contains('.') || cents.len() >= 3 => return None,
+            _ => {}
+        }
         let mut parts: Vec<(i64, &str)> = Vec::new();
         for (i, seg) in rest.split('.').enumerate().take(2) {
             let n: i64 = if seg.is_empty() { 0 } else { seg.parse().ok()? };
@@ -1590,6 +1618,15 @@ impl G2P {
     /// 0199 reads "one ninety nine" and 1234 "twelve thirty four".
     fn nonhead_number(&self, word: &str) -> Option<String> {
         let num = word.replace(',', "");
+        // A decimal inside a word (`GPL-3.0`, `GPT-5.6`, `**98.7%`). misaki reads each digit group and no "point"
+        // ("ninety eight seven"); the port added "point", which is right, but dropped a zero fraction, so `3.0` read
+        // "three". Magpie's change: both groups, joined by "point".
+        if let Some((int, frac)) = num.split_once('.') {
+            let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+            if digits(int) && digits(frac) {
+                return Some(format!("{} point {}", self.number_component(int), self.number_component(frac)));
+            }
+        }
         if num.is_empty() || !num.chars().all(|c| c.is_ascii_digit()) {
             return None;
         }
@@ -1773,6 +1810,18 @@ mod tests {
         let (phonemes, _) = g2p.g2p("Hello, world!").unwrap();
         println!("Phonemes: {}", phonemes);
         assert!(!phonemes.contains("❓"));
+    }
+
+    /// Magpie's fixes: misaki 0.9.4's output for each, from a 1,974-line corpus (text-to-speech notebook 107).
+    #[test]
+    fn test_numbers_and_symbols_match_misaki() {
+        let g2p = G2P::new(Language::EnglishUS, crate::data::Data::for_tests(Language::EnglishUS));
+        let ps = |text: &str| g2p.g2p(text).unwrap().0;
+        assert_eq!(ps("steps 1–2 completed"), "stˈɛps wˈʌn❓ tˈu kəmplˈiTᵻd");
+        assert_eq!(ps("Media3's queue"), "mˈidiə θɹˈiz kjˈu");
+        assert_eq!(ps("$0.042 per hour"), "zˈɪɹO pYnt zˈɪɹO fˈɔɹ tˈu pɜɹ ˈWəɹ");
+        // misaki says "three zero" and "ninety eight seven"; "point" is Magpie's deliberate difference
+        assert_eq!(ps("is GPL-3.0;"), "ɪz ʤˌipˌiˈɛl θɹˈi pYnt zˈɪɹO;");
     }
 
     #[test]

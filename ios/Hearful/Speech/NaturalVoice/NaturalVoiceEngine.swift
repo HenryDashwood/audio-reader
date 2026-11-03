@@ -16,8 +16,8 @@ actor NaturalVoiceEngine {
     nonisolated static let sampleRate = 24_000.0
     /// Samples per frame: Kokoro decides durations in 25 ms steps.
     nonisolated static let frame = 600
-    /// The body's sizes, in frames: 3.2, 6.4 and 12.8 seconds.
-    nonisolated static let buckets = [128, 256, 512]
+    /// The body's sizes, in frames, from the voice's `voice.json`: a sentence is padded up to the next.
+    let sizes: [Int]
 
     struct Word: Sendable, Equatable {
         /// UTF-16 offsets into the text rendered.
@@ -56,6 +56,9 @@ actor NaturalVoiceEngine {
             [String: Int32].self, from: Data(contentsOf: folder.appending(path: "vocab.json")))
         vocabulary = Dictionary(
             uniqueKeysWithValues: vocab.compactMap { key, id in key.unicodeScalars.first.map { ($0, id) } })
+        struct Config: Decodable { let sizes: [Int] }
+        sizes = try JSONDecoder().decode(Config.self, from: Data(contentsOf: folder.appending(path: "voice.json"))).sizes
+            .sorted()
         let table = try Data(contentsOf: folder.appending(path: "voices/\(voice.id).bin"))
         styles = table.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
         let cpu = MLModelConfiguration()
@@ -91,7 +94,7 @@ actor NaturalVoiceEngine {
         let tEn = try floats(front, "t_en")
         let frames = try floats(front, "duration").map { max(1, Int($0.rounded(.toNearestOrEven))) }
         let total = frames.reduce(0, +)
-        guard let bucket = Self.buckets.first(where: { $0 >= total }) else { throw RenderError.tooLong(frames: total) }
+        guard let bucket = sizes.first(where: { $0 >= total }) else { throw RenderError.tooLong(frames: total) }
         let phonemeOfFrame = frames.enumerated().flatMap { Array(repeating: $0.offset, count: $0.element) }
 
         // Per frame: pitch and energy, two values a frame

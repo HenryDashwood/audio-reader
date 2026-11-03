@@ -169,6 +169,10 @@ static UNIT: LazyLock<Regex> = LazyLock::new(|| {
     units.sort_by_key(|u| std::cmp::Reverse(u.len()));
     Regex::new(&format!(r"(\d[\d,]*(?:\.\d+)?)(\s?)({})\b\.?", units.join("|"))).unwrap()
 });
+/// Money in thousands, millions and so on: "$1M", "£2.5bn", "€300k". misaki reads "$1M" as "one M".
+static MONEY_MAGNITUDE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"([$£€])(\d[\d,]*(?:\.\d+)?)\s?(k|K|m|M|mn|bn|b|B|tn|T|thousand|million|billion|trillion)\b").unwrap()
+});
 static ORDINAL_BEFORE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d(?:st|nd|rd|th)?\s*$").unwrap());
 static ST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(St|Dr)\.").unwrap());
 
@@ -178,7 +182,8 @@ pub fn normalize(text: &str) -> Normalized {
     for m in ST.captures_iter(text) {
         let all = m.get(0).unwrap();
         let (before, after) = (&text[..all.start()], &text[all.end()..]);
-        let word = if starts_capitalised(after) && !ends_name(before) {
+        let next = after.trim_start().split(|c: char| !c.is_alphabetic()).next().unwrap_or("");
+        let word = if starts_capitalised(after) && !SENTENCE_STARTERS.contains(&next) && !ends_name(before) {
             if &m[1] == "St" { "Saint".to_string() } else { continue } // misaki already says "Doctor"
         } else if ends_capitalised_word(before) || ends_number(before) {
             with_period(if &m[1] == "St" { "Street" } else { "Drive" }, after)
@@ -223,6 +228,21 @@ pub fn normalize(text: &str) -> Normalized {
         }
     }
 
+    for m in MONEY_MAGNITUDE.captures_iter(text) {
+        let currency = match &m[1] {
+            "$" => "dollars",
+            "£" => "pounds",
+            _ => "euros",
+        };
+        let magnitude = match &m[3] {
+            "k" | "K" | "thousand" => "thousand",
+            "m" | "M" | "mn" | "million" => "million",
+            "bn" | "b" | "B" | "billion" => "billion",
+            _ => "trillion",
+        };
+        rewrites.push((m.get(0).unwrap().range(), format!("{} {magnitude} {currency}", &m[2])));
+    }
+
     for m in UNIT.captures_iter(text) {
         let (number, space, unit) = (m.get(1).unwrap(), m.get(2).unwrap(), m.get(3).unwrap());
         let Some(&(_, one, many)) = UNITS.iter().find(|u| u.0 == unit.as_str()) else { continue };
@@ -251,15 +271,26 @@ pub fn normalize(text: &str) -> Normalized {
     out
 }
 
-/// The word, keeping the abbreviation's period when it also ends a sentence: at the end, or before a capital.
+/// The word, keeping the abbreviation's period when it also ends a sentence: at the end of the text, or before a
+/// word that starts sentences. A capital alone isn't enough, since names follow abbreviations too ("Ave. Road").
 fn with_period(word: &str, after: &str) -> String {
     let rest = after.trim_start();
-    if rest.is_empty() || (after.starts_with(char::is_whitespace) && starts_capitalised(after)) {
+    let next = rest.split(|c: char| !c.is_alphabetic()).next().unwrap_or("");
+    if rest.is_empty() || (after.starts_with(char::is_whitespace) && SENTENCE_STARTERS.contains(&next)) {
         format!("{word}.")
     } else {
         word.to_string()
     }
 }
+
+/// Words that start sentences far more often than they name anything: after one, a full stop ended the sentence.
+const SENTENCE_STARTERS: &[&str] = &[
+    "A", "After", "All", "Also", "An", "And", "As", "At", "Because", "But", "By", "During", "Each", "Even", "Every",
+    "For", "From", "He", "Her", "Here", "His", "How", "However", "I", "If", "In", "It", "Its", "Many", "Meanwhile",
+    "Most", "My", "No", "Not", "Now", "Of", "On", "One", "Only", "Or", "Our", "She", "Since", "So", "Some", "Still",
+    "That", "The", "Their", "Then", "There", "These", "They", "This", "Those", "Though", "To", "Today", "Under", "We",
+    "What", "When", "Where", "Which", "While", "Who", "Why", "With", "Yet", "You", "Your",
+];
 
 fn starts_capitalised(s: &str) -> bool {
     let s = s.strip_prefix(' ').unwrap_or(s);
@@ -304,6 +335,7 @@ mod tests {
         assert_eq!(n("St. Paul's is on Ludgate Hill, not Baker St. in London."), "Saint Paul's is on Ludgate Hill, not Baker Street in London.");
         assert_eq!(n("He lives at 221B Baker St., London."), "He lives at 221B Baker Street, London.");
         assert_eq!(n("No. 10 Downing St. Then home."), "No. 10 Downing Street. Then home.");
+        assert_eq!(n("Flat 2, Ave. Road, London. Downing St. The end."), "Flat 2, Avenue Road, London. Downing Street. The end.");
         assert_eq!(n("Turn onto Mulholland Dr. and stop. Dr. Brown waved."), "Turn onto Mulholland Drive and stop. Dr. Brown waved.");
         assert_eq!(n("When Dr. Clark arrived, Rome. St. Peter's"), "When Dr. Clark arrived, Rome. Saint Peter's");
     }
@@ -333,6 +365,12 @@ mod tests {
         assert_eq!(n("5 km from here, 3kg, 1 ft, 6 ft tall, 20 mph."), "5 kilometres from here, 3 kilograms, 1 foot, 6 feet tall, 20 miles per hour.");
         assert_eq!(n("The ft and the km stayed."), "The ft and the km stayed.");
         assert_eq!(n("It was 5 km."), "It was 5 kilometres.");
+    }
+
+    #[test]
+    fn money_in_millions() {
+        assert_eq!(n("Under $1M/year, or £2.5bn and €300k."), "Under 1 million dollars/year, or 2.5 billion pounds and 300 thousand euros.");
+        assert_eq!(n("It cost $5 and 3 MB."), "It cost $5 and 3 megabytes.");
     }
 
     #[test]

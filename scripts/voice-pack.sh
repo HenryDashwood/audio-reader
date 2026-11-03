@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The natural voice's Apple-hosted asset pack, and a local server for testing it.
 #
-#   scripts/voice-pack.sh package <voice folder> [--simulator]
-#       build/voice-pack/hearful-natural-voice-v1.aar, from a folder text-to-speech's notebooks 106 and 107 made.
-#       --simulator also packs a body per size: the simulator's Core ML won't load the shared-weight one.
+#   scripts/voice-pack.sh package <voice folder>
+#       build/voice-pack/hearful-natural-voice-v1.aar from the folder text-to-speech notebook 107's voice_folder("ios")
+#       makes. For the simulator, make it with simulator=True: the simulator's Core ML won't load the shared-weight
+#       body, so that folder also has one per size.
 #   scripts/voice-pack.sh tls <simulator udid>
 #       Makes a development certificate authority and a localhost certificate under build/voice-pack/tls, has the
 #       simulator trust the authority, and imports the localhost identity into the login keychain for ba-serve.
@@ -20,16 +21,10 @@ out="$root/build/voice-pack"
 archive="$out/hearful-natural-voice-v1.aar"
 
 package() {
-  local source="$1" simulator="${2:-}"
-  rm -rf "$out/NaturalVoice" && mkdir -p "$out/NaturalVoice"
-  for name in vocab.json tokens.mlmodelc prosody.mlmodelc source.mlmodelc body.mlmodelc voices tagger.bin \
-    tagger_labels.txt us_gold.json us_silver.json gb_gold.json gb_silver.json lexicon_us.json lexicon_gb.json \
-    g2p_us.g2p g2p_gb.g2p; do
-    ditto "$source/$name" "$out/NaturalVoice/$name"
-  done
-  if [[ "$simulator" == "--simulator" ]]; then
-    for size in 128 256 512; do ditto "$source/body$size.mlmodelc" "$out/NaturalVoice/body$size.mlmodelc"; done
-  fi
+  local source="$1"
+  [[ -f "$source/voice.json" ]] || { echo "$source isn't a voice folder: no voice.json" >&2; exit 1; }
+  rm -rf "$out/NaturalVoice" && mkdir -p "$out"
+  ditto "$source" "$out/NaturalVoice"
   rm -f "$archive"
   xcrun ba-package package "$root/background-assets/natural-voice/Manifest.json" --output-path "$archive" --quiet
   du -sh "$archive"
@@ -68,9 +63,9 @@ point() {
 }
 
 case "${1:-}" in
-  package) package "${2:?voice folder}" "${3:-}" ;;
+  package) package "${2:?voice folder}" ;;
   tls) tls "${2:?simulator udid}" ;;
   serve) serve "${2:-}" ;;
   point) point "${2:?simulator udid}" "${3:-}" ;;
-  *) echo "usage: $0 package <voice folder> [--simulator] | tls <udid> | serve [port] | point <udid> [port]" >&2; exit 2 ;;
+  *) echo "usage: $0 package <voice folder> | tls <udid> | serve [port] | point <udid> [port]" >&2; exit 2 ;;
 esac

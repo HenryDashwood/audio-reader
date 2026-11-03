@@ -25,7 +25,7 @@ nonisolated enum NaturalVoiceStore {
 
     /// What a usable voice folder holds, beside at least one speaker in `voices/`.
     static let requiredFiles = [
-        "vocab.json", "tokens.mlmodelc", "prosody.mlmodelc", "source.mlmodelc", "body.mlmodelc",
+        "vocab.json", "voice.json", "tokens.mlmodelc", "prosody.mlmodelc", "source.mlmodelc", "body.mlmodelc",
         "tagger.bin", "tagger_labels.txt", "us_gold.json", "us_silver.json", "gb_gold.json", "gb_silver.json",
         "lexicon_us.json", "lexicon_gb.json", "g2p_us.g2p", "g2p_gb.g2p",
     ]
