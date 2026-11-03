@@ -34,6 +34,14 @@ class NaturalVoiceEngineTest {
         assertEquals(2_400 until 14_400, trimmed.words.single().samples)
     }
 
+    @Test fun trimmingFollowsWhatIsHeardRatherThanTheWordTimings() {
+        // Speech from 0.5 s to 0.8 s, though the word's timing runs on to 1 s, as Kokoro's last word does
+        val samples = FloatArray(48_000) { if (it in 12_000 until 19_200) 0.5f else 0.001f }
+        val trimmed = NaturalVoiceEngine.trimmed(samples, listOf(NaturalVoiceEngine.Word(0 until 3, 12_000 until 24_000)))
+        assertEquals(1_200 + 7_200 + 4_800, trimmed.samples.size)
+        assertEquals(1_200 until 13_200, trimmed.words.single().samples)
+    }
+
     @Test fun paddingRepeatsTheSentence() {
         assertArrayEquals(floatArrayOf(1f, 2f, 3f, 1f, 2f, 3f, 1f), NaturalVoiceEngine.repeated(floatArrayOf(1f, 2f, 3f), 7), 0f)
     }
