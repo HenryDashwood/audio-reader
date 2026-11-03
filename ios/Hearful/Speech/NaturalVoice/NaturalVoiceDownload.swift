@@ -187,6 +187,7 @@ final class NaturalVoiceDownload: ObservableObject {
             if cancellationRequested {
                 state = await installedState() ?? .notInstalled
             } else {
+                log.error("Natural voice download failed: \(String(describing: error), privacy: .public)")
                 state = .failed(Self.message(for: error))
             }
         }
