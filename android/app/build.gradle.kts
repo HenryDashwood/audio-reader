@@ -1,5 +1,6 @@
 import java.security.KeyStore
 import java.security.MessageDigest
+import org.gradle.process.ExecOperations
 
 plugins {
     id("com.android.application")
@@ -103,6 +104,7 @@ android {
         buildConfig = true
     }
     testOptions { unitTests.isReturnDefaultValues = true }
+    if (rootProject.findProject(":natural_voice") != null) assetPacks += ":natural_voice"
 }
 
 dependencies {
@@ -122,6 +124,12 @@ dependencies {
     ksp("androidx.appfunctions:appfunctions-compiler:1.0.0-alpha11")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("org.jsoup:jsoup:1.23.2")
+    // The downloadable natural voice: its front half on ONNX Runtime, its decoder on LiteRT (GPU where there is one),
+    // and the voice itself an on-demand Play asset pack.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.31.0")
+    implementation("com.google.ai.edge.litert:litert:2.3.0")
+    implementation("com.google.ai.edge.litert:litert-gpu:2.3.0")
+    implementation("com.google.android.play:asset-delivery:2.3.0")
     implementation("io.coil-kt.coil3:coil-compose:3.6.2")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.2")
     androidTestImplementation("io.coil-kt.coil3:coil-test:3.6.2")
@@ -158,6 +166,24 @@ val captureAssets = tasks.register<CaptureAssetsTask>("captureAssets") {
     licenseFile.set(rootProject.file("../ios/HearfulShare/Readability-LICENSE.txt"))
     outputDirectory.set(layout.buildDirectory.dir("generated/captureAssets"))
 }
+// The downloadable voice's phonemizer: native/g2p's Rust, built for arm64 with the NDK, as Xcode does for iOS.
+abstract class PhonemizerLibraryTask : DefaultTask() {
+    @get:InputFiles @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sources: ConfigurableFileCollection
+    @get:InputFile @get:PathSensitive(PathSensitivity.NONE)
+    abstract val script: RegularFileProperty
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+    @get:javax.inject.Inject abstract val execution: ExecOperations
+    @TaskAction fun build() {
+        execution.exec { commandLine(script.get().asFile.path, "android", outputDirectory.get().asFile.path) }
+    }
+}
+val phonemizerLibrary = tasks.register<PhonemizerLibraryTask>("phonemizerLibrary") {
+    sources.from(rootProject.fileTree("../native/g2p") { exclude("build/**", "target/**") })
+    script.set(rootProject.file("../scripts/build-g2p.sh"))
+    outputDirectory.set(layout.buildDirectory.dir("generated/phonemizer"))
+}
 androidComponents.onVariants { variant ->
     variant.sources.assets?.addGeneratedSourceDirectory(captureAssets, CaptureAssetsTask::outputDirectory)
+    variant.sources.jniLibs?.addGeneratedSourceDirectory(phonemizerLibrary, PhonemizerLibraryTask::outputDirectory)
 }

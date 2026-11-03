@@ -89,6 +89,26 @@ install_debug() {
     "$adb" -s "$ANDROID_SERIAL" shell am start -W -n "$package/com.henrydashwood.magpie.MainActivity"
 }
 
+# Play's local-testing mode: the debug app bundle, natural voice pack included, installed as Play would split it,
+# with asset packs fetched from the device rather than the store. bundletool is Google's, checksum-pinned.
+install_bundle() {
+    [[ -f "$root/android/natural_voice/src/main/assets/NaturalVoice/voice.json" ]] \
+        || fail 'Copy the voice into the asset pack first: scripts/voice-pack.sh android <voice folder>.'
+    local version=1.18.3 sha=a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29
+    local tool="$root/build/android-tools/bundletool-$version.jar" apks="$root/android/app/build/outputs/magpie-local-testing.apks"
+    if [[ ! -f "$tool" ]] || ! echo "$sha  $tool" | shasum -a 256 -c --status; then
+        mkdir -p "$(dirname "$tool")"
+        curl -fsSL -o "$tool" "https://github.com/google/bundletool/releases/download/$version/bundletool-all-$version.jar"
+        echo "$sha  $tool" | shasum -a 256 -c --status || fail 'The downloaded bundletool does not match its checksum.'
+    fi
+    gradle :app:bundleDebug
+    local java="${JAVA_HOME:+$JAVA_HOME/bin/}java"
+    "$java" -jar "$tool" build-apks --overwrite --local-testing --connected-device --device-id="$ANDROID_SERIAL" --adb="$adb" \
+        --bundle="$root/android/app/build/outputs/bundle/debug/app-debug.aab" --output="$apks"
+    "$java" -jar "$tool" install-apks --apks="$apks" --device-id="$ANDROID_SERIAL" --adb="$adb"
+    "$adb" -s "$ANDROID_SERIAL" shell am start -W -n "$package/com.henrydashwood.magpie.MainActivity"
+}
+
 screenshot() {
     mkdir -p "$artifacts"
     output="$artifacts/screen-$ANDROID_SERIAL-$(date +%Y%m%d-%H%M%S)-$$.png"
@@ -188,6 +208,7 @@ case "${1:-doctor}" in
         echo "Saved $count screenshots to $destination"
         ;;
     run) select_emulator; install_debug ;;
+    run-bundle) select_emulator; install_bundle ;;
     screenshot) select_emulator; screenshot ;;
     layout)
         select_emulator

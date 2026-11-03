@@ -111,8 +111,11 @@ requires network access and additional disk space.
 `ANDROID_HOME` takes precedence over legacy `ANDROID_SDK_ROOT`; without either,
 the helper uses `~/Library/Android/sdk` on macOS or `~/Android/Sdk` on Linux.
 Keep Android Studio's ignored `local.properties` SDK path aligned with that
-location. No NDK, CMake, or separate system-wide Kotlin/Gradle install is needed
-for the current Kotlin application.
+location. The build also needs Rust (rustup, toolchain 1.97) and an Android NDK, for
+the natural voice's phonemizer: Gradle builds `native/g2p` for arm64 with
+`scripts/build-g2p.sh`, using `ANDROID_NDK_HOME` or the newest NDK under the SDK
+(`./scripts/android-dev.sh cli sdk install ndk/29.0.14206865`). No CMake or separate
+system-wide Kotlin/Gradle install is needed.
 
 Codex can use Google's [`android-cli` skill](https://github.com/android/skills/tree/main/devtools/android-cli)
 for current command and UI-inspection guidance. It is installed locally on this
@@ -261,6 +264,34 @@ permission relaxation is needed. `android-doctor` distinguishes launcher Java
 The sample WAV is an original Magpie introduction, generated with the Mac's
 installed Alex voice. Its matching transcript is in `data/Library.kt`. It is
 bundled so playback tests don't depend on a publisher's stream or a network.
+
+## Natural voice
+
+An optional, downloadable voice for articles: Kokoro, as text-to-speech notebooks
+106 and 107 prepare it, running on the phone so it works offline. Settings →
+Natural Voice downloads it, chooses a speaker for articles and removes it; spoken
+replies keep the Google voice. As on iOS, `native/g2p` turns text into phonemes
+(misaki in Rust), then ONNX Runtime runs the front half and LiteRT the decoder, on
+the GPU where it can and otherwise on the CPU. The models, speakers and text files
+arrive in `natural_voice`, an on-demand Play asset pack of about 280 MB.
+
+The pack's files are too large for Git. `scripts/voice-pack.sh android <folder>`
+copies notebook 107's `voice_folder("android")` into
+`natural_voice/src/main/assets/`; builds without them leave the pack out, and
+Settings says the voice isn't available yet. To try the download on an emulator,
+`make android-run-bundle` installs the debug bundle in Play's local-testing mode.
+A debug build also reads a folder pushed to its own files directory:
+
+```sh
+adb push android-pack /sdcard/Android/data/com.henrydashwood.magpie.dev/files/NaturalVoice
+adb shell chmod -R a+rwX /sdcard/Android/data/com.henrydashwood.magpie.dev/files/NaturalVoice
+```
+
+`NaturalVoiceTest` then reads sentences end to end and logs its speed, and
+`NaturalVoiceDownloadTest` (opt-in, with `-e naturalVoiceDownload true`) downloads
+the pack; both skip when the voice is missing. On the API 36 emulator the decoder
+runs on the CPU at 2.6–3.7× real time once warm, using about 1.3 GB, so the 2 GB
+emulator runs out of memory if other tests run alongside. No phone has run it yet.
 
 ## Article content
 

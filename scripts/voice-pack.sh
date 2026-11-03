@@ -12,6 +12,9 @@
 #       Apple's mock server for that archive on localhost.
 #   scripts/voice-pack.sh point <simulator udid> [port]
 #       Points a simulator's development builds at the mock server.
+#   scripts/voice-pack.sh android <voice folder>
+#       Copies the folder voice_folder("android") makes into Android's on-demand asset pack, which app bundles then
+#       carry. Without it, Android builds leave the pack out and the app says the voice isn't available yet.
 #
 # TestFlight and App Store builds download the copy uploaded to App Store Connect, never this one.
 set -euo pipefail
@@ -28,6 +31,14 @@ package() {
   rm -f "$archive"
   xcrun ba-package package "$root/background-assets/natural-voice/Manifest.json" --output-path "$archive" --quiet
   du -sh "$archive"
+}
+
+android() {
+  local source="$1" assets="$root/android/natural_voice/src/main/assets"
+  [[ -f "$source/voice.json" && -f "$source/body.tflite" ]] || { echo "$source isn't an Android voice folder" >&2; exit 1; }
+  rm -rf "$assets/NaturalVoice" && mkdir -p "$assets"
+  cp -R "$source" "$assets/NaturalVoice"
+  du -sh "$assets/NaturalVoice"
 }
 
 tls() {
@@ -64,8 +75,9 @@ point() {
 
 case "${1:-}" in
   package) package "${2:?voice folder}" ;;
+  android) android "${2:?voice folder}" ;;
   tls) tls "${2:?simulator udid}" ;;
   serve) serve "${2:-}" ;;
   point) point "${2:?simulator udid}" "${3:-}" ;;
-  *) echo "usage: $0 package <voice folder> | tls <udid> | serve [port] | point <udid> [port]" >&2; exit 2 ;;
+  *) echo "usage: $0 package <voice folder> | tls <udid> | serve [port] | point <udid> [port] | android <voice folder>" >&2; exit 2 ;;
 esac

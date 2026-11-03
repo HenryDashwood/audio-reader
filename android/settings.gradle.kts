@@ -17,3 +17,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "Magpie"
 include(":app")
+// The natural voice's asset pack, when its files are here: see natural_voice/build.gradle.kts.
+if (file("natural_voice/src/main/assets/NaturalVoice/voice.json").isFile) include(":natural_voice")

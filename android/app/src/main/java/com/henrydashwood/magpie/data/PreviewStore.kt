@@ -54,6 +54,10 @@ class PreviewStore(context: Context) {
     var voiceId: String?
         get() = preferences.getString("voice", null)
         set(value) { preferences.edit { putString("voice", value) } }
+    /** The downloadable natural voice's speaker for articles, or null for the Google voice. Spoken replies keep voiceId. */
+    var naturalVoice: String?
+        get() = preferences.getString("natural_voice", null)
+        set(value) { preferences.edit { putString("natural_voice", value) } }
     var lastItem: String?
         get() = preferences.getString("last_item", null)
         set(value) { preferences.edit { putString("last_item", value) } }

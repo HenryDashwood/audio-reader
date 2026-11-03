@@ -15,6 +15,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import com.henrydashwood.magpie.playback.VoiceCatalog
+import com.henrydashwood.magpie.playback.NaturalVoice
+import com.henrydashwood.magpie.playback.NaturalVoiceDownload
+import com.henrydashwood.magpie.playback.NaturalVoicePreview
 import kotlinx.coroutines.Job
 import com.henrydashwood.magpie.data.LibraryItem
 import com.henrydashwood.magpie.data.ItemFiling
@@ -51,7 +54,7 @@ data class PlayerState(
 /** A download dialog: a question when `confirmation` is set, otherwise an explanation. */
 data class DownloadPrompt(val title: String, val message: String, val confirmation: com.henrydashwood.magpie.data.DownloadConfirmation? = null)
 
-data class ListeningSettings(val podcastSpeed: Float, val articleSpeed: Float, val voiceId: String?)
+data class ListeningSettings(val podcastSpeed: Float, val articleSpeed: Float, val voiceId: String?, val naturalVoice: String? = null)
 data class LinkCaptureState(val showing: Boolean = false, val url: String = "", val saving: Boolean = false, val error: String? = null, val savedUrl: String? = null)
 
 class MagpieModel(application: Application) : AndroidViewModel(application) {
@@ -127,7 +130,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
             completed = if (current && playback.positionMs > 0) false else item.id in finished.value,
             articleOffset = offset)
     }
-    private fun readSettings() = ListeningSettings(store.speed(ContentKind.Podcast), store.speed(ContentKind.Article), store.voiceId)
+    private fun readSettings() = ListeningSettings(store.speed(ContentKind.Podcast), store.speed(ContentKind.Article), store.voiceId, store.naturalVoice)
     private val mutableSettings = MutableStateFlow(readSettings())
     val settings = mutableSettings.asStateFlow()
     private val voiceCatalog = VoiceCatalog(application)
@@ -446,8 +449,34 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         pause()
         voiceCatalog.preview(store.voiceId, store.speed(ContentKind.Article))
     }
-    fun stopVoicePreview() = voiceCatalog.stop()
-    fun closeVoiceSettings() { voiceRefresh?.cancel(); voiceCatalog.close() }
+    fun stopVoicePreview() { voiceCatalog.stop(); naturalPreview.stop(); naturalPreviewJob?.cancel() }
+    fun closeVoiceSettings() { voiceRefresh?.cancel(); voiceCatalog.close(); stopVoicePreview() }
+
+    private val naturalDownload = NaturalVoiceDownload.get(application)
+    val naturalVoice = naturalDownload.state
+    private val naturalPreview = NaturalVoicePreview(application)
+    private var naturalPreviewJob: Job? = null
+    fun refreshNaturalVoice() { viewModelScope.launch { naturalDownload.refresh() } }
+    fun downloadNaturalVoice() { viewModelScope.launch { naturalDownload.download() } }
+    fun cancelNaturalVoice() = naturalDownload.cancel()
+    fun confirmNaturalVoice(launcher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>) = naturalDownload.confirm(launcher)
+    fun removeNaturalVoice() {
+        stopVoicePreview()
+        viewModelScope.launch { naturalDownload.remove(); mutableSettings.value = readSettings() }
+    }
+    /** A natural speaker for articles, or null for the Google voice; choosing a speaker plays a sample of it. */
+    fun selectNaturalVoice(voice: NaturalVoice?) {
+        stopVoicePreview()
+        store.naturalVoice = voice?.id
+        mutableSettings.value = readSettings()
+        if (voice == null) return
+        pause()
+        naturalPreviewJob = viewModelScope.launch {
+            try { naturalPreview.play(voice) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { mutableNotice.value = error.message ?: "The natural voice couldn't play. Please try again." }
+        }
+    }
     fun cancelPreparation() {
         controller?.sendCustomCommand(SessionCommand(PlaybackService.CANCEL_PREPARATION, Bundle.EMPTY), Bundle.EMPTY)
     }

@@ -39,21 +39,40 @@ fun resumeAt(chunks: List<TimedChunk>, bookmark: ArticleBookmark?, version: Stri
     return chunks.lastOrNull { it.text.startUtf16 <= bookmark.offsetUtf16 }?.startMs ?: 0
 }
 
-/** Keep a sentence boundary even when an engine supplies no per-word audio markers. */
+/** Keep a sentence boundary even when an engine supplies no per-word audio markers. As on iOS, a "sentence" that ends
+ *  in a title or abbreviation ("Mr.", "St.") or runs on into a number or a lower-case word continues the one before. */
 fun articleNarrationChunks(text: String, limit: Int = 500): List<TextChunk> {
     val sentences = java.text.BreakIterator.getSentenceInstance(java.util.Locale.UK)
     sentences.setText(text)
-    val result = mutableListOf<TextChunk>()
+    val ranges = mutableListOf<IntRange>()
     var start = sentences.first()
     var end = sentences.next()
     while (end != java.text.BreakIterator.DONE) {
-        result += articleChunks(text.substring(start, end), limit).map {
-            it.copy(startUtf16 = it.startUtf16 + start, endUtf16 = it.endUtf16 + start)
-        }
+        val last = ranges.lastOrNull()
+        if (last != null && continuesSentence(text.substring(last.first, last.last + 1), text.substring(start, end))) {
+            ranges[ranges.lastIndex] = last.first until end
+        } else ranges += start until end
         start = end
         end = sentences.next()
     }
-    return result
+    return ranges.flatMap { range ->
+        articleChunks(text.substring(range.first, range.last + 1), limit).map {
+            it.copy(startUtf16 = it.startUtf16 + range.first, endUtf16 = it.endUtf16 + range.first)
+        }
+    }
+}
+
+private val leadingAbbreviations = setOf(
+    "mr", "mrs", "ms", "dr", "st", "no", "mt", "ft", "prof", "gen", "gov", "sen", "rep", "rev", "capt", "lt", "col",
+    "sgt", "maj", "fr", "fig", "vol", "ch", "pp", "p", "vs", "e.g", "i.e", "cf", "approx", "viz",
+)
+
+internal fun continuesSentence(sentence: String, next: String): Boolean {
+    if ('\n' in sentence.substring(sentence.trimEnd().length)) return false  // A paragraph ends the sentence, whatever follows
+    val first = next.trimStart().firstOrNull()
+    if (first != null && (first.isDigit() || first.isLowerCase())) return true
+    val lastWord = sentence.trim().split(' ').last()
+    return lastWord.endsWith(".") && lastWord.dropLast(1).lowercase() in leadingAbbreviations
 }
 
 /** As on iOS: a few seconds in is the start, and so are an episode's last seconds (its outro). */

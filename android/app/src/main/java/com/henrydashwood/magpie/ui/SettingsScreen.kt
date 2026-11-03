@@ -85,8 +85,9 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onDownloads
                 SpeedSetting("Articles", preferences.articleSpeed) { model.setSpeed(ContentKind.Article, it) }
             }
         }
+        item { NaturalVoiceSection(model, preferences.naturalVoice) }
         item {
-            SettingsSection("Voice", "Choose from installed offline Google voices. Download more voices in Android’s text-to-speech settings. A voice change applies the next time you start an article.") {
+            SettingsSection("Google Voice", "Choose from installed offline Google voices. Download more voices in Android’s text-to-speech settings. A voice change applies the next time you start an article.") {
                 ListItem(headlineContent = { Text("Voice") }, supportingContent = { Text(if (voices.loading) "Loading installed voices…" else selectedVoice) },
                     trailingContent = { Icon(Icons.Rounded.ChevronRight, null) },
                     modifier = Modifier.clickable(onClickLabel = "Choose voice") { showingVoices = true }.testTag("voice-setting"))
@@ -182,7 +183,7 @@ fun SettingsScreen(model: MagpieModel, onShortcuts: () -> Unit = {}, onDownloads
 }
 
 @Composable
-private fun VoiceChoice(title: String, detail: String, selected: Boolean, choose: () -> Unit) {
+internal fun VoiceChoice(title: String, detail: String, selected: Boolean, choose: () -> Unit) {
     ListItem(headlineContent = { Text(title) }, supportingContent = detail.takeIf { it.isNotBlank() }?.let { { Text(it) } },
         trailingContent = { RadioButton(selected, onClick = null) }, colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier.clickable(role = Role.RadioButton, onClick = choose).semantics { this.selected = selected })
@@ -218,7 +219,7 @@ internal fun <T> ChoiceDialog(title: String, options: List<T>, selected: T, labe
 internal fun speedLabel(speed: Float) = "${if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()}×"
 
 @Composable
-private fun SettingsAction(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, action: () -> Unit) {
+internal fun SettingsAction(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, action: () -> Unit) {
     ListItem(headlineContent = { Text(title, color = MaterialTheme.colorScheme.primary) }, leadingContent = { Icon(icon, null) }, modifier = Modifier.clickable(onClick = action))
 }
 
@@ -241,8 +242,8 @@ internal fun SettingsSection(title: String, footer: String? = null, top: android
 }
 
 @Composable
-private fun SettingsFootnote(text: String, error: Boolean = false) {
-    Text(text, Modifier.padding(horizontal = 16.dp, vertical = 12.dp).semantics { if (error) liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall,
+internal fun SettingsFootnote(text: String, error: Boolean = false, announced: Boolean = error) {
+    Text(text, Modifier.padding(horizontal = 16.dp, vertical = 12.dp).semantics { if (announced) liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodySmall,
         color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
