@@ -273,7 +273,7 @@ Natural Voice downloads it, chooses a speaker for articles and removes it; spoke
 replies keep the Google voice. As on iOS, `native/g2p` turns text into phonemes
 (misaki in Rust), then ONNX Runtime runs the front half and LiteRT the decoder, on
 the GPU where it can and otherwise on the CPU. The models, speakers and text files
-arrive in `natural_voice`, an on-demand Play asset pack of about 280 MB.
+arrive in `natural_voice`, an on-demand Play asset pack of about 240 MB.
 
 The pack's files are too large for Git. `scripts/voice-pack.sh android <folder>`
 copies notebook 107's `voice_folder("android")` into
@@ -287,11 +287,16 @@ adb push android-pack /sdcard/Android/data/com.henrydashwood.magpie.dev/files/Na
 adb shell chmod -R a+rwX /sdcard/Android/data/com.henrydashwood.magpie.dev/files/NaturalVoice
 ```
 
-`NaturalVoiceTest` then reads sentences end to end and logs its speed, and
-`NaturalVoiceDownloadTest` (opt-in, with `-e naturalVoiceDownload true`) downloads
-the pack; both skip when the voice is missing. On the API 36 emulator the decoder
-runs on the CPU at 2.6–3.7× real time once warm, using about 1.3 GB, so the 2 GB
-emulator runs out of memory if other tests run alongside. No phone has run it yet.
+`NaturalVoiceTest` then reads sentences end to end, logging its speed and its
+memory at every decoder size, and `NaturalVoiceDownloadTest` (opt-in, with
+`-e naturalVoiceDownload true`) downloads the pack; both skip when the voice is
+missing. On the API 36 emulator the decoder runs on the CPU at 2.5–3× real time
+once warm. The app then holds about 0.85 GB after its first sentence and 1.05 GB
+once every size has been used. That needs XNNPACK's weight cache (a file, so the six
+sizes share one packed copy of the weights) and transient indirection buffers;
+without them the 2 GB emulator kills it. The 8-bit decoders notebook 106 makes
+would download smaller but need more memory on a CPU, so the pack keeps the 16-bit
+one. No phone has run it yet.
 
 ## Article content
 
