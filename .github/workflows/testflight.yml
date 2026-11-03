@@ -232,6 +232,10 @@ jobs:
           install_profile "$PROFILE_B64" app app_uuid
           install_profile "$CONTROLS_PROFILE_B64" controls controls_uuid
 
+      # The app links the downloadable voice's text-to-phonemes library, a build output.
+      - name: Build native/g2p for iOS
+        run: scripts/build-g2p.sh ios
+
       - name: Archive
         env:
           BUILD_NUMBER: ${{ steps.version.outputs.build }}

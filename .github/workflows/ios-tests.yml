@@ -69,7 +69,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: build/DerivedData/CompilationCache.noindex
-          key: ios-compilation-v2-ios${{ matrix.ios }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.macos }}-${{ steps.xcode.outputs.build }}-${{ hashFiles('ios/**', 'scripts/ios-dev.sh', '.github/workflows/ios-tests.yml') }}
+          key: ios-compilation-v2-ios${{ matrix.ios }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.macos }}-${{ steps.xcode.outputs.build }}-${{ hashFiles('ios/**', 'native/g2p/src/**', 'native/g2p/vendor/**', 'scripts/ios-dev.sh', '.github/workflows/ios-tests.yml') }}
           restore-keys: |
             ios-compilation-v2-ios${{ matrix.ios }}-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.macos }}-${{ steps.xcode.outputs.build }}-
 

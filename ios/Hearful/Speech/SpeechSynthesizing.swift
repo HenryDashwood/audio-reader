@@ -26,6 +26,9 @@ enum SpeechSynthesizers {
     /// SilentSynthesizer and passes it in.
     static func make() -> SpeechSynthesizing {
         if TestEnvironment.isRunningTests { return SilentSynthesizer() }
+        if let natural = NaturalVoiceStore.selected() {
+            return NaturalVoiceSynthesizer(folder: natural.folder, voice: natural.voice)
+        }
         return SystemSpeechSynthesizer()
     }
 }

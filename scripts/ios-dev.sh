@@ -91,8 +91,22 @@ simulator_id="${IOS_SIMULATOR_ID:-}"
 runtime_version=""
 simulator_name=""
 
+# The app links native/g2p's XCFramework, a build output: make it when it's
+# missing or older than the Rust it comes from.
+ensure_g2p() {
+  local framework="$repo_root/native/g2p/build/MagpieG2P.xcframework"
+  if [[ -d "$framework" ]] && [[ -z "$(find "$repo_root/native/g2p/src" "$repo_root/native/g2p/vendor" \
+    "$repo_root/native/g2p/include" "$repo_root/native/g2p/Cargo.toml" "$repo_root/native/g2p/Cargo.lock" \
+    -newer "$framework/Info.plist" -print -quit)" ]]; then
+    return
+  fi
+  echo "Building native/g2p for iOS"
+  "$repo_root/scripts/build-g2p.sh" ios >/dev/null
+}
+
 run_xcodebuild() {
   local log_dir="$repo_root/build/ios-logs" raw_log status=0
+  ensure_g2p
   mkdir -p "$log_dir"
   raw_log="$(mktemp "$log_dir/xcodebuild-$1.XXXXXX")"
   echo "Raw Xcode log: $raw_log"

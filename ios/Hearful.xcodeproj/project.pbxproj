@@ -60,6 +60,7 @@
         DD0000000000000000000003 = {isa = PBXBuildFile; productRef = DD0000000000000000000004; };
         BB0000000000000000000001 = {isa = PBXBuildFile; fileRef = BB0000000000000000000002; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
         BB0000000000000000000003 = {isa = PBXBuildFile; fileRef = BB0000000000000000000004; };
+        FF0000000000000000000002 = {isa = PBXBuildFile; fileRef = FF0000000000000000000001; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -78,6 +79,8 @@
 		AA00000000000000000000D4 /* HearfulTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HearfulTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
         BB0000000000000000000002 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = HearfulControls.appex; sourceTree = BUILT_PRODUCTS_DIR; };
         BB0000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hearful/Intents/MagpieControlIntents.swift; sourceTree = SOURCE_ROOT; };
+        // The downloadable voice's text-to-phonemes library: scripts/build-g2p.sh ios builds it (ios-dev.sh does so first).
+        FF0000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = MagpieG2P.xcframework; path = ../native/g2p/build/MagpieG2P.xcframework; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -102,6 +105,7 @@
                 DD0000000000000000000001,
                 EE0000000000000000000001,
                 DD0000000000000000000003,
+                FF0000000000000000000002,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -125,6 +129,7 @@
                 CC0000000000000000000001,
                 CC0000000000000000000002,
                 BB0000000000000000000004,
+                FF0000000000000000000001,
 				AA00000000000000000000C2 /* Products */,
 			);
 			sourceTree = "<group>";
