@@ -33,6 +33,7 @@ voices.npz
 android/.gradle/
 android/.kotlin/
 android/local.properties
+android/natural_voice/src/main/assets/
 android/.idea/
 *.jks
 *.keystore

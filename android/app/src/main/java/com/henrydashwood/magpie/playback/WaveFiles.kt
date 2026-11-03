@@ -84,3 +84,13 @@ fun joinWaves(parts: List<File>, chunks: List<TextChunk>, destination: File): Li
         TimedChunk(chunks[index], start, bytes * 1000 / info.bytesPerSecond)
     }.also { require(it.last().endMs > 0) }
 }
+
+/** Writes mono floats in [-1, 1] as a 16-bit PCM WAV. */
+fun writeWave(file: File, samples: FloatArray, sampleRate: Int) {
+    val data = java.nio.ByteBuffer.allocate(44 + 2 * samples.size).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    data.put("RIFF".toByteArray()).putInt(36 + 2 * samples.size).put("WAVEfmt ".toByteArray())
+        .putInt(16).putShort(1).putShort(1).putInt(sampleRate).putInt(2 * sampleRate).putShort(2).putShort(16)
+        .put("data".toByteArray()).putInt(2 * samples.size)
+    for (sample in samples) data.putShort((sample.coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort())
+    file.writeBytes(data.array())
+}

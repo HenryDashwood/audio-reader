@@ -550,10 +550,10 @@ class PlaybackService : MediaLibraryService() {
                     checkRequest()
                     val reuse = current?.id == item.id && current?.contentVersion == item.contentVersion &&
                         player.currentMediaItem?.mediaId == item.id &&
-                        (item.kind == ContentKind.Podcast || rendered?.let { it.voiceSelection == store.voiceId && !it.closed } == true)
+                        (item.kind == ContentKind.Podcast || rendered?.let { it.voiceSelection == NaturalVoiceStore.articleVoice(this@PlaybackService, store) && !it.closed } == true)
                     val position = if (reuse && (item.kind == ContentKind.Podcast || item.episodeId == null ||
                         current?.articleProgress?.revision == item.articleProgress?.revision)) player.currentPosition.coerceAtLeast(0) else null
-                    audio = if (reuse) rendered else if (item.kind == ContentKind.Article) renderer.render(item, store.voiceId, articleResumeOffset(item)) { done, total ->
+                    audio = if (reuse) rendered else if (item.kind == ContentKind.Article) renderer.render(item, NaturalVoiceStore.articleVoice(this@PlaybackService, store), articleResumeOffset(item)) { done, total ->
                         checkRequest()
                         PlaybackStatus.mutable.value = Preparation(item.id, "Preparing audio… ${done * 100 / total}%")
                     } else null
@@ -597,7 +597,7 @@ class PlaybackService : MediaLibraryService() {
         sleepTimer.check()
         if ((!newIntent || item.kind == ContentKind.Podcast || item.episodeId == null) &&
             current?.id == item.id && current?.contentVersion == item.contentVersion && player.playbackState != Player.STATE_IDLE && PlaybackStatus.state.value.message == null &&
-            (item.kind == ContentKind.Podcast || rendered?.voiceSelection == store.voiceId)) {
+            (item.kind == ContentKind.Podcast || rendered?.voiceSelection == NaturalVoiceStore.articleVoice(this@PlaybackService, store))) {
             if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
             if (newIntent) beginProgressIntent(item)
             player.play()
@@ -613,7 +613,7 @@ class PlaybackService : MediaLibraryService() {
             try {
                 val resolved = if (newIntent && item.episodeId != null && item.kind == ContentKind.Article)
                     library.content(item.id, forPlayback = true) else item
-                val audio = if (resolved.kind == ContentKind.Article) renderer.render(resolved, store.voiceId, articleResumeOffset(resolved)) { done, total ->
+                val audio = if (resolved.kind == ContentKind.Article) renderer.render(resolved, NaturalVoiceStore.articleVoice(this@PlaybackService, store), articleResumeOffset(resolved)) { done, total ->
                     PlaybackStatus.mutable.value = Preparation(resolved.id, "Preparing audio… ${done * 100 / total}%")
                 } else null
                 load(resolved, audio, true)

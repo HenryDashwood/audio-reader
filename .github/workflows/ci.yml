@@ -49,6 +49,8 @@ jobs:
               - *shared
               - 'android/**'
               - 'scripts/android-dev.sh'
+              - 'scripts/build-g2p.sh'
+              - 'native/g2p/**'
             # The backend job also runs the repository-script tests and the
             # App Store listing validation; its tests read the frozen client
             # checksums, the deploy config and the iOS browser-capture fixtures.
@@ -94,6 +96,8 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+      - name: Rust for the natural voice's phonemizer
+        run: rustup toolchain install 1.97 --profile minimal --target aarch64-linux-android
       - name: Cache Android dependencies
         uses: actions/cache@v6
         with:

@@ -49,6 +49,8 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+      - name: Rust for the natural voice's phonemizer
+        run: rustup toolchain install 1.97 --profile minimal --target aarch64-linux-android
       # Restore only: main CI saves this cache, and a second writer racing it
       # left the first release run hanging in its post-job cache upload.
       - name: Cache Android dependencies
@@ -83,6 +85,8 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+      - name: Rust for the natural voice's phonemizer
+        run: rustup toolchain install 1.97 --profile minimal --target aarch64-linux-android
       # Restore only: main CI saves this cache, and a second writer racing it
       # left the first release run hanging in its post-job cache upload.
       - name: Cache Android dependencies

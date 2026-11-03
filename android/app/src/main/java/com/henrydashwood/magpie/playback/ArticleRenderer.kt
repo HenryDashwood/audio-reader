@@ -63,9 +63,17 @@ private class OfflineArticleVoice(private val tts: TextToSpeech) : ArticleVoice 
     }
 }
 
+/** A selection naming a natural speaker reads with the downloaded voice; any other, a Google voice. */
+private suspend fun openArticleVoice(context: Context, selected: String?): ArticleVoice {
+    val speaker = selected?.removePrefix(NaturalVoiceStore.PREFIX)?.takeIf { it != selected }
+        ?: return OfflineArticleVoice.open(context, selected)
+    val folder = NaturalVoiceStore.folder(context) ?: error("The natural voice isn't on this phone. Download it again in Settings.")
+    return NaturalArticleVoice(context, folder, NaturalVoice(speaker))
+}
+
 /** Prepares only the resume passage; Media3 requests subsequent passages on demand. */
 class ArticleRenderer internal constructor(private val context: Context,
-    private val openVoice: suspend (String?) -> ArticleVoice = { OfflineArticleVoice.open(context, it) }) {
+    private val openVoice: suspend (String?) -> ArticleVoice = { openArticleVoice(context, it) }) {
     private val articles = ConcurrentHashMap<String, RenderedArticle>()
 
     internal fun find(uri: String): RenderedArticle? = articles[uri]?.takeUnless { it.closed }
