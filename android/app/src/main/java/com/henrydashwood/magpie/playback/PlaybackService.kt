@@ -1142,6 +1142,7 @@ class PlaybackService : MediaLibraryService() {
         feedback.close()
         scope.cancel()
         renderer.close()
+        NaturalVoiceEngines.releaseWhenIdle()  // Hundreds of megabytes, kept only while the player runs
         session.release()
         player.release()
         rendered?.close()

@@ -38,7 +38,7 @@ internal fun NaturalVoiceSection(model: MagpieModel, selected: String?) {
     SettingsSection("Natural Voice", "A more natural voice for reading articles. It runs on this phone, so it works offline once downloaded. Magpie’s spoken replies keep the Google voice.") {
         when (val current = state) {
             State.Checking -> ListItem(headlineContent = { Text("Checking…") })
-            is State.NotInstalled -> SettingsAction("Download natural voice (${current.bytes?.let(::megabytes) ?: "about 290 MB"})", Icons.Rounded.Download, model::downloadNaturalVoice)
+            is State.NotInstalled -> SettingsAction("Download natural voice (${current.bytes?.let(::megabytes) ?: "about 240 MB"})", Icons.Rounded.Download, model::downloadNaturalVoice)
             is State.Unavailable -> SettingsFootnote(current.message)
             State.Waiting -> {
                 ListItem(headlineContent = { Text("Waiting to download…") }, supportingContent = { LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp)) })
