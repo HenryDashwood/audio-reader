@@ -28,6 +28,11 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
     private var words: [(characters: NSRange, samples: Range<Int>)] = []
     private var queuedSamples = 0
     private var reported: NSRange?
+    /// The next chunk, and its first sentence once this chunk is rendered: otherwise the next chunk would wait a second
+    /// or so for the model at every chunk boundary, a much longer pause than the one between sentences.
+    private var nextText: String?
+    private var prepared: (text: String, first: Task<[(NaturalVoiceEngine.Sentence, Int)], Error>)?
+    private var renderedCurrent = false
 
     init(folder: URL, voice: NaturalVoice) {
         self.folder = folder
@@ -48,11 +53,21 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
 
         let pieces = Self.sentences(in: text)
         let load = Self.engine(folder: folder, voice: voice)
+        let ready = prepared?.text == text ? prepared?.first : nil
+        if ready == nil { prepared?.first.cancel() }
+        prepared = nil
+        nextText = nil
+        renderedCurrent = false
         renderTask = Task { [weak self] in
             do {
                 let engine = try await load.value
-                for piece in pieces {
-                    for (sentence, offset) in try await Self.render(piece.text, at: piece.offset, with: engine) {
+                for (index, piece) in pieces.enumerated() {
+                    let rendered = if index == 0, let ready {
+                        try await ready.value
+                    } else {
+                        try await Self.render(piece.text, at: piece.offset, with: engine)
+                    }
+                    for (sentence, offset) in rendered {
                         guard !Task.isCancelled, let self, self.current == id else { return }
                         try self.enqueue(sentence, at: offset)
                     }
@@ -64,7 +79,21 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
             }
             guard !Task.isCancelled, let self, self.current == id else { return }
             self.output.finishEnqueueing()  // Also after a failure, so the reader moves on rather than stalls
+            self.renderedCurrent = true
+            self.prepareNext()
         }
+    }
+
+    func prepare(_ text: String) {
+        nextText = text
+        if renderedCurrent { prepareNext() }
+    }
+
+    /// Renders the next chunk's first sentence, after this chunk's so it never delays them.
+    private func prepareNext() {
+        guard let text = nextText, prepared?.text != text, let first = Self.sentences(in: text).first else { return }
+        let load = Self.engine(folder: folder, voice: voice)
+        prepared = (text, Task { try await Self.render(first.text, at: first.offset, with: load.value) })
     }
 
     func stopSpeaking(at boundary: AVSpeechBoundary) {

@@ -15,6 +15,12 @@ protocol SpeechSynthesizing: AnyObject {
     func stopSpeaking(at boundary: AVSpeechBoundary)
     func pauseSpeaking(at boundary: AVSpeechBoundary)
     func continueSpeaking()
+    /// The text likely to be spoken next, so a synthesiser that is slow to start can get it ready.
+    func prepare(_ text: String)
+}
+
+extension SpeechSynthesizing {
+    func prepare(_ text: String) {}
 }
 
 /// What speech comes out of when nothing has been named.

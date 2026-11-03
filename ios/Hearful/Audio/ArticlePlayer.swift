@@ -480,6 +480,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         utterance.postUtteranceDelay = 0.15
         currentUtterance = ObjectIdentifier(utterance)
         synthesizer.speak(utterance)
+        if chunkIndex + 1 < script.chunks.count { synthesizer.prepare(script.chunks[chunkIndex + 1].text) }
         progressContext?.hasPlayed = true
         isPlaying = true
         publishProgress(flush: false)

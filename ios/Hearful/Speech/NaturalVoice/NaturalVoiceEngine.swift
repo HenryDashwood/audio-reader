@@ -231,13 +231,23 @@ actor NaturalVoiceEngine {
         return words
     }
 
-    /// Cuts the audio to the speech, keeping 0.1 s before the first word and 0.25 s after the last, as the
-    /// notebooks' player does, and moves the words to match.
+    /// Cuts the audio to the speech, keeping 0.05 s before it and 0.2 s after, and moves the words to match.
+    ///
+    /// The speech is where the audio is louder than 3% of its peak, looked for between 0.1 s before the first word
+    /// and 0.25 s after the last. Not the word timings themselves: the last word's runs 0.2 to 0.26 s past the end of
+    /// what is heard, which left 0.6 s between sentences. Cut this way the gap is about 0.25 s, as Alex's is.
     nonisolated static func trimmed(_ samples: [Float], words: [Word]) -> Sentence {
         guard let first = words.first, let last = words.last else { return Sentence(samples: samples, words: []) }
-        let from = max(0, first.samples.lowerBound - Int(0.1 * sampleRate))
-        let to = min(samples.count, last.samples.upperBound + Int(0.25 * sampleRate))
-        guard from < to else { return Sentence(samples: samples, words: words) }
+        let lower = max(0, first.samples.lowerBound - Int(0.1 * sampleRate))
+        let upper = min(samples.count, last.samples.upperBound + Int(0.25 * sampleRate))
+        guard lower < upper else { return Sentence(samples: samples, words: words) }
+        let threshold = 0.03 * vDSP.maximumMagnitude(samples)
+        let window = samples[lower ..< upper]
+        let heard = window.firstIndex { abs($0) > threshold }.flatMap { start in
+            window.lastIndex { abs($0) > threshold }.map { start ... $0 }
+        }
+        let from = heard.map { max(lower, $0.lowerBound - Int(0.05 * sampleRate)) } ?? lower
+        let to = heard.map { min(upper, $0.upperBound + 1 + Int(0.2 * sampleRate)) } ?? upper
         let moved = words.map {
             Word(characters: $0.characters,
                  samples: max(0, $0.samples.lowerBound - from) ..< max(0, min(to, $0.samples.upperBound) - from))

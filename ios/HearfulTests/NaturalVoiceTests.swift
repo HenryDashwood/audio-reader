@@ -39,6 +39,16 @@ struct NaturalVoiceTests {
         #expect(trimmed.words == [NaturalVoiceEngine.Word(characters: 0 ..< 3, samples: 2_400 ..< 14_400)])
     }
 
+    @Test func trimmingFollowsWhatIsHeardRatherThanTheWordTimings() {
+        // Speech from 0.5 s to 0.8 s, though the word's timing runs on to 1 s, as Kokoro's last word does
+        var samples = [Float](repeating: 0.001, count: 48_000)
+        for i in 12_000 ..< 19_200 { samples[i] = 0.5 }
+        let words = [NaturalVoiceEngine.Word(characters: 0 ..< 3, samples: 12_000 ..< 24_000)]
+        let trimmed = NaturalVoiceEngine.trimmed(samples, words: words)
+        #expect(trimmed.samples.count == 1_200 + 7_200 + 4_800)
+        #expect(trimmed.words == [NaturalVoiceEngine.Word(characters: 0 ..< 3, samples: 1_200 ..< 13_200)])
+    }
+
     @Test func paddingRepeatsTheSentence() {
         #expect(NaturalVoiceEngine.repeated([1, 2, 3], to: 7) == [1, 2, 3, 1, 2, 3, 1])
     }
