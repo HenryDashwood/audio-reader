@@ -82,3 +82,80 @@ struct NaturalVoiceTests {
         #expect(NaturalVoice(id: "af_heart").isBritish == false)
     }
 }
+
+@Suite("Natural voice download")
+@MainActor
+struct NaturalVoiceDownloadTests {
+    /// Stands in for Background Assets: "installs" by making a complete voice folder, or fails as told.
+    actor FakeInstaller: NaturalVoiceInstalling {
+        let folder: URL
+        var failure: (any Error)?
+        var complete = true
+        private(set) var removals = 0
+        private var installed = false
+
+        init(failure: (any Error)? = nil, complete: Bool = true) {
+            folder = FileManager.default.temporaryDirectory.appending(path: "voice-\(UUID().uuidString)")
+            self.failure = failure
+            self.complete = complete
+        }
+
+        var installedFolder: URL? { installed && NaturalVoiceStore.isUsable(folder) ? folder : nil }
+
+        func install(status: @escaping @Sendable (NaturalVoiceInstallStatus) -> Void) async throws {
+            status(.downloading(0.5))
+            if let failure { throw failure }
+            let files = NaturalVoiceStore.requiredFiles.dropLast(complete ? 0 : 1) + ["voices/bf_emma.bin"]
+            for file in files {
+                let url = folder.appending(path: file)
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data().write(to: url)
+            }
+            installed = true
+        }
+
+        func cancelInstall() {}
+
+        func remove() async throws {
+            removals += 1
+            installed = false
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+
+    @Test func aCompleteDownloadOffersItsSpeakers() async {
+        let download = NaturalVoiceDownload(installer: FakeInstaller())
+        await download.refresh()
+        #expect(download.state == .notInstalled)
+        await download.download()
+        #expect(download.state == .installed([NaturalVoice(id: "bf_emma")]))
+    }
+
+    @Test func anIncompleteDownloadIsRemovedSoTryAgainStartsAfresh() async {
+        let installer = FakeInstaller(complete: false)
+        let download = NaturalVoiceDownload(installer: installer)
+        await download.download()
+        #expect(download.state == .failed(NaturalVoiceInstallError.unusableDownload.localizedDescription))
+        #expect(await installer.removals == 1)
+    }
+
+    @Test func beingOfflineSaysSo() async {
+        let download = NaturalVoiceDownload(installer: FakeInstaller(failure: URLError(.notConnectedToInternet)))
+        await download.download()
+        guard case .failed(let message) = download.state else {
+            Issue.record("expected a failure, got \(download.state)")
+            return
+        }
+        #expect(message.contains("internet connection"))
+    }
+
+    @Test func removingGoesBackToTheAppleVoice() async {
+        let defaults = UserDefaults.standard
+        let download = NaturalVoiceDownload(installer: FakeInstaller())
+        await download.download()
+        NaturalVoiceStore.select(NaturalVoice(id: "bf_emma"))
+        await download.remove()
+        #expect(download.state == .notInstalled)
+        #expect(defaults.string(forKey: NaturalVoiceStore.selectionKey) == nil)
+    }
+}

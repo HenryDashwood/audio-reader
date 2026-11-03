@@ -145,8 +145,10 @@ actor NaturalVoiceEngine {
         if let model = bodies[bucket] { return model }
         let gpu = MLModelConfiguration()
         gpu.computeUnits = .cpuAndGPU
-        var url = folder.appending(path: "body\(bucket).mlmodelc")
-        if !FileManager.default.fileExists(atPath: url.path) {
+        var url: URL
+        if let single = NaturalVoiceStore.file("body\(bucket).mlmodelc", in: folder) {
+            url = single
+        } else {
             url = folder.appending(path: "body.mlmodelc")
             gpu.functionName = "body\(bucket)"
         }

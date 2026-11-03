@@ -95,6 +95,11 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         return loading
     }
 
+    /// Lets the models go: the voice was removed, or its files are about to change.
+    static func releaseEngines() {
+        engines = [:]
+    }
+
     /// The text's sentences, as UTF-16 offsets into it and the text itself.
     ///
     /// NLTokenizer ends a sentence at most full stops, including the ones after "No." and "St.", which would

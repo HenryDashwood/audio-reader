@@ -52,6 +52,8 @@ struct SettingsView: View {
                     )
                 }
 
+                NaturalVoiceSection()
+
                 Section {
                     if loadingVoices {
                         ProgressView("Loading voices…")

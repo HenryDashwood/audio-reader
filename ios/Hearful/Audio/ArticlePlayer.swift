@@ -75,6 +75,8 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     private let activateAudioSession: @MainActor () throws -> Void
     private let loadDeadlineSleep: @MainActor @Sendable (Duration) async throws -> Void
     private var needsInterruptionRecovery = false
+    /// Which voice `synthesizer` reads with; when Settings changes it, the next chunk gets a new synthesiser.
+    private var synthesizerIdentity = SpeechSynthesizers.identity()
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
     private let defaults: UserDefaults
@@ -458,11 +460,13 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     private func speakCurrentChunk() {
         guard let script, chunkIndex < script.chunks.count else { return }
         guard activateSessionForSpeech() else { return }
-        if needsInterruptionRecovery {
+        let identity = SpeechSynthesizers.identity()
+        if needsInterruptionRecovery || identity != synthesizerIdentity {
             cancelSpeech(clearingLocation: false)
             synthesizer.delegate = nil
             synthesizer = makeSynthesizer()
             synthesizer.delegate = self
+            synthesizerIdentity = identity
             needsInterruptionRecovery = false
         }
         // Keep the marker present while one utterance replaces another; the

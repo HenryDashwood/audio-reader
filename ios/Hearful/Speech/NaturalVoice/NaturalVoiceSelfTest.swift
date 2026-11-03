@@ -1,5 +1,6 @@
 #if DEBUG
     import AVFoundation
+    import Combine
     import os
 
     private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "natural-voice")
@@ -18,6 +19,10 @@
 
         static func runIfRequested() async {
             let mode = ProcessInfo.processInfo.environment["HEARFUL_NATURAL_VOICE_SELFTEST"]
+            if mode == "download" || mode == "redownload" {
+                await DownloadCheck.run(removingFirst: mode == "redownload")
+                return
+            }
             guard let mode, let selected = NaturalVoiceStore.selected() else { return }
             if mode == "synthesizer" {
                 await SynthesizerCheck().run(selected)
@@ -57,6 +62,22 @@
             } catch {
                 log.error("selftest failed: \(String(describing: error), privacy: .public)")
             }
+        }
+    }
+
+    /// `HEARFUL_NATURAL_VOICE_SELFTEST=download`: downloads the asset pack as Settings' button does, logging each state
+    /// (`redownload` removes it first, as Settings' Remove does),
+    /// and where the voice ended up. With `ba-serve` and `scripts/voice-pack.sh point`, against a local server.
+    enum DownloadCheck {
+        @MainActor
+        static func run(removingFirst: Bool) async {
+            let download = NaturalVoiceDownload.shared
+            let watcher = download.$state.sink { log.notice("selftest download: \(String(describing: $0), privacy: .public)") }
+            await download.refresh()
+            if removingFirst { await download.remove() }
+            if case .notInstalled = download.state { await download.download() }
+            log.notice("selftest download: folder \(NaturalVoiceStore.folder?.path ?? "none", privacy: .public)")
+            watcher.cancel()
         }
     }
 

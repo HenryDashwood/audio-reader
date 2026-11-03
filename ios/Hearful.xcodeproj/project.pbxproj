@@ -50,6 +50,46 @@
         }; name = Release; };
 
 
+        // The natural voice's download extension: Apple's managed downloader for its on-demand asset pack.
+        AB0000000000000000000001 = {isa = PBXBuildFile; fileRef = AB0000000000000000000003; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+        AB0000000000000000000002 = {isa = PBXContainerItemProxy; containerPortal = AA00000000000000000000C0; proxyType = 1; remoteGlobalIDString = AB0000000000000000000006; remoteInfo = HearfulBackgroundAssets; };
+        AB0000000000000000000003 = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = HearfulBackgroundAssets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+        AB0000000000000000000004 = {isa = PBXFileSystemSynchronizedRootGroup; path = HearfulBackgroundAssets; sourceTree = "<group>"; };
+        AB0000000000000000000005 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        AB0000000000000000000006 = {isa = PBXNativeTarget; buildConfigurationList = AB000000000000000000000C;
+            buildPhases = (AB0000000000000000000008, AB0000000000000000000005, AB0000000000000000000007, );
+            buildRules = (); dependencies = (); fileSystemSynchronizedGroups = (AB0000000000000000000004, );
+            name = HearfulBackgroundAssets; productName = HearfulBackgroundAssets; productReference = AB0000000000000000000003; productType = "com.apple.product-type.extensionkit-extension"; };
+        AB0000000000000000000007 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        AB0000000000000000000008 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        AB0000000000000000000009 = {isa = PBXTargetDependency; target = AB0000000000000000000006; targetProxy = AB0000000000000000000002; };
+        AB000000000000000000000A = {isa = XCBuildConfiguration; buildSettings = {
+            APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 67F2439F4X;
+            CODE_SIGN_ENTITLEMENTS = HearfulBackgroundAssets/HearfulBackgroundAssets.entitlements;
+            // The extension defines no App Intents; only the app and controls need metadata.
+            LM_SKIP_METADATA_EXTRACTION = YES;
+            CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 1.4.0;
+            GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "HearfulBackgroundAssets-Info.plist";
+            PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful.BackgroundAssets; PRODUCT_NAME = "$(TARGET_NAME)";
+            SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+            SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2";
+        }; name = Debug; };
+        AB000000000000000000000B = {isa = XCBuildConfiguration; buildSettings = {
+            APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 67F2439F4X;
+            CODE_SIGN_ENTITLEMENTS = HearfulBackgroundAssets/HearfulBackgroundAssets.entitlements;
+            // The extension defines no App Intents; only the app and controls need metadata.
+            LM_SKIP_METADATA_EXTRACTION = YES;
+            CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 1.4.0;
+            GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "HearfulBackgroundAssets-Info.plist";
+            PRODUCT_BUNDLE_IDENTIFIER = com.henrydashwood.hearful.BackgroundAssets; PRODUCT_NAME = "$(TARGET_NAME)";
+            SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+            SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2";
+            PROVISIONING_PROFILE_SPECIFIER = "$(HEARFUL_BACKGROUND_ASSETS_PROFILE_UUID)";
+        }; name = Release; };
+        AB000000000000000000000C = {isa = XCConfigurationList; buildConfigurations = (AB000000000000000000000A, AB000000000000000000000B, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        // ExtensionKit extensions live in the app's Extensions folder, not PlugIns with the app extensions.
+        AB000000000000000000000D = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = "$(EXTENSIONS_FOLDER_PATH)"; dstSubfolderSpec = 16; files = (AB0000000000000000000001, ); name = "Embed ExtensionKit Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+
 /* Begin PBXCopyFilesBuildPhase section */
         BB0000000000000000000005 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (BB0000000000000000000001, CC0000000000000000000004, ); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXCopyFilesBuildPhase section */
@@ -130,6 +170,7 @@
                 CC0000000000000000000002,
                 BB0000000000000000000004,
                 FF0000000000000000000001,
+                AB0000000000000000000004,
 				AA00000000000000000000C2 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -141,6 +182,7 @@
 				AA00000000000000000000D4 /* HearfulTests.xctest */,
                 BB0000000000000000000002,
                 CC0000000000000000000003,
+                AB0000000000000000000003,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -156,12 +198,14 @@
 				AA00000000000000000000B1 /* Frameworks */,
 				AA00000000000000000000B3 /* Resources */,
                 BB0000000000000000000005 /* Embed App Extensions */,
+                AB000000000000000000000D /* Embed ExtensionKit Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
                 BB000000000000000000000F,
                 CC0000000000000000000006,
+                AB0000000000000000000009,
 			);
 			fileSystemSynchronizedGroups = (
 				AA00000000000000000000A1 /* Hearful */,
@@ -246,6 +290,7 @@
 				AA00000000000000000000D3 /* HearfulTests */,
                 BB000000000000000000000A,
                 CC000000000000000000000A,
+                AB0000000000000000000006,
 			);
 		};
 /* End PBXProject section */

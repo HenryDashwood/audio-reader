@@ -1,0 +1,15 @@
+{
+	"assetPackID": "hearful-natural-voice-v1",
+	"downloadPolicy": {
+		"onDemand": {}
+	},
+	"fileSelectors": [
+		{
+			"directory": "NaturalVoice"
+		}
+	],
+	"platforms": [
+		"iOS"
+	],
+	"sourceRoot": "../../build/voice-pack"
+}
