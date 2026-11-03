@@ -220,13 +220,20 @@ class NaturalVoiceEngine(folder: File, val voice: NaturalVoice, cacheDir: File) 
             return words
         }
 
-        /** Cuts the audio to the speech, keeping 0.1 s before the first word and 0.25 s after the last, as the
-         *  notebooks' player does, and moves the words to match. */
+        /** Cuts the audio to the speech, keeping 0.05 s before it and 0.2 s after, and moves the words to match.
+         *  The speech is where the audio is louder than 3% of its peak, between 0.1 s before the first word and
+         *  0.25 s after the last: the last word's timing runs past what is heard, and cutting by it left 0.6 s
+         *  between sentences. The same as iOS's. */
         fun trimmed(samples: FloatArray, words: List<Word>): Sentence {
             val first = words.firstOrNull() ?: return Sentence(samples, emptyList())
-            val from = maxOf(0, first.samples.first - SAMPLE_RATE / 10)
-            val to = minOf(samples.size, words.last().samples.last + 1 + SAMPLE_RATE / 4)
-            if (from >= to) return Sentence(samples, words)
+            val lower = maxOf(0, first.samples.first - SAMPLE_RATE / 10)
+            val upper = minOf(samples.size, words.last().samples.last + 1 + SAMPLE_RATE / 4)
+            if (lower >= upper) return Sentence(samples, words)
+            val threshold = 0.03f * samples.maxOf { Math.abs(it) }
+            val start = (lower until upper).firstOrNull { Math.abs(samples[it]) > threshold }
+            val end = (upper - 1 downTo lower).firstOrNull { Math.abs(samples[it]) > threshold }
+            val from = if (start != null) maxOf(lower, start - SAMPLE_RATE / 20) else lower
+            val to = if (end != null) minOf(upper, end + 1 + SAMPLE_RATE / 5) else upper
             val moved = words.map {
                 Word(it.characters, maxOf(0, it.samples.first - from) until maxOf(0, minOf(to, it.samples.last + 1) - from))
             }
