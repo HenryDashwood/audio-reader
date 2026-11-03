@@ -48,7 +48,7 @@ class NaturalVoiceEngine(folder: File, val voice: NaturalVoice, cacheDir: File) 
         sizes = JSONObject(File(folder, "voice.json").readText()).getJSONArray("sizes").let { a -> List(a.length()) { a.getInt(it) } }.sorted()
         val table = ByteBuffer.wrap(File(folder, "voices/${voice.id}.bin").readBytes()).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
         styles = FloatArray(table.remaining()).also { table.get(it) }
-        val options = OrtSession.SessionOptions().apply { setIntraOpNumThreads(4) }
+        val options = OrtSession.SessionOptions().apply { setIntraOpNumThreads(4); setCPUArenaAllocator(false); setMemoryPatternOptimization(false) }
         tokens = environment.createSession(File(folder, "tokens.onnx").path, options)
         prosody = environment.createSession(File(folder, "prosody.onnx").path, options)
         source = environment.createSession(File(folder, "source.onnx").path, options)
@@ -61,9 +61,12 @@ class NaturalVoiceEngine(folder: File, val voice: NaturalVoice, cacheDir: File) 
                     precision = CompiledModel.GpuOptions.Precision.FP16)
             })
         }.onFailure { Log.i(TAG, "No GPU for the natural voice, so the CPU: ${it.message}") }.getOrNull()
-        // On the CPU, XNNPACK repacks the weights for each size; its cache file lets the sizes share one copy.
+        // On the CPU, XNNPACK packs the weights for each of the six sizes separately, 1.4 GB in all, unless its weight cache
+        // (a file: given a directory it silently caches nothing) lets them share one copy. And it keeps each convolution's
+        // indirection buffer between runs unless told not to, half a gigabyte more, for a few percent of speed.
         body = gpu ?: CompiledModel.create(path, CompiledModel.Options(Accelerator.CPU).apply {
-            cpuOptions = CompiledModel.CpuOptions(numThreads = 4, xnnPackWeightCachePath = File(cacheDir, "natural-voice-xnnpack").path)
+            cpuOptions = CompiledModel.CpuOptions(numThreads = 4, xnnPackWeightCachePath = weightCache(cacheDir, File(path)).path,
+                xnnPackFlags = XNNPACK_QS8 or XNNPACK_QU8 or XNNPACK_TRANSIENT_INDIRECTION_BUFFER)
         })
         accelerator = if (gpu != null) "GPU" else "CPU"
     }
@@ -150,9 +153,21 @@ class NaturalVoiceEngine(folder: File, val voice: NaturalVoice, cacheDir: File) 
 
     companion object {
         private const val TAG = "NaturalVoice"
+        // TfLiteXNNPackDelegateOptions flags, from tensorflow/lite/delegates/xnnpack/xnnpack_delegate.h
+        private const val XNNPACK_QS8 = 0x1
+        private const val XNNPACK_QU8 = 0x2
+        private const val XNNPACK_TRANSIENT_INDIRECTION_BUFFER = 0x20
         const val SAMPLE_RATE = 24_000
         /** Samples per frame: Kokoro decides durations in 25 ms steps. */
         const val FRAME = 600
+
+        /** The CPU's packed-weight cache for `model`, named for it, so a new download never reads an old one's. */
+        private fun weightCache(cacheDir: File, model: File): File {
+            val name = "natural-voice-${model.length()}-${model.lastModified()}.xnnpack"
+            cacheDir.listFiles { f -> f.name.startsWith("natural-voice-") && f.name.endsWith(".xnnpack") && f.name != name }
+                ?.forEach { it.delete() }
+            return File(cacheDir, name)
+        }
 
         /** Repeats per-phoneme features once per frame. `x` is (rows, columns) row-major; the result is
          *  (channels, frames): with `transposing`, x's rows are phonemes and its columns channels (Tokens' d), else the

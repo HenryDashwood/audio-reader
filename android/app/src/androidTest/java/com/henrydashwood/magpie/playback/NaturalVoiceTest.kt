@@ -54,6 +54,29 @@ class NaturalVoiceTest {
         NaturalVoiceEngines.use(app, folder, NaturalVoice("bf_emma")) { Log.i("NaturalVoiceTest", "decoder on the ${it.accelerator}") }
     }
 
+    /** Logs the process's memory as each body size is first used: short to long sentences, 64 to 512 frames. */
+    @Test fun memoryAcrossEverySize() = runBlocking<Unit>(Dispatchers.Default) {
+        val sentences = listOf(
+            "Good morning.",
+            "The river was quiet this morning.",
+            "The river was quiet this morning, and the boats stayed tied to the wall.",
+            "The river was quiet this morning, and the boats stayed tied to the wall until the tide began to turn.",
+            "The river was quiet this morning, and the boats stayed tied to the wall until the tide began to turn, when the " +
+                "first of them slipped out past the bridge.",
+            "The river was quiet this morning, and the boats stayed tied to the wall until the tide began to turn, when the " +
+                "first of them slipped out past the bridge and the gulls followed it down towards the sea, calling.",
+        )
+        val voice = NaturalArticleVoice(app, folder, NaturalVoice("bf_emma"))
+        fun pss() = android.os.Debug.MemoryInfo().also(android.os.Debug::getMemoryInfo).totalPss / 1024
+        val report = mutableListOf("before ${pss()} MB")
+        for (sentence in sentences) {
+            val file = File(app.cacheDir, "natural-voice-memory.wav")
+            voice.synthesize(TextChunk(sentence, 0, sentence.length), file)
+            report += "${inspectWave(file).dataSize / 2 / NaturalVoiceEngine.SAMPLE_RATE.toDouble()}s: ${pss()} MB"
+        }
+        Log.i("NaturalVoiceTest", "memory: ${report.joinToString()}")
+    }
+
     @Test fun articlesReadWithTheChosenSpeaker() = runBlocking<Unit>(Dispatchers.Main) {
         val renderer = ArticleRenderer(app)
         try {

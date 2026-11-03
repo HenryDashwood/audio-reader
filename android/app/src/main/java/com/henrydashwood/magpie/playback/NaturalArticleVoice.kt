@@ -2,8 +2,10 @@ package com.henrydashwood.magpie.playback
 
 import android.content.Context
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -73,4 +75,7 @@ internal object NaturalVoiceEngines {
 
     /** Frees the models, before the voice is removed. */
     suspend fun release() = mutex.withLock { engine?.second?.close(); engine = null }
+
+    /** Frees the models once any sentence being read has finished: when playback stops for good. */
+    fun releaseWhenIdle() { CoroutineScope(Dispatchers.Default).launch { release() } }
 }
