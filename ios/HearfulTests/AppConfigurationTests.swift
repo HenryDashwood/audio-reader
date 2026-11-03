@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import Hearful
@@ -6,6 +7,10 @@ import Testing
 private func store() -> UserDefaults {
     let defaults = UserDefaults(suiteName: "test-\(UUID().uuidString)")!
     return defaults
+}
+
+private final class ChangeCount: Sendable {
+    let value = Mutex(0)
 }
 
 @Suite("API base URL")
@@ -31,6 +36,28 @@ struct AppConfigurationTests {
 
         let next = AppConfiguration.resolveBaseURL(environment: [:], defaults: defaults)
         #expect(next.absoluteString == "http://192.168.1.246:8000")
+    }
+
+    @Test(arguments: [
+        "http://192.168.1.246:8000", AppConfiguration.productionBaseURL.absoluteString,
+    ])
+    func rereadingTheAddressLeavesTheStoreAlone(override: String) {
+        // Settings reads the address from its body. A write on every read
+        // invalidated its @AppStorage properties, so the body ran forever.
+        let defaults = store()
+        let environment = ["HEARFUL_API_URL": override]
+        _ = AppConfiguration.resolveBaseURL(environment: environment, defaults: defaults)
+
+        let changes = ChangeCount()
+        let observer = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: defaults, queue: nil
+        ) { _ in changes.value.withLock { $0 += 1 } }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        for _ in 0..<3 {
+            _ = AppConfiguration.resolveBaseURL(environment: environment, defaults: defaults)
+        }
+        #expect(changes.value.withLock { $0 } == 0)
     }
 
     @Test func fallsBackToTheDefaultWhenNothingIsKnown() {

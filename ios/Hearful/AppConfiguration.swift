@@ -46,14 +46,19 @@ nonisolated enum AppConfiguration {
         if let override = environment["HEARFUL_API_URL"],
             let url = URL(string: override), url.host != nil
         {
+            // Write only on a change. This runs on every read of the address,
+            // including from view bodies, and every write to the store — even
+            // of the same value — invalidates each @AppStorage observer. A
+            // write here from Settings' body re-ran that body without end.
+            let remembered = defaults.string(forKey: storageKey)
             // Launching a device build with the ordinary production address
             // is not an override. Clear any older laptop address and keep the
             // Settings screen from claiming production is a test server.
             if url == productionBaseURL {
-                defaults.removeObject(forKey: storageKey)
+                if remembered != nil { defaults.removeObject(forKey: storageKey) }
                 return productionBaseURL
             }
-            defaults.set(override, forKey: storageKey)
+            if remembered != override { defaults.set(override, forKey: storageKey) }
             return url
         }
         if let remembered = defaults.string(forKey: storageKey),
