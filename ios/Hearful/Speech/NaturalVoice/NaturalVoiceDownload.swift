@@ -138,8 +138,8 @@ final class NaturalVoiceDownload: ObservableObject {
         case failed(String)
     }
 
-    /// About what the download costs, for the button that starts it.
-    static let approximateSize = "190 MB"
+    /// About what the download costs, for the button that starts it: the asset pack is 158 MB with 13 speakers.
+    static let approximateSize = "160 MB"
 
     static let shared = NaturalVoiceDownload()
 
