@@ -1,4 +1,7 @@
 import AVFoundation
+import os
+
+private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "natural-voice")
 
 /// The downloadable voice's speaker: an AVAudioEngine with one player node, fed
 /// a sentence at a time as each is rendered. Buffers scheduled on one node play
@@ -52,7 +55,8 @@ final class NaturalVoiceAudioOutput {
         else { return }
         buffer.frameLength = buffer.frameCapacity
         samples.withUnsafeBufferPointer { channel[0].update(from: $0.baseAddress!, count: $0.count) }
-        try start()
+        try connect()
+        if pausedAt == nil { try start() }  // Not while paused: a running engine says audio is playing
         scheduled += 1
         let scheduledGeneration = generation
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
@@ -66,15 +70,23 @@ final class NaturalVoiceAudioOutput {
         drainIfFinished()
     }
 
+    /// Pauses the engine as well as the player. A running engine plays silence, and iOS takes an app that is
+    /// playing silence to be playing: the lock screen's button went back to Pause, and pressing it did nothing.
     func pause() {
         guard pausedAt == nil else { return }
         pausedAt = position
         player.pause()
+        engine.pause()
     }
 
     func resume() {
         guard pausedAt != nil else { return }
         pausedAt = nil
+        do {
+            try start()
+        } catch {
+            log.error("Natural voice could not restart its audio: \(error.localizedDescription, privacy: .public)")
+        }
         player.play()
     }
 
@@ -105,13 +117,16 @@ final class NaturalVoiceAudioOutput {
         finished?()
     }
 
+    private func connect() throws {
+        guard !isConnected else { return }
+        try AudioSession.configureForPlayback()
+        engine.connect(player, to: timePitch, format: format)
+        engine.connect(timePitch, to: engine.mainMixerNode, format: format)
+        isConnected = true
+    }
+
     private func start() throws {
-        if !isConnected {
-            try AudioSession.configureForPlayback()
-            engine.connect(player, to: timePitch, format: format)
-            engine.connect(timePitch, to: engine.mainMixerNode, format: format)
-            isConnected = true
-        }
+        try connect()
         if !engine.isRunning {
             engine.prepare()
             try engine.start()
