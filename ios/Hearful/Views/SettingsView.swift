@@ -47,10 +47,12 @@ struct SettingsView: View {
                 } footer: {
                     Text(
                         "Magpie remembers separate speeds for recorded podcasts "
-                            + "and articles read by the system voice. "
+                            + "and articles. "
                             + "Article speed also applies to Magpie’s spoken replies."
                     )
                 }
+
+                NaturalVoiceSection()
 
                 Section {
                     if loadingVoices {
@@ -77,7 +79,7 @@ struct SettingsView: View {
                         .pickerStyle(.navigationLink)
                     }
                 } header: {
-                    Text("Voice")
+                    Text("Apple Voice")
                 } footer: {
                     Text(
                         "Magpie shows every voice available on this iPhone. Download "

@@ -26,7 +26,17 @@ enum SpeechSynthesizers {
     /// SilentSynthesizer and passes it in.
     static func make() -> SpeechSynthesizing {
         if TestEnvironment.isRunningTests { return SilentSynthesizer() }
+        if let natural = NaturalVoiceStore.selected() {
+            return NaturalVoiceSynthesizer(folder: natural.folder, voice: natural.voice)
+        }
         return SystemSpeechSynthesizer()
+    }
+
+    /// Which synthesiser `make()` would give now. ArticlePlayer compares it before each chunk, so a voice chosen in
+    /// Settings takes over at the next chunk rather than cutting off the one being read.
+    static func identity() -> String {
+        if TestEnvironment.isRunningTests { return "silent" }
+        return NaturalVoiceStore.selected().map { "natural:\($0.voice.id)" } ?? "system"
     }
 }
 

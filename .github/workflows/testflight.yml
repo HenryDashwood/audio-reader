@@ -194,6 +194,7 @@ jobs:
           PROFILE_B64: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
           CONTROLS_PROFILE_B64: ${{ secrets.APPLE_CONTROLS_PROVISIONING_PROFILE }}
           SHARE_PROFILE_B64: ${{ secrets.APPLE_SHARE_PROVISIONING_PROFILE }}
+          BACKGROUND_ASSETS_PROFILE_B64: ${{ secrets.APPLE_BACKGROUND_ASSETS_PROVISIONING_PROFILE }}
         run: |
           set -euo pipefail
           install_profile() {
@@ -231,6 +232,15 @@ jobs:
           install_profile "$SHARE_PROFILE_B64" share share_uuid
           install_profile "$PROFILE_B64" app app_uuid
           install_profile "$CONTROLS_PROFILE_B64" controls controls_uuid
+          if [ -z "$BACKGROUND_ASSETS_PROFILE_B64" ]; then
+            echo "::error::Set APPLE_BACKGROUND_ASSETS_PROVISIONING_PROFILE for com.henrydashwood.hearful.BackgroundAssets with the Magpie app group enabled."
+            exit 1
+          fi
+          install_profile "$BACKGROUND_ASSETS_PROFILE_B64" background-assets background_assets_uuid
+
+      # The app links the downloadable voice's text-to-phonemes library, a build output.
+      - name: Build native/g2p for iOS
+        run: scripts/build-g2p.sh ios
 
       - name: Archive
         env:
@@ -239,6 +249,7 @@ jobs:
           APP_PROFILE_UUID: ${{ steps.profile.outputs.app_uuid }}
           CONTROLS_PROFILE_UUID: ${{ steps.profile.outputs.controls_uuid }}
           SHARE_PROFILE_UUID: ${{ steps.profile.outputs.share_uuid }}
+          BACKGROUND_ASSETS_PROFILE_UUID: ${{ steps.profile.outputs.background_assets_uuid }}
         run: |
           set -euo pipefail
           # Signed manually against the profile installed above. No
@@ -257,6 +268,7 @@ jobs:
             HEARFUL_APP_PROFILE_UUID="$APP_PROFILE_UUID" \
             HEARFUL_CONTROLS_PROFILE_UUID="$CONTROLS_PROFILE_UUID" \
             HEARFUL_SHARE_PROFILE_UUID="$SHARE_PROFILE_UUID" \
+            HEARFUL_BACKGROUND_ASSETS_PROFILE_UUID="$BACKGROUND_ASSETS_PROFILE_UUID" \
             DEVELOPMENT_TEAM=67F2439F4X \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             $MARKETING_ARG
@@ -283,6 +295,7 @@ jobs:
           APP_PROFILE_UUID: ${{ steps.profile.outputs.app_uuid }}
           CONTROLS_PROFILE_UUID: ${{ steps.profile.outputs.controls_uuid }}
           SHARE_PROFILE_UUID: ${{ steps.profile.outputs.share_uuid }}
+          BACKGROUND_ASSETS_PROFILE_UUID: ${{ steps.profile.outputs.background_assets_uuid }}
         run: |
           set -euo pipefail
           # Apple's /usr/bin/rsync (openrsync) reads -E as --extended-attributes,
@@ -304,6 +317,9 @@ jobs:
 
           plutil -insert 'provisioningProfiles.com\.henrydashwood\.hearful\.share' \
             -string "$SHARE_PROFILE_UUID" "$options"
+
+          plutil -insert 'provisioningProfiles.com\.henrydashwood\.hearful\.BackgroundAssets' \
+            -string "$BACKGROUND_ASSETS_PROFILE_UUID" "$options"
 
           # The key still authenticates the upload; it is only provisioning that
           # must not go through it.

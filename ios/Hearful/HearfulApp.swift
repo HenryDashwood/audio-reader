@@ -29,6 +29,9 @@ struct HearfulApp: App {
             .task {
                 auth.bootstrap()
                 await ObsoleteVoiceCleanup.remove()
+                #if DEBUG
+                    await NaturalVoiceSelfTest.runIfRequested()
+                #endif
             }
         }
         // The system relaunches Magpie in the background to hand over

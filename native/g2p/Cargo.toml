@@ -1,0 +1,29 @@
+[package]
+name = "magpie-g2p"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Text to Kokoro phonemes for Magpie's downloadable voice: misaki-rs, a build-time lexicon, and a small model"
+publish = false
+
+[lib]
+name = "magpie_g2p"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+misaki-rs = { path = "vendor/misaki-rs" }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.21", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[workspace]
+members = [".", "vendor/misaki-rs"]
