@@ -153,7 +153,8 @@ struct PlaybackRecoveryTests {
         #expect(coordinator.handleRemotePause() == .noActionableNowPlayingItem)
     }
 
-    @Test func articleResumesOnAFreshEngineAndIgnoresRetiredCallbacks() async throws {
+    @Test(arguments: [false, true])
+    func articleResumesOnAFreshEngineAndIgnoresRetiredCallbacks(remote: Bool) async throws {
         let oldEngine = SilentSynthesizer()
         let newEngine = SilentSynthesizer()
         let api = FakeAPI()
@@ -189,7 +190,11 @@ struct PlaybackRecoveryTests {
         #expect(replacements == 0)
 
         session.available = true
-        coordinator.resume()
+        if remote {
+            #expect(coordinator.handleRemotePlay() == .success)
+        } else {
+            coordinator.resume()
+        }
         #expect(article.isPlaying)
         #expect(replacements == 1)
         #expect(oldEngine.delegate == nil)

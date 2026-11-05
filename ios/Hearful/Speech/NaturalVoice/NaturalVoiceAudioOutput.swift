@@ -3,6 +3,18 @@ import os
 
 private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "natural-voice")
 
+@MainActor
+protocol NaturalVoiceOutput: AnyObject {
+    var onDrained: (@MainActor () -> Void)? { get set }
+    var position: Int { get }
+    func setRate(_ rate: Float)
+    func enqueue(_ samples: [Float], continuesToNextChunk: Bool) throws
+    func finishEnqueueing()
+    func pause()
+    func resume()
+    func stop()
+}
+
 /// The downloadable voice's speaker: an AVAudioEngine with one player node, fed
 /// a sentence at a time as each is rendered. Buffers scheduled on one node play
 /// back to back with no gap, so a chunk rendered in sentences still sounds like
@@ -13,9 +25,10 @@ private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "natu
 /// it down was an audible gap and a chirp), and speed speech up after rendering
 /// rather than asking the model to talk faster.
 @MainActor
-final class NaturalVoiceAudioOutput {
-    /// Everything enqueued has played. Only after `finishEnqueueing()`, so it
-    /// means the utterance is over rather than that rendering fell behind.
+final class NaturalVoiceAudioOutput: NaturalVoiceOutput {
+    /// Everything enqueued has finished. Continuing chunks hand off after
+    /// rendering; the final chunk waits until playback reaches the device.
+    /// Only after `finishEnqueueing()`, so a rendering delay cannot finish it.
     var onDrained: (@MainActor () -> Void)?
 
     private let engine = AVAudioEngine()
@@ -36,6 +49,20 @@ final class NaturalVoiceAudioOutput {
         engine.attach(timePitch)
     }
 
+    #if HEARFUL_VOICE_TIMING
+        func beginTimingCapture(_ capture: NaturalVoiceTimingCapture) {
+            // The audio thread owns this callback; the capture protects its
+            // shared state rather than carrying main-actor isolation here.
+            engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { @Sendable buffer, _ in
+                capture.append(buffer)
+            }
+        }
+
+        func endTimingCapture() {
+            engine.mainMixerNode.removeTap(onBus: 0)
+        }
+    #endif
+
     /// How fast to play, pitch unchanged. Speech is rendered at 1x.
     func setRate(_ rate: Float) {
         timePitch.rate = min(max(rate, 0.5), 3)
@@ -48,7 +75,7 @@ final class NaturalVoiceAudioOutput {
         return max(0, Int(time.sampleTime))
     }
 
-    func enqueue(_ samples: [Float]) throws {
+    func enqueue(_ samples: [Float], continuesToNextChunk: Bool) throws {
         guard !samples.isEmpty,
             let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
             let channel = buffer.floatChannelData
@@ -59,7 +86,12 @@ final class NaturalVoiceAudioOutput {
         if pausedAt == nil { try start() }  // Not while paused: a running engine says audio is playing
         scheduled += 1
         let scheduledGeneration = generation
-        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+        // Waiting for device playback at every chunk adds the downstream
+        // processing and output-device latency to every passage boundary.
+        // Hand continuing speech over once its samples have been rendered;
+        // keep the final completion tied to sound actually finishing.
+        let completion: AVAudioPlayerNodeCompletionCallbackType = continuesToNextChunk ? .dataRendered : .dataPlayedBack
+        player.scheduleBuffer(buffer, completionCallbackType: completion) { [weak self] _ in
             Task { @MainActor in self?.bufferPlayed(generation: scheduledGeneration) }
         }
         if !player.isPlaying, pausedAt == nil { player.play() }

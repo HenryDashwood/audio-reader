@@ -27,6 +27,12 @@ struct HearfulApp: App {
             }
             .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
             .task {
+                #if HEARFUL_VOICE_TIMING
+                    if await NaturalVoiceCadenceCheck.runIfRequested() {
+                        auth.bootstrap()
+                        return
+                    }
+                #endif
                 auth.bootstrap()
                 await ObsoleteVoiceCleanup.remove()
                 #if DEBUG

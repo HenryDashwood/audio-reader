@@ -18,6 +18,8 @@ nonisolated struct ArticleScript: Equatable {
         /// Estimated seconds from the start of the article to this chunk.
         let start: TimeInterval
         let duration: TimeInterval
+        /// Distinguishes a paragraph break from a processing split inside one.
+        let endsParagraph: Bool
         var end: TimeInterval { start + duration }
     }
 
@@ -47,7 +49,8 @@ nonisolated struct ArticleScript: Equatable {
             guard paragraphRange.location != NSNotFound else { continue }
             let paragraphText = trimmed as NSString
             var pieceSearchStart = 0
-            for piece in Self.pieces(of: trimmed) {
+            let pieces = Self.pieces(of: trimmed)
+            for (pieceIndex, piece) in pieces.enumerated() {
                 let pieceRemaining = NSRange(
                     location: pieceSearchStart,
                     length: max(paragraphText.length - pieceSearchStart, 0))
@@ -64,7 +67,8 @@ nonisolated struct ArticleScript: Equatable {
                             location: paragraphRange.location + localRange.location,
                             length: localRange.length),
                         start: clock,
-                        duration: seconds))
+                        duration: seconds,
+                        endsParagraph: pieceIndex == pieces.count - 1))
                 clock += seconds
                 pieceSearchStart = NSMaxRange(localRange)
             }

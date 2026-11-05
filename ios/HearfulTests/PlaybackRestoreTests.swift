@@ -71,6 +71,24 @@ struct PlaybackRestoreTests {
         return defaults
     }
 
+    @Test func articleRestorationUsesItsInjectedPreferences() async throws {
+        let defaults = makeDefaults()
+        let api = OneEpisodeAPI()
+        api.storedText = "A short article for an isolated player."
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let article = ArticlePlayer(
+            api: api, cache: OfflineCache(directory: directory),
+            synthesizer: SilentSynthesizer(), defaults: defaults)
+        defer { article.clear() }
+
+        article.restore(episode(id: 104, audio: nil))
+        await article.waitForPendingLoad()
+
+        try #require(article.isReadyToPlay)
+        #expect(defaults.integer(forKey: PlaybackRestore.lastEpisodeKey) == 104)
+    }
+
     @Test func restoresTheRememberedEpisodePaused() async {
         let defaults = makeDefaults()
         PlaybackRestore.remember(episodeID: 104, defaults: defaults)

@@ -1,6 +1,7 @@
 import BackgroundAssets
 import Foundation
 import System
+import os
 
 /// One of the downloadable voice's speakers, by Kokoro's name for it.
 nonisolated struct NaturalVoice: Sendable, Hashable, Identifiable {
@@ -17,6 +18,11 @@ nonisolated struct NaturalVoice: Sendable, Hashable, Identifiable {
 
 /// Where the downloadable voice is, and which of its speakers reads articles.
 nonisolated enum NaturalVoiceStore {
+    /// Materialising an asset-pack URL involves the system service. Once the
+    /// pack is available, identity checks at speech boundaries must use its
+    /// local files rather than repeating every service request on the main actor.
+    private static let resolvedFolder = OSAllocatedUnfairLock<URL?>(initialState: nil)
+
     /// Not "HearfulNaturalVoice", which ObsoleteVoiceCleanup removes on launch.
     static let selectionKey = "HearfulDownloadedVoice"
 
@@ -41,13 +47,16 @@ nonisolated enum NaturalVoiceStore {
                 if isUsable(url) { return url }
             }
         #endif
+        if let cached = resolvedFolder.withLock({ $0 }), isUsable(cached) { return cached }
         // Background Assets lays a file out on disk only once its URL is asked for, so ask for every one: checking
         // the folder after asking for vocab.json alone finds nothing else in it.
         let urls = (requiredFiles + ["voices"]).map { try? AssetPackManager.shared.url(for: FilePath("NaturalVoice/\($0)")) }
         guard let url = urls.first??.deletingLastPathComponent(),
             urls.allSatisfy({ $0?.deletingLastPathComponent() == url })
         else { return nil }
-        return isUsable(url) ? url : nil
+        guard isUsable(url) else { return nil }
+        resolvedFolder.withLock { $0 = url }
+        return url
     }
 
     /// `name` in the voice's folder if it's there. From the asset pack, asks Background Assets first, which is what

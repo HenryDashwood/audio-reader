@@ -515,7 +515,15 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
     func handleRemotePlay() -> MPRemoteCommandHandlerStatus {
         guard currentEpisode != nil else { return .noActionableNowPlayingItem }
         guard !isPlaying else { return .commandFailed }
-        resume()
+        if mode == .article, article.hasPausedSpeech {
+            // Keep the paused voice's queued audio. Reloading discards it and
+            // leaves the engine stopped while fetching and rendering again,
+            // so the system flips back to Play before audio eventually starts.
+            sheTookOver()
+            resumeWithRetries()
+        } else {
+            resume()
+        }
         return .success
     }
 
@@ -530,7 +538,8 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
 
     func handleRemoteToggle() -> MPRemoteCommandHandlerStatus {
         guard currentEpisode != nil else { return .noActionableNowPlayingItem }
-        toggle()
+        if !isPlaying { return handleRemotePlay() }
+        pause()
         return .success
     }
 }

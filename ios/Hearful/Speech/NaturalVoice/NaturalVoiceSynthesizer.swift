@@ -12,15 +12,18 @@ private let log = Logger(subsystem: "com.henrydashwood.hearful", category: "natu
 /// word is reported as it starts, from where the engine says it lands.
 @MainActor
 final class NaturalVoiceSynthesizer: SpeechSynthesizing {
+    typealias RenderedSentence = (NaturalVoiceEngine.Sentence, Int)
+    typealias Renderer = @MainActor (String, Int) async throws -> [RenderedSentence]
+    private typealias Rendering = Task<[RenderedSentence], Error>
+
     weak var delegate: SpeechSynthesizingDelegate?
 
     /// Matches AVSpeechSynthesizer: still speaking while paused.
     private(set) var isSpeaking = false
     private(set) var isPaused = false
 
-    private let folder: URL
-    private let voice: NaturalVoice
-    private let output = NaturalVoiceAudioOutput()
+    private let output: any NaturalVoiceOutput
+    private let renderSentence: Renderer
     private var current: UtteranceID?
     private var renderTask: Task<Void, Never>?
     private var progressTimer: Timer?
@@ -28,15 +31,26 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
     private var words: [(characters: NSRange, samples: Range<Int>)] = []
     private var queuedSamples = 0
     private var reported: NSRange?
-    /// The next chunk, and its first sentence once this chunk is rendered: otherwise the next chunk would wait a second
-    /// or so for the model at every chunk boundary, a much longer pause than the one between sentences.
+    /// Render one chunk ahead while the current audio plays. Preparing only
+    /// its first sentence leaves too little time to render a long second
+    /// sentence after a short first one, especially on a model size's first use.
     private var nextText: String?
-    private var prepared: (text: String, first: Task<[(NaturalVoiceEngine.Sentence, Int)], Error>)?
+    private var prepared: (text: String, sentences: [Rendering])?
+    private var activePreparation: [Rendering] = []
     private var renderedCurrent = false
+    private var paragraphPauseSamples = 0
+    /// Added to the model's normal sentence spacing, at the rendered 1× rate.
+    static let additionalParagraphPause: TimeInterval = 0.2
 
-    init(folder: URL, voice: NaturalVoice) {
-        self.folder = folder
-        self.voice = voice
+    init(
+        folder: URL, voice: NaturalVoice,
+        output: (any NaturalVoiceOutput)? = nil, renderSentence: Renderer? = nil
+    ) {
+        self.output = output ?? NaturalVoiceAudioOutput()
+        self.renderSentence = renderSentence ?? { text, offset in
+            let engine = try await Self.engine(folder: folder, voice: voice).value
+            return try await Self.render(text, at: offset, with: engine)
+        }
     }
 
     // MARK: - SpeechSynthesizing
@@ -52,25 +66,32 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         startProgressTimer()
 
         let pieces = Self.sentences(in: text)
-        let load = Self.engine(folder: folder, voice: voice)
-        let ready = prepared?.text == text ? prepared?.first : nil
-        if ready == nil { prepared?.first.cancel() }
+        let ready = prepared?.text == text ? prepared?.sentences : nil
+        if ready == nil { cancelPreparation() }
+        activePreparation = ready ?? []
         prepared = nil
         nextText = nil
         renderedCurrent = false
-        renderTask = Task { [weak self] in
+        renderTask = Task { [weak self, renderSentence] in
             do {
-                let engine = try await load.value
                 for (index, piece) in pieces.enumerated() {
-                    let rendered = if index == 0, let ready {
-                        try await ready.value
+                    let rendered = if let ready {
+                        try await ready[index].value
                     } else {
-                        try await Self.render(piece.text, at: piece.offset, with: engine)
+                        try await renderSentence(piece.text, piece.offset)
                     }
                     for (sentence, offset) in rendered {
                         guard !Task.isCancelled, let self, self.current == id else { return }
                         try self.enqueue(sentence, at: offset)
                     }
+                }
+                if !Task.isCancelled, let self, self.current == id, self.paragraphPauseSamples > 0 {
+                    // Queue silence with the speech so pause, resume and speed
+                    // changes apply to it without a separate timer or state change.
+                    try self.enqueue(
+                        NaturalVoiceEngine.Sentence(
+                            samples: [Float](repeating: 0, count: self.paragraphPauseSamples), words: []),
+                        at: 0)
                 }
             } catch is CancellationError {
                 return
@@ -78,26 +99,52 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
                 log.error("Natural voice could not read a chunk: \(error.localizedDescription, privacy: .public)")
             }
             guard !Task.isCancelled, let self, self.current == id else { return }
-            self.output.finishEnqueueing()  // Also after a failure, so the reader moves on rather than stalls
             self.renderedCurrent = true
             self.prepareNext()
+            // May synchronously finish this chunk and start another one.
+            self.output.finishEnqueueing()  // Also after a failure, so the reader moves on rather than stalls
         }
     }
 
     func prepare(_ text: String) {
+        prepare(text, startsNewParagraph: false)
+    }
+
+    func prepare(_ text: String, startsNewParagraph: Bool) {
         nextText = text
+        paragraphPauseSamples = startsNewParagraph
+            ? Int(Self.additionalParagraphPause * NaturalVoiceEngine.sampleRate) : 0
         if renderedCurrent { prepareNext() }
     }
 
-    /// Renders the next chunk's first sentence, after this chunk's so it never delays them.
+    /// Start each sentence in order, after the current chunk is rendered.
+    /// Separate tasks let playback consume the first ready sentence without
+    /// waiting for the rest of the preparation to finish.
     private func prepareNext() {
-        guard let text = nextText, prepared?.text != text, let first = Self.sentences(in: text).first else { return }
-        let load = Self.engine(folder: folder, voice: voice)
-        prepared = (text, Task { try await Self.render(first.text, at: first.offset, with: load.value) })
+        guard let text = nextText, prepared?.text != text else { return }
+        cancelPreparation()
+        var previous: Rendering?
+        let sentences = Self.sentences(in: text).map { piece in
+            let before = previous
+            let rendering = Task { [renderSentence] in
+                if let before { _ = try await before.value }
+                try Task.checkCancellation()
+                return try await renderSentence(piece.text, piece.offset)
+            }
+            previous = rendering
+            return rendering
+        }
+        prepared = (text, sentences)
+    }
+
+    private func cancelPreparation() {
+        prepared?.sentences.forEach { $0.cancel() }
+        prepared = nil
     }
 
     func stopSpeaking(at boundary: AVSpeechBoundary) {
         reset()
+        cancelPreparation()
     }
 
     func pauseSpeaking(at boundary: AVSpeechBoundary) {
@@ -199,7 +246,7 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
             ))
         }
         queuedSamples += sentence.samples.count
-        try output.enqueue(sentence.samples)
+        try output.enqueue(sentence.samples, continuesToNextChunk: nextText != nil)
     }
 
     // MARK: - Progress
@@ -230,6 +277,11 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
     private func reset() {
         renderTask?.cancel()
         renderTask = nil
+        activePreparation.forEach { $0.cancel() }
+        activePreparation = []
+        nextText = nil
+        renderedCurrent = false
+        paragraphPauseSamples = 0
         progressTimer?.invalidate()
         progressTimer = nil
         output.stop()

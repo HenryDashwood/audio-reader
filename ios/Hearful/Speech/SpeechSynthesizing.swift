@@ -17,10 +17,12 @@ protocol SpeechSynthesizing: AnyObject {
     func continueSpeaking()
     /// The text likely to be spoken next, so a synthesiser that is slow to start can get it ready.
     func prepare(_ text: String)
+    func prepare(_ text: String, startsNewParagraph: Bool)
 }
 
 extension SpeechSynthesizing {
     func prepare(_ text: String) {}
+    func prepare(_ text: String, startsNewParagraph: Bool) { prepare(text) }
 }
 
 /// What speech comes out of when nothing has been named.
@@ -36,6 +38,13 @@ enum SpeechSynthesizers {
             return NaturalVoiceSynthesizer(folder: natural.folder, voice: natural.voice)
         }
         return SystemSpeechSynthesizer()
+    }
+
+    /// Start loading the selected natural voice while article text and shared
+    /// bookmarks are fetched. This only loads models; it never starts audio.
+    static func warmUp() {
+        guard !TestEnvironment.isRunningTests, let natural = NaturalVoiceStore.selected() else { return }
+        _ = NaturalVoiceSynthesizer.engine(folder: natural.folder, voice: natural.voice)
     }
 
     /// Which synthesiser `make()` would give now. ArticlePlayer compares it before each chunk, so a voice chosen in

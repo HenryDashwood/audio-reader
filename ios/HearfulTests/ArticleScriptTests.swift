@@ -34,6 +34,14 @@ struct ArticleScriptTests {
         #expect(words == 10 * sentence.split(separator: " ").count)
     }
 
+    @Test func processingSplitsDoNotBecomeParagraphBreaks() throws {
+        let paragraph = String(repeating: "A sentence long enough to split this paragraph into several chunks. ", count: 12)
+        let script = ArticleScript(text: paragraph + "\n\n   \n\nThe next paragraph.")
+        try #require(script.chunks.count > 2)
+        #expect(script.chunks.dropLast(2).allSatisfy { !$0.endsParagraph })
+        #expect(script.chunks.suffix(2).allSatisfy { $0.endsParagraph })
+    }
+
     @Test func indexMapsTimesBackToChunks() {
         let script = ArticleScript(text: "One two three.\n\nFour five six.\n\nSeven eight nine.")
 

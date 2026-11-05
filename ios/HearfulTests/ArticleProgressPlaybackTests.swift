@@ -1,4 +1,6 @@
+import Combine
 import Foundation
+import MediaPlayer
 import Testing
 @testable import Hearful
 
@@ -95,6 +97,91 @@ struct ArticleProgressPlaybackTests {
     private func loaded(_ player: ArticlePlayer) async throws {
         await player.waitForPendingLoad()
         try #require(player.isReadyToPlay); try #require(player.loadingError == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func remoteResumeContinuesPausedSpeechWithoutReloadingOrPublishingAPausedState(toggle: Bool) async throws {
+        let api = BookmarkPlaybackAPI()
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let synth = SilentSynthesizer()
+        let article = ArticlePlayer(
+            api: api, cache: OfflineCache(directory: directory), synthesizer: synth,
+            progressScope: { nil }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
+        var publishedRates: [Double] = []
+        let coordinator = PlaybackCoordinator(
+            audio: AudioPlayer(), article: article,
+            nowPlaying: NowPlayingPublisher { info in
+                if let rate = info?[MPNowPlayingInfoPropertyPlaybackRate] as? Double {
+                    publishedRates.append(rate)
+                }
+            })
+        defer { coordinator.clear() }
+        try coordinator.play(try await api.episode(id: 1))
+        try await loaded(article)
+        synth.speak(range: NSRange(location: 8, length: 2))
+        #expect(coordinator.handleRemotePause() == .success)
+        let context = try #require(article.progressContext)
+        let position = article.currentTime
+        let location = article.spokenLocation
+        let spokenCount = synth.spoken.count
+        #expect(synth.isPaused)
+        var drained = false
+        article.progressDrain = { drained = true }
+        await api.setOffline(true)
+        publishedRates.removeAll()
+        var playingStates: [Bool] = []
+        let subscription = coordinator.$isPlaying.dropFirst().sink { playingStates.append($0) }
+        defer { subscription.cancel() }
+
+        let result = toggle ? coordinator.handleRemoteToggle() : coordinator.handleRemotePlay()
+        await article.waitForPendingLoad()
+
+        #expect(result == .success)
+        #expect(coordinator.isPlaying)
+        #expect(!synth.isPaused)
+        #expect(!drained)
+        #expect(synth.spoken.count == spokenCount)
+        #expect(article.progressContext?.playbackID == context.playbackID)
+        #expect(article.currentTime == position)
+        #expect(article.spokenLocation == location)
+        #expect(!playingStates.isEmpty && playingStates.allSatisfy { $0 })
+        #expect(!publishedRates.isEmpty && publishedRates.allSatisfy { $0 > 0 })
+        #expect(coordinator.handleRemotePause() == .success)
+        #expect(!coordinator.isPlaying)
+        #expect(synth.isPaused)
+    }
+
+    @Test(arguments: [false, true])
+    func resumingARestoredArticleStillRefreshesTheSharedBookmark(remote: Bool) async throws {
+        let api = BookmarkPlaybackAPI()
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let synth = SilentSynthesizer()
+        let article = ArticlePlayer(
+            api: api, cache: OfflineCache(directory: directory), synthesizer: synth,
+            progressScope: { nil }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
+        let coordinator = PlaybackCoordinator(audio: AudioPlayer(), article: article)
+        defer { coordinator.clear() }
+        coordinator.restore(try await api.episode(id: 1))
+        try await loaded(article)
+        #expect(!article.hasPausedSpeech)
+        #expect(synth.spoken.isEmpty)
+        let offset = (api.body as NSString).range(of: "Another").location
+        await api.setBookmark(offset, revision: String(repeating: "c", count: 64))
+
+        if remote {
+            #expect(coordinator.handleRemotePlay() == .success)
+        } else {
+            coordinator.resume()
+        }
+        try await loaded(article)
+
+        #expect(synth.lastSpoken?.hasPrefix("Another") == true)
+        #expect(article.progressContext?.offsetUTF16 == offset)
+        #expect(coordinator.isPlaying)
     }
 
     @Test(arguments: [true, false])

@@ -199,6 +199,10 @@ utterance. It captures the outgoing episode, content version and coordinate befo
 switching or clearing playback. Completion records the final text length. A
 modern article cannot also send a legacy position or completion write.
 
+When speech is paused, lock-screen and accessory Play/toggle commands continue
+its queued audio and retain the current playback session. After an app restart,
+or when choosing Play in the app, the shared bookmark is refreshed as above.
+
 The small atomic journal is outside disposable caches, excluded from backup, and
 scoped by a fingerprint of the server and signed-in session. Samples are persisted
 every three seconds and on pause, seek, backgrounding, switching and completion;

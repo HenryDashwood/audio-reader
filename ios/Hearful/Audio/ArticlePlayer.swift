@@ -186,6 +186,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// A refused audio-session activation is retriable by the coordinator.
     var isStuckAfterPlayRequest: Bool { wantsPlayback && script != nil && !isPlaying }
 
+    /// A live speech queue can continue immediately without reloading text.
+    var hasPausedSpeech: Bool { synthesizer.isPaused && !needsInterruptionRecovery }
+
     func resume() {
         guard let episode = currentEpisode else { return }
         wantsPlayback = true
@@ -307,7 +310,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         let resumeAt = episode.completed == true ? 0 : (episode.positionSeconds ?? 0)
         currentTime = resumeAt > 5 ? resumeAt : 0
         duration = 0
-        PlaybackRestore.remember(episode)
+        PlaybackRestore.remember(episode, defaults: defaults)
+
+        if andPlay { SpeechSynthesizers.warmUp() }
 
         loadTask = Task { [weak self, api, cache, loadDeadlineSleep] in
             guard !Task.isCancelled else { return }
@@ -387,7 +392,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
             currentEpisode?.completed = false
         }
         currentEpisode?.contentID = article.contentID
-        if let episode = currentEpisode { PlaybackRestore.remember(episode) }
+        if let episode = currentEpisode { PlaybackRestore.remember(episode, defaults: defaults) }
         sourceUTF16 = Array(article.text.utf16)
         let loaded = ArticleScript(text: article.text)
         if let progress = article.articleProgress {
@@ -480,7 +485,11 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         utterance.postUtteranceDelay = 0.15
         currentUtterance = ObjectIdentifier(utterance)
         synthesizer.speak(utterance)
-        if chunkIndex + 1 < script.chunks.count { synthesizer.prepare(script.chunks[chunkIndex + 1].text) }
+        if chunkIndex + 1 < script.chunks.count {
+            synthesizer.prepare(
+                script.chunks[chunkIndex + 1].text,
+                startsNewParagraph: script.chunks[chunkIndex].endsParagraph)
+        }
         progressContext?.hasPlayed = true
         isPlaying = true
         publishProgress(flush: false)

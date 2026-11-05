@@ -165,6 +165,36 @@ The expanded action catalog and device acceptance checks are in [Siri and Shortc
 - [ ] Play something you have already finished → starts from the beginning, not the outro
 - [ ] ⏱️ Let an episode run to the very end → a short tone and a buzz, then silence. **Nothing plays automatically afterwards**
 
+### Measuring natural voice cadence on a phone
+
+For a local **Release** device build, add `HEARFUL_VOICE_TIMING` to
+`SWIFT_ACTIVE_COMPILATION_CONDITIONS`, then launch with `HEARFUL_VOICE_TIMING=1`.
+This opt-in harness runs cached fixture text through the real `ArticlePlayer`,
+using isolated preferences and caches. It records the output mixer, not the
+microphone, and writes `tmp/natural-voice-cadence-{1,2}.{wav,json}` in the app
+container. Pass 1 includes model startup; pass 2 reuses the loaded models.
+Ordinary builds exclude the harness and audio tap. Reinstall and launch the
+ordinary Release build after collecting the recordings.
+
+On 3 November 2026, an iOS 27.2 phone using Puck at 1× reproduced passage gaps
+of 1.91 seconds in the full article path. Caching the resolved asset-pack folder
+reduced them to 0.29–0.31 seconds, with warm startup falling from 1.89 to 0.34
+seconds. The underlying voice output also required handing continuing chunks
+over at `.dataRendered`: waiting for `.dataPlayedBack` added about 0.3 seconds
+at each boundary even with all audio prepared. The final chunk still waits for
+playback completion. Recorded voiced duration was unchanged across the fix.
+Cold startup remained about 2.8 seconds, with a 1.7-second rendering stall after
+the short first sentence; these are separate from the recurring boundary gap.
+Recordings and reports from this run are in ignored `build/natural-voice-timing/`.
+
+Paragraph breaks subsequently gained 0.2 seconds of additional queued silence
+at 1×. Puck recordings measured paragraph pauses of 0.49–0.51 seconds, compared
+with 0.24 seconds between sentences. Processing splits inside a long paragraph
+do not receive this addition, and there is no added pause at the article's end.
+The pause scales with playback speed and remains part of the resumable audio
+queue. These recordings are `paragraph-{cold,warm}.json` and `paragraph-warm.wav`
+in the same evidence directory.
+
 ### Lock screen and elsewhere
 
 - [ ] 📱 Lock the phone → title and artwork on the lock screen, controls work
