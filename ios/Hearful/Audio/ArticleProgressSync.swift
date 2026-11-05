@@ -13,6 +13,8 @@ final class ArticleProgressSync {
     private var active = true
     private var cancellables: Set<AnyCancellable> = []
     private var upload: Task<Void, Never>?
+    /// A report arrived while another was being sent, typically the completion just after the last position.
+    private var retryAfterUpload = false
     private var lastDiskWrite = Date.distantPast
     private var lastUpload = Date.distantPast
 
@@ -73,11 +75,23 @@ final class ArticleProgressSync {
         catch { player.progressError = "Your listening progress could not be updated." }
     }
     func retry() {
-        guard valid, let owner, upload == nil else { return }
+        guard valid, let owner else { return }
+        guard upload == nil else {
+            // Otherwise the completion waited up to 30 seconds for the timer, long enough for Latest to reload
+            // from the server and show the finished article again.
+            retryAfterUpload = true
+            return
+        }
         lastUpload = Date()
         upload = Task { [weak self] in
             guard let self else { return }
-            defer { self.upload = nil }
+            defer {
+                self.upload = nil
+                if self.retryAfterUpload {
+                    self.retryAfterUpload = false
+                    self.retry()
+                }
+            }
             do {
                 var observed: ArticleProgressState?
                 var observedPlayback: UUID?
@@ -112,7 +126,16 @@ final class ArticleProgressSync {
                                 completed: receipt.episode.completed ?? false, durationSeconds: nil, contentID: receipt.episode.contentID))
                         }
                         self.player.progressError = "This article changed on another device. Its newer progress was kept. Choose Play again to continue here."
-                    } else { self.player.progressError = nil }
+                    } else {
+                        self.player.progressError = nil
+                        // The lists may have reloaded from the server between this article finishing and
+                        // the server accepting it; the server's word now takes it off them.
+                        if receipt.episode.completed == true {
+                            NotificationCenter.default.post(name: .hearfulPositionReported, object: PositionReport(
+                                episodeID: receipt.episode.id, seconds: receipt.episode.positionSeconds ?? 0,
+                                completed: true, durationSeconds: nil, contentID: receipt.episode.contentID))
+                        }
+                    }
                 })
             } catch is CancellationError { }
             catch {

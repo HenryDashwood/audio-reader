@@ -254,6 +254,32 @@ struct ArticleReaderTests {
         #expect(player.isPlaying)
     }
 
+    /// Resuming reloads the text; the bar must not jump to the end while it does.
+    @Test func resumingKeepsTheArticleLengthWhileTheTextReloads() async {
+        let cache = makeCache()
+        cache.save(
+            EpisodeText(episodeID: 7, title: "An article", text: article),
+            for: .articleText(episodeID: 7))
+        let synthesizer = SilentSynthesizer()
+        let player = ArticlePlayer(
+            api: FailingAPI(), cache: cache, synthesizer: synthesizer)
+        let episode = Episode(
+            id: 7, title: "An article", description: nil, audioURL: nil,
+            durationSeconds: nil, publishedAt: nil, link: nil, imageURL: nil,
+            positionSeconds: nil, completed: nil, hasText: true)
+        player.play(episode)
+        for _ in 0..<100 where synthesizer.lastSpoken == nil {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        let length = player.duration
+        #expect(length > 0)
+        player.pause()
+
+        player.play(episode)
+
+        #expect(player.duration == length)
+    }
+
     @Test func aSavedFeedTeaserIsRefreshedBeforeItIsRead() async {
         let cache = makeCache()
         cache.save(

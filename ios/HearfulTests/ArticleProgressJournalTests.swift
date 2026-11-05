@@ -51,6 +51,22 @@ struct ArticleProgressJournalTests {
         try await reopened.flush(owner: a, valid: { true }, send: { _, report in #expect(report == tail); return receipt(c) })
         #expect(try reopened.entries(owner: a).first?.pending == nil)
     }
+    /// Latest reloading between an article finishing and the server accepting it showed the article again.
+    @Test func aCompletionIsUnconfirmedUntilTheServerAcceptsIt() async throws {
+        let journal = ArticleProgressJournal(store: BookmarkMemoryStorage()); let playback = UUID()
+        try journal.start(owner: a, episodeID: 1, playbackID: playback, progress: state(a), sample: sample(0))
+        try journal.record(owner: a, episodeID: 1, playbackID: playback, sample: sample(10))
+        #expect(journal.unconfirmedCompletions(owner: a).isEmpty)
+        // The finish lands while the earlier position is still the pending report.
+        try journal.record(owner: a, episodeID: 1, playbackID: playback, sample: sample(100, completed: true))
+        #expect(journal.unconfirmedCompletions(owner: a) == [1])
+        try await journal.flush(owner: a, valid: { true }, send: { _, _ in receipt(b) })
+        #expect(journal.unconfirmedCompletions(owner: a) == [1])
+        try await journal.flush(owner: a, valid: { true }, send: { _, report in
+            #expect(report.completed); return receipt(c)
+        })
+        #expect(journal.unconfirmedCompletions(owner: a).isEmpty)
+    }
     @Test func completionCannotBeUndoneByALatePauseAndNewerFilingBlocksTheOldClock() async throws {
         let journal = ArticleProgressJournal(store: BookmarkMemoryStorage()); let playback = UUID()
         try journal.start(owner: a, episodeID: 1, playbackID: playback, progress: state(a), sample: sample(0))

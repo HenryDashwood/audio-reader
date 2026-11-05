@@ -226,6 +226,16 @@ struct LatestFilingTests {
         #expect(titles(model) == [7102])
     }
 
+    @Test func anArticleFinishedHereStaysOffUntilTheServerCatchesUp() async {
+        // The server still says unplayed: its completion upload has not landed yet.
+        let api = FilingAPI()
+        api.episodes = [episode(id: 7107), episode(id: 7108)]
+        let model = LatestModel(api: api, cache: makeCache(), unconfirmedArticleCompletions: { [7107] })
+        await model.load()
+
+        #expect(titles(model) == [7108])
+    }
+
     @Test func aDismissalTakesTheRowTooo() async {
         let (model, _) = await makeModel([episode(id: 7103), episode(id: 7104)])
 

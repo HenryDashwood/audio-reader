@@ -199,6 +199,7 @@ final class LatestModel: ObservableObject {
     @Published private(set) var state: State = .loading
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
+    private let unconfirmedArticleCompletions: () -> Set<Int>
 
     var availableEpisodes: [Episode] {
         switch state {
@@ -209,10 +210,14 @@ final class LatestModel: ObservableObject {
 
     init(
         api: HearfulAPIProtocol = HearfulAPI(),
-        cache: OfflineCache = .shared
+        cache: OfflineCache = .shared,
+        unconfirmedArticleCompletions: @escaping () -> Set<Int> = {
+            ShortcutScope.current.map { ArticleProgressJournal.shared.unconfirmedCompletions(owner: $0) } ?? []
+        }
     ) {
         self.api = api
         self.cache = cache
+        self.unconfirmedArticleCompletions = unconfirmedArticleCompletions
     }
 
     var canClear: Bool {
@@ -330,14 +335,18 @@ final class LatestModel: ObservableObject {
         loading = true
         defer { loading = false }
         let scope = ShortcutScope.current
+        // An article finished here stays off the list until the server has caught up.
+        let finishedHere = unconfirmedArticleCompletions()
         if let cached = cache.load([Episode].self, for: .recentEpisodes) {
-            state = .loaded(OfflineLibraryActions.shared.overlay(cached).filter { $0.completed != true && $0.dismissed != true })
+            state = .loaded(OfflineLibraryActions.shared.overlay(cached).filter {
+                $0.completed != true && $0.dismissed != true && !finishedHere.contains($0.id)
+            })
         }
         do {
             let fetched = try await api.recentEpisodes(limit: 50)
             let episodes = OfflineLibraryActions.shared.overlay(fetched).map { episode in
                 scope.map { PodcastProgressJournal.shared.overlay(episode, owner: $0) } ?? episode
-            }.filter { $0.completed != true && $0.dismissed != true }
+            }.filter { $0.completed != true && $0.dismissed != true && !finishedHere.contains($0.id) }
             guard !Task.isCancelled, ShortcutScope.current == scope else { return }
             cache.save(episodes, for: .recentEpisodes)
             state = .loaded(episodes)

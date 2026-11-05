@@ -179,33 +179,12 @@ struct NowPlayingView: View {
     }
 
     private var speedControl: some View {
-        Picker(
-            selection: Binding(
-                get: { player.playbackRate },
-                set: { player.setPlaybackRate($0) }
-            ),
-            content: {
-                ForEach(AudioPlayer.playbackRates, id: \.self) { rate in
-                    Text(speedLabel(rate)).tag(rate)
-                }
-            }
-        ) {
-            Text(speedLabel(player.playbackRate))
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .background(.quaternary, in: Capsule())
-                .contentShape(Capsule())
-        }
-        // Picker gives the system menu one stable selection binding instead
-        // of rebuilding its Button rows while a tap is being completed.
-        .pickerStyle(.menu)
-        .accessibilityLabel("Playback speed")
-        .accessibilityValue(spokenSpeed(player.playbackRate))
-        // The new rate is audible only once playback advances far enough to
-        // make the difference obvious. A light selection tick confirms the
-        // option landed immediately, including while the episode is paused.
-        .sensoryFeedback(.selection, trigger: player.playbackRate)
+        // Its own Equatable view so it redraws only when the speed changes. This
+        // screen redraws several times a second with the position and the
+        // spoken word, and each redraw rebuilt the open menu, which swallowed
+        // the first tap on a speed.
+        SpeedMenu(rate: player.playbackRate, setRate: { player.setPlaybackRate($0) })
+            .equatable()
     }
 
     private var sleepControl: some View {
@@ -250,17 +229,46 @@ struct NowPlayingView: View {
         guard let remaining = sleepTimer.remaining else { return "Sleep" }
         return "\(max(1, Int(ceil(remaining / 60)))) min"
     }
+}
 
-    private func speedLabel(_ rate: Float) -> String {
-        // "1×", "1.5×" — trailing zeros stripped so the chip stays narrow.
+/// The playback speed chip and its menu of rates.
+private struct SpeedMenu: View, Equatable {
+    let rate: Float
+    let setRate: (Float) -> Void
+
+    nonisolated static func == (lhs: SpeedMenu, rhs: SpeedMenu) -> Bool { lhs.rate == rhs.rate }
+
+    var body: some View {
+        Picker(
+            selection: Binding(get: { rate }, set: setRate),
+            content: {
+                ForEach(AudioPlayer.playbackRates, id: \.self) { rate in
+                    Text(Self.label(rate)).tag(rate)
+                }
+            }
+        ) {
+            Text(Self.label(rate))
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(.quaternary, in: Capsule())
+                .contentShape(Capsule())
+        }
+        .pickerStyle(.menu)
+        .accessibilityLabel("Playback speed")
+        .accessibilityValue(rate == 1 ? "Normal speed" : "\(String(format: "%g", rate)) times speed")
+        // The new rate is audible only once playback advances far enough to
+        // make the difference obvious. A light selection tick confirms the
+        // option landed immediately, including while the episode is paused.
+        .sensoryFeedback(.selection, trigger: rate)
+    }
+
+    /// "1×", "1.5×": trailing zeros stripped so the chip stays narrow.
+    private static func label(_ rate: Float) -> String {
         let number =
             rate.truncatingRemainder(dividingBy: 1) == 0
             ? String(Int(rate)) : String(format: "%g", rate)
         return "\(number)×"
-    }
-
-    private func spokenSpeed(_ rate: Float) -> String {
-        rate == 1 ? "Normal speed" : "\(String(format: "%g", rate)) times speed"
     }
 }
 

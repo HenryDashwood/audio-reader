@@ -296,6 +296,11 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     func waitForPendingLoad() async { await loadTask?.value }
 
     private func load(_ episode: Episode, andPlay: Bool) {
+        // Resuming reloads the text to reconcile its bookmark. Its length is
+        // already known; zeroing it until the reload lands showed the saved
+        // position against a zero-length article, the bar pinned to the end.
+        let sameText = script != nil && episode.id == currentEpisode?.id
+            && episode.contentID == currentEpisode?.contentID
         loadTask?.cancel()
         deactivate()
         wantsPlayback = andPlay
@@ -309,7 +314,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         // and not for the first few seconds.
         let resumeAt = episode.completed == true ? 0 : (episode.positionSeconds ?? 0)
         currentTime = resumeAt > 5 ? resumeAt : 0
-        duration = 0
+        if !sameText { duration = 0 }
         PlaybackRestore.remember(episode, defaults: defaults)
 
         if andPlay { SpeechSynthesizers.warmUp() }

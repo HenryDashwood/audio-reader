@@ -100,6 +100,12 @@ final class ArticleProgressJournal {
     init(store: any ArticleProgressStorage = FileArticleProgressStorage.shared) { self.store = store }
 
     func entries(owner: String) throws -> [QueuedArticleProgress] { try store.read(owner: owner) }
+    /// Articles finished here whose completion the server has not yet accepted. A list fetched in that gap still
+    /// offers them as unplayed; nothing would correct it until the next fetch after the upload lands.
+    func unconfirmedCompletions(owner: String) -> Set<Int> {
+        Set(((try? entries(owner: owner)) ?? []).filter { !$0.blocked && $0.latest.completed && $0.pending != nil }
+            .map(\.episodeID))
+    }
     func clear(owner: String) throws { try store.write(owner: owner, entries: []) }
     func start(owner: String, episodeID: Int, playbackID: UUID, progress: ArticleProgressState,
                sample: ArticleProgressSample) throws {
