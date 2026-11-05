@@ -33,7 +33,7 @@ All host/platform decisions for browser capture live in `capture_policy.js`:
 
 | Policy | Evidence and scope |
 | --- | --- |
-| Substack identity | Platform hostname or its application bundle on the loaded page; only known navigation flags on `/p/` paths are ignored. |
+| Substack identity | Platform hostname or its application bundle on the loaded page; only known navigation flags and the parameters Substack adds to email links (`publication_id`, `post_id`, `isFreemail`, `r`, each in its own value shape) on `/p/` paths are ignored. Elsewhere only `utm_*`, `fbclid`, `gclid`, `mc_cid` and `mc_eid` are. |
 | Ghost membership | Generator metadata plus a visible gate; general visible access-instruction checks also cover unfamiliar themes. |
 | General membership | A visible access instruction and action inside content or a dialog. Generic newsletter invitations, hidden templates, quoted instructions, and paid-content metadata alone are insufficient. |
 | Failed navigation recovery | Only a rejected main-frame GET with HTTP 400 and the exact structured query-validation error for repeated `open=false`; no publication hostname checks or blanket query normalization. |

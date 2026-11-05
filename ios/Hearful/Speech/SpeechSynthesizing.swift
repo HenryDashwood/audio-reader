@@ -70,6 +70,13 @@ protocol SpeechSynthesizingDelegate: AnyObject {
     /// range, rather than reducing it to a percentage here, lets the article
     /// on screen follow the actual word as well as the playback clock.
     func speechProgressed(to range: NSRange, of utterance: UtteranceID)
+    /// The utterance can no longer be heard and will never finish: the audio
+    /// output died under it. The reader has to start it again on a new one.
+    func speechFailed(_ utterance: UtteranceID)
+}
+
+extension SpeechSynthesizingDelegate {
+    func speechFailed(_ utterance: UtteranceID) {}
 }
 
 /// The real thing: AVSpeechSynthesizer, with its delegate callbacks brought

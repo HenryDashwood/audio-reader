@@ -192,7 +192,10 @@ struct BrowserCaptureReliabilityTests {
             let raw = try resource("inline-charts").replacingOccurrences(of: "https://example.com/charts", with: canonical)
                 .replacingOccurrences(of: "</head>", with: #"<script type="text/plain" src="https://substackcdn.com/bundle/static/js/main.js"></script></head>"#)
             for query in ["open=false", "triedRedirect=true", "utm_campaign=posts-open-in-app&triedRedirect=true",
-                          "open=false&triedRedirect=true&utm_source=share", "triedRedirect=true&triedRedirect=true&open=false"] {
+                          "open=false&triedRedirect=true&utm_source=share", "triedRedirect=true&triedRedirect=true&open=false",
+                          // A link from one of Substack's emails, as shared from Safari.
+                          "utm_source=post-email-title&publication_id=747616&post_id=223136646&utm_campaign=email-post-title"
+                              + "&isFreemail=true&r=3o9&triedRedirect=true&utm_medium=email"] {
                 let url = canonical + "?" + query
                 let result = try await capture(raw, url: url)
                 #expect(result["url"] == url)
@@ -203,6 +206,8 @@ struct BrowserCaptureReliabilityTests {
             for address in [canonical + "?open=false&page=2", canonical + "?open=true",
                             canonical + "?triedRedirect=true&page=2", canonical + "?triedRedirect=false",
                             canonical + "?triedRedirect=true&triedRedirect=false",
+                            canonical + "?post_id=223136646&page=2", canonical + "?post_id=story",
+                            canonical + "?isFreemail=maybe", canonical + "?r=not/a-code",
                             "https://\(host)/p/different?open=false", "https://other.substack.com/p/story?open=false"] {
                 let rejected = try await capture(raw, url: address)
                 #expect(rejected["html"] == "")
@@ -214,6 +219,11 @@ struct BrowserCaptureReliabilityTests {
         #expect(rejected["html"] == "")
         let otherRedirect = try await capture(other, url: "https://example.com/charts?triedRedirect=true")
         #expect(otherRedirect["html"] == "")
+        // Substack's email parameters mean nothing to another site.
+        let otherEmail = try await capture(other, url: "https://example.com/charts?post_id=1&r=abc")
+        #expect(otherEmail["html"] == "")
+        let mailchimp = try await capture(other, url: "https://example.com/charts?mc_cid=abc123&mc_eid=def456")
+        #expect(mailchimp["contentFormat"] == "article")
     }
 
     @Test func customSubstackDetectionRequiresItsApplicationBundle() async throws {

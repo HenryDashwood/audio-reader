@@ -75,6 +75,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     private let activateAudioSession: @MainActor () throws -> Void
     private let loadDeadlineSleep: @MainActor @Sendable (Duration) async throws -> Void
     private var needsInterruptionRecovery = false
+    /// Output failures since a word was last heard. One fresh engine is worth
+    /// trying; if that one fails too, stop and say so rather than loop silently.
+    private var failuresWithoutProgress = 0
     /// Which voice `synthesizer` reads with; when Settings changes it, the next chunk gets a new synthesiser.
     private var synthesizerIdentity = SpeechSynthesizers.identity()
     private let api: HearfulAPIProtocol
@@ -537,6 +540,27 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         progressed(to: range, of: utterance)
     }
 
+    func speechFailed(_ utterance: UtteranceID) {
+        guard utterance == currentUtterance, wantsPlayback, script != nil else { return }
+        failuresWithoutProgress += 1
+        let log = Logger(subsystem: "com.henrydashwood.hearful", category: "playback")
+        // Rebuild the synthesiser, as after an interruption: its audio engine
+        // is the thing that died. The passage restarts from its beginning.
+        needsInterruptionRecovery = true
+        guard failuresWithoutProgress <= 1 else {
+            log.error("Speech output failed again without progress; pausing")
+            failuresWithoutProgress = 0
+            currentUtterance = nil
+            wantsPlayback = false
+            isPlaying = false
+            publishProgress(flush: true)
+            feedback.play(.failure)
+            return
+        }
+        log.error("Speech output failed; restarting the passage on a new synthesiser")
+        speakCurrentChunk()
+    }
+
     private func chunkFinished(_ finished: ObjectIdentifier) {
         guard finished == currentUtterance, wantsPlayback, let script else { return }
         chunkIndex += 1
@@ -564,6 +588,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         guard speaking == currentUtterance, isPlaying, !isScrubbing,
             let episode = currentEpisode, let script, chunkIndex < script.chunks.count
         else { return }
+        failuresWithoutProgress = 0
         let chunk = script.chunks[chunkIndex]
         let utteranceLength = (chunk.text as NSString).length
         let location = min(max(range.location, 0), utteranceLength)

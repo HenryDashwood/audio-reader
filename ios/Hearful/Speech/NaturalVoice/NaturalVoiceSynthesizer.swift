@@ -39,14 +39,21 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
     private var activePreparation: [Rendering] = []
     private var renderedCurrent = false
     private var paragraphPauseSamples = 0
+    /// How long queued speech may sit without the clock moving before the
+    /// output is taken to be dead. Generous: a healthy engine moves every render.
+    private let stallLimit: Duration
+    private var stalledSince: ContinuousClock.Instant?
+    private var lastPosition = 0
     /// Added to the model's normal sentence spacing, at the rendered 1× rate.
     static let additionalParagraphPause: TimeInterval = 0.2
 
     init(
         folder: URL, voice: NaturalVoice,
-        output: (any NaturalVoiceOutput)? = nil, renderSentence: Renderer? = nil
+        output: (any NaturalVoiceOutput)? = nil, renderSentence: Renderer? = nil,
+        stallLimit: Duration = .seconds(4)
     ) {
         self.output = output ?? NaturalVoiceAudioOutput()
+        self.stallLimit = stallLimit
         self.renderSentence = renderSentence ?? { text, offset in
             let engine = try await Self.engine(folder: folder, voice: voice).value
             return try await Self.render(text, at: offset, with: engine)
@@ -63,6 +70,7 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         isSpeaking = true
         output.setRate(Self.speed(forUtteranceRate: utterance.rate))
         output.onDrained = { [weak self] in self?.finished(id) }
+        output.onFailure = { [weak self] in self?.failed(id) }
         startProgressTimer()
 
         let pieces = Self.sentences(in: text)
@@ -155,8 +163,8 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
 
     func continueSpeaking() {
         guard isPaused else { return }
-        output.resume()
         isPaused = false
+        output.resume()  // May report a failure at once if the engine died while paused
     }
 
     // MARK: - Rendering
@@ -259,13 +267,43 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
     }
 
     private func reportProgress() {
-        guard let current, isSpeaking, !isPaused else { return }
+        guard let current, isSpeaking, !isPaused else {
+            stalledSince = nil
+            return
+        }
         let position = output.position
+        if detectStall(at: position) { return }
         guard let word = words.last(where: { $0.samples.lowerBound <= position }), word.characters != reported else {
             return
         }
         reported = word.characters
         delegate?.speechProgressed(to: word.characters, of: current)
+    }
+
+    /// Speech queued, nothing holding it, and the clock stuck: the engine has
+    /// gone without saying so. Without this the reader stayed "playing" in
+    /// silence for ever, the lock screen's clock running on regardless.
+    private func detectStall(at position: Int) -> Bool {
+        guard output.isExpectingSound, position == lastPosition else {
+            lastPosition = position
+            stalledSince = nil
+            return false
+        }
+        let now = ContinuousClock.now
+        guard let since = stalledSince else {
+            stalledSince = now
+            return false
+        }
+        guard now - since >= stallLimit, let current else { return false }
+        log.error("Natural voice output stalled at sample \(position, privacy: .public)")
+        failed(current)
+        return true
+    }
+
+    private func failed(_ id: UtteranceID) {
+        guard current == id else { return }
+        reset()
+        delegate?.speechFailed(id)
     }
 
     private func finished(_ id: UtteranceID) {
@@ -289,6 +327,8 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         words = []
         queuedSamples = 0
         reported = nil
+        stalledSince = nil
+        lastPosition = 0
         isSpeaking = false
         isPaused = false
     }

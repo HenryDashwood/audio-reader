@@ -2803,6 +2803,10 @@ var MagpieCapturePolicy = {
                     });
             },
             navigationFlags: [['open', 'false'], ['triedRedirect', 'true']],
+            // Added to every link in Substack's emails. Only their own shapes of value
+            // are ignored, so a page number or an unfamiliar parameter still counts.
+            emailParameters: [['publication_id', /^[0-9]+$/], ['post_id', /^[0-9]+$/],
+                ['isFreemail', /^(true|false)$/], ['r', /^[A-Za-z0-9]{1,32}$/]],
             articlePath: /^\/p\//,
             gates: '.paywall, .paywall-content, .subscription-widget-wrap[data-paywall]'
         },
@@ -2863,12 +2867,16 @@ var MagpieCapturePolicy = {
         var url = new URL(value, doc.baseURI), current = new URL(doc.URL), profile = this.profile(doc);
         url.hash = '';
         Array.from(url.searchParams.keys()).forEach(function (key) {
-            if (/^utm_|^(fbclid|gclid)$/.test(key)) url.searchParams.delete(key);
+            if (/^utm_|^(fbclid|gclid|mc_cid|mc_eid)$/.test(key)) url.searchParams.delete(key);
         });
         if (profile && profile.navigationFlags && url.origin === current.origin && profile.articlePath.test(url.pathname)) {
             profile.navigationFlags.forEach(function (flag) {
                 var values = url.searchParams.getAll(flag[0]);
                 if (values.length && values.every(function (value) { return value === flag[1]; })) url.searchParams.delete(flag[0]);
+            });
+            (profile.emailParameters || []).forEach(function (parameter) {
+                var values = url.searchParams.getAll(parameter[0]);
+                if (values.length && values.every(function (value) { return parameter[1].test(value); })) url.searchParams.delete(parameter[0]);
             });
         }
         return url.href;
