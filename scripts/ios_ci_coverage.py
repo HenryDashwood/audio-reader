@@ -24,6 +24,7 @@ IOS_TEST_INPUTS = (
     "ios/",
     "app-store/",
     "scripts/ios-dev.sh",
+    "scripts/ios_test_install.py",
     "scripts/build-g2p.sh",
     "native/g2p/",
     "scripts/prepare-ios-simulators.sh",

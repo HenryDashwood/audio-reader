@@ -240,6 +240,10 @@ final class PositionReporter {
                     }
                 }, applied: { receipt in
                     if self.trackedEpisode?.id == receipt.episode.id {
+                        if receipt.changedSinceAcceptance, self.player.currentEpisode?.id == receipt.episode.id,
+                            (try? self.podcastJournal.entries(owner: owner).first { $0.episodeID == receipt.episode.id }?.blocked) == true {
+                            self.player.audio.applyRemotePositionWhilePaused(receipt.episode)
+                        }
                         self.trackedEpisode?.progressRevision = receipt.episode.progressRevision
                         if let episode = self.trackedEpisode {
                             var saved = receipt.changedSinceAcceptance ? receipt.episode : episode

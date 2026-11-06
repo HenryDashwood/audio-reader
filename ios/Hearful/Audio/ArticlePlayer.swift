@@ -683,6 +683,23 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         }
     }
 
+    func applyRemoteBookmarkWhilePaused(_ receipt: ArticleProgressReceipt, playbackID: UUID?) {
+        guard !wantsPlayback, !isPlaying, !isScrubbing,
+            let context = progressContext, context.playbackID == playbackID,
+            context.episodeID == receipt.episode.id, context.progress.contentID == receipt.progress.contentID,
+            context.progress.textVersion == receipt.progress.textVersion,
+            receipt.episode.completed != true, receipt.episode.dismissed != true,
+            let bookmark = receipt.progress.bookmark, bookmark.textVersion == context.progress.textVersion,
+            ArticleScript.isScalarBoundary(bookmark.offsetUTF16, inUTF16: sourceUTF16),
+            let script, let index = script.index(atUTF16: bookmark.offsetUTF16)
+        else { return }
+        // Discard the paused utterance so lock-screen Play cannot continue its old word.
+        cancelSpeech()
+        chunkIndex = index
+        currentTime = script.chunks[index].start
+        publishChunkStart(index, in: script)
+    }
+
     private func publishProgress(flush: Bool) {
         guard let context = progressContext, context.hasPlayed else { return }
         progressEvents.send(.sample(context, flush: flush))

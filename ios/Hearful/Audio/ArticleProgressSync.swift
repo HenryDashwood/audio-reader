@@ -34,6 +34,9 @@ final class ArticleProgressSync {
                 self.retry()
             }
         }.store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .hearfulRetryOffline).sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.retry() }
+        }.store(in: &cancellables)
         Timer.publish(every: 30, on: .main, in: .common).autoconnect().sink { [weak self] _ in
             MainActor.assumeIsolated { self?.retry() }
         }.store(in: &cancellables)
@@ -121,6 +124,7 @@ final class ArticleProgressSync {
                     self.player.acceptArticleProgress(receipt, replacing: observed, playbackID: observedPlayback)
                     if receipt.changedSinceAcceptance {
                         if (try? self.journal.entries(owner: owner).first { $0.episodeID == receipt.episode.id }?.blocked) == true {
+                            self.player.applyRemoteBookmarkWhilePaused(receipt, playbackID: observedPlayback)
                             NotificationCenter.default.post(name: .hearfulPositionReported, object: PositionReport(
                                 episodeID: receipt.episode.id, seconds: receipt.episode.positionSeconds ?? 0,
                                 completed: receipt.episode.completed ?? false, durationSeconds: nil, contentID: receipt.episode.contentID))

@@ -90,6 +90,22 @@ def ios_runner(tmp_path: Path):
         tools / "xcodebuild",
         """
 printf '%s\\n' "$@" > "$FAKE_CALLS/$1.args"
+if [[ -n "${FAKE_INSTALL:-}" && "$1" != build-for-testing ]]; then
+  echo "$*" >> "$FAKE_CALLS/attempts"
+  result="${!#}"
+  session="$result/Staging/1_Test/Diagnostics/target/session/Session-HearfulTests.log"
+  mkdir -p "$(dirname "$session")"
+  device="${FAKE_INSTALL_DEVICE:-$IOS_SIMULATOR_ID}"
+  echo "12:00:00 xcodebuild[$$:1] $device: Installing app at path: /app/Magpie.app and options: {" > "$session"
+  case "$FAKE_INSTALL" in
+    always) exec sleep 60 ;;
+    once) [[ -f "$FAKE_CALLS/shutdown.args" ]] || exec sleep 60 ;;
+    completed)
+      echo "12:00:01 xcodebuild[$$:1] $device: Installed app at path: /app/Magpie.app and options: {" >> "$session"
+      ;;
+  esac
+  sleep "${FAKE_AFTER_INSTALL_SLEEP:-0}"
+fi
 if [[ -n "${FAKE_DIAGNOSTIC:-}" ]]; then
   echo "$FAKE_DIAGNOSTIC" >&2
 fi
@@ -113,6 +129,10 @@ exit "${FAKE_TEST_STATUS:-0}"
     _executable(
         tools / "xcrun",
         """
+if [[ "$2" == shutdown ]]; then
+  printf '%s\\n' "$@" > "$FAKE_CALLS/shutdown.args"
+  exit "${FAKE_SHUTDOWN_STATUS:-0}"
+fi
 if [[ "$2" == bootstatus ]]; then
   printf '%s\\n' "$@" > "$FAKE_CALLS/boot.args"
   touch "$FAKE_CALLS/boot-started"
@@ -152,6 +172,7 @@ printf '{}\\n'
     wrapper = sandbox / "scripts" / "ios-dev.sh"
     wrapper.write_bytes((repo / "scripts" / "ios-dev.sh").read_bytes())
     wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
+    shutil.copy(repo / "scripts/ios_test_install.py", sandbox / "scripts")
     (sandbox / "Makefile").write_bytes((repo / "Makefile").read_bytes())
 
     def run(target="ios-test", *, test=None, runtimes=None, devices=None, **overrides):
@@ -240,6 +261,49 @@ def test_phased_failures_fail_make_and_never_test_after_failed_preparation(ios_r
     assert result.returncode != 0
     assert "Error 65" in result.stderr
     assert ("test-without-building" in calls) == (failure == "FAKE_TEST_STATUS")
+
+
+@pytest.mark.parametrize("phased", ["0", "1"])
+def test_stalled_install_reboots_only_target_and_retries_same_tests(ios_runner, tmp_path, phased):
+    result, calls = ios_runner(
+        test="VoiceControllerTests", FAKE_INSTALL="once", IOS_TEST_INSTALL_TIMEOUT="1", IOS_TEST_PREBOOT=phased
+    )
+    assert result.returncode == 0, result.stderr
+    assert calls["shutdown"] == ["simctl", "shutdown", "test-simulator"]
+    assert calls["boot"] == ["simctl", "bootstatus", "test-simulator", "-b"]
+    first, second = (tmp_path / "calls/attempts").read_text().splitlines()
+    assert first.split(" -resultBundlePath ")[0] == second.split(" -resultBundlePath ")[0]
+    assert "-only-testing:HearfulTests/VoiceControllerTests" in second
+    assert first != second  # Independent result bundles preserve the stalled attempt.
+
+
+@pytest.mark.parametrize(
+    ("mode", "shutdown", "attempts", "code"),
+    [
+        ("always", "0", 2, 124),
+        ("once", "17", 1, 17),
+        ("once", "0", 2, 65),
+    ],
+)
+def test_install_recovery_is_bounded_and_preserves_failure(ios_runner, tmp_path, mode, shutdown, attempts, code):
+    result, _ = ios_runner(
+        FAKE_INSTALL=mode, IOS_TEST_INSTALL_TIMEOUT="1", FAKE_SHUTDOWN_STATUS=shutdown, FAKE_TEST_STATUS="65"
+    )
+    assert f"Error {code}" in result.stderr
+    assert len((tmp_path / "calls/attempts").read_text().splitlines()) == attempts
+
+
+@pytest.mark.parametrize(("mode", "device"), [("completed", "test-simulator"), ("pending", "other-device")])
+def test_slow_tests_or_other_simulators_do_not_trigger_recovery(ios_runner, mode, device):
+    result, calls = ios_runner(
+        FAKE_INSTALL=mode,
+        FAKE_INSTALL_DEVICE=device,
+        IOS_TEST_INSTALL_TIMEOUT="1",
+        FAKE_AFTER_INSTALL_SLEEP="3",
+        FAKE_TEST_STATUS="65",
+    )
+    assert "Error 65" in result.stderr
+    assert "shutdown" not in calls
 
 
 def test_formatter_does_not_hide_local_test_failure(ios_runner):

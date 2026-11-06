@@ -461,6 +461,43 @@ struct ArticleProgressPlaybackTests {
         #expect(await api.reportEpisodeIDs().allSatisfy { $0 == 1 })
         #expect(await api.reports().allSatisfy { $0.textVersion == ArticleScript.textVersion(api.body) && $0.contentID == 7 })
     }
+    @Test(arguments: [false, true])
+    func reconnectMovesPausedArticleAndResumesNewPassage(lockScreen: Bool) async throws {
+        let api = BookmarkPlaybackAPI()
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let journal = ArticleProgressJournal(store: FileArticleProgressStorage(directory: directory.appending(path: "journal")))
+        let synth = SilentSynthesizer()
+        let article = ArticlePlayer(api: api, cache: OfflineCache(directory: directory), synthesizer: synth,
+            bookmarkJournal: journal, progressScope: { owner }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
+        let player = PlaybackCoordinator(audio: AudioPlayer(), article: article)
+        let sync = ArticleProgressSync(api: api, player: article)
+        defer { sync.invalidate(); player.clear() }
+        try player.play(await api.row())
+        try await loaded(article)
+        await sync.waitForPendingReports()
+        await api.setOffline(true)
+        synth.speak(range: NSRange(location: 8, length: 2))
+        player.pause()
+        await sync.waitForPendingReports()
+        try #require(try journal.entries(owner: owner).first?.pending != nil)
+        let offset = (api.body as NSString).range(of: "Another").location
+        let script = ArticleScript(text: api.body)
+        let index = try #require(script.index(atUTF16: offset))
+        await api.setBookmark(offset, revision: String(repeating: "c", count: 64))
+        await api.setOffline(false)
+        NotificationCenter.default.post(name: .hearfulRetryOffline, object: true)
+        await sync.waitForPendingReports()
+        #expect(!player.isPlaying)
+        #expect(player.currentTime == script.chunks[index].start)
+        #expect(article.spokenLocation?.rangeInArticle.location == offset)
+        if lockScreen { #expect(player.handleRemotePlay() == .success) } else { player.toggle() }
+        try await loaded(article)
+        #expect(player.isPlaying)
+        #expect(synth.lastSpoken == script.chunks[index].text)
+    }
+
     @Test func changedSavedSelectionStartsNewTextAndNewerFilingBlocksLateSamples() async throws {
         let api = BookmarkPlaybackAPI(); let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

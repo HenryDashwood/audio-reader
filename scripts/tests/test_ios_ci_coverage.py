@@ -78,6 +78,7 @@ def test_later_main_commits_are_ignored(monkeypatch):
         "ios/Hearful/ContentView.swift",
         "app-store/metadata/en-GB/description.txt",
         "scripts/ios-dev.sh",
+        "scripts/ios_test_install.py",
         ".github/workflows/ci.yml",
         "Makefile",
     ],

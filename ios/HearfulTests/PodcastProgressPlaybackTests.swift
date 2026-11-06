@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 @testable import Hearful
@@ -5,6 +6,8 @@ import Testing
 /// Enforces the server's revision guard, including exact retries, without audio
 /// or network timing determining when a position is acknowledged.
 private actor PodcastPlaybackAPI: HearfulAPIProtocol {
+    private var offline = false
+    func setOffline(_ value: Bool) { offline = value }
     private var episodes: [Int: Episode] = [:]
     private var receipts: [String: (PodcastProgressReport, String)] = [:]
     private(set) var conflicts = 0
@@ -16,6 +19,7 @@ private actor PodcastPlaybackAPI: HearfulAPIProtocol {
             progressRevision: String(repeating: "a", count: 64), completed: false)
     }
     func reportPodcastProgress(episodeID: Int, report: PodcastProgressReport) async throws -> PodcastProgressReceipt {
+        if offline { throw URLError(.notConnectedToInternet) }
         var episode = try await episode(id: episodeID)
         if let receipt = receipts[report.requestID] {
             #expect(receipt.0 == report)
@@ -79,6 +83,56 @@ struct PodcastProgressPlaybackTests {
         audio.restore(original)
         #expect(audio.currentEpisode?.positionSeconds == 900)
         #expect(audio.currentEpisode?.progressRevision == (try await api.episode(id: 1)).progressRevision)
+    }
+
+    @Test(arguments: [false, true])
+    func reconnectMovesPausedPodcastAndResumesNewPosition(lockScreen: Bool) async throws {
+        let owner = ArticleScript.textVersion(UUID().uuidString)
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "podcast.caf")
+        do {
+            let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1))
+            let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8000))
+            buffer.frameLength = 8000
+            try #require(buffer.floatChannelData)[0].update(repeating: 0, count: 8000)
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            for _ in 0..<210 { try file.write(from: buffer) }
+        }
+        let journal = PodcastProgressJournal(store: FilePodcastProgressStorage(directory: directory))
+        let api = PodcastPlaybackAPI()
+        let episode = try await api.episode(id: 1)
+        let engine = AVPlayer()
+        let audio = AudioPlayer(defaults: .standard, player: engine, activateAudioSession: {},
+            podcastJournal: journal, progressScope: { owner })
+        audio.localFile = { _ in url }
+        let player = PlaybackCoordinator(audio: audio, article: ArticlePlayer(progressScope: { nil }))
+        let reporter = PositionReporter(api: api, player: player, sessionScope: { owner }, podcastJournal: journal)
+        defer { reporter.invalidate(); player.clear() }
+        await api.setOffline(true)
+        try player.play(episode)
+        for _ in 0..<250 where !player.isPlaying { try await Task.sleep(for: .milliseconds(20)) }
+        try #require(player.isPlaying)
+        player.seek(to: 60)
+        player.pause()
+        for _ in 0..<250 where player.isPlaying { try await Task.sleep(for: .milliseconds(20)) }
+        await reporter.waitForPendingReports()
+        try #require(try journal.entries(owner: owner).first?.pending != nil)
+        await api.setOffline(false)
+        _ = try await api.reportPodcastProgress(episodeID: 1, report: .init(requestID: UUID().uuidString,
+            expectedRevision: try #require(episode.progressRevision), seconds: 180, completed: false))
+        NotificationCenter.default.post(name: .hearfulRetryOffline, object: true)
+        await reporter.waitForPendingReports()
+        #expect(!player.isPlaying)
+        #expect(player.currentTime == 180)
+        if lockScreen { #expect(player.handleRemotePlay() == .success) } else { player.toggle() }
+        for _ in 0..<250 {
+            if player.isPlaying && engine.currentTime().seconds > 180.1 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(player.isPlaying)
+        #expect((180..<190).contains(engine.currentTime().seconds))
     }
 
     @Test func pausingPlayingTwoOtherEpisodesAndResumingKeepsSavingOnTheSamePhone() async throws {

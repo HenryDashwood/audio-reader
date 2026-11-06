@@ -20,6 +20,7 @@ usage() {
   echo "Overrides: IOS_SIMULATOR_ID, IOS_SIMULATOR_NAME, IOS_MINIMUM_OS, IOS_DERIVED_DATA_PATH"
   echo "           IOS_INDEX_DERIVED_DATA_PATH, TEST (suite or suite/test identifier)"
   echo "           IOS_TEST_PREBOOT=1 (overlap boot/build and report phase timings)"
+  echo "           IOS_TEST_INSTALL_TIMEOUT (seconds pending in Magpie install before recovery; default 180)"
   echo "           IOS_TEST_DIAGNOSTICS=on-failure (opt into slow system diagnostics)"
   echo "           IOS_COMPILATION_CACHE=1 (enable Xcode compilation caching)"
   echo "           IOS_DEVICE_ID, IOS_DEVICE_API_URL, IOS_DEVICE_DERIVED_DATA_PATH, IOS_DEVICE_DRY_RUN"
@@ -110,10 +111,14 @@ run_xcodebuild() {
   mkdir -p "$log_dir"
   raw_log="$(mktemp "$log_dir/xcodebuild-$1.XXXXXX")"
   echo "Raw Xcode log: $raw_log"
+  local runner=(xcodebuild)
+  if [[ "$1" == "test" || "$1" == "test-without-building" ]]; then
+    runner=(python3 "$repo_root/scripts/ios_test_install.py" "$simulator_id" "$derived_data")
+  fi
   if command -v xcbeautify >/dev/null 2>&1; then
-    NSUnbufferedIO=YES xcodebuild "$@" 2>&1 | tee "$raw_log" | xcbeautify || status=$?
+    NSUnbufferedIO=YES "${runner[@]}" "$@" 2>&1 | tee "$raw_log" | xcbeautify || status=$?
   else
-    xcodebuild "$@" 2>&1 | tee "$raw_log" || status=$?
+    "${runner[@]}" "$@" 2>&1 | tee "$raw_log" || status=$?
   fi
   if [[ "$status" != 0 ]]; then
     # Formatters can omit compiler crash stacks and the failed command. Keep

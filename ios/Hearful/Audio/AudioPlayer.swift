@@ -219,6 +219,15 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         isPlaying = false
     }
 
+    func applyRemotePositionWhilePaused(_ episode: Episode) {
+        guard currentEpisode?.id == episode.id, !playbackRequested, !isPlaying, !isScrubbing,
+            episode.completed != true, episode.dismissed != true, let seconds = episode.positionSeconds,
+            seconds.isFinite, seconds >= 0
+        else { return }
+        currentEpisode = episode
+        seek(to: seconds)
+    }
+
     func skip(by seconds: TimeInterval) {
         seek(to: currentTime + seconds)
     }
@@ -281,6 +290,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
         // Resume where she left off — but not for an episode she finished,
         // not within the first moments (starting over costs nothing), and not
         // into the final seconds (an outro is worse than a fresh start).
+        let initialSeekGeneration = seekGeneration
         let explicitResumeAt = resumeAt
         let resumeAt = resumeAt ?? (episode.completed == true ? 0 : (episode.positionSeconds ?? 0))
         statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
@@ -300,6 +310,7 @@ final class AudioPlayer: NSObject, AudioPlaying, ObservableObject {
                     self.duration = seconds
                     self.hasMeasuredDuration = true
                 }
+                guard self.seekGeneration == initialSeekGeneration else { return }
                 if let explicitResumeAt {
                     self.seek(to: explicitResumeAt)
                 } else if resumeAt > 5, resumeAt < self.duration - 10 {
