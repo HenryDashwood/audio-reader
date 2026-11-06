@@ -24,7 +24,13 @@ from urllib.parse import urljoin, urlsplit
 
 from lxml import html as lxml_html
 
-from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes, post_public
+from audioreader.feeds.fetcher import (
+    MAX_ARTICLE_BYTES,
+    FeedFetchError,
+    PostOutcomeUnknown,
+    fetch_public_bytes,
+    post_public,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +122,7 @@ def normalised_site(url: str) -> str:
     parts = urlsplit(candidate)
     if not parts.hostname:
         raise SignupUnsupported("no_form", "that is not a web address")
-    return candidate
+    return parts._replace(path=parts.path or "/", fragment="").geturl()
 
 
 def site_domain(url: str) -> str:
@@ -329,6 +335,8 @@ async def submit_signup(plan: SignupPlan, address: str, *, request_sign_in: bool
             reply = await post_public(plan.submit_url, json={"email": address, "emailType": "subscribe"})
         else:
             reply = await post_public(plan.submit_url, data={**dict(plan.form_fields), plan.email_field: address})
+    except PostOutcomeUnknown:
+        raise
     except FeedFetchError as exc:
         raise SignupFailed(f"{plan.publication} could not be reached: {exc}") from exc
 

@@ -56,6 +56,8 @@ class NewsletterWireTest {
         assertEquals("/newsletters/signups", connection.url.path); assertEquals("POST", connection.requestMethod)
         assertEquals("https://publisher.example", JSONObject(connection.body.toString("UTF-8")).getString("url"))
         assertEquals(60_000, connection.readTimeout)
+        status = "unknown"
+        assertEquals("Signup unconfirmed", api.signUpForNewsletter("session", "https://publisher.example").resultTitle)
         status = "submitted"
         assertTrue(api.signUpForNewsletter("session", "https://publisher.example").submitted)
     }

@@ -256,7 +256,7 @@ class NewsletterSignupRequest(BaseModel):
 class NewsletterSignupRead(BaseModel):
     """What came of asking a site for its newsletter."""
 
-    #: "submitted", "unsupported" or "failed".
+    #: "submitted", "unknown", "unsupported" or "failed".
     status: str
     publication: str | None = None
     platform: str | None = None

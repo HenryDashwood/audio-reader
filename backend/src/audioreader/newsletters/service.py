@@ -20,12 +20,19 @@ from email.parser import BytesHeaderParser
 from hashlib import sha256
 from html import unescape
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from audioreader.config import settings
-from audioreader.feeds.fetcher import MAX_ARTICLE_BYTES, FeedFetchError, fetch_public_bytes, post_public
+from audioreader.feeds.fetcher import (
+    MAX_ARTICLE_BYTES,
+    FeedFetchError,
+    PostOutcomeUnknown,
+    fetch_public_bytes,
+    post_public,
+)
 from audioreader.feeds.parser import MAX_CONTENT_CHARS
 from audioreader.feeds.search import matches_name
 from audioreader.models import (
@@ -236,6 +243,24 @@ class SignupOutcome:
     reason: str | None = None
 
 
+def _signup_still_followed():
+    return (
+        select(Subscription.id)
+        .where(Subscription.user_id == NewsletterSignup.user_id, Subscription.feed_id == NewsletterSignup.feed_id)
+        .exists()
+    )
+
+
+def _unconfirmed_signup(signup: NewsletterSignup) -> SignupOutcome:
+    return SignupOutcome(
+        "unknown",
+        f"I couldn’t confirm whether {signup.publication} accepted your signup. "
+        "I’ll wait for its email. If it arrives, the newsletter will appear in Following.",
+        publication=signup.publication,
+        platform=signup.platform,
+    )
+
+
 async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
     """Submit her address to a newsletter's signup, the way its button would.
 
@@ -259,14 +284,42 @@ async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
         )
     domain = site_domain(site)
 
-    existing = await session.scalar(
-        select(NewsletterSignup).where(
-            NewsletterSignup.user_id == user.id,
-            NewsletterSignup.site_url == site,
-            NewsletterSignup.completed_at.is_(None),
+    async def existing_outcome(*sites: str) -> SignupOutcome | None:
+        # Older rows may store the bare origin without its root slash.
+        aliases = set(sites)
+        for candidate in sites:
+            parsed = urlsplit(candidate)
+            if parsed.path in ("", "/") and not parsed.query:
+                aliases.update((candidate.rstrip("/"), candidate.rstrip("/") + "/"))
+        existing = await session.scalar(
+            select(NewsletterSignup)
+            .where(
+                NewsletterSignup.user_id == user.id,
+                NewsletterSignup.site_url.in_(aliases),
+                or_(
+                    and_(NewsletterSignup.completed_at.is_not(None), _signup_still_followed()),
+                    and_(
+                        NewsletterSignup.completed_at.is_(None),
+                        NewsletterSignup.created_at
+                        >= utcnow() - timedelta(days=settings.newsletter_signup_window_days),
+                    ),
+                ),
+            )
+            .order_by(NewsletterSignup.completed_at.is_not(None).desc(), NewsletterSignup.id.desc())
+            .limit(1)
         )
-    )
-    if existing is not None and _within_signup_window(existing):
+        if existing is None:
+            return None
+        if existing.completed_at is not None:
+            return SignupOutcome(
+                SIGNUP_SUBMITTED,
+                f"{existing.publication} is already in Following.",
+                publication=existing.publication,
+                platform=existing.platform,
+                address=address,
+            )
+        if existing.awaiting_response and existing.confirmed_at is None:
+            return _unconfirmed_signup(existing)
         return SignupOutcome(
             SIGNUP_SUBMITTED,
             f"I have already asked {existing.publication} for its newsletter. It will appear in Following when "
@@ -275,6 +328,9 @@ async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
             platform=existing.platform,
             address=address,
         )
+
+    if prior := await existing_outcome(site):
+        return prior
 
     try:
         plan = await plan_signup(site)
@@ -286,13 +342,34 @@ async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
         logger.info("could not fetch %s for signup: %s", site, exc)
         return SignupOutcome(SIGNUP_FAILED, f"I could not reach {domain}. {manual}", address=address)
 
+    # Serialize the check and reservation across workers, then release the
+    # lock before contacting the publisher. A disconnect or crash leaves the
+    # reservation in place for another command with a different request ID.
+    await session.execute(select(User.id).where(User.id == user.id).with_for_update())
+    if prior := await existing_outcome(site, plan.site_url):
+        await session.commit()
+        return prior
+    signup = NewsletterSignup(
+        user_id=user.id,
+        site_url=site,
+        publication=plan.publication,
+        platform=plan.platform,
+        expected_senders=",".join(plan.expected_senders),
+        awaiting_response=True,
+    )
+    session.add(signup)
+    await session.commit()
     try:
         # Substack delivers nothing to an address it has not verified, and
         # verifies it through a sign-in email: asked for on her first
         # Substack, then never again.
         first_substack = plan.platform == SUBSTACK and not await _substack_verified(session, user)
         sign_in_requested = await submit_signup(plan, address, request_sign_in=first_substack)
+    except PostOutcomeUnknown:
+        return _unconfirmed_signup(signup)
     except SignupUnsupported as exc:
+        await session.delete(signup)
+        await session.commit()
         return SignupOutcome(
             SIGNUP_UNSUPPORTED,
             _unsupported_sentence(exc, domain, manual),
@@ -302,6 +379,8 @@ async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
             reason=exc.reason,
         )
     except SignupFailed as exc:
+        await session.delete(signup)
+        await session.commit()
         logger.info("signup to %s failed: %s", plan.submit_url, exc)
         return SignupOutcome(
             SIGNUP_FAILED,
@@ -311,15 +390,7 @@ async def sign_up(session: AsyncSession, user: User, url: str) -> SignupOutcome:
             address=address,
         )
 
-    session.add(
-        NewsletterSignup(
-            user_id=user.id,
-            site_url=site,
-            publication=plan.publication,
-            platform=plan.platform,
-            expected_senders=",".join(plan.expected_senders),
-        )
-    )
+    signup.awaiting_response = False
     await session.commit()
     logger.info(
         "signed telemetry %s up to %s via %s%s",
@@ -955,9 +1026,10 @@ async def prune_newsletters(session: AsyncSession, now: datetime | None = None) 
         await session.delete(feed)
     summary.pending_feeds = len(stale)
 
-    # A signup nothing ever answered, or one long since completed, is only a
-    # record now; the feed it made carries on without it.
-    signups = await session.execute(delete(NewsletterSignup).where(NewsletterSignup.created_at < pending_cutoff))
+    # The signup links the publisher's website to its email feed while the user follows it.
+    signups = await session.execute(
+        delete(NewsletterSignup).where(NewsletterSignup.created_at < pending_cutoff, ~_signup_still_followed())
+    )
     summary.stale_signups = getattr(signups, "rowcount", 0) or 0
     await session.commit()
     if summary.raw_messages or summary.pending_feeds:

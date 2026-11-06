@@ -247,6 +247,15 @@ struct NewsletterSignupTests {
         #expect(body["url"] == "https://www.understandingai.org")
     }
 
+    @Test func decodesAnUnconfirmedSignup() async throws {
+        let json = """
+            {"status":"unknown","spoken_response":"I couldn’t confirm whether the publisher accepted your signup."}
+            """
+        let signup = try await makeClient(FakeTransport(json: json)).signUpForNewsletter(url: URL(string: "https://example.org")!)
+        #expect(signup.resultTitle == "Signup unconfirmed")
+        #expect(signup.address == nil)
+    }
+
     @Test func decodesTheManualPath() async throws {
         let json = """
             {"status": "unsupported", "reason": "account_required", "address": "hefty-prism-bolt@magpieinbox.com",

@@ -169,3 +169,109 @@ async def test_default_new_fields_preserve_old_receipt_fingerprint(session, user
         yield
 
     assert [line async for line in recoverable_events(body, user.id, session, never)] == [final.encode()]
+
+
+async def test_voice_signup_after_timeout_recognises_the_first_delivery(session, user, monkeypatch, respx_mock):
+    from datetime import timedelta
+
+    import httpx
+    from sqlalchemy import select
+    from tests.newsletter_fixtures import build_email
+    from tests.test_newsletter_signup import MAILCHIMP_PAGE
+
+    from audioreader.config import settings
+    from audioreader.llm.openai_responses import ResponseCompleted
+    from audioreader.models import NewsletterSignup, utcnow
+    from audioreader.newsletters import service
+    from audioreader.routers.commands import command_stream
+    from audioreader.routers.feeds import list_feeds, unsubscribe
+
+    monkeypatch.setattr(settings, "inbound_email_domain", "magpieinbox.com")
+    monkeypatch.setattr(settings, "inbound_email_secret", "secret")
+    respx_mock.get("https://anna.test/").respond(content=MAILCHIMP_PAGE, content_type="text/html")
+    received, release = asyncio.Event(), asyncio.Event()
+
+    async def lose_reply(request):
+        received.set()
+        await release.wait()
+        raise httpx.ReadTimeout("Publisher received the signup but its reply was lost", request=request)
+
+    post = respx_mock.post("https://anna.us6.list-manage.com/subscribe/post").mock(side_effect=lose_reply)
+
+    class Model:
+        def __init__(self, site):
+            self.site = site
+
+        async def stream(self, **kwargs):
+            yield ResponseCompleted(
+                {
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "name": "sign_up_for_newsletter",
+                            "call_id": "signup",
+                            "arguments": json.dumps({"url": self.site}),
+                        }
+                    ]
+                }
+            )
+
+    async def call(request_id, site="https://anna.test"):
+        # Each caller has its own HTTP session. Only the receipt identifies a retry.
+        async with async_sessionmaker(session.bind, expire_on_commit=False)() as caller:
+            body = CommandRequest(transcript="Sign me up for Anna's newsletter", request_id=request_id)
+            stream = await command_stream(body, caller, Model(site), user)
+            return [
+                json.loads(line.tobytes() if isinstance(line, memoryview) else line)
+                async for line in stream.body_iterator
+            ][-1]
+
+    first = asyncio.create_task(call("original"))
+    try:
+        await asyncio.wait_for(received.wait(), 3)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        retry = asyncio.create_task(call("original"))
+        # An independent command can also arrive before the publisher times out.
+        overlapping = await asyncio.wait_for(call("overlap"), 3)
+    finally:
+        release.set()
+    result = await asyncio.wait_for(retry, 3)
+    assert result["type"] == "result"
+    assert "couldn’t confirm whether Words from Anna accepted your signup" in result["response"]["spoken_response"]
+    assert overlapping == result
+    assert await call("original") == result
+    assert await call("fresh-after-timeout", "https://anna.test/") == result
+    assert post.call_count == 1
+    signup = (await session.scalars(select(NewsletterSignup))).one()
+    assert signup.awaiting_response
+
+    raw = build_email(
+        to=service.address_for(user) or "",
+        sender="Anna <anna@anna.test>",
+        subject="Words from Anna: Issue 1",
+        message_id="<first@anna.test>",
+    )
+    assert (await service.receive(session, user, raw)).status == "delivered"
+    (feed,) = await list_feeds(session, user)
+    await session.refresh(signup)
+    assert signup.feed_id == feed.id and signup.completed_at is not None
+
+    async def already_followed(request_id):
+        fresh = await call(request_id)
+        assert fresh["response"]["spoken_response"] == "Words from Anna is already in Following."
+        assert post.call_count == 1
+
+    await already_followed("after-delivery")
+    # The subscription outlives both the pending signup window and routine cleanup.
+    signup.created_at = utcnow() - timedelta(days=settings.newsletter_pending_retention_days + 1)
+    await session.commit()
+    await service.prune_newsletters(session)
+    await already_followed("after-cleanup")
+
+    await unsubscribe(feed.id, session, user)
+    post.respond(200, text="Almost finished")
+    resubscribed = await call("after-unfollowing")
+    assert resubscribed["response"]["spoken_response"].startswith("I have asked Words from Anna")
+    assert post.call_count == 2

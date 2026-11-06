@@ -38,7 +38,7 @@ struct FeedDiscoveryView: View {
             case .signedUp(let signup):
                 ContentUnavailableView {
                     Label(
-                        signup.submitted ? "Asked for the newsletter" : "Needs signing up by hand",
+                        signup.resultTitle,
                         systemImage: signup.submitted ? "envelope.badge" : "person.crop.circle.badge.exclamationmark")
                 } description: {
                     Text(signup.spokenResponse)

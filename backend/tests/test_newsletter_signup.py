@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+import httpx
 import pytest
 from sqlalchemy import select
 from tests.newsletter_fixtures import build_email
@@ -358,6 +359,32 @@ class TestSignUp:
         assert outcome.status == "submitted"
         assert "already asked" in outcome.spoken_response
         assert route.call_count == 1
+
+    async def test_a_refusal_leaves_the_next_attempt_available(self, session, user, respx_mock, newsletters_enabled):
+        respx_mock.get("https://anna.test/").respond(content=MAILCHIMP_PAGE, content_type="text/html")
+        submit = respx_mock.post("https://anna.us6.list-manage.com/subscribe/post").respond(400)
+        assert (await service.sign_up(session, user, "https://anna.test")).status == "failed"
+        assert await session.scalar(select(NewsletterSignup)) is None
+
+        submit.respond(200)
+        assert (await service.sign_up(session, user, "https://anna.test")).status == "submitted"
+        assert submit.call_count == 2
+
+    async def test_timed_out_substack_verification_does_not_repeat_either_post(
+        self,
+        session,
+        user,
+        respx_mock,
+        newsletters_enabled,
+    ):
+        site = "https://www.understandingai.org/"
+        respx_mock.get(site).respond(content=SUBSTACK_PAGE, content_type="text/html")
+        signup = respx_mock.post(site + "api/v1/free").respond(200, json={"email": ADDRESS})
+        verify = respx_mock.post("https://substack.com/api/v1/email-login").mock(side_effect=httpx.ReadTimeout)
+        first = await service.sign_up(session, user, site)
+        assert first.status == "unknown"
+        assert await service.sign_up(session, user, site) == first
+        assert signup.call_count == verify.call_count == 1
 
     async def test_an_account_gated_publisher_gets_the_manual_path(self, session, user, newsletters_enabled):
         outcome = await service.sign_up(session, user, "https://www.bloomberg.com/account/newsletters/money-stuff")

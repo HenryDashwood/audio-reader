@@ -398,6 +398,8 @@ class NewsletterSignup(Base):
     site_url: Mapped[str]
     publication: Mapped[str]
     platform: Mapped[str]
+    #: Set before submission and cleared once the publisher acknowledges it.
+    awaiting_response: Mapped[bool] = mapped_column(default=False, server_default=false())
     #: Domains and addresses its mail may come from, comma-separated.
     expected_senders: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

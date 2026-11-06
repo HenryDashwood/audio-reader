@@ -445,7 +445,7 @@ nonisolated struct NewsletterAddress: Decodable, Equatable, Sendable {
 
 /// What came of asking a site for its newsletter.
 nonisolated struct NewsletterSignup: Decodable, Equatable, Sendable {
-    /// "submitted", "unsupported" or "failed".
+    /// "submitted", "unknown", "unsupported" or "failed".
     let status: String
     var publication: String?
     var platform: String?
@@ -455,6 +455,13 @@ nonisolated struct NewsletterSignup: Decodable, Equatable, Sendable {
     let spokenResponse: String
 
     var submitted: Bool { status == "submitted" }
+    var resultTitle: String {
+        switch status {
+        case "submitted": "Asked for the newsletter"
+        case "unknown": "Signup unconfirmed"
+        default: "Needs signing up by hand"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case status, publication, platform, address, reason

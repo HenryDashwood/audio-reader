@@ -27,6 +27,11 @@ data class PendingNewsletter(val id: Int, val title: String, val senderAddress: 
 data class NewsletterSignup(val status: String, val spokenResponse: String, val address: String? = null,
     val publication: String? = null, val platform: String? = null, val reason: String? = null) {
     val submitted get() = status == "submitted"
+    val resultTitle get() = when (status) {
+        "submitted" -> "Asked for the newsletter"
+        "unknown" -> "Signup unconfirmed"
+        else -> "Needs signing up by hand"
+    }
 }
 
 interface NewsletterApi {

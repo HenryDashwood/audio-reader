@@ -59,6 +59,10 @@ class FeedFetchError(Exception):
         self.status_code = status_code
 
 
+class PostOutcomeUnknown(FeedFetchError):
+    """The POST may have reached the publisher, but no usable reply arrived."""
+
+
 class FeedRateLimitedError(FeedFetchError):
     """The upstream site temporarily refused a polite feed request."""
 
@@ -187,10 +191,18 @@ async def post_public(
                 async for chunk in response.aiter_bytes():
                     content.extend(chunk)
                     if len(content) > max_bytes:
-                        raise FeedFetchError("the response is too large")
+                        raise PostOutcomeUnknown("the response is too large")
                 return PostResult(response.status_code, bytes(content), str(response.url))
     except FeedFetchError:
         raise
+    except (
+        httpx.ReadTimeout,
+        httpx.WriteTimeout,
+        httpx.ReadError,
+        httpx.WriteError,
+        httpx.RemoteProtocolError,
+    ) as exc:
+        raise PostOutcomeUnknown("lost the reply to the submission") from exc
     except httpx.HTTPError as exc:
         raise FeedFetchError(f"could not reach the address: {exc}") from exc
 

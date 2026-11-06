@@ -85,7 +85,7 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, o
                         state.signup != null -> item {
                             val signup = state.signup!!
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Text(if (signup.submitted) "Asked for the newsletter" else "Needs signing up by hand",
+                                Text(signup.resultTitle,
                                     style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
                                 Text(signup.spokenResponse, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                                 signup.address?.let { address ->
