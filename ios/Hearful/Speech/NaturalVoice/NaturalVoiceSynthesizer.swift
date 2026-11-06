@@ -111,12 +111,18 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
                 return
             } catch {
                 log.error("Natural voice could not read a chunk: \(error.localizedDescription, privacy: .public)")
+                // Not finishEnqueueing: that ended the chunk early, and with the
+                // screen locked a run of failures skipped passage after passage
+                // in silence. The reader restarts it, then uses the system voice.
+                guard !Task.isCancelled, let self, self.current == id else { return }
+                self.failed(id)
+                return
             }
             guard !Task.isCancelled, let self, self.current == id else { return }
             self.renderedCurrent = true
             self.prepareNext()
             // May synchronously finish this chunk and start another one.
-            self.output.finishEnqueueing()  // Also after a failure, so the reader moves on rather than stalls
+            self.output.finishEnqueueing()
         }
     }
 

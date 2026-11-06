@@ -128,6 +128,30 @@ struct NaturalVoicePreparationTests {
         #expect(synth.isSpeaking)
     }
 
+    @Test func aSentenceThatFailsToRenderFailsTheUtteranceRatherThanSkippingIt() async throws {
+        let output = Output()
+        let synth = NaturalVoiceSynthesizer(
+            folder: URL.temporaryDirectory, voice: NaturalVoice(id: "bf_emma"), output: output,
+            renderSentence: { _, _ in throw NaturalVoicePhonemizer.Failure(errorDescription: "Out of memory") })
+        defer { synth.stopSpeaking(at: .immediate) }
+        let listener = Listener()
+        synth.delegate = listener
+        let utterance = AVSpeechUtterance(string: "This passage cannot be rendered.")
+
+        synth.speak(utterance)
+        try await waitUntil { !listener.failed.isEmpty }
+
+        #expect(listener.failed == [UtteranceID(utterance)])
+        #expect(output.completedChunks == 0)
+        #expect(listener.finished.isEmpty)
+    }
+
+    @Test func theEngineLoadsTheLargestBodyAndOneShortOne() {
+        #expect(NaturalVoiceEngine.sizesInUse(of: [64, 128, 192, 256, 384, 512]) == [192, 512])
+        #expect(NaturalVoiceEngine.sizesInUse(of: [512, 128]) == [512])
+        #expect(NaturalVoiceEngine.sizesInUse(of: [256]) == [256])
+    }
+
     @Test func anOutputFailureEndsTheUtteranceWithoutFinishingIt() async throws {
         let output = Output()
         let synth = synthesizer(output: output, renderer: Renderer())

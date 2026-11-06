@@ -2,7 +2,6 @@ import Accelerate
 import CoreML
 import Foundation
 import os
-import UIKit
 
 nonisolated private let timing = Logger(subsystem: "com.henrydashwood.hearful", category: "natural-voice")
 
@@ -11,19 +10,33 @@ nonisolated private let timing = Logger(subsystem: "com.henrydashwood.hearful", 
 ///
 /// The models and the steps between them are text-to-speech notebook 106's
 /// `synthesize`. The front half (`tokens`, then `prosody`) and the sine source
-/// run on the CPU in 32 bits; the decoder's body runs on the GPU at one of
-/// three padded sizes, all in one model with its weights shared.
+/// run on the CPU in 32 bits, and so does the decoder's body, at one of two
+/// padded sizes.
 ///
-/// iOS refuses GPU work from an app in the background, so with the screen
-/// locked or another app open the body runs on the CPU instead. Without that
-/// every sentence after the ones already rendered failed, and the reader
-/// skipped through the rest of the article in silence.
+/// Not the GPU, and not every size the voice offers. Each size loaded is its
+/// own copy of the body's weights: about 130 MB on the CPU and 350 MB on the
+/// GPU. With all six on the GPU, a long listen held gigabytes; once the screen
+/// locked and iOS lowered the app's allowance, every further load failed and
+/// the reader skipped passages in silence, and back in the foreground Metal
+/// failed to allocate and aborted the app. The CPU renders a sentence several
+/// times faster than it is spoken, works in the background, and two sizes keep
+/// short sentences quick without loading the rest.
 actor NaturalVoiceEngine {
     nonisolated static let sampleRate = 24_000.0
     /// Samples per frame: Kokoro decides durations in 25 ms steps.
     nonisolated static let frame = 600
-    /// The body's sizes, in frames, from the voice's `voice.json`: a sentence is padded up to the next.
+    /// The body's sizes in use, in frames: a sentence is padded up to the next.
     let sizes: [Int]
+
+    /// Of the sizes a voice offers, the two to load: the largest, so any
+    /// sentence that fits the voice fits here, and one short enough to keep
+    /// most sentences cheap.
+    nonisolated static func sizesInUse(of offered: [Int]) -> [Int] {
+        let sorted = offered.sorted()
+        guard let largest = sorted.last else { return [] }
+        let short = sorted.first(where: { $0 >= 192 }) ?? largest
+        return Array(Set([short, largest])).sorted()
+    }
 
     struct Word: Sendable, Equatable {
         /// UTF-16 offsets into the text rendered.
@@ -52,7 +65,6 @@ actor NaturalVoiceEngine {
     private let source: MLModel
     private let folder: URL
     private var bodies: [Int: MLModel] = [:]
-    private var cpuBodies: [Int: MLModel] = [:]
     private var random = SplitMix64(seed: 0x5EED)
 
     init(folder: URL, voice: NaturalVoice) throws {
@@ -64,8 +76,8 @@ actor NaturalVoiceEngine {
         vocabulary = Dictionary(
             uniqueKeysWithValues: vocab.compactMap { key, id in key.unicodeScalars.first.map { ($0, id) } })
         struct Config: Decodable { let sizes: [Int] }
-        sizes = try JSONDecoder().decode(Config.self, from: Data(contentsOf: folder.appending(path: "voice.json"))).sizes
-            .sorted()
+        sizes = Self.sizesInUse(
+            of: try JSONDecoder().decode(Config.self, from: Data(contentsOf: folder.appending(path: "voice.json"))).sizes)
         let table = try Data(contentsOf: folder.appending(path: "voices/\(voice.id).bin"))
         styles = table.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
         let cpu = MLModelConfiguration()
@@ -77,7 +89,6 @@ actor NaturalVoiceEngine {
 
     /// Speaks `text`, trimmed to the speech with a little either side.
     func render(_ text: String) async throws -> Sentence {
-        let useGPU = await MainActor.run { UIApplication.shared.applicationState != .background }
         var clock = ContinuousClock.now
         var stages: [String] = []
         func lap(_ name: String) {
@@ -86,7 +97,7 @@ actor NaturalVoiceEngine {
         }
         // Notice, not debug, so the start and end of each render survive in a
         // log collected after the fact: a start with no end is a hung render.
-        timing.notice("render start: \((text as NSString).length, privacy: .public) characters, gpu \(useGPU, privacy: .public)")
+        timing.notice("render start: \((text as NSString).length, privacy: .public) characters")
         let g2p = try phonemizer.phonemize(text)
         lap("g2p")
         let phonemes = Array(g2p.phonemes.unicodeScalars.prefix(510))  // Kokoro's limit, in code points
@@ -145,18 +156,8 @@ actor NaturalVoiceEngine {
             "har": harmonics,
         ]
         lap("glue")
-        // The app can be sent to the background between the check and the prediction: then the GPU refuses it.
-        var onGPU: MLFeatureProvider?
-        if useGPU {
-            do {
-                onGPU = try predict(body(bucket, onGPU: true), inputs)
-            } catch {
-                timing.error("Natural voice body failed on the GPU, using the CPU: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-        let audio: MLFeatureProvider
-        if let onGPU { audio = onGPU } else { audio = try predict(body(bucket, onGPU: false), inputs) }
-        lap("body\(bucket)\(useGPU ? "" : " cpu")")
+        let audio = try predict(body(bucket), inputs)
+        lap("body\(bucket)")
         let samples = Array(try floats(audio, "out").prefix(total * Self.frame))
         timing.notice("render: \(stages.joined(separator: ", "), privacy: .public)")
         return Self.trimmed(samples, words: Self.words(g2p.tokens, frames: frames))
@@ -165,10 +166,10 @@ actor NaturalVoiceEngine {
     /// The body for one size, loaded the first time it's needed: a function of the shared-weight `body.mlmodelc`, or
     /// `body<size>.mlmodelc` where there is one. The simulator's Core ML refuses `functionName` ("must be nil unless
     /// the model type is ML Program", for a model that is one), where macOS's loads the same file.
-    private func body(_ bucket: Int, onGPU: Bool) throws -> MLModel {
-        if let model = (onGPU ? bodies : cpuBodies)[bucket] { return model }
+    private func body(_ bucket: Int) throws -> MLModel {
+        if let model = bodies[bucket] { return model }
         let configuration = MLModelConfiguration()
-        configuration.computeUnits = onGPU ? .cpuAndGPU : .cpuOnly
+        configuration.computeUnits = .cpuOnly
         var url: URL
         if let single = NaturalVoiceStore.file("body\(bucket).mlmodelc", in: folder) {
             url = single
@@ -177,7 +178,7 @@ actor NaturalVoiceEngine {
             configuration.functionName = "body\(bucket)"
         }
         let model = try MLModel(contentsOf: url, configuration: configuration)
-        if onGPU { bodies[bucket] = model } else { cpuBodies[bucket] = model }
+        bodies[bucket] = model
         return model
     }
 
