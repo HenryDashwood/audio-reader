@@ -46,6 +46,14 @@ final class SilentSynthesizer: SpeechSynthesizing {
     /// The current utterance reaching its end, which is what advances the
     /// reader to the next chunk. Nothing calls the delegate on its own here,
     /// so a test that wants the article to progress says so explicitly.
+    /// The audio output dying under the current utterance.
+    func failSpeaking() {
+        guard let utterance = spoken.last, isSpeaking else { return }
+        isSpeaking = false
+        isPaused = false
+        delegate?.speechFailed(UtteranceID(utterance))
+    }
+
     func finishSpeaking() {
         guard let utterance = spoken.last, isSpeaking else { return }
         isSpeaking = false

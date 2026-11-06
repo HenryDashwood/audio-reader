@@ -43,6 +43,11 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
     /// output is taken to be dead. Generous: a healthy engine moves every render.
     private let stallLimit: Duration
     private var stalledSince: ContinuousClock.Instant?
+    /// How long she may hear nothing while the chunk is still being rendered.
+    /// A sentence renders in well under a second normally and a few seconds on
+    /// a cold model in the background; this long means a render has hung.
+    private let renderLimit: Duration
+    private var starvedSince: ContinuousClock.Instant?
     private var lastPosition = 0
     /// Added to the model's normal sentence spacing, at the rendered 1× rate.
     static let additionalParagraphPause: TimeInterval = 0.2
@@ -50,10 +55,11 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
     init(
         folder: URL, voice: NaturalVoice,
         output: (any NaturalVoiceOutput)? = nil, renderSentence: Renderer? = nil,
-        stallLimit: Duration = .seconds(4)
+        stallLimit: Duration = .seconds(4), renderLimit: Duration = .seconds(20)
     ) {
         self.output = output ?? NaturalVoiceAudioOutput()
         self.stallLimit = stallLimit
+        self.renderLimit = renderLimit
         self.renderSentence = renderSentence ?? { text, offset in
             let engine = try await Self.engine(folder: folder, voice: voice).value
             return try await Self.render(text, at: offset, with: engine)
@@ -232,15 +238,27 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         } catch NaturalVoiceEngine.RenderError.tooLong {
             guard let cut = splitPoint(text) else { throw NaturalVoiceEngine.RenderError.tooLong(frames: 0) }
             let head = String(text[..<cut]), tail = String(text[cut...])
+            // Each half must be strictly shorter, or the recursion never ends.
+            guard head.count < text.count, tail.count < text.count else {
+                throw NaturalVoiceEngine.RenderError.tooLong(frames: 0)
+            }
             let tailOffset = offset + (head as NSString).length
             return try await render(head, at: offset, with: engine) + render(tail, at: tailOffset, with: engine)
         }
     }
 
     /// Where to split an over-long sentence: after the clause punctuation nearest the middle, else the space.
+    ///
+    /// Only a space with something to say on both sides counts. A first half
+    /// keeps the space it was cut after, so "…accurate predictions, " ends in
+    /// one: choosing it again split the half into itself and nothing, and the
+    /// voice rendered the same 198 characters for ever, ten times a second.
     nonisolated static func splitPoint(_ text: String) -> String.Index? {
         let middle = text.count / 2
-        let candidates = text.indices.enumerated().filter { _, i in text[i] == " " && i > text.startIndex }
+        let speaks: (Substring) -> Bool = { $0.contains(where: { $0.isLetter || $0.isNumber }) }
+        let candidates = text.indices.enumerated().filter { _, i in
+            text[i] == " " && i > text.startIndex && speaks(text[..<i]) && speaks(text[text.index(after: i)...])
+        }
         let clause = candidates.filter { _, i in ",;:—–".contains(text[text.index(before: i)]) }
         let best = (clause.isEmpty ? candidates : clause).min { abs($0.offset - middle) < abs($1.offset - middle) }
         return best.map { text.index(after: $0.element) }
@@ -269,10 +287,11 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
     private func reportProgress() {
         guard let current, isSpeaking, !isPaused else {
             stalledSince = nil
+            starvedSince = nil
             return
         }
         let position = output.position
-        if detectStall(at: position) { return }
+        if detectStall(at: position) || detectStarvation() { return }
         guard let word = words.last(where: { $0.samples.lowerBound <= position }), word.characters != reported else {
             return
         }
@@ -296,6 +315,26 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         }
         guard now - since >= stallLimit, let current else { return false }
         log.error("Natural voice output stalled at sample \(position, privacy: .public)")
+        failed(current)
+        return true
+    }
+
+    /// Nothing left to play and the chunk still not rendered, for far longer
+    /// than a render takes: the engine is stuck inside one. Its actor stays
+    /// blocked behind that call, so the next synthesiser needs a new engine.
+    private func detectStarvation() -> Bool {
+        guard !renderedCurrent, !output.isExpectingSound else {
+            starvedSince = nil
+            return false
+        }
+        let now = ContinuousClock.now
+        guard let since = starvedSince else {
+            starvedSince = now
+            return false
+        }
+        guard now - since >= renderLimit, let current else { return false }
+        log.error("Natural voice rendering made no progress for \(self.renderLimit, privacy: .public); replacing the engine")
+        Self.releaseEngines()
         failed(current)
         return true
     }
@@ -328,6 +367,7 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         queuedSamples = 0
         reported = nil
         stalledSince = nil
+        starvedSince = nil
         lastPosition = 0
         isSpeaking = false
         isPaused = false

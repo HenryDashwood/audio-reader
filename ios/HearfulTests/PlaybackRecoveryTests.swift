@@ -208,4 +208,55 @@ struct PlaybackRecoveryTests {
         #expect(article.currentTime > resumedTime)
         coordinator.clear()
     }
+
+    @Test func articleRestartsThePassageOnAFreshEngineThenTheSystemVoiceWhenSpeechFails() async throws {
+        let oldEngine = SilentSynthesizer()
+        let newEngine = SilentSynthesizer()
+        let thirdEngine = SilentSynthesizer()
+        let systemVoice = SilentSynthesizer()
+        var engines = [newEngine, thirdEngine]
+        var fallbacks = 0
+        let api = FakeAPI()
+        api.articleText = String(repeating: "One paragraph about number fields.\n\n", count: 30)
+        let article = ArticlePlayer(
+            api: api,
+            cache: OfflineCache(directory: URL.temporaryDirectory.appending(path: UUID().uuidString)),
+            synthesizer: oldEngine,
+            makeSynthesizer: { engines.removeFirst() },
+            makeFallbackSynthesizer: {
+                fallbacks += 1
+                return systemVoice
+            },
+            activateAudioSession: {})
+        defer { article.clear() }
+        article.play(Episode(
+            id: 902, title: "Route change", description: nil, audioURL: nil,
+            durationSeconds: nil, publishedAt: nil, link: nil, hasText: true))
+        await article.waitForPendingLoad()
+        let failing = try #require(oldEngine.spoken.last)
+
+        oldEngine.speakOn(toFraction: 0.3)  // Its first sentences play every time
+        oldEngine.failSpeaking()
+
+        #expect(article.isPlaying)
+        #expect(oldEngine.delegate == nil)
+        #expect(newEngine.lastSpoken == failing.speechString)
+
+        // A second failure on the same passage, even after words were heard:
+        // the system voice reads it rather than the same voice failing again.
+        newEngine.speakOn(toFraction: 0.3)
+        newEngine.failSpeaking()
+        #expect(article.isPlaying)
+        #expect(fallbacks == 1)
+        #expect(systemVoice.lastSpoken == failing.speechString)
+        #expect(thirdEngine.spoken.isEmpty)
+
+        // The next passage goes back to the chosen voice.
+        systemVoice.speakOn(toFraction: 0.5)
+        let failedPassageTime = article.currentTime
+        systemVoice.finishSpeaking()
+        #expect(article.isPlaying)
+        #expect(thirdEngine.spoken.count == 1)
+        #expect(article.currentTime > failedPassageTime)
+    }
 }

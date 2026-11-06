@@ -69,6 +69,26 @@ class NaturalVoiceEngineTest {
         val plain = "one two three four five six"
         assertEquals("one two three ", plain.substring(0, NaturalArticleVoice.splitPoint(plain)!!))
         assertNull(NaturalArticleVoice.splitPoint("unbreakable"))
+        assertNull(NaturalArticleVoice.splitPoint("trailing, "))
+
+        // A first half ends in the space it was cut after; splitting it again must still make progress.
+        val sentence = "But it seems to me like our current equilibrium is that US midterm election prediction markets " +
+            "are big enough (\$2.5 billion of volume on Kalshi) to provide real incentives for accurate predictions, " +
+            "but not big enough to, like, swamp the actual elections."
+        val pending = mutableListOf(sentence)
+        var pieces = 0
+        while (pending.isNotEmpty()) {
+            val piece = pending.removeAt(pending.lastIndex)
+            if (piece.length <= 20) continue
+            val cut = NaturalArticleVoice.splitPoint(piece)!!
+            val head = piece.substring(0, cut)
+            val tail = piece.substring(cut)
+            assertTrue(head.length < piece.length && tail.length < piece.length)
+            assertTrue(head.any { it.isLetter() } && tail.any { it.isLetter() })
+            pending += listOf(head, tail)
+            pieces += 1
+            assertTrue("Splitting never finished", pieces < 100)
+        }
     }
 
     @Test fun noiseIsTheSameEveryRunAndUnitGaussian() {

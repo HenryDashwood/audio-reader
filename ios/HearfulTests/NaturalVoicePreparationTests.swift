@@ -9,7 +9,9 @@ import Testing
 struct NaturalVoicePreparationTests {
     private final class Output: NaturalVoiceOutput {
         var onDrained: (@MainActor () -> Void)?
+        var onFailure: (@MainActor () -> Void)?
         var position = 0
+        var isExpectingSound = false
         var enqueued: [Float] = []
         var continuingBuffers: [Bool] = []
         var completedChunks = 0
@@ -21,7 +23,10 @@ struct NaturalVoicePreparationTests {
         func finishEnqueueing() { completedChunks += 1 }
         func pause() {}
         func resume() {}
-        func stop() { onDrained = nil }
+        func stop() {
+            onDrained = nil
+            onFailure = nil
+        }
         func drain() {
             let finished = onDrained
             onDrained = nil
@@ -45,10 +50,98 @@ struct NaturalVoicePreparationTests {
         }
     }
 
-    private func synthesizer(output: Output, renderer: Renderer) -> NaturalVoiceSynthesizer {
+    private final class Listener: SpeechSynthesizingDelegate {
+        var failed: [UtteranceID] = []
+        var finished: [UtteranceID] = []
+        func speechFinished(_ utterance: UtteranceID) { finished.append(utterance) }
+        func speechProgressed(to range: NSRange, of utterance: UtteranceID) {}
+        func speechFailed(_ utterance: UtteranceID) { failed.append(utterance) }
+    }
+
+    private func synthesizer(
+        output: Output, renderer: Renderer, stallLimit: Duration = .seconds(4),
+        renderLimit: Duration = .seconds(20)
+    ) -> NaturalVoiceSynthesizer {
         NaturalVoiceSynthesizer(
             folder: URL.temporaryDirectory, voice: NaturalVoice(id: "bf_emma"),
-            output: output, renderSentence: renderer.render)
+            output: output, renderSentence: renderer.render, stallLimit: stallLimit,
+            renderLimit: renderLimit)
+    }
+
+    @Test func aRenderThatNeverReturnsIsReportedAsFailedOnceTheQueuedAudioRunsOut() async throws {
+        let output = Output()
+        let renderer = Renderer()
+        let synth = synthesizer(output: output, renderer: renderer, renderLimit: .milliseconds(300))
+        defer { synth.stopSpeaking(at: .immediate) }
+        let listener = Listener()
+        synth.delegate = listener
+        let utterance = AVSpeechUtterance(string: "These do not bug me that much. But this one hangs.")
+        renderer.heldSentence = NaturalVoiceSynthesizer.sentences(in: utterance.speechString).last?.text
+
+        synth.speak(utterance)
+        try await waitUntil { output.enqueued.count == 1 && renderer.delay.pendingCount == 1 }
+        // The first sentence is still playing: waiting on the next is fine.
+        output.isExpectingSound = true
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(listener.failed.isEmpty)
+
+        output.isExpectingSound = false  // Played out; nothing left to say
+        try await waitUntil { listener.failed == [UtteranceID(utterance)] }
+        #expect(listener.finished.isEmpty)
+        #expect(!synth.isSpeaking)
+    }
+
+    @Test func queuedSpeechWhoseClockStopsIsReportedAsFailed() async throws {
+        let output = Output()
+        let synth = synthesizer(output: output, renderer: Renderer(), stallLimit: .milliseconds(200))
+        defer { synth.stopSpeaking(at: .immediate) }
+        let listener = Listener()
+        synth.delegate = listener
+        let utterance = AVSpeechUtterance(string: "The engine dies under this sentence.")
+
+        synth.speak(utterance)
+        try await waitUntil { !output.enqueued.isEmpty }
+        output.position = 1_000
+        output.isExpectingSound = true
+        try await waitUntil { listener.failed == [UtteranceID(utterance)] }
+
+        #expect(!synth.isSpeaking)
+        #expect(listener.finished.isEmpty)
+    }
+
+    @Test func aClockHeldForRenderingOrByPauseIsNotAStall() async throws {
+        let output = Output()
+        let synth = synthesizer(output: output, renderer: Renderer(), stallLimit: .milliseconds(100))
+        defer { synth.stopSpeaking(at: .immediate) }
+        let listener = Listener()
+        synth.delegate = listener
+
+        synth.speak(AVSpeechUtterance(string: "Rendering is slow here."))
+        try await waitUntil { !output.enqueued.isEmpty }
+        output.isExpectingSound = false  // Held: waiting on the next sentence
+        try await Task.sleep(for: .milliseconds(400))
+        output.isExpectingSound = true
+        synth.pauseSpeaking(at: .word)
+        try await Task.sleep(for: .milliseconds(400))
+
+        #expect(listener.failed.isEmpty)
+        #expect(synth.isSpeaking)
+    }
+
+    @Test func anOutputFailureEndsTheUtteranceWithoutFinishingIt() async throws {
+        let output = Output()
+        let synth = synthesizer(output: output, renderer: Renderer())
+        defer { synth.stopSpeaking(at: .immediate) }
+        let listener = Listener()
+        synth.delegate = listener
+        let utterance = AVSpeechUtterance(string: "The route changes.")
+
+        synth.speak(utterance)
+        output.onFailure?()
+
+        #expect(listener.failed == [UtteranceID(utterance)])
+        #expect(listener.finished.isEmpty)
+        #expect(!synth.isSpeaking)
     }
 
     private func waitUntil(_ condition: () -> Bool) async throws {

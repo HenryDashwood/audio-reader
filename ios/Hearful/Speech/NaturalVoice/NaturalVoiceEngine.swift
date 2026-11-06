@@ -84,6 +84,9 @@ actor NaturalVoiceEngine {
             stages.append("\(name) \((ContinuousClock.now - clock).components.attoseconds / 1_000_000_000_000_000 + (ContinuousClock.now - clock).components.seconds * 1000)ms")
             clock = ContinuousClock.now
         }
+        // Notice, not debug, so the start and end of each render survive in a
+        // log collected after the fact: a start with no end is a hung render.
+        timing.notice("render start: \((text as NSString).length, privacy: .public) characters, gpu \(useGPU, privacy: .public)")
         let g2p = try phonemizer.phonemize(text)
         lap("g2p")
         let phonemes = Array(g2p.phonemes.unicodeScalars.prefix(510))  // Kokoro's limit, in code points
@@ -155,7 +158,7 @@ actor NaturalVoiceEngine {
         if let onGPU { audio = onGPU } else { audio = try predict(body(bucket, onGPU: false), inputs) }
         lap("body\(bucket)\(useGPU ? "" : " cpu")")
         let samples = Array(try floats(audio, "out").prefix(total * Self.frame))
-        timing.debug("render: \(stages.joined(separator: ", "), privacy: .public)")
+        timing.notice("render: \(stages.joined(separator: ", "), privacy: .public)")
         return Self.trimmed(samples, words: Self.words(g2p.tokens, frames: frames))
     }
 

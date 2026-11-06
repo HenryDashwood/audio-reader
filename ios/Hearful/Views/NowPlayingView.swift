@@ -234,7 +234,9 @@ struct NowPlayingView: View {
 /// The playback speed chip and its menu of rates.
 private struct SpeedMenu: View, Equatable {
     let rate: Float
-    let setRate: (Float) -> Void
+    /// Main-actor and Sendable so Binding's setter can take it as is: it only
+    /// ever runs on the main actor, and saying so keeps the data-race check quiet.
+    let setRate: @MainActor @Sendable (Float) -> Void
 
     nonisolated static func == (lhs: SpeedMenu, rhs: SpeedMenu) -> Bool { lhs.rate == rhs.rate }
 

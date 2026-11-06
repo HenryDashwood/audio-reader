@@ -40,6 +40,13 @@ enum SpeechSynthesizers {
         return SystemSpeechSynthesizer()
     }
 
+    /// What reads a passage the chosen voice has failed on: always the system
+    /// voice, which needs no download and no model. Silence under test.
+    static func makeFallback() -> SpeechSynthesizing {
+        if TestEnvironment.isRunningTests { return SilentSynthesizer() }
+        return SystemSpeechSynthesizer()
+    }
+
     /// Start loading the selected natural voice while article text and shared
     /// bookmarks are fetched. This only loads models; it never starts audio.
     static func warmUp() {

@@ -144,6 +144,7 @@ final class NaturalVoiceAudioOutput: NaturalVoiceOutput {
     func resume() {
         guard pausedAt != nil else { return }
         pausedAt = nil
+        isHeld = false  // play() below releases a hold too
         if isBroken {
             fail()
             return

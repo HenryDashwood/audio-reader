@@ -42,14 +42,25 @@ internal class NaturalArticleVoice(private val context: Context, private val fol
                 emptyList()
             } catch (tooLong: NaturalVoiceEngine.TooLong) {
                 val cut = splitPoint(text) ?: throw tooLong
+                // Each half must be strictly shorter, or the recursion never ends.
+                if (cut <= 0 || cut >= text.length) throw tooLong
                 render(text.substring(0, cut), offset, engine) + render(text.substring(cut), offset + cut, engine)
             }
         }
 
-        /** Where to split an over-long sentence: after the clause punctuation nearest the middle, else the space. */
+        /**
+         * Where to split an over-long sentence: after the clause punctuation nearest the middle, else the space.
+         *
+         * Only a space with something to say on both sides counts. A first half keeps the space it was cut after,
+         * so "…accurate predictions, " ends in one: choosing it again split the half into itself and nothing, and
+         * the voice rendered the same text for ever.
+         */
         fun splitPoint(text: String): Int? {
             val middle = text.length / 2
-            val spaces = (1 until text.length).filter { text[it] == ' ' }
+            fun speaks(part: String) = part.any { it.isLetterOrDigit() }
+            val spaces = (1 until text.length).filter {
+                text[it] == ' ' && speaks(text.substring(0, it)) && speaks(text.substring(it + 1))
+            }
             val clauses = spaces.filter { text[it - 1] in ",;:—–" }
             return (clauses.ifEmpty { spaces }).minByOrNull { Math.abs(it - middle) }?.plus(1)
         }

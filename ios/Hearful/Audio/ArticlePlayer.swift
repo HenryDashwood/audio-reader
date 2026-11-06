@@ -72,12 +72,18 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     private var synthesizer: SpeechSynthesizing
     private let makeSynthesizer: @MainActor () -> SpeechSynthesizing
+    private let makeFallbackSynthesizer: @MainActor () -> SpeechSynthesizing
+    /// Read the current passage with the system voice: the chosen one has
+    /// failed on it twice. The next passage goes back to the chosen voice.
+    private var useFallbackVoice = false
     private let activateAudioSession: @MainActor () throws -> Void
     private let loadDeadlineSleep: @MainActor @Sendable (Duration) async throws -> Void
     private var needsInterruptionRecovery = false
-    /// Output failures since a word was last heard. One fresh engine is worth
-    /// trying; if that one fails too, stop and say so rather than loop silently.
-    private var failuresWithoutProgress = 0
+    /// Speech failures on one passage. Counted per passage, not reset by
+    /// hearing a word: a passage whose first sentences play and whose third
+    /// always fails would otherwise restart every 20 seconds for ever.
+    private var failuresInPassage = 0
+    private var failedPassage: Int?
     /// Which voice `synthesizer` reads with; when Settings changes it, the next chunk gets a new synthesiser.
     private var synthesizerIdentity = SpeechSynthesizers.identity()
     private let api: HearfulAPIProtocol
@@ -112,6 +118,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         bookmarkJournal: ArticleProgressJournal = .shared,
         progressScope: @escaping () -> String? = { ShortcutScope.current },
         makeSynthesizer: @escaping @MainActor () -> SpeechSynthesizing = SpeechSynthesizers.make,
+        makeFallbackSynthesizer: @escaping @MainActor () -> SpeechSynthesizing = SpeechSynthesizers.makeFallback,
         activateAudioSession: @escaping @MainActor () throws -> Void = AudioSession.configureForPlayback,
         loadDeadlineSleep: @escaping @MainActor @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
@@ -124,6 +131,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         let synthesizer = synthesizer ?? makeSynthesizer()
         self.synthesizer = synthesizer
         self.makeSynthesizer = makeSynthesizer
+        self.makeFallbackSynthesizer = makeFallbackSynthesizer
         self.activateAudioSession = activateAudioSession
         self.loadDeadlineSleep = loadDeadlineSleep
         self.defaults = defaults
@@ -473,15 +481,16 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     private func speakCurrentChunk() {
         guard let script, chunkIndex < script.chunks.count else { return }
         guard activateSessionForSpeech() else { return }
-        let identity = SpeechSynthesizers.identity()
+        let identity = useFallbackVoice ? "fallback" : SpeechSynthesizers.identity()
         if needsInterruptionRecovery || identity != synthesizerIdentity {
             cancelSpeech(clearingLocation: false)
             synthesizer.delegate = nil
-            synthesizer = makeSynthesizer()
+            synthesizer = useFallbackVoice ? makeFallbackSynthesizer() : makeSynthesizer()
             synthesizer.delegate = self
             synthesizerIdentity = identity
             needsInterruptionRecovery = false
         }
+        useFallbackVoice = false
         // Keep the marker present while one utterance replaces another; the
         // exact first word follows with the synthesiser's next callback.
         cancelSpeech(clearingLocation: false)
@@ -542,27 +551,40 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     func speechFailed(_ utterance: UtteranceID) {
         guard utterance == currentUtterance, wantsPlayback, script != nil else { return }
-        failuresWithoutProgress += 1
+        if failedPassage != chunkIndex {
+            failedPassage = chunkIndex
+            failuresInPassage = 0
+        }
+        failuresInPassage += 1
         let log = Logger(subsystem: "com.henrydashwood.hearful", category: "playback")
         // Rebuild the synthesiser, as after an interruption: its audio engine
-        // is the thing that died. The passage restarts from its beginning.
+        // or its renderer is the thing that died. The passage restarts from
+        // its beginning. A second failure reads the passage with the system
+        // voice, so one passage the natural voice cannot manage does not
+        // strand her at the same spot every time she presses play.
         needsInterruptionRecovery = true
-        guard failuresWithoutProgress <= 1 else {
-            log.error("Speech output failed again without progress; pausing")
-            failuresWithoutProgress = 0
+        switch failuresInPassage {
+        case 1:
+            log.error("Speech failed; restarting the passage on a new synthesiser")
+        case 2:
+            log.error("Speech failed again; reading the passage with the system voice")
+            useFallbackVoice = true
+        default:
+            log.error("Speech failed on the system voice too; pausing")
+            failedPassage = nil
             currentUtterance = nil
             wantsPlayback = false
             isPlaying = false
             publishProgress(flush: true)
-            feedback.play(.failure)
+            feedback.play(.failed)
             return
         }
-        log.error("Speech output failed; restarting the passage on a new synthesiser")
         speakCurrentChunk()
     }
 
     private func chunkFinished(_ finished: ObjectIdentifier) {
         guard finished == currentUtterance, wantsPlayback, let script else { return }
+        failedPassage = nil
         chunkIndex += 1
         if chunkIndex < script.chunks.count {
             speakCurrentChunk()
@@ -588,7 +610,6 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
         guard speaking == currentUtterance, isPlaying, !isScrubbing,
             let episode = currentEpisode, let script, chunkIndex < script.chunks.count
         else { return }
-        failuresWithoutProgress = 0
         let chunk = script.chunks[chunkIndex]
         let utteranceLength = (chunk.text as NSString).length
         let location = min(max(range.location, 0), utteranceLength)

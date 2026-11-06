@@ -73,11 +73,29 @@ struct NaturalVoiceTests {
         #expect(offsets.dropFirst().allSatisfy { (text as NSString).substring(from: $0).first?.isUppercase == true })
     }
 
-    @Test func longSentencesSplitAtTheClauseNearestTheMiddle() {
+    @Test func longSentencesSplitAtTheClauseNearestTheMiddle() throws {
         let text = "This is the first half of it, and this is the second half of the sentence"
         #expect(String(text[..<NaturalVoiceSynthesizer.splitPoint(text)!]) == "This is the first half of it, ")
         let plain = "one two three four five six"
         #expect(String(plain[..<NaturalVoiceSynthesizer.splitPoint(plain)!]) == "one two three ")
+
+        // A first half ends in the space it was cut after. Splitting it again
+        // must not choose that space: the half came back whole, for ever.
+        let sentence = "But it seems to me like our current equilibrium is that US midterm election prediction markets "
+            + "are big enough ($2.5 billion of volume on Kalshi) to provide real incentives for accurate predictions, "
+            + "but not big enough to, like, swamp the actual elections."
+        var pending = [sentence]
+        var pieces = 0
+        while let piece = pending.popLast(), piece.count > 20 {
+            let cut = try #require(NaturalVoiceSynthesizer.splitPoint(piece))
+            let head = String(piece[..<cut]), tail = String(piece[cut...])
+            #expect(head.count < piece.count && tail.count < piece.count, "\(piece) did not get shorter")
+            #expect(head.contains(where: \.isLetter) && tail.contains(where: \.isLetter))
+            pending += [head, tail]
+            pieces += 1
+            try #require(pieces < 100, "Splitting never finished")
+        }
+        #expect(NaturalVoiceSynthesizer.splitPoint("trailing, ") == nil)
     }
 
     @Test func speedIsTheInverseOfTheReadersRate() {
