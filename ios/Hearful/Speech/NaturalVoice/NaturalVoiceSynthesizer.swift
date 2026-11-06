@@ -167,10 +167,11 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         cancelPreparation()
     }
 
-    func pauseSpeaking(at boundary: AVSpeechBoundary) {
-        guard isSpeaking, !isPaused else { return }
+    @discardableResult func pauseSpeaking(at boundary: AVSpeechBoundary) -> Bool {
+        guard isSpeaking, !isPaused else { return false }
         output.pause()
         isPaused = true
+        return true
     }
 
     func continueSpeaking() {

@@ -32,9 +32,18 @@ final class SilentSynthesizer: SpeechSynthesizing {
         isPaused = false
     }
 
-    func pauseSpeaking(at boundary: AVSpeechBoundary) {
-        guard isSpeaking else { return }
+    var delaysWordBoundaryPause = false
+
+    @discardableResult func pauseSpeaking(at boundary: AVSpeechBoundary) -> Bool {
+        guard isSpeaking else { return false }
+        if boundary != .word || !delaysWordBoundaryPause { isPaused = true }
+        return true
+    }
+
+    func reachPauseBoundary() {
+        guard isSpeaking, let utterance = spoken.last else { return }
         isPaused = true
+        delegate?.speechPaused(UtteranceID(utterance))
     }
 
     func continueSpeaking() {

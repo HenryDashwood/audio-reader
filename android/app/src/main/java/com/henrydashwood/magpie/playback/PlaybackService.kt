@@ -323,7 +323,7 @@ class PlaybackService : MediaLibraryService() {
                         val item = library.state.value.items.find { it.id == args.getString("id") }
                             ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
                         if (item.episodeId != null && !item.textLoaded) return Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
-                        play(item)
+                        play(item, resumeLoadedArticle = args.getBoolean(RESUME_LOADED_ARTICLE))
                     }
                     CANCEL_PREPARATION -> {
                         rendering?.cancel()
@@ -589,17 +589,22 @@ class PlaybackService : MediaLibraryService() {
         return future
     }
 
-    private fun play(item: LibraryItem, newIntent: Boolean = true) {
+    private fun play(item: LibraryItem, newIntent: Boolean = true, resumeLoadedArticle: Boolean = false) {
         cancelRestoration()
         cancelAssistant()
         feedback.close()
         // Clear an elapsed deadline before a new, explicit request to listen.
         sleepTimer.check()
-        if ((!newIntent || item.kind == ContentKind.Podcast || item.episodeId == null) &&
+        // A paused article has an exact audio position. Rebuilding from a text
+        // bookmark would start the current passage again.
+        val resumeArticle = resumeLoadedArticle && item.kind == ContentKind.Article && hasPlayed &&
+            !player.playWhenReady && player.playbackState != Player.STATE_ENDED && rendered?.closed == false &&
+            playbackRevision == library.state.value.revision && current?.contentId == item.contentId
+        if ((!newIntent || item.kind == ContentKind.Podcast || item.episodeId == null || resumeArticle) &&
             current?.id == item.id && current?.contentVersion == item.contentVersion && player.playbackState != Player.STATE_IDLE && PlaybackStatus.state.value.message == null &&
             (item.kind == ContentKind.Podcast || rendered?.voiceSelection == NaturalVoiceStore.articleVoice(this@PlaybackService, store))) {
             if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
-            if (newIntent) beginProgressIntent(item)
+            if (newIntent) beginProgressIntent(item, refreshArticleProgress = resumeArticle)
             player.play()
             return
         }
@@ -1157,6 +1162,7 @@ class PlaybackService : MediaLibraryService() {
         const val END_VOICE = "magpie.end_voice"
         const val VOICE_CONTROL = "magpie.voice_control"
         const val RESTORE_PLAYER = "magpie.restore_player"
+        const val RESUME_LOADED_ARTICLE = "resume_loaded_article"
         const val PLAY_ITEM = "magpie.play_sample"
         const val DISMISS_PLAYER = "magpie.dismiss_player"
         const val CANCEL_PREPARATION = "magpie.cancel_preparation"

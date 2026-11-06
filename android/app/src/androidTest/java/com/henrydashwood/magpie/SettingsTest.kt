@@ -69,12 +69,14 @@ class SettingsTest {
             compose.onNodeWithText("Settings").performClick()
             compose.waitUntil(20_000) { !model.voices.value.loading && (model.voices.value.voices.isNotEmpty() || model.voices.value.error != null) }
             if (model.voices.value.voices.isEmpty()) {
+                compose.onNodeWithTag("settings-list").performScrollToNode(hasText("Download voices"))
                 compose.onNodeWithText("Download voices").assertIsDisplayed()
                 assertNotNull(model.voices.value.error)
                 return
             }
             val options = model.voices.value.voices
             val selected = options.getOrElse(1) { options.first() }
+            compose.onNodeWithTag("settings-list").performScrollToNode(hasTestTag("voice-setting"))
             compose.onNodeWithTag("voice-setting").performClick()
             compose.onNodeWithTag("voice-list").performScrollToNode(hasText(selected.label))
             compose.onNodeWithText(selected.label).performClick()

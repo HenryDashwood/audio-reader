@@ -150,7 +150,13 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         if Self.playsAsArticle(episode) {
             audio.pause()
             activate(.article)
-            article.play(episode)
+            if article.awaitingWordPause, article.currentEpisode?.id == episode.id,
+                episode.contentID == nil || article.currentEpisode?.contentID == episode.contentID
+            {
+                resumeWithRetries()
+            } else {
+                article.play(episode)
+            }
         } else {
             article.deactivate()
             activate(.audio)
@@ -212,7 +218,7 @@ final class PlaybackCoordinator: ObservableObject, AudioPlaying {
         // session — silencing whatever else is playing — for no sound at all.
         guard currentEpisode != nil else { return }
         sheTookOver()
-        if mode == .article, article.progressContext != nil, let episode = currentEpisode {
+        if mode == .article, !article.awaitingWordPause, article.progressContext != nil, let episode = currentEpisode {
             wantsPlayback = true
             article.play(episode)
         } else { resumeWithRetries() }

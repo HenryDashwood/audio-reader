@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
+import androidx.lifecycle.ViewModelProvider
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
@@ -60,8 +61,11 @@ class ArticleProgressPlaybackTest {
         override suspend fun episodes(token: String, feedId: String, query: String) = listOf(row)
         override suspend fun search(token: String, query: String) = listOf(row)
         override suspend fun episode(token: String, episodeId: Int) = row
-        override suspend fun text(token: String, episodeId: Int, contentId: Int?) = RemoteText(1, 7, body, null, 160,
-            ArticleProgressState(hash, 7, revision, row.articleBookmark))
+        var textRequests = 0
+        override suspend fun text(token: String, episodeId: Int, contentId: Int?): RemoteText {
+            textRequests++
+            return RemoteText(1, 7, body, null, 160, ArticleProgressState(hash, 7, revision, row.articleBookmark))
+        }
         override suspend fun save(token: String, episodeId: Int?, url: String?) = row
         override suspend fun remove(token: String, episodeId: Int) {}
         override suspend fun played(token: String, episodeId: Int, played: Boolean) { error("Guarded completion must not use legacy filing") }
@@ -93,6 +97,31 @@ class ArticleProgressPlaybackTest {
         compose.waitUntil(60_000) { compose.runOnUiThread { controller!!.isPlaying && controller!!.duration > 30_000 } }
     }
     private fun entries() = runBlocking { journal.read(library.state.value.owner!!) }
+    @Test fun quickArticleResumeKeepsAudioPositionFromAppAndLockScreen() {
+        play()
+        val media = controller!!
+        for (inApp in listOf(true, false)) {
+            compose.runOnUiThread { media.seekTo(3_500) }
+            compose.waitUntil(10_000) { compose.runOnUiThread { media.isPlaying && media.currentPosition >= 3_500 } }
+            val requests = api.textRequests
+            val pausedAt = compose.runOnUiThread {
+                media.pause()
+                media.currentPosition
+            }
+            if (inApp) {
+                scenario!!.onActivity { activity ->
+                    val model = ViewModelProvider(activity)[MagpieModel::class.java]
+                    model.play(library.state.value.items.single())
+                }
+            } else {
+                compose.runOnUiThread { media.play() }
+            }
+            compose.waitUntil(10_000) { compose.runOnUiThread { media.isPlaying } }
+            val resumedAt = compose.runOnUiThread { media.currentPosition }
+            assertTrue("Paused at $pausedAt ms, resumed at $resumedAt ms", resumedAt in (pausedAt - 100)..(pausedAt + 1_000))
+            assertEquals("Resuming loaded audio must not fetch the text again", requests, api.textRequests)
+        }
+    }
     @Test fun transportResumeAfterSuccessfulSyncKeepsSavingTheNewSession() {
         api.offline = false
         api.enforceRevision = true

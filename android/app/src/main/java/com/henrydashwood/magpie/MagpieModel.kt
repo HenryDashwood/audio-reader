@@ -386,13 +386,13 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         if (play) { cancelShortcut(); voice.close(resume = false) }
         contentJob?.cancel()
         mutableItemError.value = null
-        if (!libraryState.value.live || item.textLoaded) { if (play) playReady(item); return }
+        if (!libraryState.value.live || item.textLoaded) { if (play) playReady(item, resumeLoadedArticle = true); return }
         mutableItemLoading.value = item.id
         contentJob = viewModelScope.launch {
             try {
                 if (item.captureError != null && item.id in saved.value) repository.prepareSaved(item, false, libraryState.value.revision)
                 val loaded = repository.content(item.id)
-                if (play) playReady(loaded)
+                if (play) playReady(loaded, resumeLoadedArticle = true)
             }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutableItemError.value = com.henrydashwood.magpie.data.AccountLibrary.message(failure) }
@@ -400,13 +400,16 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun play(item: LibraryItem) = openItem(item, play = true)
-    private fun playReady(item: LibraryItem) {
+    private fun playReady(item: LibraryItem, resumeLoadedArticle: Boolean = false) {
         if (library.none { it.id == item.id }) return
         voiceCatalog.stop()
         val media = controller
         if (media == null || !media.isConnected) { mutableNotice.value = "The player is still connecting. Please try again."; return }
         mutablePlayer.update { it.copy(item = item) }
-        val result = media.sendCustomCommand(SessionCommand(PlaybackService.PLAY_ITEM, Bundle.EMPTY), Bundle().apply { putString("id", item.id) })
+        val result = media.sendCustomCommand(SessionCommand(PlaybackService.PLAY_ITEM, Bundle.EMPTY), Bundle().apply {
+            putString("id", item.id)
+            putBoolean(PlaybackService.RESUME_LOADED_ARTICLE, resumeLoadedArticle)
+        })
         result.addListener({
             try { if (result.get().resultCode < 0) mutableNotice.value = "The player could not open this item. Please try again." }
             catch (_: Exception) { mutableNotice.value = "The player disconnected. Please try again." }

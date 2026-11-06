@@ -99,6 +99,95 @@ struct ArticleProgressPlaybackTests {
         try #require(player.isReadyToPlay); try #require(player.loadingError == nil)
     }
 
+    @Test func resumeAfterTextLoadFailsRetriesAndSpeaksTheArticle() async throws {
+        let api = BookmarkPlaybackAPI()
+        let episode = await api.row()
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let synth = SilentSynthesizer()
+        let article = ArticlePlayer(
+            api: api, cache: OfflineCache(directory: directory), synthesizer: synth,
+            progressScope: { nil }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
+        defer { article.clear() }
+
+        await api.setOffline(true)
+        article.restore(episode)
+        await article.waitForPendingLoad()
+        try #require(article.loadingError != nil)
+        #expect(!article.isReadyToPlay)
+
+        await api.setOffline(false)
+        article.resume()
+        try await loaded(article)
+
+        #expect(article.isPlaying)
+        #expect(synth.spoken.count == 1)
+        #expect(synth.lastSpoken == "Café 🌱 in the garden.")
+    }
+
+    enum PlayControl: CaseIterable {
+        case miniPlayer, articleButton, lockScreen
+    }
+
+    @Test(arguments: PlayControl.allCases, [false, true])
+    func playDuringWordBoundaryPausePreservesTheUtterance(control: PlayControl, pauseAgain: Bool) async throws {
+        let api = BookmarkPlaybackAPI()
+        let episode = await api.row()
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let synth = SilentSynthesizer()
+        synth.delaysWordBoundaryPause = true
+        let article = ArticlePlayer(
+            api: api, cache: OfflineCache(directory: directory), synthesizer: synth,
+            progressScope: { nil }, activateAudioSession: {},
+            loadDeadlineSleep: { try await loadDeadline.wait(for: $0) })
+        let coordinator = PlaybackCoordinator(audio: AudioPlayer(), article: article)
+        defer { coordinator.clear() }
+
+        try coordinator.play(episode)
+        try await loaded(article)
+        let first = try #require(synth.spoken.first)
+        let word = (first.speechString as NSString).range(of: "the")
+        try #require(word.location != NSNotFound)
+        synth.speak(range: word)
+        let marker = try #require(article.spokenLocation)
+        if control == .lockScreen {
+            #expect(coordinator.handleRemotePause() == .success)
+        } else {
+            coordinator.toggle()
+        }
+        try #require(!coordinator.isPlaying && synth.isSpeaking && !synth.isPaused)
+
+        switch control {
+        case .miniPlayer: coordinator.toggle()
+        case .articleButton:
+            // A list row may predate the content ID learned when the text loaded.
+            var row = episode
+            row.contentID = nil
+            coordinator.playReportingFailure(row)
+        case .lockScreen: #expect(coordinator.handleRemotePlay() == .success)
+        }
+        #expect(coordinator.isPlaying)
+        if pauseAgain { coordinator.toggle() }
+        synth.reachPauseBoundary()
+        await article.waitForPendingLoad()
+
+        #expect(coordinator.isPlaying == !pauseAgain)
+        #expect(synth.isPaused == pauseAgain)
+        #expect(synth.spoken.count == 1)
+        #expect(synth.spoken.last === first)
+        #expect(article.spokenLocation == marker)
+        if !pauseAgain {
+            let next = (first.speechString as NSString).range(of: "garden")
+            synth.speak(range: next)
+            #expect(article.spokenLocation?.rangeInArticle == next)
+            synth.finishSpeaking()
+            #expect(synth.spoken.count == 2)
+            #expect(synth.lastSpoken?.hasPrefix("Another") == true)
+        }
+    }
+
     @Test(arguments: [false, true])
     func remoteResumeContinuesPausedSpeechWithoutReloadingOrPublishingAPausedState(toggle: Bool) async throws {
         let api = BookmarkPlaybackAPI()

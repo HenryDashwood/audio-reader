@@ -13,7 +13,7 @@ protocol SpeechSynthesizing: AnyObject {
 
     func speak(_ utterance: AVSpeechUtterance)
     func stopSpeaking(at boundary: AVSpeechBoundary)
-    func pauseSpeaking(at boundary: AVSpeechBoundary)
+    @discardableResult func pauseSpeaking(at boundary: AVSpeechBoundary) -> Bool
     func continueSpeaking()
     /// The text likely to be spoken next, so a synthesiser that is slow to start can get it ready.
     func prepare(_ text: String)
@@ -67,11 +67,10 @@ enum SpeechSynthesizers {
 /// which is all the reader compares against anyway.
 typealias UtteranceID = ObjectIdentifier
 
-/// The two callbacks the reader needs: one to advance to the next chunk, one
-/// to follow the position within the chunk being spoken. Deliberately no
-/// equivalent of `didCancel` — a deliberate stop must not advance anything.
+/// Events for a specific utterance. Deliberate cancellation never advances playback.
 @MainActor
 protocol SpeechSynthesizingDelegate: AnyObject {
+    func speechPaused(_ utterance: UtteranceID)
     func speechFinished(_ utterance: UtteranceID)
     /// The exact UTF-16 range Apple says it is about to speak. Keeping the
     /// range, rather than reducing it to a percentage here, lets the article
@@ -83,6 +82,7 @@ protocol SpeechSynthesizingDelegate: AnyObject {
 }
 
 extension SpeechSynthesizingDelegate {
+    func speechPaused(_ utterance: UtteranceID) {}
     func speechFailed(_ utterance: UtteranceID) {}
 }
 
@@ -110,7 +110,7 @@ final class SystemSpeechSynthesizer: NSObject, SpeechSynthesizing, AVSpeechSynth
         synthesizer.stopSpeaking(at: boundary)
     }
 
-    func pauseSpeaking(at boundary: AVSpeechBoundary) {
+    @discardableResult func pauseSpeaking(at boundary: AVSpeechBoundary) -> Bool {
         synthesizer.pauseSpeaking(at: boundary)
     }
 
@@ -119,6 +119,13 @@ final class SystemSpeechSynthesizer: NSObject, SpeechSynthesizing, AVSpeechSynth
     }
 
     // MARK: - AVSpeechSynthesizerDelegate
+
+    nonisolated func speechSynthesizer(
+        _ synthesizer: AVSpeechSynthesizer, didPause utterance: AVSpeechUtterance
+    ) {
+        let paused = UtteranceID(utterance)
+        Task { @MainActor in self.delegate?.speechPaused(paused) }
+    }
 
     nonisolated func speechSynthesizer(
         _ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance

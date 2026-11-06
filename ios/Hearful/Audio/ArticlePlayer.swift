@@ -78,6 +78,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     private var useFallbackVoice = false
     private let activateAudioSession: @MainActor () throws -> Void
     private let loadDeadlineSleep: @MainActor @Sendable (Duration) async throws -> Void
+    private(set) var awaitingWordPause = false
     private var needsInterruptionRecovery = false
     /// Speech failures on one passage. Counted per passage, not reset by
     /// hearing a word: a passage whose first sentences play and whose third
@@ -173,9 +174,10 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
 
     func pause() {
         wantsPlayback = false
-        if synthesizer.isSpeaking {
+        if synthesizer.isSpeaking, !awaitingWordPause {
             // .word, not .immediate: stopping mid-word sounds like a fault.
-            synthesizer.pauseSpeaking(at: .word)
+            let accepted = synthesizer.pauseSpeaking(at: .word)
+            awaitingWordPause = accepted && !synthesizer.isPaused && currentUtterance != nil
         }
         isPlaying = false
         publishProgress(flush: true)
@@ -197,22 +199,40 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// A refused audio-session activation is retriable by the coordinator.
     var isStuckAfterPlayRequest: Bool { wantsPlayback && script != nil && !isPlaying }
 
+    private enum ResumeAction {
+        case awaitWordBoundary
+        case continueQueuedSpeech
+        case speakCurrentChunk
+        case loadText
+    }
+
+    private var resumeAction: ResumeAction {
+        if synthesizer.isPaused && !needsInterruptionRecovery { return .continueQueuedSpeech }
+        if awaitingWordPause { return .awaitWordBoundary }
+        return script == nil ? .loadText : .speakCurrentChunk
+    }
+
     /// A live speech queue can continue immediately without reloading text.
-    var hasPausedSpeech: Bool { synthesizer.isPaused && !needsInterruptionRecovery }
+    var hasPausedSpeech: Bool { resumeAction == .continueQueuedSpeech }
 
     func resume() {
         guard let episode = currentEpisode else { return }
         wantsPlayback = true
-        if synthesizer.isPaused, !needsInterruptionRecovery {
+        switch resumeAction {
+        case .awaitWordBoundary:
+            // The current utterance is still speaking. Keep Play/Pause responsive
+            // while the delegate waits for the engine to reach the boundary.
+            isPlaying = true
+        case .continueQueuedSpeech:
+            awaitingWordPause = false
             guard activateSessionForSpeech() else { return }
             synthesizer.continueSpeaking()
             isPlaying = true
             progressContext?.hasPlayed = true
             publishProgress(flush: false)
-        } else if script != nil {
+        case .speakCurrentChunk:
             speakCurrentChunk()
-        } else {
-            // Restored at launch: the text has not been fetched yet.
+        case .loadText:
             load(episode, andPlay: true)
         }
     }
@@ -532,6 +552,7 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     /// only didFinish for the current utterance advances playback, and a
     /// deliberate stop arrives as didCancel, which is ignored.
     private func cancelSpeech(clearingLocation: Bool = true) {
+        awaitingWordPause = false
         currentUtterance = nil
         if clearingLocation { spokenLocation = nil }
         if synthesizer.isSpeaking || synthesizer.isPaused {
@@ -540,6 +561,12 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     }
 
     // MARK: - SpeechSynthesizingDelegate
+
+    func speechPaused(_ utterance: UtteranceID) {
+        guard utterance == currentUtterance, awaitingWordPause, synthesizer.isPaused else { return }
+        awaitingWordPause = false
+        if wantsPlayback { resume() }
+    }
 
     func speechFinished(_ utterance: UtteranceID) {
         chunkFinished(utterance)
@@ -550,7 +577,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     }
 
     func speechFailed(_ utterance: UtteranceID) {
-        guard utterance == currentUtterance, wantsPlayback, script != nil else { return }
+        guard utterance == currentUtterance else { return }
+        awaitingWordPause = false
+        guard wantsPlayback, script != nil else { return }
         if failedPassage != chunkIndex {
             failedPassage = chunkIndex
             failuresInPassage = 0
@@ -583,7 +612,9 @@ final class ArticlePlayer: ObservableObject, SpeechSynthesizingDelegate {
     }
 
     private func chunkFinished(_ finished: ObjectIdentifier) {
-        guard finished == currentUtterance, wantsPlayback, let script else { return }
+        guard finished == currentUtterance else { return }
+        awaitingWordPause = false
+        guard wantsPlayback, let script else { return }
         failedPassage = nil
         chunkIndex += 1
         if chunkIndex < script.chunks.count {
