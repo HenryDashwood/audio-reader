@@ -42,6 +42,20 @@ struct NaturalVoiceTests {
         ])
     }
 
+    /// The model can leave a last word almost silent ("The problem with v…"), so it starts after the audible end.
+    @Test func trimmingKeepsAWordThatStartsAfterTheAudibleEndInsideTheAudio() {
+        var samples = [Float](repeating: 0, count: 48_000)
+        for i in 2_400 ..< 12_000 { samples[i] = 0.5 }  // Speech up to 0.5 s, then silence
+        let words = [
+            NaturalVoiceEngine.Word(characters: 0 ..< 3, samples: 2_400 ..< 12_000),
+            NaturalVoiceEngine.Word(characters: 4 ..< 9, samples: 20_000 ..< 30_000),  // Unvoiced
+        ]
+        let trimmed = NaturalVoiceEngine.trimmed(samples, words: words)
+        #expect(trimmed.words.count == 2)
+        #expect(trimmed.words.allSatisfy { $0.samples.upperBound <= trimmed.samples.count })
+        #expect(trimmed.words[1].samples.lowerBound >= trimmed.words[0].samples.lowerBound)
+    }
+
     @Test func trimmingKeepsALittleEitherSideAndMovesTheWords() {
         let samples = [Float](repeating: 0.5, count: 48_000)
         let words = [NaturalVoiceEngine.Word(characters: 0 ..< 3, samples: 12_000 ..< 24_000)]

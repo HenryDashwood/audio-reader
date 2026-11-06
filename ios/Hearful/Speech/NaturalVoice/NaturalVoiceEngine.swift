@@ -274,9 +274,14 @@ actor NaturalVoiceEngine {
         }
         let from = heard.map { max(lower, $0.lowerBound - Int(0.05 * sampleRate)) } ?? lower
         let to = heard.map { min(upper, $0.upperBound + 1 + Int(0.2 * sampleRate)) } ?? upper
+        // Clamped at both ends: a word the model barely voiced can start after
+        // the last audible sample, and an unclamped range then ran backwards
+        // and trapped, at the same sentence every time it was read.
+        let length = to - from
         let moved = words.map {
-            Word(characters: $0.characters,
-                 samples: max(0, $0.samples.lowerBound - from) ..< max(0, min(to, $0.samples.upperBound) - from))
+            let start = min(max(0, $0.samples.lowerBound - from), length)
+            let end = min(max(start, $0.samples.upperBound - from), length)
+            return Word(characters: $0.characters, samples: start ..< end)
         }
         return Sentence(samples: Array(samples[from ..< to]), words: moved)
     }
