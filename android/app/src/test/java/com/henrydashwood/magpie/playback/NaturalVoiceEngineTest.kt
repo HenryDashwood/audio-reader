@@ -115,4 +115,17 @@ class NaturalVoiceEngineTest {
         assertEquals("Emma (British)", NaturalVoice("bf_emma").label)
         assertFalse(NaturalVoice("af_heart").isBritish)
     }
+
+    /** "Up - down." phonemizes as "ʌp  dWn.": the dash says nothing but keeps its space, one phoneme. */
+    @Test fun aSilentTokenTakesOnlyItsSpaceSoLaterWordsKeepTheirPlace() {
+        val tokens = listOf(
+            PhonemeToken("Up", "ʌp", " ", 0, 2), PhonemeToken("-", "", " ", 3, 4),
+            PhonemeToken("down", "dWn", "", 5, 9), PhonemeToken(".", ".", "", 9, 10),
+        )
+        val words = NaturalVoiceEngine.words(tokens, List(10) { 2 })
+        assertEquals(
+            listOf(listOf(0, 2, 0, 3_000), listOf(5, 9, 4_200, 8_400)),
+            words.map { listOf(it.characters.first, it.characters.last + 1, it.samples.first, it.samples.last + 1) },
+        )
+    }
 }

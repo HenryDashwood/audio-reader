@@ -197,8 +197,10 @@ class NaturalVoiceEngine(folder: File, val voice: NaturalVoice, cacheDir: File) 
             for (token in tokens) {
                 if (i >= frames.size - 1) break
                 if (token.phonemes.isEmpty()) {
+                    // A token with nothing to say, like the dash in " - ", still leaves its space in the phonemes:
+                    // one frame, not Kokoro's two. Taking two put every later word a phoneme late, and after two
+                    // dashes the last word fell off the end, so trimming cut the sentence short in the middle of it.
                     if (token.whitespace.isNotEmpty()) {
-                        i += 1
                         left = right + frames[i]
                         right = left + frames[i]
                         i += 1

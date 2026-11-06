@@ -31,6 +31,17 @@ struct NaturalVoiceTests {
         #expect(NaturalVoiceEngine.words(tokens, frames: frames) == expected)
     }
 
+    /// "Up - down." phonemizes as "ʌp␣␣dWn.": the dash says nothing but keeps its space, one phoneme.
+    @Test func aSilentTokenTakesOnlyItsSpaceSoLaterWordsKeepTheirPlace() {
+        let tokens = [("Up", "ʌp", " ", 0, 2), ("-", "", " ", 3, 4), ("down", "dWn", "", 5, 9), (".", ".", "", 9, 10)]
+            .map { Token(text: $0.0, phonemes: $0.1, whitespace: $0.2, start: $0.3, end: $0.4) }
+        let frames = [Int](repeating: 2, count: 10)  // Start, eight phonemes, end
+        #expect(NaturalVoiceEngine.words(tokens, frames: frames) == [
+            NaturalVoiceEngine.Word(characters: 0 ..< 2, samples: 0 ..< 3_000),
+            NaturalVoiceEngine.Word(characters: 5 ..< 9, samples: 4_200 ..< 8_400),
+        ])
+    }
+
     @Test func trimmingKeepsALittleEitherSideAndMovesTheWords() {
         let samples = [Float](repeating: 0.5, count: 48_000)
         let words = [NaturalVoiceEngine.Word(characters: 0 ..< 3, samples: 12_000 ..< 24_000)]
