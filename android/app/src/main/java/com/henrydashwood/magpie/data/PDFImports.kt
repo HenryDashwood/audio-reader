@@ -3,6 +3,10 @@ package com.henrydashwood.magpie.data
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -118,5 +122,26 @@ class PDFUploadInbox(private val context: Context) {
         File(directory, "${item.id}.json").delete()
         File(directory, "${item.id}.pdf").delete()
         Unit
+    }
+}
+
+
+// Called on the main thread. Dialogs await the same app-owned request when a
+// sheet is reopened while its previous upload is finishing.
+class PDFUploads(private val scope: CoroutineScope) {
+    private val active = mutableMapOf<PendingPDF, Deferred<Unit>>()
+
+    suspend fun send(item: PendingPDF, inbox: PDFUploadInbox, client: PDFClient, current: () -> Boolean) {
+        val request = active[item] ?: scope.async(start = CoroutineStart.LAZY) {
+            try {
+                val bytes = inbox.bytes(item)
+                check(current()) { "Your account changed." }
+                client.upload(bytes, item.filename)
+                // The receipt acknowledges this specific owner's copy even if
+                // the user has since dismissed the dialog or switched accounts.
+                inbox.remove(item)
+            } finally { active.remove(item) }
+        }.also { active[item] = it; it.start() }
+        request.await()
     }
 }

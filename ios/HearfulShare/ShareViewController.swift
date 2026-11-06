@@ -9,7 +9,7 @@ final class ShareViewController: UIViewController {
     private var pendingInput: Input?
     private var queuedPDF: PDFUploadInbox.Pending?
     private var queuedCapture: CaptureInbox.Capture?
-    private var uploadTask: Task<Void, Never>?
+    private let upload = ShareSheetUpload()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -119,7 +119,7 @@ final class ShareViewController: UIViewController {
     }
 
     private func saveCapture() {
-        guard uploadTask == nil else { return }
+        guard !upload.isDismissed, upload.task == nil else { return }
         do {
             if pendingInput?.pdf != nil || queuedPDF != nil {
                 if queuedPDF == nil, let input = pendingInput, let data = input.pdf {
@@ -129,13 +129,16 @@ final class ShareViewController: UIViewController {
                 guard let pdf = queuedPDF else { throw CaptureInbox.InboxError.unavailable }
                 pendingInput = nil
                 show(.uploading)
-                uploadTask = Task { [weak self] in
-                    do {
-                        try await PDFUploadInbox.shared.upload(pdf)
+                upload.start {
+                    try await PDFUploadInbox.shared.upload(pdf)
+                } completion: { [weak self] result in
+                    switch result {
+                    case .success:
                         self?.queuedPDF = nil
                         self?.show(.saved(title: pdf.filename, url: URL(fileURLWithPath: pdf.filename), preparing: true))
-                    } catch { self?.show(.queued(message: error.localizedDescription)) }
-                    self?.uploadTask = nil
+                    case .failure(let error):
+                        self?.show(.queued(message: error.localizedDescription))
+                    }
                 }
                 return
             }
@@ -148,21 +151,20 @@ final class ShareViewController: UIViewController {
             guard let capture = queuedCapture else { throw CaptureInbox.InboxError.unavailable }
             pendingInput = nil
             show(.uploading)
-            uploadTask = Task { [weak self] in
-                do {
-                    let preparing = try await CaptureUploader().finish(capture, inbox: .shared)
-                    try Task.checkCancellation()
+            upload.start {
+                try await CaptureUploader().finish(capture, inbox: .shared)
+            } completion: { [weak self] result in
+                switch result {
+                case .success(let preparing):
                     self?.queuedCapture = nil
                     self?.show(.saved(title: capture.title, url: capture.url, preparing: preparing))
-                } catch is CancellationError {
-                    // Dismissal leaves the durable queue available to a later retry.
-                } catch {
-                    guard !Task.isCancelled else { return }
+                case .failure(let error) where error is CancellationError:
+                    break
+                case .failure(let error):
                     let message = (error as? CaptureUploader.Failure)?.localizedDescription
                         ?? "The upload could not finish. Your capture is kept on this device. Retry here, or Magpie will retry when you next open it."
                     self?.show(.queued(message: message))
                 }
-                self?.uploadTask = nil
             }
         } catch {
             show(.failed(message: error.localizedDescription))
@@ -173,12 +175,13 @@ final class ShareViewController: UIViewController {
         ShareConfirmationView(state: state, save: { [weak self] in
             self?.saveCapture()
         }) { [weak self] in
-            self?.uploadTask?.cancel()
+            self?.upload.dismiss()
             self?.extensionContext?.completeRequest(returningItems: nil)
         }
     }
 
     private func show(_ state: ShareConfirmationView.Phase) {
+        guard !upload.isDismissed else { return }
         confirmation?.rootView = makeConfirmation(state: state)
         if state.isSaved || state.isFailure {
             UINotificationFeedbackGenerator().notificationOccurred(state.isSaved ? .success : .error)
@@ -189,7 +192,7 @@ final class ShareViewController: UIViewController {
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        uploadTask?.cancel()
+        upload.dismiss()
     }
 }
 

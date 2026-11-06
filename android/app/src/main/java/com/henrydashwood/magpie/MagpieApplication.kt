@@ -51,6 +51,7 @@ open class MagpieApplication : Application() {
         }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val pdfUploads by lazy { PDFUploads(scope) }
     /** Episode audio kept on the phone. Follows the account library; see EpisodeDownloads. */
     open val downloads: EpisodeDownloads by lazy {
         EpisodeDownloads(SystemDownloadTransport(this), FileDownloadManifestStore(this), PreferencesDownloadSettingsStore(this),

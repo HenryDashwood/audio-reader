@@ -19,6 +19,7 @@ import com.henrydashwood.magpie.BuildConfig
 import com.henrydashwood.magpie.MagpieApplication
 import com.henrydashwood.magpie.data.*
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -46,51 +47,69 @@ fun PDFImportButton() {
 fun PDFImportDialog(initialUri: Uri? = null, onClose: () -> Unit) {
     val app = LocalContext.current.applicationContext as MagpieApplication
     val library by app.library.state.collectAsStateWithLifecycle()
-    val token by app.accounts.accessToken.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
+    val token = app.accounts.accessToken.collectAsStateWithLifecycle().value
     val owner = library.owner
-    val inbox = remember { PDFUploadInbox(app) }
     val client = remember(token) { token?.let { PDFClient(BuildConfig.ACCOUNT_API_URL, it) } }
-    var showingPlus by remember(owner, token) { mutableStateOf(false) }
-    var capability by remember(owner, token) { mutableStateOf<PDFCapability?>(null) }
-    var error by remember(owner, token) { mutableStateOf<String?>(null) }
-    var busy by remember(owner, token) { mutableStateOf(false) }
-    var queued by remember(owner, token) { mutableStateOf<List<PendingPDF>>(emptyList()) }
-    var selected by remember(owner, token) { mutableStateOf(initialUri) }
+    key(owner, token) {
+        PDFUploadDialog(initialUri, owner, client, current = {
+            owner != null && owner == app.library.state.value.owner && token == app.accounts.accessToken.value
+        }, onClose = onClose)
+    }
+}
+
+@Composable
+internal fun PDFUploadDialog(initialUri: Uri?, owner: String?, client: PDFClient?, current: () -> Boolean, onClose: () -> Unit) {
+    val app = LocalContext.current.applicationContext as MagpieApplication
+    val scope = rememberCoroutineScope()
+    val inbox = remember { PDFUploadInbox(app) }
+    var showingPlus by remember { mutableStateOf(false) }
+    var capability by remember { mutableStateOf<PDFCapability?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var queued by remember { mutableStateOf<List<PendingPDF>>(emptyList()) }
+    var selected by remember { mutableStateOf(initialUri) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { selected = it }
     if (showingPlus) PlusDialog {
         showingPlus = false
         scope.launch {
-            try { val refreshed = client?.capability(); if (owner == app.library.state.value.owner && token == app.accounts.accessToken.value) capability = refreshed }
+            try { val refreshed = client?.capability(); if (current()) capability = refreshed }
             catch (_: Exception) { }
         }
     }
-    fun current() = owner != null && owner == app.library.state.value.owner && token == app.accounts.accessToken.value
-    fun upload(item: PendingPDF) {
+    fun close() {
+        scope.cancel()
+        onClose()
+    }
+    fun upload(prepare: suspend () -> PendingPDF) {
+        if (busy || !current()) return
+        busy = true
+        error = null
         scope.launch {
-            busy = true
             try {
-                check(current()) { "Your account changed. Reopen PDF import." }
-                val data = inbox.bytes(item)
+                val item = prepare()
                 check(current()) { "Your account changed." }
-                checkNotNull(client).upload(data, item.filename)
-                check(current()) { "Your account changed." }
-                inbox.remove(item)
-                app.library.refresh()
-                onClose()
+                app.pdfUploads.send(item, inbox, checkNotNull(client)) { current() }
+                if (current()) {
+                    app.library.refresh()
+                    if (current()) close()
+                }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { if (current()) error = failure.message }
-            finally { if (current()) { busy = false; queued = inbox.pending(checkNotNull(owner)) } }
+            catch (failure: Exception) {
+                if (current()) {
+                    queued = inbox.pending(checkNotNull(owner))
+                    error = failure.message
+                }
+            } finally { busy = false }
         }
     }
-    LaunchedEffect(owner, token) {
+    LaunchedEffect(owner, client) {
         try {
             capability = client?.capability()
             queued = owner?.let { inbox.pending(it) }.orEmpty()
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { error = failure.message }
     }
-    AlertDialog(onDismissRequest = onClose,
+    AlertDialog(onDismissRequest = ::close,
         title = { Text("Import PDF") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Import a PDF from Files, or share a PDF link from your browser to Magpie.")
@@ -104,28 +123,22 @@ fun PDFImportDialog(initialUri: Uri? = null, onClose: () -> Unit) {
             else if (capability?.enabled == true) {
                 TextButton(onClick = { picker.launch(arrayOf("application/pdf")) }, enabled = !busy) { Text("Choose PDF") }
                 if (selected != null) TextButton(onClick = {
-                    scope.launch {
-                        busy = true
-                        try {
-                            check(current()) { "Your account changed." }
-                            val item = inbox.add(checkNotNull(selected), checkNotNull(owner))
-                            check(current()) { "Your account changed." }
-                            selected = null
-                            queued = inbox.pending(owner)
-                            upload(item)
-                        } catch (failure: Exception) { if (current()) { error = failure.message; busy = false } }
+                    upload {
+                        val item = inbox.add(checkNotNull(selected), checkNotNull(owner))
+                        selected = null
+                        item
                     }
                 }, enabled = !busy) { Text("Save selected PDF") }
                 queued.forEach { item ->
                     Text(item.filename)
-                    TextButton(onClick = { upload(item) }, enabled = !busy) { Text("Retry upload") }
+                    TextButton(onClick = { upload { item } }, enabled = !busy) { Text("Retry upload") }
                     TextButton(onClick = { scope.launch { inbox.remove(item); if (current()) queued = inbox.pending(checkNotNull(owner)) } }, enabled = !busy) { Text("Remove local PDF") }
                 }
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
         } },
-        confirmButton = { TextButton(onClick = onClose) { Text("Done") } })
+        confirmButton = { TextButton(onClick = ::close) { Text("Done") } })
 }
 
 @Composable
