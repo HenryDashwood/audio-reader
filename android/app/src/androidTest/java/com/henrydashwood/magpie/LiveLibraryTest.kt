@@ -1,6 +1,7 @@
 package com.henrydashwood.magpie
 
 import android.content.Intent
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -53,7 +54,8 @@ class LiveLibraryTest {
         override suspend fun save(token: String, episodeId: Int?, url: String?) = article
         override suspend fun remove(token: String, episodeId: Int) {}
         override suspend fun played(token: String, episodeId: Int, played: Boolean) {}
-        override suspend fun clearLatest(token: String) {}
+        val cleared = mutableListOf<String>()
+        override suspend fun clearLatest(token: String) { cleared += token }
         override suspend fun subscribe(token: String, url: String) = LibraryFeed("30", "Added publication", 0, true)
         override suspend fun position(token: String, episodeId: Int, seconds: Double, completed: Boolean) { reported++ }
     }
@@ -70,6 +72,27 @@ class LiveLibraryTest {
         app.libraryOverride = null
     }
     private fun launch() { scenario = ActivityScenario.launch(MainActivity::class.java) }
+
+    @Test fun clearConfirmationFromAPreviousSessionCannotClearTheCurrentLatest() {
+        launch()
+        compose.onNodeWithText("Latest").performClick()
+        compose.onNodeWithContentDescription("Clear Latest").performClick()
+        val originalRevision = repository.state.value.revision
+        compose.onNodeWithText("Clear Latest").performSemanticsAction(SemanticsActions.OnClick) { click ->
+            // Deliver the pending tap before Compose detaches the original button.
+            runBlocking { repository.changeSession("second-session") }
+            click()
+        }
+        compose.onNodeWithText("Clear Latest?").assertDoesNotExist()
+        compose.onNodeWithText("Account podcast").assertIsDisplayed()
+        compose.runOnIdle { assertTrue(api.cleared.isEmpty()) }
+        compose.onNodeWithContentDescription("Clear Latest").performClick()
+        scenario!!.onActivity { ViewModelProvider(it)[MagpieModel::class.java].clearLatest(originalRevision) }
+        compose.onNodeWithText("Clear Latest?").assertIsDisplayed()
+        compose.onNodeWithText("Clear Latest").performClick()
+        compose.waitUntil(10_000) { repository.state.value.latestIds.isEmpty() }
+        compose.runOnIdle { assertEquals(listOf("second-session"), api.cleared) }
+    }
 
     @Test fun failedInitialLoadShowsRetryWithoutClaimingTheAccountIsEmpty() {
         api.failing = true

@@ -128,11 +128,12 @@ fun AskConversation(model: MagpieModel) {
         }
     }
     // As on iOS: without AI data sharing, the sheet says what still works and offers to enable the rest.
-    var aiAllowed by remember { mutableStateOf<Boolean?>(null) }
-    var reviewingAI by remember { mutableStateOf(false) }
-    var savingAI by remember { mutableStateOf(false) }
     val library by model.libraryState.collectAsStateWithLifecycle()
-    LaunchedEffect(library.revision) { aiAllowed = if (library.live) runCatching { model.aiConsent() }.getOrNull() else false }
+    val revision = library.revision
+    var aiAllowed by remember(revision) { mutableStateOf<Boolean?>(null) }
+    var reviewingAI by remember(revision) { mutableStateOf(false) }
+    var savingAI by remember(revision) { mutableStateOf(false) }
+    LaunchedEffect(revision) { aiAllowed = if (library.live) runCatching { model.aiConsent() }.getOrNull() else false }
     val sheet = rememberModalBottomSheetState()
     // Choices and unfinished requests need an answer, and at half height they sit below the fold.
     val needsRoom = state.clarification != null || (state.reviewing && state.recoveryRequests.isNotEmpty() && !state.busy)
@@ -244,10 +245,20 @@ fun AskConversation(model: MagpieModel) {
             confirmButton = { TextButton(onClick = { dismissRequest = null; model.voice.dismissRequest(request.requestId) }) { Text("Dismiss request") } },
             dismissButton = { TextButton(onClick = { dismissRequest = null }) { Text("Keep request") } })
     }
-    if (state.phase == VoicePhase.Consent) AIConsentDialog(false, state.error, model.voice::allowAI, model.voice::declineAI)
+    if (state.phase == VoicePhase.Consent) state.consentPrompt?.let { prompt ->
+        AIConsentDialog(false, state.error, { model.voice.allowAI(prompt) }, { model.voice.declineAI(prompt) })
+    }
     if (reviewingAI) AIConsentDialog(savingAI, null, {
-        savingAI = true
-        scope.launch { aiAllowed = runCatching { model.setAIConsent(true) }.getOrNull() ?: aiAllowed; savingAI = false; reviewingAI = false }
+        if (!savingAI && model.libraryState.value.revision == revision) {
+            savingAI = true
+            scope.launch {
+                try {
+                    if (model.libraryState.value.revision == revision) aiAllowed = model.setAIConsent(true)
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Keep the current choice when the request fails. */ }
+                finally { savingAI = false; reviewingAI = false }
+            }
+        }
     }, { reviewingAI = false })
 }
 

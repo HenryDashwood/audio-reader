@@ -1,4 +1,4 @@
-import Foundation
+import SwiftUI
 import Testing
 
 @testable import Hearful
@@ -14,7 +14,11 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
 
     var results: [PodcastResult] = []
     var episodeResults: [Episode] = []
+    var delayedWebResult: (@Sendable () async throws -> PodcastResult?)?
     var webResult: PodcastResult?
+    var delayedDiscovery: (@Sendable () async throws -> FeedDiscoveryResponse)?
+    var signupReply: (@Sendable () async throws -> NewsletterSignup)?
+    private(set) var signupURLs: [URL] = []
     var discoveryResponse: FeedDiscoveryResponse?
     var error: Error?
     private(set) var queries: [String] = []
@@ -36,15 +40,23 @@ private final class SearchAPI: HearfulAPIProtocol, @unchecked Sendable {
 
     func searchPublicationOnWeb(query: String) async throws -> PodcastResult? {
         webQueries.append(query)
+        if let delayedWebResult { return try await delayedWebResult() }
         if let error { throw error }
         return webResult
     }
 
     func discoverFeeds(url: URL) async throws -> FeedDiscoveryResponse {
         discoveryURLs.append(url)
+        if let delayedDiscovery { return try await delayedDiscovery() }
         if let error { throw error }
         guard let discoveryResponse else { throw APIError(underlying: "no discovery response") }
         return discoveryResponse
+    }
+
+    func signUpForNewsletter(url: URL) async throws -> NewsletterSignup {
+        signupURLs.append(url)
+        let reply = try #require(signupReply)
+        return try await reply()
     }
 
     func command(
@@ -219,9 +231,221 @@ struct PodcastSearchModelTests {
     }
 }
 
+private actor DelayedWebResult {
+    var reply: CheckedContinuation<PodcastResult?, any Error>?
+
+    func search() async throws -> PodcastResult? {
+        try await withCheckedThrowingContinuation { reply = $0 }
+    }
+
+    func finish(with result: Result<PodcastResult?, any Error>) {
+        reply?.resume(with: result)
+        reply = nil
+    }
+}
+
+@MainActor
+private final class SourceSheetPresentation: ObservableObject {
+    @Published var showing = false
+    var model: PodcastSearchModel
+    init(model: PodcastSearchModel) { self.model = model }
+}
+
+private struct SourceSheetHost: View {
+    @StateObject private var auth = AuthController(notificationCenter: NotificationCenter(), readToken: { nil })
+    @ObservedObject var presentation: SourceSheetPresentation
+
+    var body: some View {
+        Text("Following").sheet(isPresented: $presentation.showing) {
+            AddSourcesView(shows: [], searchModel: presentation.model)
+                .environmentObject(auth)
+        }
+    }
+}
+
+@MainActor
+struct AddSourcesDismissalTests {
+    enum Destination: CaseIterable { case following, reopened }
+    enum Response: CaseIterable { case match, failure }
+
+    private func waitFor(_ description: String, _ ready: () async -> Bool) async throws {
+        for _ in 0..<200 {
+            if await ready() { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(await ready(), "Timed out waiting for \(description)")
+    }
+
+    @Test(.serialized, arguments: Destination.allCases, Response.allCases)
+    func webSearchFinishesAfterDismissal(_ destination: Destination, _ response: Response) async throws {
+        let gate = DelayedWebResult()
+        let api = SearchAPI()
+        api.delayedWebResult = { try await gate.search() }
+        var announcements: [String] = []
+        let first = PodcastSearchModel(api: api, announce: { announcements.append($0) })
+        let presentation = SourceSheetPresentation(model: first)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: SourceSheetHost(presentation: presentation))
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true; window.rootViewController = nil }
+
+        func openSheet() async throws {
+            presentation.showing = true
+            try await waitFor("Add Sources to appear") {
+                host.presentedViewController?.viewIfLoaded?.window === window &&
+                    host.presentedViewController?.isBeingPresented == false
+            }
+        }
+
+        try await openSheet()
+        first.searchWebNow(for: "Alpha")
+        let pending = try #require(first.webPending)
+        try await waitFor("Alpha request") { await gate.reply != nil }
+        presentation.showing = false
+        try await waitFor("Following") { host.presentedViewController == nil }
+
+        if destination == .reopened {
+            let secondAPI = SearchAPI()
+            secondAPI.webResult = result("Publication Beta")
+            let second = PodcastSearchModel(api: secondAPI, announce: { announcements.append($0) })
+            presentation.model = second
+            try await openSheet()
+            second.searchWebNow(for: "Beta")
+            await second.webPending?.value
+        }
+
+        switch response {
+        case .match: await gate.finish(with: .success(result("Publication Alpha")))
+        case .failure: await gate.finish(with: .failure(APIError(spokenResponse: "Alpha failed", underlying: "offline")))
+        }
+        await pending.value
+        #expect(first.webPublication == nil && first.webMessage == nil)
+        if destination == .reopened {
+            #expect(presentation.model.webPublication == result("Publication Beta"))
+            #expect(presentation.model.webMessage == nil && !presentation.model.isSearchingWeb)
+            #expect(announcements == ["Found Publication Beta on the web"])
+        } else {
+            #expect(announcements.isEmpty)
+        }
+    }
+}
+
 @MainActor
 @Suite("Feed discovery model")
 struct FeedDiscoveryModelTests {
+    enum OldReply: CaseIterable { case feeds, discoveryError, signupSuccess, signupError }
+
+    @Test(arguments: OldReply.allCases, [false, true])
+    func closedLookupOrSignupCannotAnnounceOrReplaceAnotherSite(reply: OldReply, reopen: Bool) async throws {
+        let signup = reply == .signupSuccess || reply == .signupError
+        let fails = reply == .discoveryError || reply == .signupError
+        let api = SearchAPI()
+        let first = URL(string: "https://first.invalid")!
+        let second = URL(string: "https://second.invalid")!
+        let started = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        var announcements: [String] = []
+        let model = FeedDiscoveryModel(api: api) { announcements.append($0) }
+        api.discoveryResponse = FeedDiscoveryResponse(submittedURL: first, candidates: [])
+        await model.load(url: first)
+        let original = try #require(model.visit)
+        let oldResponse = FeedDiscoveryResponse(submittedURL: first, candidates: [discoveredFeed("First")])
+        @Sendable func waitForReply() async throws {
+            started.continuation.finish()
+            for await _ in release.stream {}
+            if fails { throw APIError(spokenResponse: "Old error", underlying: "fixture") }
+        }
+        api.delayedDiscovery = { try await waitForReply(); return oldResponse }
+        api.signupReply = { try await waitForReply(); return NewsletterSignup(status: "submitted", spokenResponse: "Old signup") }
+        let pending = Task {
+            if signup { await model.signUp(for: original) }
+            else { await model.retry(for: original) }
+        }
+        for await _ in started.stream {}
+        model.close()
+        api.delayedDiscovery = nil
+        let candidates = [discoveredFeed("Second")]
+        if reopen {
+            api.discoveryResponse = FeedDiscoveryResponse(submittedURL: second, candidates: candidates)
+            await model.load(url: second)
+        }
+        await model.signUp(for: original)
+        release.continuation.finish()
+        await pending.value
+        #expect(model.state == (reopen ? .loaded(candidates) : .loading))
+        #expect(announcements == (reopen ? ["One feed found"] : []))
+        #expect(api.signupURLs == (signup ? [first] : []))
+    }
+
+    @Test func oldSignupAndRapidTapsCannotInterruptOrDuplicateTheCurrentSignup() async throws {
+        let api = SearchAPI()
+        var announcements: [String] = []
+        let model = FeedDiscoveryModel(api: api) { announcements.append($0) }
+        let first = URL(string: "https://first.invalid")!
+        let second = URL(string: "https://second.invalid")!
+        api.discoveryResponse = FeedDiscoveryResponse(submittedURL: first, candidates: [])
+        let firstStarted = AsyncStream<Void>.makeStream()
+        let firstRelease = AsyncStream<Void>.makeStream()
+        api.signupReply = {
+            firstStarted.continuation.finish()
+            for await _ in firstRelease.stream {}
+            throw APIError(spokenResponse: "Old error", underlying: "fixture")
+        }
+        await model.load(url: first)
+        let firstVisit = try #require(model.visit)
+        let original = Task { await model.signUp(for: firstVisit) }
+        for await _ in firstStarted.stream {}
+        model.close()
+        let secondStarted = AsyncStream<Void>.makeStream()
+        let secondRelease = AsyncStream<Void>.makeStream()
+        let result = NewsletterSignup(status: "submitted", spokenResponse: "Signup sent for the second site")
+        api.signupReply = {
+            secondStarted.continuation.finish()
+            for await _ in secondRelease.stream {}
+            return result
+        }
+        api.discoveryResponse = FeedDiscoveryResponse(submittedURL: second, candidates: [])
+        await model.load(url: second)
+        let secondVisit = try #require(model.visit)
+        let replacement = Task { await model.signUp(for: secondVisit) }
+        for await _ in secondStarted.stream {}
+        firstRelease.continuation.finish()
+        await original.value
+        #expect(model.signingUp)
+        await model.retry(for: secondVisit)
+        await model.signUp(for: secondVisit)
+        secondRelease.continuation.finish()
+        await replacement.value
+        #expect(api.discoveryURLs == [first, second])
+        #expect(api.signupURLs == [first, second])
+        #expect(model.state == .signedUp(result))
+        #expect(!model.signingUp)
+        #expect(announcements == [result.spokenResponse])
+    }
+
+    @Test func oldSignupButtonCannotUseTheReplacementAccountBeforeItsPageReloads() async throws {
+        let api = SearchAPI()
+        let url = URL(string: "https://publisher.invalid")!
+        api.discoveryResponse = FeedDiscoveryResponse(submittedURL: url, candidates: [])
+        api.signupReply = { NewsletterSignup(status: "submitted", spokenResponse: "Sent") }
+        var announcements: [String] = []
+        let model = FeedDiscoveryModel(api: api) { announcements.append($0) }
+        await HearfulAPI.$tokenProvider.withValue({ "first-token" }) { await model.load(url: url) }
+        let old = try #require(model.visit)
+        try await HearfulAPI.$tokenProvider.withValue({ "second-token" }) {
+            await model.signUp(for: old)
+            #expect(api.signupURLs.isEmpty)
+            #expect(announcements.isEmpty)
+            await model.load(url: url)
+            let current = try #require(model.visit)
+            await model.signUp(for: current)
+            #expect(api.signupURLs == [url])
+            #expect(announcements == ["Sent"])
+        }
+    }
+
     @Test func keepsEveryRankedCandidateForVisualSelection() async {
         let api = SearchAPI()
         let url = URL(string: "https://example.com")!

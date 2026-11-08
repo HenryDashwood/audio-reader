@@ -80,7 +80,7 @@ struct ShowDetailView: View {
         .sheet(isPresented: $managingSources, onDismiss: {
             Task {
                 refreshedShow = try? await HearfulAPI().shows().first { $0.id == show.id }
-                await model.load(showID: show.id)
+                await model.load(showID: show.id, query: searchText)
             }
         }) {
             FeedSourcesView(show: refreshedShow ?? show)
@@ -118,7 +118,7 @@ struct ShowDetailView: View {
             model.queryChanged(text, showID: show.id)
         }
         .onSubmit(of: .search) { model.searchNow(searchText, showID: show.id) }
-        .task { await model.load(showID: show.id) }
+        .task { await model.load(showID: show.id, query: searchText) }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)) { note in
             if let change = note.object as? EpisodeFiling.Change {
                 model.filed(change)
@@ -448,6 +448,8 @@ final class EpisodeListModel: ObservableObject {
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
     private let debounce: Duration
+    private var requestRevision = 0
+    private var latestFullRequest = 0
     /// The search in flight, including the pause before it starts. Not private
     /// so tests can await it: sleeping for longer than the debounce instead
     /// passes on a quiet machine and fails on a loaded one, which is the worst
@@ -467,8 +469,10 @@ final class EpisodeListModel: ObservableObject {
         self.debounce = debounce
     }
 
-    func load(showID: Int) async {
-        await fetch(showID: showID, query: nil)
+    func load(showID: Int, query: String = "") async {
+        pending?.cancel()
+        requestRevision += 1
+        await fetch(showID: showID, query: query, request: requestRevision)
     }
 
     /// Called on every keystroke: search after a pause in typing.
@@ -483,7 +487,8 @@ final class EpisodeListModel: ObservableObject {
 
     private func schedule(_ query: String, showID: Int, after delay: Duration) {
         pending?.cancel()
-        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        requestRevision += 1
+        let request = requestRevision
         // Existing rows stay on screen until fresher ones replace them, so the
         // list updates in place rather than flickering through a spinner.
         pending = Task { [weak self] in
@@ -491,11 +496,15 @@ final class EpisodeListModel: ObservableObject {
                 try? await Task.sleep(for: delay)
             }
             guard !Task.isCancelled else { return }
-            await self?.fetch(showID: showID, query: query.isEmpty ? nil : query)
+            await self?.fetch(showID: showID, query: query, request: request)
         }
     }
 
-    private func fetch(showID: Int, query: String?) async {
+    private func fetch(showID: Int, query text: String, request: Int) async {
+        guard request == requestRevision, !Task.isCancelled else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = trimmed.isEmpty ? nil : trimmed
+        if query == nil { latestFullRequest = request }
         let scope = ShortcutScope.current
         let local = cache.load([Episode].self, for: .episodes(showID: showID)).map { episodes in
             episodes.filter { episode in
@@ -518,14 +527,15 @@ final class EpisodeListModel: ObservableObject {
             // would leave the cache holding three episodes about volcanoes and
             // call them the show — and the next time she opened it with no
             // signal, that is what she would get.
-            if query == nil {
+            if query == nil, request == latestFullRequest {
                 cache.save(episodes, for: .episodes(showID: showID))
             }
+            guard request == requestRevision else { return }
             isSearching = query != nil
             isOffline = false
             state = .loaded(episodes)
         } catch {
-            guard !Task.isCancelled, ShortcutScope.current == scope else { return }
+            guard request == requestRevision, !Task.isCancelled, ShortcutScope.current == scope else { return }
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             isSearching = query != nil
             if (error as? APIError)?.isAuthFailure != true, let cached = local {

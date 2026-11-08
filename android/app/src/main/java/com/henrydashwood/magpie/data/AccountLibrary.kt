@@ -63,6 +63,7 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
         return result
     }
     private var token: String? = null
+    override val sessionRevision: Int get() = revision
     private var revision = 0
     private var searchVersion = 0
     private val writes = Mutex()
@@ -70,6 +71,10 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
     private var progressMutation = 0
     private val mutable = MutableStateFlow(if (initiallySignedIn) LibraryState(live = true, loading = true) else preview())
     val state = mutable.asStateFlow()
+
+    fun ownsSession(owner: String?, credential: String?): Boolean =
+        owner != null && credential != null && owner == state.value.owner && credential == token
+
     fun telemetryScope(): com.henrydashwood.magpie.telemetry.TelemetryScope? {
         if (!telemetryEnabled()) return null
         val owner = state.value.owner ?: return null
@@ -504,6 +509,11 @@ class AccountLibrary(private val api: LibraryApi, private val server: String, in
                 sources.await() to feeds.await()
             }
             check(version)
+            // The dialog and Following use the same successful read of the subscriptions.
+            if (state.value.feeds != result.second) {
+                mutable.value = state.value.copy(feeds = result.second)
+                checkpoint(version)
+            }
             SourceGroup(result.first.sortedByDescending { it.primary },
                 result.second.filter { it.id != feedId && result.first.none { source -> source.id == it.id } })
         }

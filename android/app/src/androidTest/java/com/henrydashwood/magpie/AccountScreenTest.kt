@@ -8,6 +8,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.test.*
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -50,7 +51,7 @@ class AccountScreenTest {
     @Test fun deletionRequiresExplicitConfirmationAndCanBeCancelled() {
         var deletions = 0
         // As on iOS, Sign Out and Delete Account are in Settings' Account section.
-        compose.setContent { MagpieTheme { com.henrydashwood.magpie.ui.AccountActions(AccountState(signedIn = true), {}, { deletions++ }) } }
+        compose.setContent { MagpieTheme { com.henrydashwood.magpie.ui.AccountActions(AccountState(signedIn = true, sessionId = "first"), {}, { deletions++ }) } }
         compose.onNodeWithText("Delete Account").performClick()
         compose.onNodeWithText("Delete your account?").assertIsDisplayed()
         assertEquals(0, deletions)
@@ -60,6 +61,22 @@ class AccountScreenTest {
         compose.onNode(hasText("Delete Account") and hasAnyAncestor(isDialog())).performClick()
         compose.runOnIdle { assertEquals(1, deletions) }
     }
+    @Test fun switchingAccountsDismissesDeletionAndNewConfirmationUsesTheNewAccount() {
+        val account = mutableStateOf(AccountState(signedIn = true, sessionId = "first"))
+        val deletions = mutableListOf<String>()
+        compose.setContent { MagpieTheme {
+            com.henrydashwood.magpie.ui.AccountActions(account.value, {}, { deletions.add(it) })
+        } }
+        compose.onNodeWithText("Delete Account").performClick()
+        compose.onNodeWithText("Delete your account?").assertIsDisplayed()
+        compose.runOnIdle { account.value = AccountState(signedIn = true, sessionId = "second") }
+        compose.onNodeWithText("Delete your account?").assertDoesNotExist()
+        compose.runOnIdle { assertTrue(deletions.isEmpty()) }
+        compose.onNodeWithText("Delete Account").performClick()
+        compose.onNode(hasText("Delete Account") and hasAnyAncestor(isDialog())).performClick()
+        compose.runOnIdle { assertEquals(listOf("second"), deletions) }
+    }
+
     @Test fun appleIsAvailableWithoutGoogleConfiguration() {
         var clicked = false
         compose.setContent { MagpieTheme {
@@ -83,7 +100,7 @@ class AccountScreenTest {
     @Test fun pendingBrowserSignInCanBeCancelledAndPreventsAnotherProvider() {
         var cancelled = false
         compose.setContent { MagpieTheme {
-            AccountContent(AccountState(applePending = true, busy = true), true, {}, {}, {}, {},
+            AccountContent(AccountState(appleAttempt = "first-attempt", busy = true), true, {}, {}, {}, {},
                 appleConfigured = true, cancelApple = { cancelled = true })
         } }
         scrollTo("Sign in with Apple").assertIsNotEnabled()
@@ -91,12 +108,34 @@ class AccountScreenTest {
         scrollTo("Cancel Apple sign-in").performClick()
         compose.runOnIdle { assertTrue(cancelled) }
     }
+    @Test fun appleButtonsKeepTheAttemptShownWhenAccessibilityQueuedTheTap() {
+        val account = mutableStateOf(AccountState(appleAttempt = "first"))
+        val taps = mutableListOf<String>()
+        compose.setContent { MagpieTheme {
+            AccountContent(account.value, true, {}, {}, {}, {}, appleConfigured = true,
+                cancelApple = { taps += "cancel-$it" }, reopenApple = { taps += "open-$it" })
+        } }
+        lateinit var oldOpen: () -> Boolean
+        lateinit var oldCancel: () -> Boolean
+        scrollTo("Open Apple sign-in").performSemanticsAction(SemanticsActions.OnClick) { oldOpen = it }
+        scrollTo("Cancel Apple sign-in").performSemanticsAction(SemanticsActions.OnClick) { oldCancel = it }
+        // Dispatch the queued actions before Compose detaches the first attempt's buttons.
+        compose.runOnIdle {
+            account.value = AccountState(appleAttempt = "second")
+            oldOpen()
+            oldCancel()
+        }
+        scrollTo("Open Apple sign-in").performClick()
+        scrollTo("Cancel Apple sign-in").performClick()
+        compose.runOnIdle { assertEquals(listOf("open-first", "cancel-first", "open-second", "cancel-second"), taps) }
+    }
+
     @Test fun returningToForegroundChecksAFailedAppleAttemptAgain() {
         val owner = object : LifecycleOwner {
             val registry = LifecycleRegistry(this)
             override val lifecycle: Lifecycle get() = registry
         }
-        val state = mutableStateOf(AccountState(applePending = true, busy = true))
+        val state = mutableStateOf(AccountState(appleAttempt = "first-attempt", busy = true))
         var checks = 0
         compose.runOnUiThread { owner.registry.currentState = Lifecycle.State.RESUMED }
         compose.setContent { CompositionLocalProvider(LocalLifecycleOwner provides owner) {

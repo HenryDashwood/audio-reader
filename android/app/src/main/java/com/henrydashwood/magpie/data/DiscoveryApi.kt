@@ -22,6 +22,7 @@ interface DiscoveryApi {
 }
 
 interface SourceRepository {
+    val sessionRevision: Int
     suspend fun findSources(query: String): SourceMatches
     suspend fun discoverSources(url: String): List<SourceResult>
     suspend fun previewSource(url: String): SourcePreview

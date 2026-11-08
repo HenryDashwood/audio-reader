@@ -61,7 +61,11 @@ class SleepTimerTest {
         var now = 0L
         val updates = mutableListOf<SleepTimerState>()
         var expired = 0
-        val timer = SleepTimer({ now }, updates::add) { assertFalse(updates.last().running); expired++ }
+        val timer = SleepTimer({ now }, updates::add) { deadline ->
+            assertFalse(updates.last().running)
+            assertEquals(5_000L, deadline)
+            expired++
+        }
         timer.start(5_000)
         now = 600_000 // Device slept while playback was already paused.
         timer.check()

@@ -25,8 +25,8 @@ final class ShareSheetUpload {
         }
     }
 
-    func dismiss() {
+    func dismiss(cancelUpload: Bool = true) {
         isDismissed = true
-        task?.cancel()
+        if cancelUpload { task?.cancel() }
     }
 }

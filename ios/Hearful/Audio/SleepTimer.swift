@@ -65,8 +65,11 @@ final class SleepTimer: ObservableObject {
         timer?.invalidate()
         timer = nil
         endsAt = nil
-        guard player.isPlaying else { return }
+        let wasPlaying = player.isPlaying
+        // Play can still be pending while article text loads or a podcast buffers.
+        guard player.currentEpisode != nil else { return }
         player.pause()
+        guard wasPlaying else { return }
         // The same marker a finished episode gets. Without it, going quiet in
         // the middle of a sentence is indistinguishable from a crash — and if
         // she is still awake, that is exactly the moment she would reach for

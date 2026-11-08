@@ -5,6 +5,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -15,6 +16,7 @@ import com.henrydashwood.magpie.data.*
 import com.henrydashwood.magpie.playback.PlaybackService
 import com.henrydashwood.magpie.ui.MagpieApp
 import com.henrydashwood.magpie.ui.MagpieTheme
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -32,6 +34,7 @@ class SourceDiscoveryTest {
         var followed = 0
         var webCalls = 0
         var grants = 0
+        var consentReply: CompletableDeferred<Unit>? = null
         var consent = false
         var failure = false
         var previewed: String? = null
@@ -61,7 +64,12 @@ class SourceDiscoveryTest {
         }
         override suspend fun webSearch(token: String, query: String): SourceResult? { webCalls++; return SourceResult("Web publication", feed.url!!) }
         override suspend fun aiConsent(token: String) = consent
-        override suspend fun setAIConsent(token: String, granted: Boolean): Boolean { grants++; consent = granted; return consent }
+        override suspend fun setAIConsent(token: String, granted: Boolean): Boolean {
+            grants++
+            consentReply?.await()
+            consent = granted
+            return consent
+        }
     }
     @Before fun prepare() {
         app.stopService(Intent(app, PlaybackService::class.java))
@@ -152,6 +160,51 @@ class SourceDiscoveryTest {
         compose.onNodeWithText("Review AI Data Sharing").assertIsDisplayed()
         assertFalse(api.consent)
     }
+    @Test fun settingsConsentCannotChangeTheReplacementAccount() {
+        compose.onNodeWithText("Settings").performClick()
+        val settings = compose.onNodeWithTag("settings-list")
+        for (grant in listOf(true, false)) {
+            val row = if (grant) "Review AI Data Sharing" else "Turn Off AI Data Sharing"
+            fun open() {
+                settings.performScrollToNode(hasText(row))
+                compose.onNodeWithText(row).performClick()
+            }
+            fun confirm() = if (grant) compose.onNodeWithContentDescription("Allow AI data sharing")
+                else compose.onNodeWithText("Turn Off")
+            open()
+            val before = api.grants
+            confirm().performSemanticsAction(SemanticsActions.OnClick) { click ->
+                runBlocking { library.changeSession("replacement-$grant") }
+                click()
+            }
+            compose.runOnIdle { assertEquals(before, api.grants); assertEquals(!grant, api.consent) }
+            open()
+            confirm().performClick()
+            compose.runOnIdle { assertEquals(before + 1, api.grants); assertEquals(grant, api.consent) }
+        }
+    }
+
+    @Test fun rapidConsentConfirmationsSendOneChangeInEachDirection() {
+        compose.onNodeWithText("Settings").performClick()
+        val settings = compose.onNodeWithTag("settings-list")
+        fun confirmTwice(action: SemanticsNodeInteraction, expectedWrites: Int) {
+            val reply = CompletableDeferred<Unit>()
+            compose.runOnIdle { api.consentReply = reply }
+            try {
+                action.performSemanticsAction(SemanticsActions.OnClick) { click -> click(); click() }
+                compose.runOnIdle { assertEquals(expectedWrites, api.grants) }
+            } finally { reply.complete(Unit) }
+        }
+        settings.performScrollToNode(hasText("Review AI Data Sharing"))
+        compose.onNodeWithText("Review AI Data Sharing").performClick()
+        confirmTwice(compose.onNodeWithContentDescription("Allow AI data sharing"), 1)
+        settings.performScrollToNode(hasText("Turn Off AI Data Sharing"))
+        compose.onNodeWithText("Turn Off AI Data Sharing").performClick()
+        confirmTwice(compose.onNodeWithText("Turn Off"), 2)
+        settings.performScrollToNode(hasText("Review AI Data Sharing"))
+        compose.runOnIdle { assertFalse(api.consent) }
+    }
+
     @Test fun accountChangeClosesDiscoveryAndDiscardsItsPreview() {
         search("fixture")
         compose.waitUntil(10_000) { compose.onAllNodesWithText("Fixture podcast").fetchSemanticsNodes().isNotEmpty() }

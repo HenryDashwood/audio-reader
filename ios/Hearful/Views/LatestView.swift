@@ -47,9 +47,10 @@ struct LatestView: View {
             .toolbar {
                 if model.canClear {
                     ToolbarItem(placement: .topBarTrailing) {
-                        ClearLatestButton {
-                            Task { clearError = await model.clear() }
+                        ClearLatestButton { scope in
+                            Task { clearError = await model.clear(expectedScope: scope) }
                         }
+                        .disabled(model.isClearing)
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -160,11 +161,13 @@ struct LatestView: View {
 /// Keep presentation state in the toolbar's view, so opening and dismissing
 /// the dialog does not rebuild LatestView and its toolbar presentation host.
 private struct ClearLatestButton: View {
-    let clear: () -> Void
+    let clear: (String?) -> Void
+    @State private var confirmationScope: String?
     @State private var confirmingClear = false
 
     var body: some View {
         Button {
+            confirmationScope = ShortcutScope.current
             confirmingClear = true
         } label: {
             Label("Clear Latest", systemImage: "checkmark.circle")
@@ -175,7 +178,7 @@ private struct ClearLatestButton: View {
             isPresented: $confirmingClear,
             titleVisibility: .visible
         ) {
-            Button("Clear Latest", role: .destructive, action: clear)
+            Button("Clear Latest", role: .destructive) { clear(confirmationScope) }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
@@ -197,6 +200,7 @@ final class LatestModel: ObservableObject {
     }
 
     @Published private(set) var state: State = .loading
+    @Published private(set) var isClearing = false
     private let api: HearfulAPIProtocol
     private let cache: OfflineCache
     private let unconfirmedArticleCompletions: () -> Set<Int>
@@ -230,12 +234,19 @@ final class LatestModel: ObservableObject {
     /// Clears the server-side inbox boundary, then mirrors that durable empty
     /// state locally. A failed request leaves both the visible rows and cache
     /// untouched and returns a message for the view to present.
-    func clear() async -> String? {
+    func clear(expectedScope scope: String? = ShortcutScope.current) async -> String? {
+        let session = HearfulAPI.RequestSession()
+        guard session.scope == scope, canClear, !isClearing else { return nil }
+        isClearing = true
+        defer { isClearing = false }
         do {
-            try await api.clearLatest()
+            try await session.perform { try await api.clearLatest() }
         } catch {
+            guard ShortcutScope.current == scope else { return nil }
             return (error as? APIError)?.spokenResponse ?? "Something went wrong."
         }
+        guard ShortcutScope.current == scope else { return nil }
+        activeLoad = nil
         let empty: [Episode] = []
         cache.save(empty, for: .recentEpisodes)
         state = .loaded(empty)
@@ -259,6 +270,7 @@ final class LatestModel: ObservableObject {
         if change.filing.hidesFromLatest {
             remove(change.episodeID)
         } else {
+            activeLoad = nil
             await load()
         }
     }
@@ -312,6 +324,7 @@ final class LatestModel: ObservableObject {
     /// out of signal, the saved copy is what she sees, and it would otherwise
     /// go on offering the episode she has just taken off her list.
     private func remove(_ episodeID: Int) {
+        if activeLoad != nil { removedDuringLoad.insert(episodeID) }
         switch state {
         case .loaded(let episodes):
             let remaining = episodes.filter { $0.id != episodeID }
@@ -329,34 +342,37 @@ final class LatestModel: ObservableObject {
     var needsRetry: Bool {
         switch state { case .stale, .failed: true; default: false }
     }
-    private var loading = false
+    private var activeLoad: UUID?
+    private var removedDuringLoad: Set<Int> = []
     func load() async {
-        guard !loading else { return }
-        loading = true
-        defer { loading = false }
+        guard activeLoad == nil else { return }
+        let request = UUID()
+        activeLoad = request
+        removedDuringLoad.removeAll()
+        defer { if activeLoad == request { activeLoad = nil } }
         let scope = ShortcutScope.current
-        // An article finished here stays off the list until the server has caught up.
-        let finishedHere = unconfirmedArticleCompletions()
+        func visible(_ rows: [Episode]) -> [Episode] {
+            let hidden = removedDuringLoad.union(unconfirmedArticleCompletions())
+            return OfflineLibraryActions.shared.overlay(rows).map { episode in
+                scope.map { PodcastProgressJournal.shared.overlay(episode, owner: $0) } ?? episode
+            }.filter { $0.completed != true && $0.dismissed != true && !hidden.contains($0.id) }
+        }
         if let cached = cache.load([Episode].self, for: .recentEpisodes) {
-            state = .loaded(OfflineLibraryActions.shared.overlay(cached).filter {
-                $0.completed != true && $0.dismissed != true && !finishedHere.contains($0.id)
-            })
+            state = .loaded(visible(cached))
         }
         do {
             let fetched = try await api.recentEpisodes(limit: 50)
-            let episodes = OfflineLibraryActions.shared.overlay(fetched).map { episode in
-                scope.map { PodcastProgressJournal.shared.overlay(episode, owner: $0) } ?? episode
-            }.filter { $0.completed != true && $0.dismissed != true && !finishedHere.contains($0.id) }
-            guard !Task.isCancelled, ShortcutScope.current == scope else { return }
+            guard activeLoad == request, !Task.isCancelled, ShortcutScope.current == scope else { return }
+            let episodes = visible(fetched)
             cache.save(episodes, for: .recentEpisodes)
             state = .loaded(episodes)
         } catch {
-            guard !Task.isCancelled, ShortcutScope.current == scope else { return }
+            guard activeLoad == request, !Task.isCancelled, ShortcutScope.current == scope else { return }
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             if (error as? APIError)?.isAuthFailure != true,
                 let cached = cache.load([Episode].self, for: .recentEpisodes)
             {
-                state = .stale(cached)
+                state = .stale(visible(cached))
             } else {
                 state = .failed(message)
             }

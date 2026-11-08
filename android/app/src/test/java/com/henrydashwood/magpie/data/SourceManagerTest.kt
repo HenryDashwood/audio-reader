@@ -46,7 +46,7 @@ class SourceManagerTest {
         model.open(root, 1); runCurrent(); repo.failWrite = true; model.combine(other); runCurrent()
         assertEquals(listOf(primary), model.state.value.sources); assertNotNull(model.state.value.error)
         repo.failWrite = false; repo.failLoad = true; model.combine(other); runCurrent()
-        assertEquals("Sources combined", model.state.value.notice); assertFalse(model.state.value.loaded)
+        assertNull(model.state.value.notice); assertFalse(model.state.value.loaded)
         assertTrue(model.state.value.available.isEmpty()); assertNotNull(model.state.value.error)
         model.combine(other); runCurrent(); assertEquals(2, repo.writes.size)
         repo.failLoad = false; model.reload(); runCurrent(); assertEquals(2, model.state.value.sources.size)

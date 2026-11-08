@@ -24,17 +24,18 @@ import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-class ArticleProgressPlaybackTest {
+abstract class ArticleProgressPlaybackFixture {
+    protected open val preloadText = true
     @get:Rule val compose = createEmptyComposeRule()
-    private val app get() = ApplicationProvider.getApplicationContext<MagpieTestApplication>()
-    private lateinit var directory: File
-    private lateinit var journal: FileArticleProgressStore
+    protected val app get() = ApplicationProvider.getApplicationContext<MagpieTestApplication>()
+    protected lateinit var directory: File
+    protected lateinit var journal: FileArticleProgressStore
     private lateinit var queue: ArticleProgressQueue
-    private lateinit var library: AccountLibrary
-    private lateinit var api: Api
-    private var scenario: ActivityScenario<MainActivity>? = null
-    private var controller: MediaController? = null
-    private class Api : LibraryApi, ArticleProgressApi {
+    protected lateinit var library: AccountLibrary
+    protected lateinit var api: Api
+    protected var scenario: ActivityScenario<MainActivity>? = null
+    protected var controller: MediaController? = null
+    protected class Api : LibraryApi, ArticleProgressApi {
         var offline = true
         var body = ("A café 🌱 stands beside the river. We stop to read the next passage and watch the birds in the trees. ").repeat(8)
         val hash get() = java.security.MessageDigest.getInstance("SHA-256").digest(body.toByteArray()).joinToString("") { "%02x".format(it) }
@@ -61,9 +62,11 @@ class ArticleProgressPlaybackTest {
         override suspend fun episodes(token: String, feedId: String, query: String) = listOf(row)
         override suspend fun search(token: String, query: String) = listOf(row)
         override suspend fun episode(token: String, episodeId: Int) = row
+        var beforeText: suspend () -> Unit = {}
         var textRequests = 0
         override suspend fun text(token: String, episodeId: Int, contentId: Int?): RemoteText {
             textRequests++
+            beforeText()
             return RemoteText(1, 7, body, null, 160, ArticleProgressState(hash, 7, revision, row.articleBookmark))
         }
         override suspend fun save(token: String, episodeId: Int?, url: String?) = row
@@ -73,23 +76,44 @@ class ArticleProgressPlaybackTest {
         override suspend fun subscribe(token: String, url: String) = LibraryFeed("1", "Test show", 1, false)
         override suspend fun position(token: String, episodeId: Int, seconds: Double, completed: Boolean) { error("Guarded playback must not use legacy position") }
     }
-    @Before fun setup() {
+    protected open fun configureFixture() {}
+    @Suppress("DEPRECATION") // The test queries only its own playback service.
+    private fun stopService() {
         app.stopService(Intent(app, PlaybackService::class.java))
+        compose.waitUntil(15_000) {
+            app.getSystemService(android.app.ActivityManager::class.java).getRunningServices(Int.MAX_VALUE)
+                .none { it.service.className == PlaybackService::class.java.name }
+        }
+    }
+    @Before fun setup() {
+        stopService()
         directory = File(app.noBackupFilesDir, "playback-progress-test-${UUID.randomUUID()}")
         journal = FileArticleProgressStore(directory); queue = ArticleProgressQueue(journal); api = Api()
-        library = AccountLibrary(api, "https://progress-test.invalid", articleQueue = queue)
-        runBlocking(Dispatchers.Main) { library.changeSession("test-session"); library.content(library.state.value.items.single().id) }
+        configureFixture()
+        library = AccountLibrary(api, "https://${directory.name}.invalid", articleQueue = queue)
+        runBlocking(Dispatchers.Main) {
+            library.changeSession("test-session")
+            if (preloadText) library.content(library.state.value.items.single().id)
+        }
         app.libraryOverride = library
         scenario = ActivityScenario.launch(MainActivity::class.java)
         controller = compose.runOnUiThread { MediaController.Builder(app,
             SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync() }.get(10, TimeUnit.SECONDS)
     }
     @After fun cleanup() {
-        controller?.let { compose.runOnUiThread { it.pause(); it.release() } }
-        scenario?.close(); app.stopService(Intent(app, PlaybackService::class.java))
+        controller?.let { media ->
+            compose.runOnUiThread {
+                media.sendCustomCommand(SessionCommand(PlaybackService.DISMISS_PLAYER, Bundle.EMPTY), Bundle.EMPTY)
+            }.get(10, TimeUnit.SECONDS)
+            compose.runOnUiThread { media.release() }
+        }
+        scenario?.close(); stopService()
         runBlocking(Dispatchers.Main) { library.changeSession(null) }
         app.libraryOverride = null; directory.deleteRecursively()
     }
+}
+
+class ArticleProgressPlaybackTest : ArticleProgressPlaybackFixture() {
     private fun play() {
         val id = library.state.value.items.single().id
         assertEquals(0, compose.runOnUiThread { controller!!.sendCustomCommand(SessionCommand(PlaybackService.PLAY_ITEM, Bundle.EMPTY),

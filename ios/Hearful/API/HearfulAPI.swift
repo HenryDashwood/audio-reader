@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // The API layer is deliberately nonisolated: it holds no mutable state and is
@@ -204,9 +205,32 @@ extension HearfulAPIProtocol {
     }
 }
 
+/// Identifies the request that was rejected without putting a bearer token in a notification.
+nonisolated struct RejectedSession: Sendable {
+    private let url: URL
+    private let fingerprint: SHA256.Digest
+
+    init?(_ request: URLRequest) {
+        guard let url = request.url, let authorization = request.value(forHTTPHeaderField: "Authorization"),
+              authorization.hasPrefix("Bearer ") else { return nil }
+        self.url = url
+        fingerprint = SHA256.hash(data: Data(authorization.dropFirst(7).utf8))
+    }
+
+    func matches(token: String?, server: URL) -> Bool {
+        guard let token else { return false }
+        let prefix = server.absoluteString.hasSuffix("/") ? server.absoluteString : server.absoluteString + "/"
+        return url.absoluteString.hasPrefix(prefix) && SHA256.hash(data: Data(token.utf8)) == fingerprint
+    }
+
+    static func notify(for request: URLRequest) {
+        guard let rejected = Self(request) else { return }
+        NotificationCenter.default.post(name: .hearfulAuthRequired, object: rejected)
+    }
+}
+
 extension Notification.Name {
-    /// Posted whenever any request comes back 401: the stored session is dead
-    /// (revoked, or wiped server-side) and the app should return to sign-in.
+    /// Carries the server and credential identity of an authenticated request that returned 401.
     nonisolated static let hearfulAuthRequired = Notification.Name("hearfulAuthRequired")
     /// Posted after subscribing (or unsubscribing) so the library reloads.
     nonisolated static let hearfulSubscriptionsChanged = Notification.Name(
@@ -239,7 +263,30 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
     /// a development server does not require every screen and singleton to be
     /// reconstructed first. Tests and special-purpose clients pass a fixed
     /// URL through the existing initializer.
-    var baseURL: URL { fixedBaseURL ?? AppConfiguration.apiBaseURL }
+    var baseURL: URL { fixedBaseURL ?? Self.requestServer ?? AppConfiguration.apiBaseURL }
+
+    @TaskLocal private static var requestServer: URL?
+
+    /// A confirmed account action keeps its original destination and credential through suspension.
+    struct RequestSession {
+        let server: URL
+        let token: String?
+
+        init(server: URL = AppConfiguration.apiBaseURL, token: String? = HearfulAPI.tokenProvider()) {
+            self.server = server
+            self.token = token
+        }
+
+        var scope: String? { ShortcutScope.forToken(token, server: server) }
+
+        nonisolated(nonsending) func perform<Value>(
+            _ operation: nonisolated(nonsending) () async throws -> Value
+        ) async rethrows -> Value {
+            try await HearfulAPI.$requestServer.withValue(server) {
+                try await HearfulAPI.$tokenProvider.withValue({ token }, operation: operation)
+            }
+        }
+    }
     let transport: DataTransport
 
     /// Live clients read the shared Keychain session. Overrides are scoped to
@@ -325,7 +372,7 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
                         var data = Data()
                         for try await byte in bytes { data.append(byte) }
                         if http.statusCode == 401 {
-                            NotificationCenter.default.post(name: .hearfulAuthRequired, object: nil)
+                            RejectedSession.notify(for: request)
                         }
                         throw APIError(
                             spokenResponse: Self.spokenResponse(from: data)
@@ -814,7 +861,7 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
             throw APIError(underlying: "response was not HTTP")
         }
         if http.statusCode == 401 {
-            NotificationCenter.default.post(name: .hearfulAuthRequired, object: nil)
+            RejectedSession.notify(for: request)
             throw APIError(
                 spokenResponse: Self.spokenResponse(from: data)
                     ?? "Please open Magpie and sign in.",

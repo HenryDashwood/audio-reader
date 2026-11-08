@@ -20,6 +20,50 @@ struct PlusAccessTests {
         #expect(status.remainingPages == 458)
     }
 
+    @MainActor
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func openingPlusDuringAccountSetupLoadsTheAllowanceUnlessDismissed(dismiss: Bool) async throws {
+        let credentials = CaptureSessionStore.Session(account: account, token: "fixture")
+        let started = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        let calls = Mutex(0)
+        let access = PlusAccess(transport: { request in
+            let index = calls.withLock { count in count += 1; return count }
+            if index == 1 {
+                started.continuation.finish()
+                for await _ in release.stream {}
+            }
+            #expect(request.httpMethod == "GET")
+            let fixture = payload.replacingOccurrences(of: #""unlimited":false"#, with: #""unlimited":true"#)
+            return (Data(fixture.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }, currentSession: { credentials })
+        let store = PlusStore(access: access)
+        let setup = Task { try await store.perform(session: credentials, configureOnly: true) }
+        for await _ in started.stream {}
+        await #expect(throws: PDFUploadInbox.Failure.self) {
+            try await store.perform(session: credentials, restore: true)
+        }
+        let opened = AsyncStream<Void>.makeStream()
+        let screen = Task {
+            opened.continuation.finish()
+            return try await store.perform(session: credentials).0
+        }
+        for await _ in opened.stream {}
+        if dismiss {
+            screen.cancel()
+            await #expect(throws: CancellationError.self) { try await screen.value }
+            #expect(calls.withLock { $0 } == 1)
+        }
+        release.continuation.finish()
+        _ = try await setup.value
+        if !dismiss {
+            let status = try await screen.value
+            #expect(status.remainingPages == 458)
+            #expect(calls.withLock { $0 } == 2)
+        }
+        #expect(!store.busy)
+    }
+
     @Test func latePurchaseResponseCannotGrantAccessToAnotherAccount() async throws {
         let credentials = CaptureSessionStore.Session(account: account, token: "token")
         let current = Mutex<CaptureSessionStore.Session?>(credentials)

@@ -12,7 +12,7 @@ import UIKit
 /// helping her can receive it as a message rather than take dictation.
 struct NewsletterAddressSection: View {
     @StateObject private var model = NewsletterAddressModel()
-    @State private var speaker = Speaker()
+    let readout: SettingsReadout
 
     var body: some View {
         Section {
@@ -22,19 +22,20 @@ struct NewsletterAddressSection: View {
             case .unavailable(let message):
                 Text(message).foregroundStyle(.secondary)
             case .loaded(let address):
+                let scope = model.addressScope
                 Text(address.address)
                     .font(.body.monospaced())
                     .textSelection(.enabled)
                     .accessibilityLabel("Your newsletter address is \(address.spoken)")
                 Button("Read Address Aloud") {
-                    Task { await speaker.speak("Your newsletter address is \(address.spoken)") }
+                    readout.speak("Your newsletter address is \(address.spoken)", expectedScope: scope)
                 }
                 .accessibilityHint("Says the address one word at a time")
                 Button("Spell Address") {
-                    Task { await speaker.speak("Your newsletter address is spelled \(address.spelledOut)") }
+                    readout.speak("Your newsletter address is spelled \(address.spelledOut)", expectedScope: scope)
                 }
                 .accessibilityHint("Says every letter, for writing it down")
-                CopyAddressButton(address: address.address)
+                CopyAddressButton(address: address.address, scope: scope)
                 ShareLink(item: address.address, subject: Text("My Magpie newsletter address")) {
                     Label("Share Address", systemImage: "square.and.arrow.up")
                 }
@@ -60,13 +61,20 @@ struct NewsletterAddressSection: View {
 /// should answer the tap in the same way.
 struct CopyAddressButton: View {
     let address: String
+    let scope: String?
     @State private var copied = false
     @State private var feedbackTrigger = 0
     @State private var resetTask: Task<Void, Never>?
 
+    func copy(to pasteboard: UIPasteboard) -> Bool {
+        guard scope == ShortcutScope.current else { return false }
+        pasteboard.string = address
+        return true
+    }
+
     var body: some View {
         Button {
-            UIPasteboard.general.string = address
+            guard copy(to: .general) else { return }
             feedbackTrigger += 1
             resetTask?.cancel()
             withAnimation(.easeInOut(duration: 0.15)) { copied = true }
@@ -102,6 +110,8 @@ final class NewsletterAddressModel: ObservableObject {
     }
 
     @Published private(set) var state: State = .loading
+    private(set) var addressScope: String?
+    private var revision = 0
     private let api: HearfulAPIProtocol
 
     init(api: HearfulAPIProtocol = HearfulAPI()) {
@@ -109,9 +119,19 @@ final class NewsletterAddressModel: ObservableObject {
     }
 
     func load() async {
+        let session = HearfulAPI.RequestSession()
+        if addressScope != session.scope {
+            addressScope = session.scope
+            state = .loading
+        }
+        revision += 1
+        let request = revision
         do {
-            state = .loaded(try await api.newsletterAddress())
+            let address = try await session.perform { try await api.newsletterAddress() }
+            guard request == revision, session.scope == ShortcutScope.current, !Task.isCancelled else { return }
+            state = .loaded(address)
         } catch {
+            guard request == revision, session.scope == ShortcutScope.current, !Task.isCancelled else { return }
             state = .unavailable((error as? APIError)?.spokenResponse ?? "Something went wrong.")
         }
     }
@@ -124,17 +144,22 @@ final class NewsletterAddressModel: ObservableObject {
 /// arrive, and following one puts its messages into the very list below.
 struct PendingNewslettersSection: View {
     @ObservedObject var model: PendingNewslettersModel
-    @State private var blocking: PendingNewsletter?
+    private struct BlockConfirmation {
+        let sender: PendingNewsletter
+        let scope: String?
+    }
+    @State private var blocking: BlockConfirmation?
 
     var body: some View {
         if !model.pending.isEmpty {
             Section {
+                let scope = model.listScope
                 ForEach(model.pending) { item in
                     PendingNewsletterRow(
                         item: item,
                         busy: model.busyID == item.id,
-                        follow: { Task { await model.approve(item) } },
-                        block: { blocking = item })
+                        follow: { Task { await model.approve(item, expectedScope: scope) } },
+                        block: { blocking = BlockConfirmation(sender: item, scope: scope) })
                 }
                 if let message = model.errorMessage {
                     Text(message).font(.callout).foregroundStyle(.red)
@@ -158,14 +183,14 @@ struct PendingNewslettersSection: View {
                 isPresented: Binding(get: { blocking != nil }, set: { if !$0 { blocking = nil } }),
                 titleVisibility: .visible,
                 presenting: blocking
-            ) { item in
-                Button("Block \(item.title)", role: .destructive) {
-                    Task { await model.block(item) }
+            ) { confirmation in
+                Button("Block \(confirmation.sender.title)", role: .destructive) {
+                    Task { await model.block(confirmation.sender, expectedScope: confirmation.scope) }
                 }
                 Button("Cancel", role: .cancel) {}
-            } message: { item in
+            } message: { confirmation in
                 Text(
-                    "Everything \(item.title) has sent is deleted, and anything it sends later "
+                    "Everything \(confirmation.sender.title) has sent is deleted, and anything it sends later "
                         + "is dropped without being kept.")
             }
         }
@@ -234,54 +259,73 @@ final class PendingNewslettersModel: ObservableObject {
     @Published private(set) var pending: [PendingNewsletter] = []
     @Published private(set) var busyID: Int?
     @Published private(set) var errorMessage: String?
+    private var listRevision = 0
+    private(set) var listScope: String?
     private let api: HearfulAPIProtocol
 
-    init(api: HearfulAPIProtocol = HearfulAPI()) {
+    private let announce: (String) -> Void
+
+    init(api: HearfulAPIProtocol = HearfulAPI(), announce: @escaping (String) -> Void = {
+        AccessibilityNotification.Announcement($0).post()
+    }) {
+        self.announce = announce
         self.api = api
     }
 
     /// Quiet on failure: this list is a courtesy at the top of Following, and
     /// a network error there is already reported by the library itself.
     func load() async {
-        if let fetched = try? await api.pendingNewsletters() {
-            pending = fetched
+        let session = HearfulAPI.RequestSession()
+        let scope = session.scope
+        if listScope != scope {
+            listScope = scope
+            pending = []
+            busyID = nil
+            errorMessage = nil
         }
-    }
-
-    /// True on success. The sender becomes a show in Following and its
-    /// messages appear in Latest; both screens are told to reload.
-    @discardableResult
-    func approve(_ item: PendingNewsletter) async -> Bool {
-        guard busyID == nil else { return false }
-        busyID = item.id
-        errorMessage = nil
-        defer { busyID = nil }
-        do {
-            _ = try await api.approveNewsletter(id: item.id)
-            pending.removeAll { $0.id == item.id }
-            NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
-            AccessibilityNotification.Announcement(
-                "Following \(item.title). \(item.messageCountLabel.capitalizedFirst) now in Latest."
-            ).post()
-            return true
-        } catch {
-            report(error)
-            return false
-        }
+        guard busyID == nil else { return }
+        listRevision += 1
+        let revision = listRevision
+        let rows = try? await session.perform { try await api.pendingNewsletters() }
+        guard revision == listRevision, scope == ShortcutScope.current, !Task.isCancelled else { return }
+        if let rows { pending = rows }
     }
 
     @discardableResult
-    func block(_ item: PendingNewsletter) async -> Bool {
-        guard busyID == nil else { return false }
+    func approve(_ item: PendingNewsletter, expectedScope: String? = ShortcutScope.current) async -> Bool {
+        await change(item, follow: true, expectedScope: expectedScope)
+    }
+
+    @discardableResult
+    func block(_ item: PendingNewsletter, expectedScope: String? = ShortcutScope.current) async -> Bool {
+        await change(item, follow: false, expectedScope: expectedScope)
+    }
+
+    private func change(_ item: PendingNewsletter, follow: Bool, expectedScope: String?) async -> Bool {
+        let session = HearfulAPI.RequestSession()
+        guard listScope == expectedScope, expectedScope == session.scope,
+              busyID == nil, pending.contains(where: { $0.id == item.id }) else { return false }
+        listRevision += 1
+        let revision = listRevision
         busyID = item.id
         errorMessage = nil
-        defer { busyID = nil }
+        defer { if revision == listRevision { busyID = nil } }
         do {
-            try await api.blockNewsletter(id: item.id)
+            try await session.perform {
+                if follow { _ = try await api.approveNewsletter(id: item.id) }
+                else { try await api.blockNewsletter(id: item.id) }
+            }
+            guard revision == listRevision, expectedScope == ShortcutScope.current else { return false }
             pending.removeAll { $0.id == item.id }
-            AccessibilityNotification.Announcement("Blocked \(item.title).").post()
+            if follow {
+                NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
+                announce("Following \(item.title). \(item.messageCountLabel.capitalizedFirst) now in Latest.")
+            } else {
+                announce("Blocked \(item.title).")
+            }
             return true
         } catch {
+            guard revision == listRevision, expectedScope == ShortcutScope.current else { return false }
             report(error)
             return false
         }
@@ -290,7 +334,7 @@ final class PendingNewslettersModel: ObservableObject {
     private func report(_ error: Error) {
         let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
         errorMessage = message
-        AccessibilityNotification.Announcement(message).post()
+        announce(message)
     }
 }
 

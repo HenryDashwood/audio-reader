@@ -29,27 +29,6 @@ fun SubscriptionExportDialog(model: MagpieModel, showing: Boolean, onDismiss: ()
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     fun currentOwner() = model.libraryState.value.let { it.owner to it.revision }
-    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/x-opml")) { uri ->
-        val data = model.pendingSubscriptionExport.value
-        val expected = data?.owner
-        model.clearSubscriptionExport()
-        if (uri != null && data != null && expected == currentOwner()) {
-            busy = true
-            scope.launch {
-                try {
-                    withContext(Dispatchers.IO) {
-                        check(expected == currentOwner())
-                        checkNotNull(context.contentResolver.openOutputStream(uri, "wt")).use {
-                            it.write(data.xml.toByteArray(Charsets.UTF_8))
-                        }
-                    }
-                    if (expected == currentOwner()) message = "Subscriptions exported."
-                } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { if (expected == currentOwner()) message = "The file couldn’t be saved. Please try again." }
-                finally { busy = false }
-            }
-        }
-    }
     LaunchedEffect(library.owner, library.revision, showing) {
         if (!showing || !library.live || (owner != null && owner != currentOwner()) || (pending != null && pending?.owner != currentOwner())) {
             model.clearSubscriptionExport(); owner = null; busy = false; message = null
@@ -57,6 +36,34 @@ fun SubscriptionExportDialog(model: MagpieModel, showing: Boolean, onDismiss: ()
         }
     }
     if (!showing || !library.live) return
+    // An outstanding picker keeps its registry key even after the account changes.
+    val pickerOwner = library.owner to library.revision
+    val save = key(pickerOwner) {
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/x-opml")) { uri ->
+            val data = model.pendingSubscriptionExport.value ?: return@rememberLauncherForActivityResult
+            if (data.owner != pickerOwner || currentOwner() != pickerOwner) return@rememberLauncherForActivityResult
+            model.clearSubscriptionExport()
+            if (uri == null) return@rememberLauncherForActivityResult
+
+            busy = true
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        check(pickerOwner == currentOwner())
+                        checkNotNull(context.contentResolver.openOutputStream(uri, "wt")).use {
+                            it.write(data.xml.toByteArray(Charsets.UTF_8))
+                        }
+                    }
+                    if (pickerOwner == currentOwner()) message = "Subscriptions exported."
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    if (pickerOwner == currentOwner()) message = "The file couldn’t be saved. Please try again."
+                } finally {
+                    if (pickerOwner == currentOwner()) busy = false
+                }
+            }
+        }
+    }
     AlertDialog(onDismissRequest = { if (!busy) { model.clearSubscriptionExport(); onDismiss() } },
         title = { Text("Export subscriptions") },
         text = {
@@ -69,19 +76,19 @@ fun SubscriptionExportDialog(model: MagpieModel, showing: Boolean, onDismiss: ()
         },
         confirmButton = {
             TextButton(enabled = !busy && pending == null, onClick = {
-                val expected = currentOwner()
-                owner = expected; busy = true; message = null
+                if (pickerOwner != currentOwner()) return@TextButton
+                owner = pickerOwner; busy = true; message = null
                 scope.launch {
                     try {
                         model.exportSubscriptions()
-                        if (expected == currentOwner()) {
+                        if (pickerOwner == currentOwner()) {
                             save.launch("Magpie-subscriptions.opml")
                         }
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (failure: Exception) {
-                        if (expected == currentOwner()) message = (failure as? AccountFailure)?.message
+                        if (pickerOwner == currentOwner()) message = (failure as? AccountFailure)?.message
                             ?: "Subscriptions couldn’t be exported. Please try again."
-                    } finally { busy = false }
+                    } finally { if (pickerOwner == currentOwner()) busy = false }
                 }
             }) { Text("Export OPML file") }
         },

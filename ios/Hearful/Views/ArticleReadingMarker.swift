@@ -268,11 +268,24 @@ enum ArticleReadingMarkerScript {
           const rectForRange = (location, length) => {
             const token = tokenForRange(location, length);
             if (!token) return null;
+            // Speech includes disclosure contents even while their <details>
+            // is closed. Reveal the spoken passage before measuring it;
+            // otherwise WebKit returns an empty rectangle at the page origin
+            // and following repeatedly scrolls upwards. A summary itself is
+            // already visible, so reading it leaves its disclosure unchanged.
+            let ancestor = token.node.parentElement;
+            while (ancestor) {
+              if (ancestor.tagName === "DETAILS" && !ancestor.open) {
+                const summary = Array.from(ancestor.children).find(child => child.tagName === "SUMMARY");
+                if (!summary || !summary.contains(token.node)) ancestor.open = true;
+              }
+              ancestor = ancestor.parentElement;
+            }
             const range = document.createRange();
             range.setStart(token.node, token.start);
             range.setEnd(token.node, token.end);
             const rect = range.getClientRects()[0] || range.getBoundingClientRect();
-            if (!rect || !Number.isFinite(rect.top)) return null;
+            if (!rect || !Number.isFinite(rect.top) || rect.width <= 0 || rect.height <= 0) return null;
             return { top: rect.top, height: rect.height };
           };
 

@@ -27,18 +27,6 @@ struct PlaybackRecoveryTests {
             publishedAt: nil, link: nil, imageURL: nil, positionSeconds: nil, completed: nil)
     }
 
-    private func silentAudio() throws -> URL {
-        let url = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).caf")
-        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
-        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8_000))
-        buffer.frameLength = 8_000
-        let samples = try #require(buffer.floatChannelData)
-        samples[0].update(repeating: 0, count: 8_000)
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
-        return url
-    }
-
     @Test(arguments: [3.0, 420.0, 1_795.0])
     func podcastReplacesTheInterruptedItemWithoutLosingPosition(position: Double) {
         let engine = AVPlayer()

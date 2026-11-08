@@ -136,6 +136,38 @@ struct EpisodeSearchTests {
         #expect(model.isOffline)
     }
 
+    @Test(arguments: [false, true])
+    func delayedInitialListPreservesSearchResults(fails: Bool) async {
+        let api = FakeAPI()
+        api.episodesByID = [1: episode(id: 1)]
+        api.searchResults = [episode(id: 99, title: "Krakatoa")]
+        let entered = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        api.beforeEpisodes = { query in
+            guard query == nil else { return }
+            entered.continuation.finish()
+            for await _ in release.stream {}
+            if fails { throw APIError(underlying: "offline") }
+        }
+        let cache = makeCache()
+        let model = EpisodeListModel(api: api, cache: cache)
+        let initial = Task { await model.load(showID: 3) }
+        for await _ in entered.stream {}
+        model.searchNow("krakatoa", showID: 3)
+        await model.pending?.value
+        release.continuation.finish()
+        await initial.value
+
+        guard case .loaded(let rows) = model.state else {
+            Issue.record("The earlier full-show request replaced the search results")
+            return
+        }
+        #expect(model.isSearching && !model.isOffline)
+        #expect(rows.map(\.id) == [99])
+        let saved = cache.load([Episode].self, for: .episodes(showID: 3))
+        #expect(saved?.map(\.id) == (fails ? nil : [1]))
+    }
+
     @Test func aLateAnswerToAnAbandonedSearchIsNotShown() async {
         // She typed on. The older request must not land on top of the newer.
         let api = FakeAPI()

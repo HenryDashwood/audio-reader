@@ -244,8 +244,10 @@ final class FakeAPI: HearfulAPIProtocol, @unchecked Sendable {
     var episodeQueries: [String?] = []
     /// Set to answer searches with something other than the whole show.
     var searchResults: [Episode]?
+    var beforeEpisodes: ((String?) async throws -> Void)?
     func episodes(showID: Int, query: String? = nil) async throws -> [Episode] {
         episodeQueries.append(query)
+        try await beforeEpisodes?(query)
         if let episodesError { throw episodesError }
         if query != nil, let searchResults { return searchResults }
         return Array(episodesByID.values)

@@ -1,5 +1,6 @@
 package com.henrydashwood.magpie
 
+import com.henrydashwood.magpie.playback.ArticleRenderer
 import android.app.Application
 import com.henrydashwood.magpie.auth.*
 import com.henrydashwood.magpie.data.*
@@ -23,6 +24,8 @@ open class MagpieApplication : Application() {
     }
     /** As on iOS, the app opens only once signed in. The instrumentation test app may use the sample library. */
     open val requiresSignIn: Boolean get() = true
+    internal open val naturalVoiceDownload get() = com.henrydashwood.magpie.playback.NaturalVoiceDownload.get(this)
+    internal open fun articleRenderer() = ArticleRenderer(this)
     open fun voiceInput(): com.henrydashwood.magpie.voice.VoiceInput = com.henrydashwood.magpie.voice.AndroidSpeechInput(this)
     open fun voiceOutput(selected: () -> String?): com.henrydashwood.magpie.voice.VoiceOutput = com.henrydashwood.magpie.voice.AndroidReplySpeaker(this, selected)
     private val mutableDiagnosticsEnabled by lazy { kotlinx.coroutines.flow.MutableStateFlow(PreviewStore(this).diagnosticsEnabled) }

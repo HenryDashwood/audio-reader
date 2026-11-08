@@ -12,6 +12,8 @@ import java.io.IOException
 @OptIn(ExperimentalCoroutinesApi::class)
 class SourceDiscoveryTest {
     private class Repository : SourceRepository, NewsletterRepository {
+        override var sessionRevision = 0
+        val signupURLs = mutableListOf<String>()
         var signupCalls = 0
         var signupGate: CompletableDeferred<Unit>? = null
         var signup = NewsletterSignup("unsupported", "Use your address on the website.", "quiet-heron@magpie.example")
@@ -20,7 +22,7 @@ class SourceDiscoveryTest {
         override suspend fun approveNewsletter(item: PendingNewsletter) {}
         override suspend fun blockNewsletter(item: PendingNewsletter) {}
         override suspend fun signUpForNewsletter(url: String): NewsletterSignup {
-            signupCalls++; withContext(NonCancellable) { signupGate?.await() }; return signup
+            signupURLs += url; signupCalls++; withContext(NonCancellable) { signupGate?.await() }; return signup
         }
         val source = SourceResult("A publication", "https://example.com/feed")
         var queries = mutableListOf<String>()
@@ -69,17 +71,46 @@ class SourceDiscoveryTest {
         val repo = Repository().apply { candidates = emptyList() }
         val model = SourceDiscovery(backgroundScope, repo); model.open(); model.edit("publisher.example"); model.submit(); runCurrent()
         assertEquals(0, repo.signupCalls); assertNotNull(model.state.value.error)
-        model.signUpByEmail(); runCurrent()
+        model.signUpByEmail(requireNotNull(model.state.value.signupOffer)); runCurrent()
         assertEquals(repo.signup, model.state.value.signup); assertFalse(model.state.value.signup!!.submitted)
         assertEquals(0, repo.grants); assertEquals(0, repo.webRequests)
         model.submit(); runCurrent(); assertNull(model.state.value.signup)
         repo.signup = repo.signup.copy(status = "submitted")
-        model.signUpByEmail(); runCurrent(); assertTrue(model.state.value.signup!!.submitted)
+        model.signUpByEmail(requireNotNull(model.state.value.signupOffer)); runCurrent(); assertTrue(model.state.value.signup!!.submitted)
     }
+    @Test fun oldSignupButtonCannotSendForAnotherSiteAndRetryCannotDuplicateAnActiveSignup() = runTest {
+        val repo = Repository().apply { candidates = emptyList() }
+        val model = SourceDiscovery(backgroundScope, repo)
+        fun showSite(site: String): () -> Unit {
+            model.open(); model.edit(site); model.submit(); runCurrent()
+            val offer = requireNotNull(model.state.value.signupOffer)
+            return { model.signUpByEmail(offer) }
+        }
+        val first = showSite("first.example")
+        val second = showSite("second.example")
+        first()
+        runCurrent()
+        assertTrue(repo.signupURLs.isEmpty())
+        repo.signupGate = CompletableDeferred()
+        second()
+        runCurrent()
+        model.retry()
+        model.submit()
+        runCurrent()
+        second()
+        runCurrent()
+        repo.signupGate!!.complete(Unit)
+        runCurrent()
+        second()
+        runCurrent()
+        assertEquals(listOf("https://second.example"), repo.signupURLs)
+        assertEquals(repo.signup, model.state.value.signup)
+    }
+
     @Test fun accountResetDiscardsALateNewsletterSignupReply() = runTest {
-        val repo = Repository().apply { signupGate = CompletableDeferred() }
-        val model = SourceDiscovery(backgroundScope, repo); model.open(); model.edit("publisher.example")
-        model.signUpByEmail(); runCurrent(); assertTrue(model.state.value.following)
+        val repo = Repository().apply { signupGate = CompletableDeferred(); candidates = emptyList() }
+        val model = SourceDiscovery(backgroundScope, repo); model.open(); model.edit("publisher.example"); model.submit(); runCurrent()
+        model.signUpByEmail(requireNotNull(model.state.value.signupOffer)); runCurrent(); assertTrue(model.state.value.following)
         model.reset(); repo.signupGate!!.complete(Unit); runCurrent()
         assertEquals(DiscoveryState(), model.state.value)
     }
@@ -115,11 +146,33 @@ class SourceDiscoveryTest {
     @Test fun webSearchRequiresBothExplicitActionAndConsent() = runTest {
         val repo = Repository(); val model = SourceDiscovery(backgroundScope, repo); model.open()
         model.edit("publication"); model.submit(); runCurrent(); assertEquals(0, repo.webRequests)
-        model.searchWeb(); runCurrent(); assertTrue(model.state.value.askingConsent); assertEquals(0, repo.webRequests)
-        model.declineAI(); runCurrent(); assertEquals(0, repo.grants); assertEquals(0, repo.webRequests)
-        model.searchWeb(); runCurrent(); model.allowAI(); runCurrent()
+        model.searchWeb(); runCurrent(); assertNotNull(model.state.value.consentPrompt); assertEquals(0, repo.webRequests)
+        model.declineAI(requireNotNull(model.state.value.consentPrompt)); runCurrent(); assertEquals(0, repo.grants); assertEquals(0, repo.webRequests)
+        model.searchWeb(); runCurrent(); model.allowAI(requireNotNull(model.state.value.consentPrompt)); runCurrent()
         assertEquals(1, repo.grants); assertEquals(1, repo.webRequests); assertNotNull(model.state.value.web)
     }
+    @Test fun oldConsentCannotGrantAccessOrSearchForTheNextAccount() = runTest {
+        val repo = Repository()
+        val model = SourceDiscovery(backgroundScope, repo)
+        model.open(); model.edit("first"); model.searchWeb(); runCurrent()
+        val original = requireNotNull(model.state.value.consentPrompt)
+        repo.sessionRevision++
+        model.allowAI(original)
+        runCurrent()
+        assertEquals(0, repo.grants)
+        assertEquals(0, repo.webRequests)
+        model.open(); model.edit("second"); model.searchWeb(); runCurrent()
+        val replacement = requireNotNull(model.state.value.consentPrompt)
+        model.declineAI(original)
+        model.allowAI(original)
+        assertEquals(replacement, model.state.value.consentPrompt)
+        model.allowAI(replacement)
+        model.allowAI(replacement)
+        runCurrent()
+        assertEquals(1, repo.grants)
+        assertEquals(1, repo.webRequests)
+    }
+
     @Test fun closingDuringConsentCheckCannotStartAnAIRequest() = runTest {
         val repo = Repository().apply { consent = true; consentGate = CompletableDeferred() }
         val model = SourceDiscovery(backgroundScope, repo); model.open(); model.edit("publication"); model.searchWeb(); runCurrent()

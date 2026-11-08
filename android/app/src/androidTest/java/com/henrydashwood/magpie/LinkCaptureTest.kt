@@ -1,5 +1,6 @@
 package com.henrydashwood.magpie
 
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -11,6 +12,39 @@ import org.junit.Test
 
 class LinkCaptureTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    @Test fun aQueuedSaveCannotSubmitTheReopenedForm() {
+        val model = compose.runOnUiThread { ViewModelProvider(compose.activity)[MagpieModel::class.java] }
+        val original = "https://example.org/old/${UUID.randomUUID()}"
+        val replacement = "https://example.org/new/${UUID.randomUUID()}"
+        try {
+            compose.onNodeWithText("Saved").performClick()
+            compose.onNodeWithContentDescription("Add link").performClick()
+            compose.onNodeWithText("Web address").performTextInput(original)
+            compose.onNodeWithText("Save").performSemanticsAction(SemanticsActions.OnClick) { click ->
+                model.closeLinkCapture()
+                model.beginLinkCapture()
+                model.editLink(model.linkCapture.value.form, replacement)
+                click()
+            }
+            compose.onNodeWithText("Web address").assertTextContains(replacement)
+            compose.runOnIdle {
+                assertTrue(model.linkCapture.value.showing)
+                assertFalse(model.linkCapture.value.saving)
+                assertFalse(original in model.pendingLinks.value)
+                assertFalse(replacement in model.pendingLinks.value)
+            }
+            compose.onNodeWithText("Save").performClick()
+            compose.waitUntil(5_000) { !model.linkCapture.value.showing && replacement in model.pendingLinks.value }
+            assertFalse(original in model.pendingLinks.value)
+        } finally {
+            compose.runOnUiThread {
+                model.closeLinkCapture()
+                model.removePendingLink(original)
+                model.removePendingLink(replacement)
+            }
+        }
+    }
 
     @Test fun readerLinkPersistsWithoutOpeningTheAddLinkForm() {
         val url = "https://example.org/reader-save/${UUID.randomUUID()}?chapter=5#start"

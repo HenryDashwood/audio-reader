@@ -93,6 +93,7 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
     private let mobileDataOverride: (@MainActor () -> Bool)?
     private let freeSpace: @MainActor () -> Int64?
     private let now: @MainActor () -> Date
+    private let announce: (String) -> Void
     private var epoch: UUID
     private var lastAutomaticRefresh = Date.distantPast
     private var refreshing = false
@@ -111,8 +112,10 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
         isOnMobileData: (@MainActor () -> Bool)? = nil,
         freeSpace: (@MainActor () -> Int64?)? = nil,
         now: @escaping @MainActor () -> Date = { Date() },
+        announce: @escaping (String) -> Void = { AccessibilityNotification.Announcement($0).post() },
         observesSystem: Bool = true
     ) {
+        self.announce = announce
         self.store = store
         self.defaults = defaults
         self.makeTransport = makeTransport
@@ -207,14 +210,14 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
 
     func remove(episodeID: Int) {
         guard let record = records[episodeID] else { return }
-        if record.status.isActive { transport.cancel(episodeID: episodeID) }
+        if record.status.isActive { transport.cancel(taskID(for: record)) }
         store.remove(record.filename)
         records[episodeID] = nil
         persist()
     }
 
     func removeAll() {
-        for record in records.values where record.status.isActive { transport.cancel(episodeID: record.id) }
+        for record in records.values where record.status.isActive { transport.cancel(taskID(for: record)) }
         for record in records.values { store.remove(record.filename) }
         records = [:]
         persist()
@@ -222,7 +225,7 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
 
     /// Sign-out or a server change: nothing here belongs to whoever is next.
     func clear() {
-        transportInstance?.cancelAll()
+        transportInstance?.cancelAll(epoch: epoch)
         epoch = UUID()
         records = [:]
         store.clear()
@@ -311,6 +314,10 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
         return created
     }
 
+    private func taskID(for record: DownloadRecord) -> DownloadTaskID {
+        DownloadTaskID(episodeID: record.id, epoch: epoch, attemptID: record.attemptID)
+    }
+
     private func enqueue(_ episodes: [Episode], origin: DownloadOrigin, allowsCellular: Bool) {
         guard !episodes.isEmpty else { return }
         for episode in episodes {
@@ -322,12 +329,13 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
                     limit: settings.limit, protecting: protecting())
                 for id in evict { removeQuietly(id) }
             }
-            records[episode.id] = DownloadRecord(
-                episode: episode, origin: origin,
+            let record = DownloadRecord(
+                episode: episode, attemptID: UUID(), origin: origin,
                 status: .queued(waitingForWiFi: !allowsCellular && isOnMobileData()),
                 bytes: bytes, requestedAt: now())
+            records[episode.id] = record
             transport.start(DownloadTaskRequest(
-                episodeID: episode.id, url: url, epoch: epoch, allowsCellular: allowsCellular,
+                id: taskID(for: record), url: url, allowsCellular: allowsCellular,
                 expectedBytes: bytes, lowPriority: origin == .automatic))
         }
         persist()
@@ -335,14 +343,16 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
 
     private func handle(_ event: DownloadEvent) {
         switch event {
-        case .progress(let id, let eventEpoch, let fraction):
-            guard eventEpoch == epoch, let record = records[id], record.status.isActive else { return }
+        case .progress(let task, let fraction):
+            let id = task.episodeID
+            guard let record = records[id], task == taskID(for: record), record.status.isActive else { return }
             // Published in whole steps of a few percent: every list row
             // observes this, and redrawing them for each packet is waste.
             if case .downloading(let previous) = record.status, abs(previous - fraction) < 0.05, fraction < 1 { return }
             records[id]?.status = .downloading(progress: fraction)
-        case .finished(let id, let eventEpoch, let file):
-            guard eventEpoch == epoch, let record = records[id], record.status.isActive else {
+        case .finished(let task, let file):
+            let id = task.episodeID
+            guard let record = records[id], task == taskID(for: record), record.status.isActive else {
                 try? FileManager.default.removeItem(at: file)
                 return
             }
@@ -353,14 +363,15 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
                 records[id]?.status = .downloaded
                 persist()
                 if record.origin == .manual {
-                    AccessibilityNotification.Announcement("Downloaded: \(record.episode.title)").post()
+                    announce("Downloaded: \(record.episode.title)")
                 }
             } catch {
                 try? FileManager.default.removeItem(at: file)
                 fail(id, message: "The episode could not be saved on this iPhone.")
             }
-        case .failed(let id, let eventEpoch, let message):
-            guard eventEpoch == epoch else { return }
+        case .failed(let task, let message):
+            let id = task.episodeID
+            guard let record = records[id], task == taskID(for: record) else { return }
             fail(id, message: message)
         }
     }
@@ -370,7 +381,7 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
         records[id]?.status = .failed(message)
         persist()
         if record.origin == .manual {
-            AccessibilityNotification.Announcement("Download failed: \(record.episode.title)").post()
+            announce("Download failed: \(record.episode.title)")
         }
     }
 
@@ -382,7 +393,7 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
 
     private func removeQuietly(_ id: Int) {
         guard let record = records[id] else { return }
-        if record.status.isActive { transport.cancel(episodeID: id) }
+        if record.status.isActive { transport.cancel(taskID(for: record)) }
         store.remove(record.filename)
         records[id] = nil
     }
@@ -392,11 +403,17 @@ final class EpisodeDownloads: ObservableObject, EpisodeDownloading {
     private func reconcileWithSystem() async {
         guard !reconciled else { return }
         reconciled = true
-        let active = Set(await transport.activeTasks().filter { $0.epoch == epoch }.map(\.episodeID))
-        for record in records.values where record.status.isActive && !active.contains(record.id) {
+        let candidates = records.values.filter { $0.status.isActive }.map { taskID(for: $0) }
+        let active = Set(await transport.activeTasks())
+        for candidate in candidates where !active.contains(candidate) {
+            guard var record = records[candidate.episodeID], record.status.isActive,
+                taskID(for: record) == candidate else { continue }
             guard let url = record.episode.audioURL else { continue }
+            record.attemptID = UUID()
+            records[record.id] = record
+            persist()
             transport.start(DownloadTaskRequest(
-                episodeID: record.id, url: url, epoch: epoch,
+                id: taskID(for: record), url: url,
                 allowsCellular: record.origin == .manual ? !isWaitingForWiFi(record) : !settings.wifiOnly,
                 expectedBytes: record.bytes, lowPriority: record.origin == .automatic))
         }

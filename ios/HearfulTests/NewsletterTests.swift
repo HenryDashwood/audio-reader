@@ -1,5 +1,7 @@
+import os
 import Foundation
 import Testing
+import UIKit
 
 @testable import Hearful
 
@@ -115,6 +117,9 @@ private nonisolated final class Seen: @unchecked Sendable {
 /// recorded, and every other method is unreachable.
 private final class NewsletterAPI: HearfulAPIProtocol, @unchecked Sendable {
     var pending: [PendingNewsletter]
+    var addressReply: (@Sendable () async throws -> NewsletterAddress)?
+    var didRead: (@MainActor @Sendable () async -> Void)?
+    var beforeChange: (@MainActor @Sendable () async -> Void)?
     var failApprove = false
     private(set) var approved: [Int] = []
     private(set) var blocked: [Int] = []
@@ -123,9 +128,19 @@ private final class NewsletterAPI: HearfulAPIProtocol, @unchecked Sendable {
         self.pending = pending
     }
 
-    func pendingNewsletters() async throws -> [PendingNewsletter] { pending }
+    func newsletterAddress() async throws -> NewsletterAddress {
+        let reply = try #require(addressReply)
+        return try await reply()
+    }
+
+    func pendingNewsletters() async throws -> [PendingNewsletter] {
+        let snapshot = pending
+        await didRead?()
+        return snapshot
+    }
 
     func approveNewsletter(id: Int) async throws -> Show {
+        await beforeChange?()
         if failApprove {
             throw APIError(spokenResponse: "That newsletter is no longer waiting.", underlying: "HTTP 404")
         }
@@ -135,7 +150,7 @@ private final class NewsletterAPI: HearfulAPIProtocol, @unchecked Sendable {
             isArticleFeed: true, isFailing: false, source: "email")
     }
 
-    func blockNewsletter(id: Int) async throws { blocked.append(id) }
+    func blockNewsletter(id: Int) async throws { blocked.append(id); await beforeChange?() }
 
     func command(
         transcript: String, nowPlayingEpisodeID: Int?, turns: [ConversationTurn], traceparent: String?
@@ -161,6 +176,77 @@ private final class NewsletterAPI: HearfulAPIProtocol, @unchecked Sendable {
     func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {}
     func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String?) async throws {}
     func reportDiagnostic(_ event: [String: any Sendable]) async throws {}
+}
+
+@MainActor
+@Suite("Newsletter address in Settings")
+struct NewsletterAddressSettingsTests {
+    @Test(arguments: [false, true])
+    func oldAddressOrNetworkErrorCannotReplaceTheNextAccountsAddress(fails: Bool) async {
+        let api = NewsletterAPI(pending: [])
+        let model = NewsletterAddressModel(api: api)
+        let entered = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        api.addressReply = {
+            entered.continuation.finish()
+            for await _ in release.stream {}
+            if fails { throw URLError(.notConnectedToInternet) }
+            return NewsletterAddress(address: "first@fixture.invalid")
+        }
+        let original = Task {
+            await HearfulAPI.$tokenProvider.withValue({ "first" }) { await model.load() }
+        }
+        for await _ in entered.stream {}
+        let second = NewsletterAddress(address: "second@fixture.invalid")
+        api.addressReply = { second }
+        await HearfulAPI.$tokenProvider.withValue({ "second" }) { await model.load() }
+        release.continuation.finish()
+        await original.value
+        #expect(model.state == .loaded(second))
+    }
+
+    @Test func copyFromAPreviousAccountLeavesTheClipboardAlone() async throws {
+        let name = UIPasteboard.Name(rawValue: UUID().uuidString)
+        let pasteboard = try #require(UIPasteboard(name: name, create: true))
+        defer { UIPasteboard.remove(withName: name) }
+        pasteboard.string = "Existing clipboard"
+        let original = HearfulAPI.$tokenProvider.withValue({ "first-token" }) {
+            CopyAddressButton(address: "first@fixture.invalid", scope: ShortcutScope.current)
+        }
+        HearfulAPI.$tokenProvider.withValue({ "second-token" }) {
+            #expect(!original.copy(to: pasteboard))
+            #expect(pasteboard.string == "Existing clipboard")
+            let current = CopyAddressButton(address: "second@fixture.invalid", scope: ShortcutScope.current)
+            #expect(current.copy(to: pasteboard))
+            #expect(pasteboard.string == "second@fixture.invalid")
+        }
+    }
+
+    @Test func leavingSettingsBeforeSpeechStartsDiscardsItAndAReplacementPlaysOnce() async {
+        let recorder = Recorder()
+        let readout = SettingsReadout { FakeSpeaker(recorder) }
+        let original = readout.speak("Private address")
+        readout.stop()
+        await original?.value
+        #expect(recorder.events.isEmpty)
+        let replaced = readout.speak("Preview A")
+        let replacement = readout.speak("Preview B")
+        await replaced?.value
+        await replacement?.value
+        #expect(recorder.events == [.spoke("Preview B")])
+    }
+
+    @Test func leavingSettingsDuringSpeechStopsIt() async {
+        let recorder = Recorder()
+        let speaker = FakeSpeaker(recorder)
+        speaker.keepsSpeaking = true
+        let readout = SettingsReadout { speaker }
+        let task = readout.speak("Spell address")
+        while recorder.events.isEmpty { await Task.yield() }
+        readout.stop()
+        await task?.value
+        #expect(recorder.events == [.spoke("Spell address")])
+    }
 }
 
 @Suite("Pending newsletters model")
@@ -209,6 +295,72 @@ struct PendingNewslettersModelTests {
         #expect(blocked)
         #expect(api.blocked == [8])
         #expect(model.pending.map(\.id) == [7])
+    }
+
+    @Test(arguments: [true, false])
+    func aLateListCannotReopenAnAnsweredSender(follow: Bool) async {
+        let api = NewsletterAPI(pending: [levine, evans])
+        let model = PendingNewslettersModel(api: api)
+        await model.load()
+        api.didRead = {
+            if follow { _ = await model.approve(levine) }
+            else { _ = await model.block(levine) }
+        }
+        await model.load()
+        api.didRead = nil
+        #expect(model.pending.map(\.id) == [evans.id])
+        // A delayed tap from the old row must also be harmless.
+        let repeated = follow ? await model.approve(levine) : await model.block(levine)
+        #expect(!repeated)
+        #expect(api.approved.count + api.blocked.count == 1)
+    }
+
+    @Test(arguments: [true, false])
+    func previousAccountsRowCannotSendAChange(follow: Bool) async {
+        let api = NewsletterAPI(pending: [levine])
+        let model = PendingNewslettersModel(api: api)
+        await HearfulAPI.$tokenProvider.withValue({ "first-test-token" }) { await model.load() }
+        let originalScope = model.listScope
+        await HearfulAPI.$tokenProvider.withValue({ "second-test-token" }) {
+            let stale = follow ? await model.approve(levine) : await model.block(levine)
+            #expect(!stale)
+            await model.load()
+            // Even identical rows can be selected only by this account's controls.
+            let confirmed = follow ? await model.approve(levine, expectedScope: originalScope)
+                : await model.block(levine, expectedScope: originalScope)
+            #expect(!confirmed)
+        }
+        #expect(api.approved.isEmpty && api.blocked.isEmpty)
+    }
+
+    @Test(arguments: [true, false])
+    func switchingAccountsSuppressesTheOriginalSendersResult(fails: Bool) async {
+        let token = OSAllocatedUnfairLock(initialState: "first-test-token")
+        await HearfulAPI.$tokenProvider.withValue({ token.withLock { $0 } }) {
+            let api = NewsletterAPI(pending: [levine])
+            var notices: [String] = []
+            let model = PendingNewslettersModel(api: api, announce: { notices.append($0) })
+            await model.load()
+            api.failApprove = fails
+            let entered = AsyncStream<Void>.makeStream()
+            let release = AsyncStream<Void>.makeStream()
+            api.beforeChange = {
+                entered.continuation.finish()
+                for await _ in release.stream {}
+            }
+            let original = Task { await model.approve(levine) }
+            for await _ in entered.stream {}
+            token.withLock { $0 = "second-test-token" }
+            api.pending = [evans]
+            await model.load()
+            release.continuation.finish()
+            let accepted = await original.value
+            api.beforeChange = nil
+            #expect(!accepted)
+            #expect(model.pending == [evans])
+            #expect(notices.isEmpty && model.errorMessage == nil)
+            #expect(model.busyID == nil)
+        }
     }
 
     @Test func aFailureIsSpokenAndLeavesTheRowInPlace() async {

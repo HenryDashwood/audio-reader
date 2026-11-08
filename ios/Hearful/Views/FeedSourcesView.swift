@@ -31,6 +31,7 @@ struct FeedSourcesView: View {
                                 Button("Separate source") {
                                     Task { await model.separate(source, from: show.id) }
                                 }
+                                .disabled(model.needsSourceRefresh)
                                 .accessibilityLabel("Separate \(source.title), \(source.locationLabel)")
                             }
                         }
@@ -48,6 +49,7 @@ struct FeedSourcesView: View {
                                 }
                             }
                         }
+                        .disabled(model.needsSourceRefresh)
                         .accessibilityLabel("Combine \(other.title) with \(show.title)")
                     }
                 } header: {
@@ -58,7 +60,7 @@ struct FeedSourcesView: View {
                 if let error = model.error {
                     Section {
                         Text(error).foregroundStyle(.red)
-                        Button("Try again") { Task { await model.load(showID: show.id) } }
+                        Button("Try again") { Task { await model.retry(showID: show.id) } }
                     }
                 }
             }
@@ -82,7 +84,23 @@ final class FeedSourcesModel: ObservableObject {
     @Published private(set) var error: String?
     private let api: any HearfulAPIProtocol
 
-    init(api: any HearfulAPIProtocol = HearfulAPI()) { self.api = api }
+    private let notifications: NotificationCenter
+    private let announce: (String) -> Void
+    private var savedChange: String?
+    var needsSourceRefresh: Bool { savedChange != nil }
+
+    init(api: any HearfulAPIProtocol = HearfulAPI(), notifications: NotificationCenter = .default,
+         announce: @escaping (String) -> Void = { AccessibilityNotification.Announcement($0).post() }) {
+        self.api = api
+        self.notifications = notifications
+        self.announce = announce
+    }
+
+    func retry(showID: Int) async {
+        guard !busy else { return }
+        notifications.post(name: .hearfulSubscriptionsChanged, object: nil)
+        await load(showID: showID)
+    }
 
     func load(showID: Int) async {
         guard !busy else { return }
@@ -99,6 +117,7 @@ final class FeedSourcesModel: ObservableObject {
         let (sources, shows) = try await (loadedSources, loadedShows)
         self.sources = sources.sorted { $0.isPrimary && !$1.isPrimary }
         available = shows.filter { $0.id != showID }
+        savedChange = nil
     }
 
     func combine(_ other: Show, into showID: Int) async {
@@ -110,7 +129,7 @@ final class FeedSourcesModel: ObservableObject {
     }
 
     private func change(showID: Int, sourceID: Int, separating: Bool) async {
-        guard !busy else { return }
+        guard !busy, !needsSourceRefresh else { return }
         busy = true
         error = nil
         defer { busy = false }
@@ -120,15 +139,22 @@ final class FeedSourcesModel: ObservableObject {
             } else {
                 try await api.combineSource(showID: showID, sourceID: sourceID)
             }
-            NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
-            AccessibilityNotification.Announcement(separating ? "Source separated." : "Sources combined.").post()
+            let success = separating ? "Source separated." : "Sources combined."
+            savedChange = success
+            notifications.post(name: .hearfulSubscriptionsChanged, object: nil)
             try await refresh(showID: showID)
+            announce(success)
         } catch { report(error) }
     }
 
     private func report(_ error: Error) {
-        let message = (error as? APIError)?.spokenResponse ?? "Could not update sources. Please try again."
+        let message: String
+        if let savedChange {
+            message = "\(savedChange) The source list couldn’t be refreshed. Tap Try again to refresh Manage Sources and Following."
+        } else {
+            message = (error as? APIError)?.spokenResponse ?? "Could not update sources. Please try again."
+        }
         self.error = message
-        AccessibilityNotification.Announcement(message).post()
+        announce(message)
     }
 }

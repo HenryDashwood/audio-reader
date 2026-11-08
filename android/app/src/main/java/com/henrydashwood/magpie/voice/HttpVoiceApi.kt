@@ -4,6 +4,8 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.trySendBlocking
@@ -66,6 +68,8 @@ class HttpVoiceApi(private val baseUrl: String, private val unauthorized: (Strin
                             if (text.length + count > VoiceLines.MAX_LINE) throw VoiceFailure(VoiceExecution.UNCONFIRMED)
                             text.append(buffer, 0, count)
                         }
+                        // Disconnect may make a cancelled read finish with EOF.
+                        currentCoroutineContext().ensureActive()
                         val receipt = try { VoiceWire.response(JSONObject(text.toString())) }
                             catch (failure: Exception) { throw VoiceFailure(VoiceExecution.UNCONFIRMED, failure) }
                         trySendBlocking(VoiceEvent.Result(receipt)).getOrThrow()
@@ -75,12 +79,13 @@ class HttpVoiceApi(private val baseUrl: String, private val unauthorized: (Strin
             } catch (cancelled: CancellationException) { close(cancelled) }
             catch (failure: VoiceFailure) { close(failure) }
             catch (failure: Exception) {
+                currentCoroutineContext().ensureActive()
                 close(VoiceFailure("I cannot reach the internet right now. Please try again shortly.", failure))
             }
         }
         // flowOn puts both the blocking reader and this cleanup on Dispatchers.IO.
         // No authorization follows a redirect, and cancellation does not leave the reader alive.
-        awaitClose { connection.disconnect(); worker.cancel() }
+        awaitClose { worker.cancel(); connection.disconnect() }
     }.flowOn(Dispatchers.IO)
 
     override suspend fun cancel(token: String, requestId: String) = withContext(Dispatchers.IO) {

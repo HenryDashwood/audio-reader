@@ -134,22 +134,22 @@ struct DownloadPolicyTests {
 final class FakeDownloadTransport: DownloadTransport {
     var onEvent: (@MainActor (DownloadEvent) -> Void)?
     var started: [DownloadTaskRequest] = []
-    var cancelled: [Int] = []
+    var cancelled: [DownloadTaskID] = []
     var cancelledAll = false
-    var active: [(episodeID: Int, epoch: UUID)] = []
+    var active: [DownloadTaskID] = []
 
     func start(_ request: DownloadTaskRequest) { started.append(request) }
-    func cancel(episodeID: Int) { cancelled.append(episodeID) }
-    func cancelAll() { cancelledAll = true }
-    func activeTasks() async -> [(episodeID: Int, epoch: UUID)] { active }
+    func cancel(_ id: DownloadTaskID) { cancelled.append(id) }
+    func cancelAll(epoch: UUID) { cancelledAll = true }
+    func activeTasks() async -> [DownloadTaskID] { active }
     func finishBackgroundEvents() async {}
 
     /// Delivers a finished file as the session delegate would.
     func finish(_ episodeID: Int, bytes: Int = 1234) throws {
-        let request = try #require(started.last { $0.episodeID == episodeID })
+        let request = try #require(started.last { $0.id.episodeID == episodeID })
         let file = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).mp3")
         try Data(repeating: 1, count: bytes).write(to: file)
-        onEvent?(.finished(episodeID: episodeID, epoch: request.epoch, file: file))
+        onEvent?(.finished(request.id, file: file))
     }
 }
 
@@ -167,14 +167,14 @@ struct EpisodeDownloadsTests {
         var now = Date(timeIntervalSince1970: 1_000_000)
 
         @MainActor
-        func make() -> EpisodeDownloads {
+        func make(announce: @escaping (String) -> Void = { _ in }) -> EpisodeDownloads {
             EpisodeDownloads(
                 store: DownloadStore(directory: directory), defaults: defaults,
                 makeTransport: { [transport] _ in transport },
                 latest: { [unowned self] in latest }, isSignedIn: { true },
                 protecting: { [unowned self] in playing }, isOnMobileData: { [unowned self] in mobileData },
                 freeSpace: { [unowned self] in freeSpace }, now: { [unowned self] in now },
-                observesSystem: false)
+                announce: announce, observesSystem: false)
         }
 
         deinit { try? FileManager.default.removeItem(at: directory) }
@@ -184,7 +184,7 @@ struct EpisodeDownloadsTests {
         let harness = Harness()
         let downloads = harness.make()
         #expect(downloads.request([podcast(1)]) == .started([podcast(1)]))
-        #expect(harness.transport.started.map(\.episodeID) == [1])
+        #expect(harness.transport.started.map(\.id.episodeID) == [1])
         #expect(harness.transport.started[0].allowsCellular)
         #expect(downloads.localFile(for: podcast(1)) == nil)
 
@@ -220,9 +220,9 @@ struct EpisodeDownloadsTests {
         #expect(confirmation.overLimitBytes == hour)
         #expect(!confirmation.usesMobileData)
         #expect(confirmation.message.contains("more than your"))
-        #expect(harness.transport.started.last?.episodeID == 3)
+        #expect(harness.transport.started.last?.id.episodeID == 3)
         downloads.confirm(confirmation, waitForWiFi: false)
-        #expect(harness.transport.started.last?.episodeID == 4)
+        #expect(harness.transport.started.last?.id.episodeID == 4)
         // Her own unheard downloads are all kept.
         #expect(downloads.record(for: 1) != nil && downloads.record(for: 3) != nil)
     }
@@ -331,7 +331,63 @@ struct EpisodeDownloadsTests {
         harness.defaults.set(Int(hour), forKey: DownloadSettings.limitKey)
         downloads.enforceLimit()
         #expect(Set(downloads.records.keys) == [3])
-        #expect(harness.transport.cancelled.sorted() == [1, 2])
+        #expect(harness.transport.cancelled.map(\.episodeID).sorted() == [1, 2])
+    }
+
+    @Test(arguments: [true, false], [true, false])
+    func removedAttemptCannotChangeReplacement(lateSuccess: Bool, replacementFinished: Bool) throws {
+        let harness = Harness()
+        var announcements: [String] = []
+        let downloads = harness.make { announcements.append($0) }
+        let episode = podcast(1)
+        _ = downloads.request([episode])
+        let old = try #require(harness.transport.started.last?.id)
+        downloads.remove(episodeID: episode.id)
+        _ = downloads.request([episode])
+        let new = try #require(harness.transport.started.last?.id)
+        #expect(old != new)
+        #expect(harness.transport.cancelled == [old])
+        #expect(BackgroundDownloadTransport.parse(new.taskDescription) == new)
+        if replacementFinished { try harness.transport.finish(1, bytes: 42) }
+        let before = downloads.record(for: 1)
+        let spoken = announcements
+        harness.transport.onEvent?(.progress(old, fraction: 0.8))
+        if lateSuccess {
+            let file = harness.directory.appending(path: "old.mp3")
+            try Data([9]).write(to: file)
+            harness.transport.onEvent?(.finished(old, file: file))
+            #expect(!FileManager.default.fileExists(atPath: file.path))
+        } else {
+            harness.transport.onEvent?(.failed(old, message: "Lost"))
+        }
+        #expect(downloads.record(for: 1) == before)
+        #expect(announcements == spoken)
+        if !replacementFinished {
+            #expect(downloads.localFile(for: episode) == nil)
+            try harness.transport.finish(1, bytes: 42)
+        }
+        let saved = try #require(downloads.localFile(for: episode))
+        #expect(try Data(contentsOf: saved) == Data(repeating: 1, count: 42))
+        #expect(downloads.record(for: 1)?.status == .downloaded)
+        #expect(announcements == ["Downloaded: Episode 1"])
+    }
+
+    @Test func legacyTransferStillFinishesAfterRelaunch() async throws {
+        let harness = Harness()
+        let manifest = DownloadManifest(records: [
+            record(1, origin: .manual, status: .queued(waitingForWiFi: false))
+        ])
+        try DownloadStore(directory: harness.directory).save(manifest)
+        let legacy = try #require(BackgroundDownloadTransport.parse("\(manifest.epoch.uuidString) 1"))
+        harness.transport.active = [legacy]
+        let downloads = harness.make()
+        await downloads.refreshAutomatic(force: true)
+        #expect(harness.transport.started.isEmpty)
+        let file = harness.directory.appending(path: "legacy.mp3")
+        try Data([3]).write(to: file)
+        harness.transport.onEvent?(.finished(legacy, file: file))
+        let saved = try #require(downloads.localFile(for: podcast(1)))
+        #expect(try Data(contentsOf: saved) == Data([3]))
     }
 
     @Test func signingOutDiscardsLateArrivals() throws {
@@ -351,8 +407,8 @@ struct EpisodeDownloadsTests {
         let harness = Harness()
         let downloads = harness.make()
         _ = downloads.request([podcast(1)])
-        let epoch = harness.transport.started[0].epoch
-        harness.transport.onEvent?(.failed(episodeID: 1, epoch: epoch, message: "Lost"))
+        let task = harness.transport.started[0].id
+        harness.transport.onEvent?(.failed(task, message: "Lost"))
         #expect(downloads.record(for: 1)?.status == .failed("Lost"))
         #expect(downloads.usedBytes == 0)
         #expect(downloads.request([podcast(1)]) == .started([podcast(1)]))
@@ -366,7 +422,7 @@ struct EpisodeDownloadsTests {
         harness.transport.started = []
         harness.defaults.set(false, forKey: DownloadSettings.automaticKey)
         await relaunched.refreshAutomatic(force: true)
-        #expect(harness.transport.started.map(\.episodeID) == [1])
+        #expect(harness.transport.started.map(\.id.episodeID) == [1])
     }
 }
 

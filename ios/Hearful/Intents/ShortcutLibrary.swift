@@ -5,9 +5,11 @@ import Foundation
 /// Never persist credentials. A session fingerprint also prevents cached titles
 /// from another account or development server appearing in system suggestions.
 nonisolated enum ShortcutScope {
-    static var current: String? {
-        guard let token = HearfulAPI.tokenProvider() else { return nil }
-        let value = AppConfiguration.apiBaseURL.absoluteString + ":" + token
+    static var current: String? { forToken(HearfulAPI.tokenProvider()) }
+
+    static func forToken(_ token: String?, server: URL = AppConfiguration.apiBaseURL) -> String? {
+        guard let token else { return nil }
+        let value = server.absoluteString + ":" + token
         return SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }

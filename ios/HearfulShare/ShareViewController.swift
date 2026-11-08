@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 final class ShareViewController: UIViewController {
     private var confirmation: UIHostingController<ShareConfirmationView>?
     private var started = false
+    private var reviewedAccount: CaptureInbox.Account?
     private var pendingInput: Input?
     private var queuedPDF: PDFUploadInbox.Pending?
     private var queuedCapture: CaptureInbox.Capture?
@@ -35,6 +36,7 @@ final class ShareViewController: UIViewController {
         super.viewDidAppear(animated)
         guard !started else { return }
         started = true
+        reviewedAccount = CaptureInbox.shared.account
         Task { await capture() }
     }
 
@@ -106,6 +108,9 @@ final class ShareViewController: UIViewController {
         }
         do {
             guard let input else { throw CaptureInbox.InboxError.invalidURL }
+            let current = CaptureInbox.shared.account
+            if let reviewedAccount, reviewedAccount != current { throw CaptureUploader.Failure.changedAccount }
+            reviewedAccount = current
             pendingInput = input
             if input.contentFormat == "pdf" || input.pdf != nil || input.url.pathExtension.lowercased() == "pdf" {
                 show(.pdfReady(title: input.title, url: input.url))
@@ -123,15 +128,19 @@ final class ShareViewController: UIViewController {
         do {
             if pendingInput?.pdf != nil || queuedPDF != nil {
                 if queuedPDF == nil, let input = pendingInput, let data = input.pdf {
-                    guard let account = CaptureInbox.shared.account else { throw CaptureUploader.Failure.signIn }
-                    queuedPDF = try PDFUploadInbox.shared.save(data, filename: input.title ?? "Document.pdf", account: account)
+                    queuedPDF = try PDFUploadInbox.shared.save(data, filename: input.title ?? "Document.pdf", reviewedBy: reviewedAccount)
                 }
                 guard let pdf = queuedPDF else { throw CaptureInbox.InboxError.unavailable }
+                guard let session = CaptureSessionStore.read(), session.account == pdf.account else { throw CaptureUploader.Failure.changedAccount }
                 pendingInput = nil
                 show(.uploading)
                 upload.start {
                     try await PDFUploadInbox.shared.upload(pdf)
                 } completion: { [weak self] result in
+                    guard CaptureSessionStore.read() == session else {
+                        self?.show(.failed(message: CaptureUploader.Failure.changedAccount.localizedDescription))
+                        return
+                    }
                     switch result {
                     case .success:
                         self?.queuedPDF = nil
@@ -146,7 +155,7 @@ final class ShareViewController: UIViewController {
                 guard let input = pendingInput else { throw CaptureInbox.InboxError.invalidURL }
                 queuedCapture = try CaptureInbox.shared.save(
                     url: input.url, title: input.title, html: input.html,
-                    contentFormat: input.contentFormat, replaceExisting: true)
+                    contentFormat: input.contentFormat, replaceExisting: true, reviewedBy: reviewedAccount)
             }
             guard let capture = queuedCapture else { throw CaptureInbox.InboxError.unavailable }
             pendingInput = nil
@@ -154,6 +163,10 @@ final class ShareViewController: UIViewController {
             upload.start {
                 try await CaptureUploader().finish(capture, inbox: .shared)
             } completion: { [weak self] result in
+                guard capture.account == CaptureInbox.shared.account else {
+                    self?.show(.failed(message: CaptureUploader.Failure.changedAccount.localizedDescription))
+                    return
+                }
                 switch result {
                 case .success(let preparing):
                     self?.queuedCapture = nil

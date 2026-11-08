@@ -10,7 +10,10 @@ import java.io.IOException
 // from restoring a signed-out account or attaching credentials to a different session.
 data class AccountState(val signedIn: Boolean = false, val user: AccountUser? = null,
     val providers: Set<String>? = null, val busy: Boolean = false, val error: String? = null,
-    val applePending: Boolean = false, val libraryRevision: Int = 0)
+    val appleAttempt: String? = null, val libraryRevision: Int = 0,
+    val sessionId: String? = null) {
+    val applePending: Boolean get() = appleAttempt != null
+}
 
 class AccountSession(private val api: AccountApi, private val store: AccountTokenStore,
     private val appleStore: ApplePendingStore = MemoryApplePendingStore(),
@@ -19,7 +22,8 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
     private val mutableToken = MutableStateFlow(token)
     internal val accessToken = mutableToken.asStateFlow()
     private var generation = 0
-    private val mutableState = MutableStateFlow(AccountState(signedIn = token != null, applePending = appleStore.read() != null))
+    private val mutableState = MutableStateFlow(AccountState(signedIn = token != null, appleAttempt = appleStore.read()?.attemptId,
+        sessionId = token?.let { java.util.UUID.randomUUID().toString() }))
     val state = mutableState.asStateFlow()
 
     suspend fun refresh() {
@@ -27,8 +31,7 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
         operation {
             val user = api.me(current)
             val providers = api.providers(current)
-            AccountState(signedIn = true, user = user, providers = providers, applePending = appleStore.read() != null,
-                libraryRevision = state.value.libraryRevision)
+            state.value.copy(user = user, providers = providers, appleAttempt = appleStore.read()?.attemptId)
         }
     }
     suspend fun signInGoogle(authorize: suspend () -> String) {
@@ -44,12 +47,12 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
             token = response.token
             mutableToken.value = token
             // /me/identities can be retried independently without losing a valid login.
-            AccountState(signedIn = true, user = response.user)
+            AccountState(signedIn = true, user = response.user, sessionId = java.util.UUID.randomUUID().toString())
         }
         if (token != null) refresh()
     }
-    suspend fun linkGoogle(authorize: suspend () -> String) {
-        if (state.value.applePending) return
+    suspend fun linkGoogle(expectedSession: String, authorize: suspend () -> String) {
+        if (state.value.sessionId != expectedSession || state.value.applePending) return
         val current = token ?: return
         operation {
             val version = generation
@@ -59,11 +62,11 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
             state.value.copy(providers = providers, libraryRevision = state.value.libraryRevision + 1, error = null)
         }
     }
-    suspend fun signInApple(link: Boolean, openBrowser: (String) -> Unit) {
-        if (link != (token != null) || state.value.applePending) return
+    suspend fun signInApple(expectedSession: String?, openBrowser: (String) -> Unit) {
+        if (expectedSession != state.value.sessionId || state.value.applePending) return
         operation {
             val version = generation
-            val current = if (link) token else null
+            val current = token
             val verifier = AppleBrowserProof.verifier()
             val started = api.startApple(AppleBrowserProof.challenge(verifier), current)
             if (version != generation) { runCatching { api.cancelApple(started.state, verifier) }; return@operation null }
@@ -71,32 +74,32 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
             val pending = ApplePending(started.state, verifier, started.authorizationUrl,
                 now() + started.expiresIn.coerceIn(1, 300) * 1000L, current?.let(AppleBrowserProof::challenge))
             appleStore.write(pending)
-            mutableState.value = state.value.copy(applePending = true)
+            mutableState.value = state.value.copy(appleAttempt = pending.attemptId)
             try { openBrowser(pending.authorizationUrl) }
             catch (failure: Exception) { appleStore.clear(); runCatching { api.cancelApple(pending.state, pending.verifier) }; throw failure }
             awaitApple(pending, version)
         }
     }
 
-    suspend fun resumeApple() {
-        val pending = appleStore.read() ?: return
+    suspend fun resumeApple(attempt: String) {
+        val pending = appleStore.read()?.takeIf { it.attemptId == attempt } ?: return
         operation { awaitApple(pending, generation) }
     }
 
-    fun reopenApple(openBrowser: (String) -> Unit) {
-        try { appleStore.read()?.let { openBrowser(it.authorizationUrl) } }
+    fun reopenApple(attempt: String, openBrowser: (String) -> Unit) {
+        try { appleStore.read()?.takeIf { it.attemptId == attempt }?.let { openBrowser(it.authorizationUrl) } }
         catch (failure: Exception) {
             mutableState.value = state.value.copy(error = (failure as? AccountFailure)?.message
                 ?: "Apple sign-in could not be opened. Please try again.")
         }
     }
 
-    suspend fun cancelApple() {
-        val pending = appleStore.read() ?: return
+    suspend fun cancelApple(attempt: String) {
+        val pending = appleStore.read()?.takeIf { it.attemptId == attempt } ?: return
         // Forget the proof first; late browser returns cannot finish this attempt.
         appleStore.clear()
         generation++
-        mutableState.value = state.value.copy(busy = false, applePending = false, error = null)
+        mutableState.value = state.value.copy(busy = false, appleAttempt = null, error = null)
         runCatching { api.cancelApple(pending.state, pending.verifier) }
     }
 
@@ -119,7 +122,7 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
                 "pending" -> delay(1500)
                 "cancelled" -> {
                     appleStore.clear()
-                    return state.value.copy(applePending = false, error = null)
+                    return state.value.copy(appleAttempt = null, error = null)
                 }
                 "complete" -> {
                     if (pending.sessionHash == null) {
@@ -130,11 +133,11 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
                         token = auth.token
                         mutableToken.value = token
                         appleStore.clear()
-                        return AccountState(signedIn = true, user = auth.user)
+                        return AccountState(signedIn = true, user = auth.user, sessionId = java.util.UUID.randomUUID().toString())
                     }
                     val providers = response.providers ?: throw AccountFailure(0, "Apple could not be connected. Please try again.")
                     appleStore.clear()
-                    return state.value.copy(providers = providers, applePending = false,
+                    return state.value.copy(providers = providers, appleAttempt = null,
                         libraryRevision = state.value.libraryRevision + 1, error = null)
                 }
                 else -> throw AccountFailure(0, "Apple sign-in did not finish. Please try again.")
@@ -143,16 +146,20 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
         return null
     }
 
-    suspend fun signOut() {
+    suspend fun signOut(expectedSession: String?): Boolean {
+        if (expectedSession != state.value.sessionId) return false
         val current = token
         try { forget() }
         catch (_: Exception) {
             mutableState.value = state.value.copy(error = "Sign-out could not be saved on this device. Please try again.")
-            return
+            return false
         }
+        val version = generation
         if (current != null) runCatching { api.logout(current) }
+        return version == generation && token == null
     }
-    suspend fun delete() {
+    suspend fun delete(confirmedSession: String) {
+        if (state.value.sessionId != confirmedSession) return
         val current = token ?: return
         operation {
             val version = generation
@@ -189,7 +196,7 @@ class AccountSession(private val api: AccountApi, private val store: AccountToke
                 if (failure is AccountFailure && failure.status == 401 && token != null) forget()
                 // Network failures retain the encrypted handoff for a foreground or manual retry.
                 if (failure is AccountFailure && failure.status in setOf(400, 403, 409, 410)) appleStore.clear()
-                mutableState.value = state.value.copy(applePending = appleStore.read() != null,
+                mutableState.value = state.value.copy(appleAttempt = appleStore.read()?.attemptId,
                     error = when (failure) {
                         is AccountFailure -> failure.message
                         is IOException -> "Could not connect to Magpie. Check your connection, then try again."

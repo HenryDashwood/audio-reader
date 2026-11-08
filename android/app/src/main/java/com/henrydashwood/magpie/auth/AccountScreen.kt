@@ -28,10 +28,11 @@ fun AccountScreen(onBack: () -> Unit, model: AccountModel = viewModel()) {
     val context = LocalContext.current
     // Loads the connected providers on arrival, as iOS does.
     LaunchedEffect(state.signedIn) { if (state.signedIn && state.providers == null) model.refresh() }
-    AccountContent(state, model.configured, onBack, { model.signIn(context) }, { model.link(context) },
+    val owner = state.sessionId
+    AccountContent(state, model.configured, onBack, { model.signIn(context) }, { owner?.let { model.link(context, it) } },
         model::refresh, appleConfigured = model.appleConfigured,
-        signInApple = { model.apple(context, false) }, linkApple = { model.apple(context, true) },
-        cancelApple = model::cancelApple, resumeApple = model::resumeApple, reopenApple = { model.reopenApple(context) })
+        signInApple = { model.apple(context, null) }, linkApple = { owner?.let { model.apple(context, it) } },
+        cancelApple = model::cancelApple, resumeApple = model::resumeApple, reopenApple = { model.reopenApple(context, it) })
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,11 +40,11 @@ fun AccountScreen(onBack: () -> Unit, model: AccountModel = viewModel()) {
 fun AccountContent(state: AccountState, configured: Boolean, onBack: () -> Unit,
     signIn: () -> Unit, linkGoogle: () -> Unit, refresh: () -> Unit,
     appleConfigured: Boolean = false, signInApple: () -> Unit = {}, linkApple: () -> Unit = {},
-    cancelApple: () -> Unit = {}, resumeApple: () -> Unit = {}, reopenApple: () -> Unit = {}) {
+    cancelApple: (String) -> Unit = {}, resumeApple: (String) -> Unit = {}, reopenApple: (String) -> Unit = {}) {
     // A Custom Tab can outlive a failed background request. Check the retained
     // proof when this screen becomes active again, including a browser return.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        if (state.applePending) resumeApple()
+        state.appleAttempt?.let(resumeApple)
     }
     Scaffold(topBar = {
         TopAppBar(title = { Text("Sign-in Methods") }, navigationIcon = {
@@ -84,11 +85,12 @@ fun AccountContent(state: AccountState, configured: Boolean, onBack: () -> Unit,
                 item { Text("Connecting requires signing in with the additional provider. Matching email addresses alone do not connect accounts. After combining accounts, review AI Data Sharing in Settings. Devices signed in to the other account will need to sign in again.",
                     style = MaterialTheme.typography.bodySmall) }
             }
-            if (state.applePending) item {
+            val attempt = state.appleAttempt
+            if (attempt != null) item(key = attempt) {
                 Text("Finish signing in with Apple in your browser, then return to Magpie.")
-                TextButton(onClick = reopenApple) { Text("Open Apple sign-in") }
-                if (!state.busy) TextButton(onClick = resumeApple) { Text("Check Again") }
-                TextButton(onClick = cancelApple) { Text("Cancel Apple sign-in") }
+                TextButton(onClick = { reopenApple(attempt) }) { Text("Open Apple sign-in") }
+                if (!state.busy) TextButton(onClick = { resumeApple(attempt) }) { Text("Check Again") }
+                TextButton(onClick = { cancelApple(attempt) }) { Text("Cancel Apple sign-in") }
             }
             if (!appleConfigured) item { Text("Apple sign-in is not available in this build yet.") }
             if (!configured) item { Text("Google sign-in is not available in this build yet.") }

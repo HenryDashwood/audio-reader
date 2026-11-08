@@ -34,6 +34,8 @@ final class SavedLibrary: ObservableObject {
     private let api: HearfulAPI
     private let inbox: CaptureInbox
     private let cache: OfflineCache
+    private let uploadPDF: (PDFUploadInbox, PDFUploadInbox.Pending) async throws -> Void
+    private let announce: (String) -> Void
     private let isSignedIn: () -> Bool
     private var removals = Set<Int>()
     private var captureRemovals = Set<UUID>()
@@ -42,11 +44,15 @@ final class SavedLibrary: ObservableObject {
     init(
         api: HearfulAPI = HearfulAPI(), inbox: CaptureInbox = .shared,
         cache: OfflineCache = .shared,
-        isSignedIn: @escaping () -> Bool = { KeychainTokenStore.token != nil }
+        isSignedIn: @escaping () -> Bool = { KeychainTokenStore.token != nil },
+        announce: @escaping (String) -> Void = { AccessibilityNotification.Announcement($0).post() },
+        uploadPDF: @escaping (PDFUploadInbox, PDFUploadInbox.Pending) async throws -> Void = { try await $0.uploadFromApp($1) }
     ) {
         self.api = api
         self.inbox = inbox
         self.cache = cache
+        self.uploadPDF = uploadPDF
+        self.announce = announce
         self.isSignedIn = isSignedIn
     }
 
@@ -111,13 +117,18 @@ final class SavedLibrary: ObservableObject {
         }
         refreshAvailability()
         pending = inbox.pending(for: account)
-        pendingPDFs = PDFUploadInbox.shared.pending(for: account)
+        let pdfInbox = PDFUploadInbox(directory: inbox.directory)
+        pendingPDFs = pdfInbox.pending(for: account)
         for pdf in pendingPDFs {
-            do { try await PDFUploadInbox.shared.upload(pdf) }
-            catch { self.error = error.localizedDescription; break }
-            guard currentAccount == account, self.generation == generation else { return }
+            do { try await uploadPDF(pdfInbox, pdf) }
+            catch {
+                guard currentAccount == account, self.generation == generation, !Task.isCancelled else { return }
+                self.error = error.localizedDescription
+                break
+            }
+            guard currentAccount == account, self.generation == generation, !Task.isCancelled else { return }
         }
-        pendingPDFs = PDFUploadInbox.shared.pending(for: account)
+        pendingPDFs = pdfInbox.pending(for: account)
         // Library display and preparation are independent of pending uploads.
         // A slow or bad capture must not hide everything already saved.
         do {
@@ -311,7 +322,35 @@ final class SavedLibrary: ObservableObject {
         }
     }
 
-    func replace(_ episode: Episode) async {
+    final class TextReplacement {
+        let episode: Episode
+        fileprivate let account: CaptureInbox.Account
+        fileprivate let generation: Int
+
+        fileprivate init(episode: Episode, account: CaptureInbox.Account, generation: Int) {
+            self.episode = episode
+            self.account = account
+            self.generation = generation
+        }
+    }
+
+    private weak var latestReplacement: TextReplacement?
+
+    func reviewReplacement(_ episode: Episode) -> TextReplacement? {
+        guard let account = currentAccount else { return nil }
+        let review = TextReplacement(episode: episode, account: account, generation: generation)
+        latestReplacement = review
+        return review
+    }
+
+    func cancelReplacement(_ review: TextReplacement) {
+        if latestReplacement === review { latestReplacement = nil }
+    }
+
+    func replace(_ review: TextReplacement) async {
+        guard latestReplacement === review, currentAccount == review.account, generation == review.generation else { return }
+        latestReplacement = nil
+        let episode = review.episode
         guard !loading, !replacing, removals.isEmpty, captureRemovals.isEmpty,
             let account = currentAccount else { return }
         let generation = self.generation
@@ -331,7 +370,13 @@ final class SavedLibrary: ObservableObject {
             cache.save(episodes, for: .savedArticles)
             await download(updated)
             guard currentAccount == account, self.generation == generation else { return }
-            AccessibilityNotification.Announcement("Saved text replaced: \(updated.title)").post()
+            let message = "Saved text replaced: \(updated.title)"
+            switch availability(updated) {
+            case .available: announce(message)
+            case .waiting: announce("\(message). Waiting to download for offline reading.")
+            case .downloading: announce("\(message). Downloading for offline reading.")
+            case .failed(let reason): announce("\(message). Offline download failed. \(reason)")
+            }
             NotificationCenter.default.post(name: .hearfulSavedChanged, object: updated)
         } catch {
             guard currentAccount == account, self.generation == generation else { return }
@@ -362,7 +407,47 @@ final class SavedLibrary: ObservableObject {
     }
 }
 
+struct SavedLinkDraft {
+    struct Form: Identifiable {
+        let id = UUID()
+        let account: CaptureInbox.Account?
+    }
+
+    var form: Form?
+    var address = ""
+    var error: String?
+    private var sessionScope: String?
+
+    mutating func open(account: CaptureInbox.Account?, scope: String?) {
+        if scope != sessionScope { address = "" }
+        sessionScope = scope
+        error = nil
+        form = Form(account: account)
+    }
+
+    mutating func edit(_ address: String, in presented: Form, scope: String?) {
+        guard form?.id == presented.id, scope == sessionScope else { return }
+        self.address = address
+    }
+
+    mutating func save(_ presented: Form, scope: String?, inbox: CaptureInbox = .shared) -> Bool {
+        guard form?.id == presented.id, scope == sessionScope else { return false }
+        do {
+            guard let url = URL(string: address.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                throw CaptureInbox.InboxError.invalidURL
+            }
+            try inbox.save(url: url, reviewedBy: presented.account)
+            self = SavedLinkDraft()
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+}
+
 struct SavedView: View {
+    @EnvironmentObject private var auth: AuthController
     @Environment(\.scenePhase) private var scenePhase
     @Binding var showingVoice: Bool
     @Binding var openEpisode: Episode?
@@ -370,15 +455,12 @@ struct SavedView: View {
     @ObservedObject private var player = PlaybackCoordinator.shared
     @State private var finished = false
     @State private var query = ""
-    @State private var adding = false
-    @State private var link = ""
-    @State private var deletingPDF: Episode?
-    @State private var originalPDF: URL?
-    @State private var pdfError: String?
+    @State private var draft = SavedLinkDraft()
+    @State private var deletingPDF: SavedPDFActions.DeletionReview?
+    @StateObject private var pdfActions = SavedPDFActions()
     @State private var importingPDF = false
-    @State private var pdfEnabled = false
-    @State private var addError: String?
-    @State private var replacing: Episode?
+    @StateObject private var pdfAccess = SavedPDFAccess()
+    @State private var replacing: SavedLibrary.TextReplacement?
 
     private var visible: [Episode] {
         model.episodes.filter {
@@ -400,7 +482,7 @@ struct SavedView: View {
                 if let error = model.error {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(error).font(.footnote).foregroundStyle(.secondary)
-                        Button("Retry saving") { Task { await refreshPDFAccess(); await model.load() } }
+                        Button("Retry saving") { Task { await pdfAccess.refresh(); await model.load() } }
                             .disabled(model.loading)
                     }
                 }
@@ -457,15 +539,15 @@ struct SavedView: View {
                         Task { await model.file(filing, episode: episode) }
                     }
                     .contextMenu {
-                        if episode.documentID != nil {
+                        if let documentID = episode.documentID {
                             if episode.link == nil {
-                                Button("View original PDF") { Task { await pdfAction(episode, delete: false) } }
+                                Button("View original PDF") { pdfActions.open(documentID) }
                             }
-                            Button("Delete PDF", role: .destructive) { deletingPDF = episode }
+                            Button("Delete PDF", role: .destructive) { deletingPDF = pdfActions.reviewDeletion(documentID) }
                         }
                         if episode.audioURL == nil, episode.link != nil, episode.documentID == nil {
                             Button("Replace saved text", systemImage: "arrow.clockwise") {
-                                replacing = episode
+                                replacing = model.reviewReplacement(episode)
                             }.disabled(model.loading || model.replacing)
                         }
                         ForEach(
@@ -502,21 +584,21 @@ struct SavedView: View {
                 isPresented: Binding(get: { replacing != nil }, set: { if !$0 { replacing = nil } }),
                 titleVisibility: .visible,
                 presenting: replacing
-            ) { episode in
-                Button("Replace saved text") { Task { await model.replace(episode) } }
-                Button("Cancel", role: .cancel) {}
+            ) { review in
+                Button("Replace saved text") { Task { await model.replace(review) } }
+                Button("Cancel", role: .cancel) { model.cancelReplacement(review) }
             } message: { _ in
                 Text("Download a fresh copy from the original link. If the text changes, listening starts from the beginning. If it fails, your current copy is kept. For pages requiring sign-in, share from Safari to update your saved copy.")
             }
             .onReceive(NotificationCenter.default.publisher(for: .hearfulRetryOffline)) { note in
                 Task { await model.retryIfDue(reset: note.object as? Bool == true) }
             }
-            .refreshable { await refreshPDFAccess(); await model.load() }
+            .refreshable { await pdfAccess.refresh(); await model.load() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("Add link") { adding = true }
-                        if pdfEnabled { Button("Import PDF", systemImage: "doc.badge.plus") { importingPDF = true } }
+                        Button("Add link") { draft.open(account: CaptureInbox.shared.account, scope: ShortcutScope.current) }
+                        if pdfAccess.enabled { Button("Import PDF", systemImage: "doc.badge.plus") { importingPDF = true } }
                     } label: { Image(systemName: "plus") }.accessibilityLabel("Add to Saved")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -528,24 +610,31 @@ struct SavedView: View {
                 }
             }
             .navigationDestination(item: $openEpisode) { ArticleView(episode: $0) }
-            .quickLookPreview($originalPDF)
-            .onChange(of: originalPDF) { previous, current in
-                if let previous, previous != current { try? FileManager.default.removeItem(at: previous) }
-            }
-            .onDisappear { originalPDF = nil }
-            .alert("PDF could not be updated", isPresented: Binding(get: { pdfError != nil }, set: { if !$0 { pdfError = nil } })) {
-                Button("OK") { pdfError = nil }
-            } message: { Text(pdfError ?? "") }
-            .confirmationDialog("Delete this PDF and its prepared text?", isPresented: Binding(get: { deletingPDF != nil }, set: { if !$0 { deletingPDF = nil } }), presenting: deletingPDF) { episode in
-                Button("Delete PDF", role: .destructive) { Task { await pdfAction(episode, delete: true) } }
+            .quickLookPreview(Binding(get: { pdfActions.file }, set: { if $0 == nil { pdfActions.dismiss() } }))
+            .onDisappear { pdfActions.dismiss() }
+            .alert("PDF could not be updated", isPresented: Binding(get: { pdfActions.error != nil }, set: { if !$0 { pdfActions.error = nil } })) {
+                Button("OK") { pdfActions.error = nil }
+            } message: { Text(pdfActions.error ?? "") }
+            .confirmationDialog("Delete this PDF and its prepared text?", isPresented: Binding(get: { deletingPDF != nil }, set: { if !$0 { deletingPDF = nil } }), presenting: deletingPDF) { review in
+                Button("Delete PDF", role: .destructive) { pdfActions.delete(review) { await model.load() } }
+                Button("Cancel", role: .cancel) { pdfActions.cancelDeletion(review) }
             }
             .sheet(isPresented: $importingPDF) { PDFImportView() }
-            .sheet(isPresented: $adding) {
+            .onChange(of: auth.sessionOwner) { _, _ in
+                replacing = nil
+                deletingPDF = nil
+                pdfActions.dismiss()
+                draft = SavedLinkDraft()
+            }
+            .sheet(item: $draft.form) { presented in
                 NavigationStack {
                     Form {
-                        TextField("https://example.com/article", text: $link).keyboardType(.URL)
+                        TextField("https://example.com/article", text: Binding(
+                            get: { draft.form?.id == presented.id ? draft.address : "" },
+                            set: { draft.edit($0, in: presented, scope: ShortcutScope.current) }
+                        )).keyboardType(.URL)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        if let addError { Text(addError).foregroundStyle(.red) }
+                        if let error = draft.error { Text(error).foregroundStyle(.red) }
                         Text(
                             "The link is kept on this device until Magpie can save and prepare it."
                         ).font(.footnote)
@@ -553,33 +642,21 @@ struct SavedView: View {
                     .navigationTitle("Add link")
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { adding = false }
+                            Button("Cancel") { if draft.form?.id == presented.id { draft.form = nil } }
                         }
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Save") {
-                                do {
-                                    guard
-                                        let url = URL(
-                                            string: link.trimmingCharacters(
-                                                in: .whitespacesAndNewlines))
-                                    else { throw CaptureInbox.InboxError.invalidURL }
-                                    try CaptureInbox.shared.save(url: url)
-                                    link = ""
-                                    addError = nil
-                                    adding = false
-                                    UIAccessibility.post(
-                                        notification: .announcement,
-                                        argument: "Link saved on this device")
-                                    Task { await model.load() }
-                                } catch { addError = error.localizedDescription }
-                            }.disabled(link.isEmpty)
+                                guard draft.save(presented, scope: ShortcutScope.current) else { return }
+                                UIAccessibility.post(notification: .announcement, argument: "Link saved on this device")
+                                Task { await model.load() }
+                            }.disabled(draft.address.isEmpty)
                         }
                     }
                 }.presentationDetents([.medium])
             }
         }
         .task {
-            await refreshPDFAccess()
+            await pdfAccess.refresh()
             await model.load()
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
@@ -597,41 +674,14 @@ struct SavedView: View {
             OfflineCache.shared.save(model.episodes, for: .savedArticles)
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await refreshPDFAccess(); await model.load() } }
+            if phase == .active { Task { await pdfAccess.refresh(); await model.load() } }
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSavedChanged)) { _ in
-            Task { await refreshPDFAccess(); await model.load() }
+            Task { await pdfAccess.refresh(); await model.load() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulEpisodeFiled)) { _ in
             Task { await model.load() }
         }
-    }
-    private func refreshPDFAccess() async {
-        guard let account = CaptureInbox.shared.account else { pdfEnabled = false; return }
-        do {
-            let capability = try await PDFImportAccess().request(for: account)
-            guard CaptureInbox.shared.account == account else { return }
-            pdfEnabled = capability.enabled || capability.subscription_available == true
-        } catch { pdfEnabled = false }
-    }
-
-    private func pdfAction(_ episode: Episode, delete: Bool) async {
-        guard let id = episode.documentID, let session = CaptureSessionStore.read() else { return }
-        do {
-            var request = URLRequest(url: session.account.server.appendingPathComponent("documents/\(id)" + (delete ? "" : "/original")))
-            request.httpMethod = delete ? "DELETE" : "GET"
-            request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-            let (data, response) = try await CaptureUploader.send(request)
-            guard CaptureSessionStore.read() == session else { return }
-            guard (200..<300).contains(response.statusCode) else { throw PDFUploadInbox.Failure.message("The PDF could not be opened or deleted. Please retry.") }
-            if delete { await model.load() }
-            else {
-                if let originalPDF { try? FileManager.default.removeItem(at: originalPDF) }
-                let url = URL.temporaryDirectory.appendingPathComponent("Magpie-\(UUID().uuidString).pdf")
-                try data.write(to: url, options: [.atomic, .completeFileProtection])
-                originalPDF = url
-            }
-        } catch { pdfError = error.localizedDescription }
     }
 
 }

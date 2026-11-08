@@ -4,7 +4,13 @@ import SwiftUI
 /// A single unambiguous feed opens immediately; several become an accessible
 /// choice so a comments or category feed can never silently beat the main one.
 struct FeedDiscoveryView: View {
+    private struct Location: Hashable {
+        let url: URL
+        let owner: AuthController.SessionOwner?
+    }
+
     let url: URL
+    @EnvironmentObject private var auth: AuthController
     @StateObject private var model = FeedDiscoveryModel()
 
     var body: some View {
@@ -13,6 +19,7 @@ struct FeedDiscoveryView: View {
             case .loading:
                 ProgressView("Looking for feeds…")
             case .failed(let message):
+                let visit = model.visit
                 ContentUnavailableView {
                     Label("Could not find a feed", systemImage: "dot.radiowaves.left.and.right")
                 } description: {
@@ -22,7 +29,7 @@ struct FeedDiscoveryView: View {
                     // backend asks its signup form to send it to her private
                     // address, and says what happened either way.
                     Button {
-                        Task { await model.signUp(url: url) }
+                        Task { await model.signUp(for: visit) }
                     } label: {
                         if model.signingUp {
                             ProgressView()
@@ -33,7 +40,8 @@ struct FeedDiscoveryView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(model.signingUp)
                     .accessibilityHint("Asks the site to send its newsletter to your Magpie address")
-                    Button("Try Again") { Task { await model.load(url: url) } }
+                    Button("Try Again") { Task { await model.retry(for: visit) } }
+                        .disabled(model.signingUp)
                 }
             case .signedUp(let signup):
                 ContentUnavailableView {
@@ -44,7 +52,7 @@ struct FeedDiscoveryView: View {
                     Text(signup.spokenResponse)
                 } actions: {
                     if !signup.submitted, let address = signup.address {
-                        CopyAddressButton(address: address)
+                        CopyAddressButton(address: address, scope: model.visit?.scope)
                         .buttonStyle(.borderedProminent)
                     }
                 }
@@ -58,7 +66,8 @@ struct FeedDiscoveryView: View {
         }
         .navigationTitle("Feeds")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await model.load(url: url) }
+        .task(id: Location(url: url, owner: auth.sessionOwner)) { await model.load(url: url) }
+        .onDisappear { model.close() }
     }
 
     private func candidateList(_ candidates: [FeedDiscoveryCandidate]) -> some View {
@@ -159,51 +168,78 @@ final class FeedDiscoveryModel: ObservableObject {
 
     @Published private(set) var state: State = .loading
     @Published private(set) var signingUp = false
-    private let api: HearfulAPIProtocol
+    struct Visit: Equatable {
+        let url: URL
+        let scope: String?
+        fileprivate let id = UUID()
+    }
 
-    init(api: HearfulAPIProtocol = HearfulAPI()) {
+    private(set) var visit: Visit?
+    private let api: HearfulAPIProtocol
+    private let announce: (String) -> Void
+
+    init(api: HearfulAPIProtocol = HearfulAPI(), announce: @escaping (String) -> Void = {
+        AccessibilityNotification.Announcement($0).post()
+    }) {
         self.api = api
+        self.announce = announce
+    }
+
+    func close() {
+        visit = nil
+        signingUp = false
+        state = .loading
+    }
+
+    private func isCurrent(_ request: Visit) -> Bool {
+        visit == request && request.scope == ShortcutScope.current && !Task.isCancelled
+    }
+
+    func retry(for request: Visit?) async {
+        guard let request, isCurrent(request), case .failed = state, !signingUp else { return }
+        await load(url: request.url)
     }
 
     func load(url: URL) async {
+        guard !Task.isCancelled else { return }
+        let session = HearfulAPI.RequestSession()
+        let request = Visit(url: url, scope: session.scope)
+        visit = request
+        signingUp = false
         state = .loading
         do {
-            let response = try await api.discoverFeeds(url: url)
+            let response = try await session.perform { try await api.discoverFeeds(url: url) }
+            guard isCurrent(request) else { return }
             guard !response.candidates.isEmpty else {
                 state = .failed("Magpie reached that site, but it did not advertise a readable feed.")
                 return
             }
             state = .loaded(response.candidates)
             let count = response.candidates.count
-            AccessibilityNotification.Announcement(
-                count == 1 ? "One feed found" : "\(count) feeds found. Choose a feed."
-            ).post()
-        } catch let error as APIError {
-            state = .failed(error.spokenResponse)
-            AccessibilityNotification.Announcement(error.spokenResponse).post()
+            announce(count == 1 ? "One feed found" : "\(count) feeds found. Choose a feed.")
         } catch {
-            state = .failed("Something went wrong.")
-            AccessibilityNotification.Announcement("Feed discovery failed").post()
+            guard isCurrent(request) else { return }
+            let message = (error as? APIError)?.spokenResponse
+            state = .failed(message ?? "Something went wrong.")
+            announce(message ?? "Feed discovery failed")
         }
     }
 
-    /// Ask the site for its newsletter. The reply is a sentence whatever
-    /// happened, so it is shown and spoken as it is; a newsletter that was
-    /// signed up appears in Following on its own when its first email lands.
-    func signUp(url: URL) async {
-        guard !signingUp else { return }
+    func signUp(for request: Visit?) async {
+        guard let request, isCurrent(request), case .failed = state, !signingUp else { return }
+        let session = HearfulAPI.RequestSession()
         signingUp = true
-        defer { signingUp = false }
+        defer { if visit == request { signingUp = false } }
         do {
-            let signup = try await api.signUpForNewsletter(url: url)
+            let signup = try await session.perform { try await api.signUpForNewsletter(url: request.url) }
+            guard isCurrent(request) else { return }
             state = .signedUp(signup)
-            AccessibilityNotification.Announcement(signup.spokenResponse).post()
-        } catch let error as APIError {
-            state = .failed(error.spokenResponse)
-            AccessibilityNotification.Announcement(error.spokenResponse).post()
+            announce(signup.spokenResponse)
         } catch {
-            state = .failed("Something went wrong.")
-            AccessibilityNotification.Announcement("Signing up failed").post()
+            guard isCurrent(request) else { return }
+            let message = (error as? APIError)?.spokenResponse
+            state = .failed(message ?? "Something went wrong.")
+            announce(message ?? "Signing up failed")
         }
     }
 }

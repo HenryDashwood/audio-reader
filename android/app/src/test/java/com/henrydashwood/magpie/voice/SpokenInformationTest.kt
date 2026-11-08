@@ -38,6 +38,41 @@ class SpokenInformationTest {
         speech.speak("Another address"); runCurrent(); speech.stop(resume = false); runCurrent()
         assertEquals(listOf(false, false), host.ended)
     }
+    @Test fun stoppingBeforePreparationAllowsTheNextAddressToPlay() = runTest {
+        val host = Host()
+        val texts = mutableListOf<String>()
+        val speech = SpokenInformation(backgroundScope, host, VoiceOutput { texts += it }, Conversation()) { fail(it) }
+        speech.speak("Original address")
+        speech.stop()
+        runCurrent()
+        assertFalse(speech.speaking.value)
+        speech.speak("Replacement address")
+        runCurrent()
+        assertEquals(listOf("Replacement address"), texts)
+        assertEquals(listOf(true), host.ended)
+    }
+
+    @Test fun closingSettingsAfterANoResumeStopKeepsPlaybackPausedAndDiscardsLateErrors() = runTest {
+        val host = Host()
+        val errors = mutableListOf<String>()
+        val done = CompletableDeferred<Unit>()
+        val speech = SpokenInformation(backgroundScope, host, VoiceOutput {
+            withContext(NonCancellable) {
+                done.await()
+                throw IllegalStateException("Original readout failed")
+            }
+        }, Conversation(), errors::add)
+        speech.speak("Address")
+        runCurrent()
+        speech.stop(resume = false)
+        speech.stop()
+        done.complete(Unit)
+        runCurrent()
+        assertEquals(listOf(false), host.ended)
+        assertTrue(errors.isEmpty())
+        assertFalse(speech.speaking.value)
+    }
+
     @Test fun busyConversationCannotBeInterruptedByAnAddressReadout() = runTest {
         val context = Conversation(); context.acquire("conversation")
         val host = Host(); val errors = mutableListOf<String>()

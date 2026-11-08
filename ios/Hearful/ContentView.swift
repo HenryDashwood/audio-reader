@@ -270,7 +270,7 @@ struct VoiceSheet: View {
     @StateObject private var openingAnnouncement = VoiceOpeningAnnouncement()
     private let initialInput: VoicePrompt.Input?
     private let launchID: UUID
-    @State private var showingConsent = false
+    @State private var showingConsent: AuthController.SessionOwner?
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var auth: AuthController
     @Environment(\.dismiss) private var dismiss
@@ -296,8 +296,9 @@ struct VoiceSheet: View {
             .onChange(of: auth.user?.aiDataSharingConsented) { _, granted in
                 controller.remoteRequestsAllowed = granted == true
             }
-            .sheet(isPresented: $showingConsent) {
-                AIDataSharingConsentView(onNotNow: { showingConsent = false })
+            .onChange(of: auth.sessionOwner) { _, _ in showingConsent = nil }
+            .sheet(item: $showingConsent) { owner in
+                AIDataSharingConsentView(owner: owner, onNotNow: { showingConsent = nil })
             }
     }
 
@@ -309,7 +310,7 @@ struct VoiceSheet: View {
                         .font(.callout).foregroundStyle(.secondary)
                     Button("Enable other voice requests") {
                         if auth.user == nil { Task { await auth.refreshUser() } }
-                        else { showingConsent = true }
+                        else { showingConsent = auth.sessionOwner }
                     }
                 }
 

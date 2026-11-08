@@ -27,6 +27,37 @@ class TelemetryQueueTest {
         online.record(event()); runCurrent()
         assertEquals(1, sent.size)
     }
+    @Test fun newReportDuringOfflineRetrySendsEachEventOnceAndKeepsTheFailedReport() = runTest {
+        val store = Store()
+        val retryStarted = CompletableDeferred<Unit>()
+        val finishRetry = CompletableDeferred<Unit>()
+        val deliveries = mutableListOf<String>()
+        var online = false
+        val queue = TelemetryQueue(store, { first }, { _, event ->
+            if (!online) throw java.io.IOException("Offline")
+            deliveries += event.id
+            if (event.id == "older") {
+                retryStarted.complete(Unit)
+                finishRetry.await()
+            } else {
+                throw java.io.IOException("Connection lost again")
+            }
+        }, this, { 100 })
+        queue.record(event("older"))
+        runCurrent()
+        online = true
+        queue.flush()
+        retryStarted.await()
+        queue.record(event("newer"))
+        runCurrent()
+        assertEquals(listOf("older"), deliveries)
+        finishRetry.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("older", "newer"), deliveries)
+        assertEquals(listOf("older"), store.rows.getValue(first.owner).acknowledged)
+        assertEquals(listOf(event("newer")), store.rows.getValue(first.owner).pending)
+    }
+
     @Test fun sessionChangeDuringDiskReadDiscardsLateEnqueue() = runTest {
         var current: TelemetryScope? = first
         val store = Store().apply { readGate = CompletableDeferred() }

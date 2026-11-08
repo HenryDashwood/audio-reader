@@ -8,7 +8,7 @@ data class SleepTimerState(val deadlineMs: Long? = null, val remainingMinutes: I
 class SleepTimer(
     private val now: () -> Long,
     private val changed: (SleepTimerState) -> Unit = {},
-    private val expired: () -> Unit,
+    private val expired: (deadlineMs: Long) -> Unit,
 ) {
     var state = SleepTimerState()
         private set
@@ -26,7 +26,7 @@ class SleepTimer(
         val remaining = deadline - now()
         if (remaining <= 0) {
             cancel() // Clear first: reentrant player callbacks cannot expire this timer twice.
-            expired()
+            expired(deadline)
         } else publish(state.copy(remainingMinutes = minutes(remaining)))
     }
 

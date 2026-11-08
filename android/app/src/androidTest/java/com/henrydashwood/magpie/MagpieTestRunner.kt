@@ -9,6 +9,10 @@ import com.henrydashwood.magpie.auth.*
 class MagpieTestApplication : MagpieApplication() {
     override fun createTelemetryStore() = com.henrydashwood.magpie.telemetry.FileTelemetryStore(java.io.File(cacheDir, "test-diagnostics-default"))
     override fun observeDiagnostics(repository: com.henrydashwood.magpie.data.AccountLibrary, scope: kotlinx.coroutines.CoroutineScope) = Unit
+    var naturalDownloadOverride: com.henrydashwood.magpie.playback.NaturalVoiceDownload? = null
+    override val naturalVoiceDownload get() = naturalDownloadOverride ?: super.naturalVoiceDownload
+    var rendererFactory: (() -> com.henrydashwood.magpie.playback.ArticleRenderer)? = null
+    override fun articleRenderer() = rendererFactory?.invoke() ?: super.articleRenderer()
     var voiceInputOverride: com.henrydashwood.magpie.voice.VoiceInput? = null
     var voiceOutputOverride: com.henrydashwood.magpie.voice.VoiceOutput? = null
     override fun voiceInput() = voiceInputOverride ?: super.voiceInput()

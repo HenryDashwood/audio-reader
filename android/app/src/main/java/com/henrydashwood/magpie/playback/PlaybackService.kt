@@ -144,7 +144,7 @@ class PlaybackService : MediaLibraryService() {
             }
         })
         store = PreviewStore(this)
-        renderer = ArticleRenderer(this)
+        renderer = (application as MagpieApplication).articleRenderer()
         ContextCompat.registerReceiver(this, noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED)
         // Private disposable preview audio only; no user downloads are stored here.
         File(cacheDir, "narration").deleteRecursively()
@@ -314,6 +314,12 @@ class PlaybackService : MediaLibraryService() {
                 if (command.customAction == RESTORE_PLAYER) {
                     restoreAllowed = true; restoreIfReady()
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+                if (command.customAction == PLAY_ITEM) {
+                    // A text fetch may finish after expiry, even before the timer job runs.
+                    sleepTimer.check()
+                    if (args.getLong(PLAY_REQUESTED_AT_MS, Long.MAX_VALUE) < lastExpiredSleepDeadlineMs)
+                        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
                 PlaybackStatus.mutableControlVersion.value++
                 cancelAssistant()
@@ -593,8 +599,6 @@ class PlaybackService : MediaLibraryService() {
         cancelRestoration()
         cancelAssistant()
         feedback.close()
-        // Clear an elapsed deadline before a new, explicit request to listen.
-        sleepTimer.check()
         // A paused article has an exact audio position. Rebuilding from a text
         // bookmark would start the current passage again.
         val resumeArticle = resumeLoadedArticle && item.kind == ContentKind.Article && hasPlayed &&
@@ -835,7 +839,10 @@ class PlaybackService : MediaLibraryService() {
         if (action == END_VOICE) {
             invalidateVoice()
             val item = hold.item?.let { old -> library.state.value.items.find { it.id == old.id && it.contentVersion == old.contentVersion } }
-            if (args.getBoolean("resume", true) && hold.resume && item != null) play(item, newIntent = false)
+            if (args.getBoolean("resume", true) && hold.resume && item != null) {
+                sleepTimer.check()
+                play(item, newIntent = false)
+            }
             return SessionResult(SessionResult.RESULT_SUCCESS)
         }
         val result = Bundle()
@@ -861,6 +868,7 @@ class PlaybackService : MediaLibraryService() {
                 val item = library.state.value.items.find { it.id == id && it.textLoaded }
                     ?: return SessionResult(SessionError.ERROR_BAD_VALUE)
                 hold.resume = false
+                sleepTimer.check()
                 play(item)
             }
             "seek" -> {
@@ -1114,7 +1122,8 @@ class PlaybackService : MediaLibraryService() {
         sleepTimer.cancel()
     }
 
-    private fun expireSleepTimer() {
+    private fun expireSleepTimer(deadlineMs: Long) {
+        lastExpiredSleepDeadlineMs = deadlineMs
         cancelAssistant()
         PlaybackStatus.mutableControlVersion.value++
         invalidateVoice()
@@ -1162,6 +1171,9 @@ class PlaybackService : MediaLibraryService() {
         const val END_VOICE = "magpie.end_voice"
         const val VOICE_CONTROL = "magpie.voice_control"
         const val RESTORE_PLAYER = "magpie.restore_player"
+        // An in-app fetch can outlive a service instance. Both timestamps use elapsedRealtime.
+        private var lastExpiredSleepDeadlineMs = 0L
+        internal const val PLAY_REQUESTED_AT_MS = "play_requested_at_ms"
         const val RESUME_LOADED_ARTICLE = "resume_loaded_article"
         const val PLAY_ITEM = "magpie.play_sample"
         const val DISMISS_PLAYER = "magpie.dismiss_player"

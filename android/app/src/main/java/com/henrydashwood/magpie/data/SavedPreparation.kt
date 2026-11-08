@@ -29,9 +29,11 @@ interface SavedArticleRepository {
     suspend fun captureSaved(article: PendingArticle, revision: Int)
     suspend fun prepareSaved(item: LibraryItem, replace: Boolean, revision: Int): LibraryItem
 }
+class SavedTextReplacement(val item: LibraryItem)
+
 data class SavedPreparationState(val owner: String? = null, val revision: Int = 0,
     val pending: List<PendingArticle> = emptyList(), val busy: Boolean = false,
-    val itemId: String? = null, val error: String? = null, val replacement: LibraryItem? = null)
+    val itemId: String? = null, val error: String? = null, val replacement: SavedTextReplacement? = null)
 
 /** Foreground queue. Only confirmed saves leave disk; every reply belongs to its initiating account. */
 class SavedPreparation(private val scope: CoroutineScope, private val repository: SavedArticleRepository,
@@ -83,10 +85,15 @@ class SavedPreparation(private val scope: CoroutineScope, private val repository
         inbox.remove(owner, article.id); reload()
     }
     fun requestReplacement(item: LibraryItem) {
-        if (!state.value.busy) mutable.value = state.value.copy(replacement = item, error = null)
+        if (!state.value.busy) mutable.value = state.value.copy(replacement = SavedTextReplacement(item), error = null)
     }
-    fun cancelReplacement() { if (!state.value.busy) mutable.value = state.value.copy(replacement = null) }
-    fun replace() { state.value.replacement?.let { prepare(it, true) } }
+    fun cancelReplacement(expected: SavedTextReplacement) {
+        val current = state.value
+        if (!current.busy && current.replacement === expected) mutable.value = current.copy(replacement = null)
+    }
+    fun replace(expected: SavedTextReplacement) {
+        if (state.value.replacement === expected) prepare(expected.item, true)
+    }
     fun retry(item: LibraryItem) = prepare(item, false)
     private fun prepare(item: LibraryItem, replace: Boolean) = run {
         update { it.copy(itemId = item.id, replacement = null) }

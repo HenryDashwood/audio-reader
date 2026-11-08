@@ -105,13 +105,13 @@ fun captureSavedPage(context: android.content.Context, item: LibraryItem) {
 @Composable
 fun ReplaceSavedTextDialog(model: MagpieModel) {
     val state by model.savedPreparation.state.collectAsStateWithLifecycle()
-    val item = state.replacement ?: return
-    AlertDialog(onDismissRequest = model.savedPreparation::cancelReplacement,
+    val confirmation = state.replacement ?: return
+    AlertDialog(onDismissRequest = { model.savedPreparation.cancelReplacement(confirmation) },
         title = { Text("Replace saved text?") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(item.title)
+            Text(confirmation.item.title)
             Text("Download a fresh copy from the original link. If the text changes, listening starts from the beginning. If it fails, your current copy is kept.")
         } },
-        confirmButton = { TextButton(onClick = model.savedPreparation::replace, enabled = !state.busy) { Text("Replace") } },
-        dismissButton = { TextButton(onClick = model.savedPreparation::cancelReplacement, enabled = !state.busy) { Text("Cancel") } })
+        confirmButton = { TextButton(onClick = { model.savedPreparation.replace(confirmation) }, enabled = !state.busy) { Text("Replace") } },
+        dismissButton = { TextButton(onClick = { model.savedPreparation.cancelReplacement(confirmation) }, enabled = !state.busy) { Text("Cancel") } })
 }

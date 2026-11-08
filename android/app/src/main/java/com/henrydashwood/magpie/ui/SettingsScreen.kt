@@ -254,19 +254,20 @@ private fun AccountActions(model: com.henrydashwood.magpie.auth.AccountModel = a
 }
 
 @Composable
-internal fun AccountActions(state: com.henrydashwood.magpie.auth.AccountState, signOut: () -> Unit, delete: () -> Unit) {
-    var confirmingDelete by rememberSaveable { mutableStateOf(false) }
+internal fun AccountActions(state: com.henrydashwood.magpie.auth.AccountState, signOut: (String) -> Unit, delete: (String) -> Unit) {
+    var deletionOwner by rememberSaveable(state.sessionId) { mutableStateOf<String?>(null) }
     Column {
         ListItem(headlineContent = { Text("Sign Out", color = MaterialTheme.colorScheme.error) },
-            modifier = Modifier.clickable(enabled = !state.busy, onClickLabel = "sign out and return to the sign-in screen") { signOut() })
+            modifier = Modifier.clickable(enabled = !state.busy, onClickLabel = "sign out and return to the sign-in screen") { state.sessionId?.let(signOut) })
         ListItem(headlineContent = { Text("Delete Account", color = MaterialTheme.colorScheme.error) },
-            modifier = Modifier.clickable(enabled = !state.busy) { confirmingDelete = true })
+            modifier = Modifier.clickable(enabled = !state.busy) { deletionOwner = state.sessionId })
         if (state.busy) SettingsFootnote("Updating account…")
         state.error?.let { SettingsFootnote(it, error = true) }
     }
-    if (confirmingDelete) AlertDialog(onDismissRequest = { confirmingDelete = false },
+    val owner = deletionOwner
+    if (owner != null && owner == state.sessionId) AlertDialog(onDismissRequest = { deletionOwner = null },
         title = { Text("Delete your account?") },
         text = { Text("This removes your account, the shows you follow, and your place in every episode. It cannot be undone. Deleting your account does not cancel Magpie Plus. Cancel your subscription in the App Store or Google Play to stop renewal.") },
-        confirmButton = { TextButton(onClick = { confirmingDelete = false; delete() }) { Text("Delete Account", color = MaterialTheme.colorScheme.error) } },
-        dismissButton = { TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") } })
+        confirmButton = { TextButton(onClick = { if (deletionOwner == owner) { deletionOwner = null; delete(owner) } }) { Text("Delete Account", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = { deletionOwner = null }) { Text("Cancel") } })
 }

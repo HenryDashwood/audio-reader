@@ -28,10 +28,24 @@ nonisolated struct PlusStatus: Decodable, Sendable {
     static let shared = PlusStore()
     @Published private(set) var busy = false
     private var configuredKey: String?
+    private let access: PlusAccess
+
+    init(access: PlusAccess = PlusAccess()) {
+        self.access = access
+    }
 
     func perform(session: CaptureSessionStore.Session, restore: Bool = false, purchase: Package? = nil, refresh: Bool = false, configureOnly: Bool = false)
         async throws -> (PlusStatus, Package?) {
-        guard !busy else { throw PDFUploadInbox.Failure.message("Please wait for the current purchase to finish.") }
+        if restore || purchase != nil || refresh {
+            guard !busy else { throw PDFUploadInbox.Failure.message("Please wait for the current purchase to finish.") }
+        } else {
+            // Opening the screen and configuring the SDK can overlap. Each read still owns its session.
+            while busy {
+                try check(session)
+                for await occupied in $busy.values where !occupied { break }
+                try Task.checkCancellation()
+            }
+        }
         busy = true
         defer { busy = false }
         try check(session)
@@ -73,11 +87,11 @@ nonisolated struct PlusStatus: Decodable, Sendable {
 
     private func check(_ session: CaptureSessionStore.Session) throws {
         try Task.checkCancellation()
-        guard CaptureSessionStore.read() == session else { throw CaptureUploader.Failure.changedAccount }
+        guard access.currentSession() == session else { throw CaptureUploader.Failure.changedAccount }
     }
 
     private func request(_ session: CaptureSessionStore.Session, sync: Bool = false) async throws -> PlusStatus {
-        try await PlusAccess().request(session, sync: sync)
+        try await access.request(session, sync: sync)
     }
 }
 

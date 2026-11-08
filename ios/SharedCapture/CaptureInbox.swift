@@ -61,12 +61,19 @@ nonisolated struct CaptureInbox {
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
+    func accountForShare(reviewedBy expected: Account?) throws -> Account {
+        let current = account
+        if let expected, expected != current { throw CaptureUploader.Failure.changedAccount }
+        guard let current else { throw InboxError.signedOut }
+        return current
+    }
+
     @discardableResult
     func save(
         url: URL, title: String? = nil, html: String? = nil,
-        contentFormat: String? = nil, replaceExisting: Bool = false
+        contentFormat: String? = nil, replaceExisting: Bool = false, reviewedBy: Account? = nil
     ) throws -> Capture {
-        guard let account else { throw InboxError.signedOut }
+        let account = try accountForShare(reviewedBy: reviewedBy)
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil,
             url.user == nil, url.password == nil
         else { throw InboxError.invalidURL }

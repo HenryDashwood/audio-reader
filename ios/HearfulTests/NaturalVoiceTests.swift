@@ -155,8 +155,8 @@ struct NaturalVoiceDownloadTests {
 
         var installedFolder: URL? { installed && NaturalVoiceStore.isUsable(folder) ? folder : nil }
 
-        func install(status: @escaping @Sendable (NaturalVoiceInstallStatus) -> Void) async throws {
-            status(.downloading(0.5))
+        func install(status: @escaping StatusHandler) async throws {
+            await status(.downloading(0.5))
             if let failure { throw failure }
             let files = NaturalVoiceStore.requiredFiles.dropLast(complete ? 0 : 1) + ["voices/bf_emma.bin"]
             for file in files {
@@ -174,6 +174,60 @@ struct NaturalVoiceDownloadTests {
             installed = false
             try? FileManager.default.removeItem(at: folder)
         }
+    }
+
+    /// Exposes each transfer's status callback, including after cancellation has finished.
+    private actor ControlledInstaller: NaturalVoiceInstalling {
+        let installedFolder: URL? = nil
+        let starts = AsyncStream<StatusHandler>.makeStream()
+        private var completion: CheckedContinuation<Void, any Error>?
+        private var attempt = 0
+        private(set) var cancelledAttempts: [Int] = []
+
+        func install(status: @escaping StatusHandler) async throws {
+            attempt += 1
+            try await withCheckedThrowingContinuation { continuation in
+                completion = continuation
+                starts.continuation.yield(status)
+            }
+        }
+
+        func cancelInstall() { cancelledAttempts.append(attempt) }
+
+        func finishCancellation() {
+            completion?.resume(throwing: CancellationError())
+            completion = nil
+        }
+
+        func remove() {}
+    }
+
+    @Test(arguments: [NaturalVoiceInstallStatus.downloading(0.9), .paused])
+    func cancelledDownloadCannotChangeReplacement(lateUpdate: NaturalVoiceInstallStatus) async throws {
+        let installer = ControlledInstaller()
+        var starts = installer.starts.stream.makeAsyncIterator()
+        let download = NaturalVoiceDownload(installer: installer)
+        let first = Task { await download.download() }
+        let firstStatus = try #require(await starts.next())
+        await download.cancel()
+        await installer.finishCancellation()
+        await first.value
+
+        let replacement = Task { await download.download() }
+        let replacementStatus = try #require(await starts.next())
+        replacementStatus(.downloading(0.1))
+        firstStatus(lateUpdate)
+        #expect(download.state == .downloading(0.1))
+        await download.refresh()  // Settings reopened during the replacement.
+        #expect(download.state == .downloading(0.1))
+
+        await download.cancel()
+        #expect(download.state == .cancelling(0.1))
+        #expect(await installer.cancelledAttempts == [1, 2])
+        await installer.finishCancellation()
+        await replacement.value
+        await download.refresh()
+        #expect(download.state == .notInstalled)
     }
 
     @Test func aCompleteDownloadOffersItsSpeakers() async {

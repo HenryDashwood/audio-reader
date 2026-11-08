@@ -35,7 +35,17 @@ private fun Context.activity(): Activity? = when (this) {
 fun PlusDialog(onClose: () -> Unit) {
     val context = LocalContext.current
     val app = context.applicationContext as MagpieApplication
-    val token by app.accounts.accessToken.collectAsStateWithLifecycle()
+    val token = app.accounts.accessToken.collectAsStateWithLifecycle().value
+    PlusDialog(token, { app.accounts.accessToken.value }, { credential, purchase, restore, refresh ->
+        PlusBilling.perform(context, credential, { app.accounts.accessToken.value == credential },
+            context.activity(), purchase, restore, refresh)
+    }, onClose)
+}
+
+@Composable
+internal fun PlusDialog(token: String?, currentToken: () -> String?,
+    perform: suspend (String, Package?, Boolean, Boolean) -> Pair<PlusStatus, Package?>, onClose: () -> Unit) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var status by remember(token) { mutableStateOf<PlusStatus?>(null) }
     var monthly by remember(token) { mutableStateOf<Package?>(null) }
@@ -43,20 +53,19 @@ fun PlusDialog(onClose: () -> Unit) {
     var error by remember(token) { mutableStateOf<String?>(null) }
     var message by remember(token) { mutableStateOf<String?>(null) }
     suspend fun load(restore: Boolean = false, purchase: Package? = null, refresh: Boolean = false) {
-        if (busy) return
+        if (busy || token != currentToken()) return
         busy = true; error = null; message = null
         val credential = token
         try {
             checkNotNull(credential) { "Sign in to Magpie to manage your subscription." }
-            val result = PlusBilling.perform(context, credential, { app.accounts.accessToken.value == credential },
-                context.activity(), purchase, restore, refresh)
-            if (app.accounts.accessToken.value != credential) return
+            val result = perform(credential, purchase, restore, refresh)
+            if (currentToken() != credential) return
             status = result.first; monthly = result.second
             if (restore) message = if (result.first.active) "Purchases restored." else "No active Magpie Plus subscription was found for this store account."
             if (purchase != null && result.first.active) message = "Magpie Plus is ready. You can import PDFs now."
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { if (token == credential) error = failure.message ?: "The subscription could not be checked. Please try again." }
-        finally { if (token == credential) busy = false }
+        catch (failure: Exception) { if (currentToken() == credential) error = failure.message ?: "The subscription could not be checked. Please try again." }
+        finally { busy = false }
     }
     fun link(url: String) {
         try { context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) }

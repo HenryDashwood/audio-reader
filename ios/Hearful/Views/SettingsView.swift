@@ -7,11 +7,13 @@ struct SettingsView: View {
     @EnvironmentObject private var auth: AuthController
     @ObservedObject private var player = PlaybackCoordinator.shared
     @State private var systemVoiceID = ""
-    @State private var previewSpeaker: Speaker?
-    @State private var confirmingDelete = false
-    @State private var confirmingDisableAI = false
-    @State private var showingAIChoice = false
-    @State private var deleting = false
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var readout = SettingsReadout()
+    @State private var deletionOwner: AuthController.SessionOwner?
+    @State private var confirmingDisableAI: AuthController.SessionOwner?
+    @State private var showingAIChoice: AuthController.SessionOwner?
+    @State private var deletingOwner: AuthController.SessionOwner?
+    private var deleting: Bool { deletingOwner != nil && deletingOwner == auth.sessionOwner }
     @State private var deleteError: String?
     @State private var privacyError: String?
     @State private var serverOverride = AppConfiguration.rememberedOverride()
@@ -68,8 +70,7 @@ struct SettingsView: View {
                                 SpeechVoice.select(identifier: identifier)
                                 // Only a user choice previews speech; loading
                                 // the saved selection must remain silent.
-                                if previewSpeaker == nil { previewSpeaker = Speaker() }
-                                Task { await previewSpeaker?.speak("This voice will read your articles.") }
+                                readout.speak("This voice will read your articles.")
                             }
                         )) {
                             ForEach(voices) { voice in
@@ -153,7 +154,8 @@ struct SettingsView: View {
                     NavigationLink("Export subscriptions") { SubscriptionExportView() }
                 }
 
-                NewsletterAddressSection()
+                NewsletterAddressSection(readout: readout)
+                    .id(auth.sessionOwner)
 
                 Section {
                     Link("Privacy Policy", destination: AppConfiguration.privacyURL)
@@ -161,14 +163,14 @@ struct SettingsView: View {
 
                     if auth.user?.aiDataSharingConsented == true {
                         Button("Turn Off AI Data Sharing", role: .destructive) {
-                            confirmingDisableAI = true
+                            confirmingDisableAI = auth.sessionOwner
                         }
                         .accessibilityHint(
                             "Stops future spoken requests and library details being sent to OpenAI"
                         )
                     } else {
                         Button("Review AI Data Sharing") {
-                            showingAIChoice = true
+                            showingAIChoice = auth.sessionOwner
                         }
                     }
 
@@ -186,13 +188,14 @@ struct SettingsView: View {
 
                 Section("Account") {
                     NavigationLink("Sign-in Methods") { SignInMethodsView(auth: auth) }
+                    let owner = auth.sessionOwner
                     Button("Sign Out", role: .destructive) {
-                        Task { await auth.signOut() }
+                        if let owner { Task { await auth.signOut(for: owner) } }
                     }
                     .accessibilityHint("Returns to the sign in screen")
 
                     Button("Delete Account", role: .destructive) {
-                        confirmingDelete = true
+                        if owner == auth.sessionOwner { deletionOwner = owner }
                     }
                     .accessibilityHint(
                         "Permanently removes your account, your shows and your place in every episode"
@@ -211,14 +214,15 @@ struct SettingsView: View {
             .toolbarTitleDisplayMode(.inline)
             .confirmationDialog(
                 "Delete your account?",
-                isPresented: $confirmingDelete,
-                titleVisibility: .visible
-            ) {
+                isPresented: Binding(get: { deletionOwner != nil && deletionOwner == auth.sessionOwner },
+                                     set: { if !$0 { deletionOwner = nil } }),
+                titleVisibility: .visible, presenting: deletionOwner
+            ) { owner in
                 Button("Delete Account", role: .destructive) {
-                    Task { await deleteAccount() }
+                    Task { await deleteAccount(confirmedFor: owner) }
                 }
                 Button("Cancel", role: .cancel) {}
-            } message: {
+            } message: { _ in
                 Text(
                     "This removes your account, the shows you follow, and your place in every "
                         + "episode. It cannot be undone. Deleting your account does not cancel Magpie Plus. "
@@ -230,22 +234,24 @@ struct SettingsView: View {
             // was pointing its arrow at an unrelated section of the list.
             .alert(
                 "Turn off AI data sharing?",
-                isPresented: $confirmingDisableAI
-            ) {
+                isPresented: Binding(get: { confirmingDisableAI != nil }, set: { if !$0 { confirmingDisableAI = nil } }),
+                presenting: confirmingDisableAI
+            ) { owner in
                 Button("Turn Off", role: .destructive) {
-                    Task { await disableAIDataSharing() }
+                    Task { await disableAIDataSharing(confirmedFor: owner) }
                 }
                 Button("Cancel", role: .cancel) {}
-            } message: {
+            } message: { _ in
                 Text(
                     "Magpie will stop sending spoken requests and episode details to OpenAI. "
                         + "You can turn it on again here later."
                 )
             }
-            .sheet(isPresented: $showingAIChoice) {
-                AIDataSharingConsentView(
-                    onAllowed: { showingAIChoice = false },
-                    onNotNow: { showingAIChoice = false }
+            .onChange(of: auth.sessionOwner) { _, _ in showingAIChoice = nil }
+            .sheet(item: $showingAIChoice) { owner in
+                AIDataSharingConsentView(owner: owner,
+                    onAllowed: { showingAIChoice = nil },
+                    onNotNow: { showingAIChoice = nil }
                 )
                 .environmentObject(auth)
                 .presentationDetents([.fraction(0.68), .large])
@@ -266,6 +272,17 @@ struct SettingsView: View {
                 loadingVoices = false
             }
         }
+        .onChange(of: auth.sessionOwner) { _, _ in
+            deletionOwner = nil
+            confirmingDisableAI = nil
+            privacyError = nil
+            deleteError = nil
+            readout.stop()
+        }
+        .onDisappear { readout.stop() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { readout.stop() }
+        }
     }
 
     @ViewBuilder
@@ -282,14 +299,17 @@ struct SettingsView: View {
         return "\(number)×"
     }
 
-    private func deleteAccount() async {
-        deleting = true
+    private func deleteAccount(confirmedFor owner: AuthController.SessionOwner) async {
+        guard owner == auth.sessionOwner, !deleting else { return }
+        deletingOwner = owner
         deleteError = nil
-        defer { deleting = false }
+        defer { if deletingOwner == owner { deletingOwner = nil } }
         do {
-            try await auth.deleteAccount()
+            try await auth.deleteAccount(confirmedFor: owner)
             // No success message: the app returns to the sign-in screen, which
             // is the confirmation.
+        } catch is CancellationError {
+            return
         } catch {
             let message = (error as? APIError)?.spokenResponse ?? "Something went wrong."
             deleteError = message
@@ -299,11 +319,13 @@ struct SettingsView: View {
         }
     }
 
-    private func disableAIDataSharing() async {
+    private func disableAIDataSharing(confirmedFor owner: AuthController.SessionOwner) async {
         privacyError = nil
         do {
-            try await auth.setAIDataSharing(granted: false)
+            try await auth.setAIDataSharing(granted: false, confirmedFor: owner)
             AccessibilityNotification.Announcement("AI data sharing is off.").post()
+        } catch is CancellationError {
+            return
         } catch let error as APIError {
             privacyError = error.spokenResponse
             AccessibilityNotification.Announcement(error.spokenResponse).post()
@@ -311,5 +333,37 @@ struct SettingsView: View {
             privacyError = APIError.genericSpokenResponse
             AccessibilityNotification.Announcement(APIError.genericSpokenResponse).post()
         }
+    }
+}
+
+/// Owns speech requested from Settings, including the time before the synthesizer starts.
+@MainActor
+final class SettingsReadout: ObservableObject {
+    private let makeSpeaker: () -> any Speaking
+    private lazy var speaker = makeSpeaker()
+    private var task: Task<Void, Never>?
+
+    init(makeSpeaker: @escaping () -> any Speaking = { Speaker() }) {
+        self.makeSpeaker = makeSpeaker
+    }
+
+    @discardableResult
+    func speak(_ text: String, expectedScope: String? = ShortcutScope.current) -> Task<Void, Never>? {
+        guard expectedScope == ShortcutScope.current else { return nil }
+        stop()
+        let speaker = self.speaker
+        let task = Task {
+            guard !Task.isCancelled, expectedScope == ShortcutScope.current else { return }
+            await speaker.speak(text)
+        }
+        self.task = task
+        return task
+    }
+
+    func stop() {
+        guard let task else { return }
+        self.task = nil
+        task.cancel()
+        speaker.stop()
     }
 }

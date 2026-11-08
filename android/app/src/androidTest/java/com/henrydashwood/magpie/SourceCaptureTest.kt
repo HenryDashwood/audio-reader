@@ -1,5 +1,6 @@
 package com.henrydashwood.magpie
 
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -11,6 +12,38 @@ import org.junit.Test
 
 class SourceCaptureTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    @Test fun aQueuedSaveCannotSubmitTheReopenedForm() {
+        val model = compose.runOnUiThread { ViewModelProvider(compose.activity)[MagpieModel::class.java] }
+        val original = "https://example.org/old/${UUID.randomUUID()}"
+        val replacement = "https://example.org/new/${UUID.randomUUID()}"
+        try {
+            compose.onNodeWithContentDescription("Add sources").performClick()
+            compose.onNodeWithText("Feed or website address").performTextInput(original)
+            compose.onNodeWithText("Save").performSemanticsAction(SemanticsActions.OnClick) { click ->
+                model.closeSourceCapture()
+                model.beginSourceCapture()
+                model.editSource(model.sourceCapture.value.form, replacement)
+                click()
+            }
+            compose.onNodeWithText("Feed or website address").assertTextContains(replacement)
+            compose.runOnIdle {
+                assertTrue(model.sourceCapture.value.showing)
+                assertFalse(model.sourceCapture.value.saving)
+                assertFalse(original in model.pendingSources.value)
+                assertFalse(replacement in model.pendingSources.value)
+            }
+            compose.onNodeWithText("Save").performClick()
+            compose.waitUntil(5_000) { !model.sourceCapture.value.showing && replacement in model.pendingSources.value }
+            assertFalse(original in model.pendingSources.value)
+        } finally {
+            compose.runOnUiThread {
+                model.closeSourceCapture()
+                model.removePendingSource(original)
+                model.removePendingSource(replacement)
+            }
+        }
+    }
 
     @Test fun sourceCaptureValidatesPersistsAndStaysSeparateFromSaved() {
         val url = "https://example.org/magpie-source-test/${UUID.randomUUID()}"

@@ -5,6 +5,8 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -33,12 +35,16 @@ class SourceManagementTest {
         var unsubscribed = false
         var fail = false
         var writes = 0
+        var failFeedReadsAfterWrite = false
         val primary = FeedSource("1", "Main publication", "https://public.example/feed?access_token=private-secret", "rss", primary = true)
         val child = FeedSource("2", "Other publication", "email://private-address", "email", failing = true)
         val root get() = LibraryFeed("1", "Main publication", if (grouped) 2 else 1, false, "https://public.example/feed", sourceDetails = if (grouped) listOf(primary, child) else listOf(primary), forwarded = true)
         val other get() = LibraryFeed("2", "Other publication", 1, true, sourceDetails = listOf(child.copy(primary = true)))
         override suspend fun userId(token: String) = "fixture"
-        override suspend fun feeds(token: String) = if (unsubscribed) emptyList() else if (grouped) listOf(root) else listOf(root, other)
+        override suspend fun feeds(token: String): List<LibraryFeed> {
+            if (failFeedReadsAfterWrite && writes > 0) throw java.io.IOException()
+            return if (unsubscribed) emptyList() else if (grouped) listOf(root) else listOf(root, other)
+        }
         val podcast = RemoteEpisode(10, "Listening episode", source = "Main publication", audioUrl = "asset:///welcome.wav", positionSeconds = 2.0)
         override suspend fun latest(token: String) = if (unsubscribed) emptyList() else listOf(podcast)
         override suspend fun saved(token: String) = listOf(RemoteEpisode(20, "Saved stays here", contentId = 7))
@@ -90,6 +96,50 @@ class SourceManagementTest {
         compose.onNodeWithText("Saved").performClick()
         compose.onNodeWithText("Saved stays here").assertIsDisplayed()
     }
+    @Test fun acceptedCombineWithFailedRefreshRecoversDialogAndFollowing() {
+        verifyRefreshRecovery(SourceChange.Combine)
+    }
+
+    @Test fun acceptedSeparationWithFailedRefreshRecoversDialogAndFollowing() {
+        verifyRefreshRecovery(SourceChange.Separate)
+    }
+
+    private fun verifyRefreshRecovery(change: SourceChange) {
+        val separating = change == SourceChange.Separate
+        if (separating) {
+            api.grouped = true
+            runBlocking(Dispatchers.Main) { library.refresh() }
+        }
+        manage()
+        api.failFeedReadsAfterWrite = true
+        val combine = "Combine Other publication with Main publication"
+        val separate = "Separate Other publication, Email newsletter"
+        val action = if (separating) separate else combine
+        val success = if (separating) "Source separated" else "Sources combined"
+        val message = "$success. The source list couldn’t be refreshed. Tap Try again to refresh Manage Sources and Following."
+        val liveRegion = SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite)
+        compose.onNodeWithContentDescription(action).performScrollTo().performClick()
+        compose.onNodeWithText(message).performScrollTo().assertIsDisplayed().assert(liveRegion)
+        compose.onNodeWithText(success).assertDoesNotExist()
+        compose.onNodeWithContentDescription(action).assertDoesNotExist()
+
+        compose.onNodeWithText("Try again").performScrollTo().performClick()
+        compose.onNodeWithText(message).performScrollTo().assertIsDisplayed().assert(liveRegion)
+        assertEquals(if (separating) 2 else 1, library.state.value.feeds.first().sourceDetails.size)
+        api.failFeedReadsAfterWrite = false
+        compose.onNodeWithText("Try again").performScrollTo().performClick()
+        compose.onNodeWithContentDescription(if (separating) combine else separate).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(success).performScrollTo().assertIsDisplayed().assert(liveRegion)
+        compose.onNodeWithText("Try again").assertDoesNotExist()
+        assertEquals(1, api.writes)
+        assertEquals(if (separating) 1 else 2, library.state.value.feeds.first().sourceDetails.size)
+        compose.onNodeWithText("Done").performClick()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Main publication").assertIsDisplayed()
+        val other = compose.onNodeWithText("Other publication")
+        if (separating) other.assertIsDisplayed() else other.assertDoesNotExist()
+    }
+
     @Test fun failedCombineKeepsSubscriptionsAndCanBeRetried() {
         manage(); api.fail = true
         compose.onNodeWithContentDescription("Combine Other publication with Main publication").performScrollTo().performClick()

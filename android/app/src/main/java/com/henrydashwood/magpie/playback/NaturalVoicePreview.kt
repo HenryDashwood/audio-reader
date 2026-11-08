@@ -8,7 +8,18 @@ import android.media.MediaPlayer
 import java.io.File
 
 /** Lets her hear a natural speaker on choosing it. The first sentence takes a moment while the voice loads. */
-class NaturalVoicePreview(private val context: Context) {
+internal class NaturalVoicePreview(
+    private val context: Context,
+    private val createPlayer: () -> MediaPlayer = { MediaPlayer() },
+    private val buildFocusRequest: (AudioAttributes, AudioManager.OnAudioFocusChangeListener) -> AudioFocusRequest =
+        { attributes, listener -> AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            .setAudioAttributes(attributes).setOnAudioFocusChangeListener(listener).build() },
+    private val renderSample: suspend (NaturalVoice, File) -> Unit = { voice, file ->
+        val folder = NaturalVoiceStore.folder(context) ?: error("The natural voice isn't on this phone. Download it again.")
+        val text = "This voice will read your articles."
+        NaturalArticleVoice(context, folder, voice).synthesize(TextChunk(text, 0, text.length), file)
+    },
+) {
     private val audioManager = context.getSystemService(AudioManager::class.java)
     private var player: MediaPlayer? = null
     private var focus: AudioFocusRequest? = null
@@ -16,19 +27,21 @@ class NaturalVoicePreview(private val context: Context) {
     /** Renders and plays the sample sentence; throws with a message she can act on. */
     suspend fun play(voice: NaturalVoice) {
         stop()
-        val folder = NaturalVoiceStore.folder(context) ?: error("The natural voice isn't on this phone. Download it again.")
-        val text = "This voice will read your articles."
         val file = File(context.cacheDir, "natural-voice-preview.wav")
-        NaturalArticleVoice(context, folder, voice).synthesize(TextChunk(text, 0, text.length), file)
+        renderSample(voice, file)
         val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
-        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT).setAudioAttributes(attributes)
-            .setOnAudioFocusChangeListener { if (it < 0) stop() }.build()
+        lateinit var request: AudioFocusRequest
+        request = buildFocusRequest(attributes) { change ->
+            if (change < 0 && focus === request) stop()
+        }
         check(audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { "Audio is in use. Try the voice again when it is free." }
         focus = request
-        player = MediaPlayer().apply {
+        player = createPlayer().apply {
             setAudioAttributes(attributes)
             setDataSource(file.path)
-            setOnCompletionListener { stop() }
+            setOnCompletionListener { finished ->
+                if (finished === player) this@NaturalVoicePreview.stop()
+            }
             prepare()
             start()
         }

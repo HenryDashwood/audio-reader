@@ -335,7 +335,7 @@ class AppFunctionsTest {
         output.mkdirs()
         java.io.File(output, "assistant-request-consent.png").outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         assertTrue(api.voiceRequests.isEmpty()); assertEquals(0, api.grants)
-        withContext(Dispatchers.Main) { model.voice.allowAI() }
+        withContext(Dispatchers.Main) { model.voice.allowAI(requireNotNull(model.voice.state.value.consentPrompt)) }
         waitFor { api.voiceRequests.isNotEmpty() && !model.voice.state.value.busy }
         assertEquals("Find a history podcast", api.voiceRequests.single().transcript)
         assertEquals(1, api.grants)

@@ -720,6 +720,19 @@ struct AuthAndPositionTests {
         #expect(request.url?.path == "/episodes")
     }
 
+    @Test func confirmedActionUsesTheCapturedServerAndAccount() async throws {
+        let server = try #require(URL(string: "https://original.invalid/api"))
+        let session = HearfulAPI.RequestSession(server: server, token: "original-test-token")
+        let transport = FakeTransport(status: 204, json: "")
+        let client = HearfulAPI(transport: transport)
+        try await HearfulAPI.$tokenProvider.withValue({ "replacement-test-token" }) {
+            try await session.perform { try await client.clearLatest() }
+        }
+        let request = try #require(transport.lastRequest)
+        #expect(request.url == server.appendingPathComponent("episodes"))
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer original-test-token")
+    }
+
     @Test func episodeDecodesSavedPosition() async throws {
         let json = """
             {"id":104,"title":"t","description":null,"audio_url":"https://x/y.mp3",

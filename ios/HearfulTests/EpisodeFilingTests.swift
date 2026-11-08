@@ -9,6 +9,8 @@ private final class FilingAPI: HearfulAPIProtocol, @unchecked Sendable {
     var failure: Error?
     var filings: [(episodeID: Int, played: Bool?, dismissed: Bool?)] = []
     var clearCount = 0
+    var beforeListReply: (() async throws -> Void)?
+    var beforeClearReply: (() async -> Void)?
 
     func setEpisodeState(episodeID: Int, played: Bool?, dismissed: Bool?) async throws {
         if let failure { throw failure }
@@ -16,12 +18,15 @@ private final class FilingAPI: HearfulAPIProtocol, @unchecked Sendable {
     }
 
     func recentEpisodes(limit: Int) async throws -> [Episode] {
+        let snapshot = episodes
+        try await beforeListReply?()
         if let failure { throw failure }
-        return episodes
+        return snapshot
     }
     func clearLatest() async throws {
         if let failure { throw failure }
         clearCount += 1
+        await beforeClearReply?()
     }
     func episodes(showID: Int, query: String? = nil) async throws -> [Episode] { episodes }
 
@@ -236,6 +241,17 @@ struct LatestFilingTests {
         #expect(titles(model) == [7108])
     }
 
+    @Test func offlineRefreshKeepsLocallyCompletedArticlesOutOfLatest() async {
+        let cache = makeCache()
+        cache.save([article(id: 7146), episode(id: 7147)], for: .recentEpisodes)
+        let api = FilingAPI()
+        api.failure = APIError(underlying: "offline")
+        let model = LatestModel(api: api, cache: cache, unconfirmedArticleCompletions: { [7146] })
+        await model.load()
+        #expect(model.needsRetry)
+        #expect(model.availableEpisodes.map(\.id) == [7147])
+    }
+
     @Test func aDismissalTakesTheRowTooo() async {
         let (model, _) = await makeModel([episode(id: 7103), episode(id: 7104)])
 
@@ -332,6 +348,88 @@ struct LatestFilingTests {
         #expect(api.clearCount == 1)
         #expect(titles(model).isEmpty)
         #expect(!model.canClear)
+    }
+
+    @Test(arguments: [false, true])
+    func confirmedClearSurvivesLateRefreshAndPreservesLaterArrivals(failingRead: Bool) async {
+        let cache = makeCache()
+        let api = FilingAPI()
+        api.episodes = [episode(id: 7140)]
+        let model = LatestModel(api: api, cache: cache)
+        await model.load()
+        let entered = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        api.beforeListReply = {
+            entered.continuation.finish()
+            for await _ in release.stream {}
+            if failingRead { throw APIError(underlying: "offline") }
+        }
+        let old = Task { await model.load() }
+        for await _ in entered.stream {}
+        #expect(await model.clear() == nil)
+        api.beforeListReply = nil
+        api.episodes = [episode(id: 7141)]
+        await model.load()
+        release.continuation.finish()
+        await old.value
+
+        #expect(titles(model) == [7141])
+        #expect(cache.load([Episode].self, for: .recentEpisodes)?.map(\.id) == [7141])
+        #expect(api.clearCount == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func refreshFinishingAfterARowIsFiledKeepsOtherArrivals(completedByPlayer: Bool) async {
+        let cache = makeCache()
+        let api = FilingAPI()
+        api.episodes = [episode(id: 7143)]
+        let model = LatestModel(api: api, cache: cache)
+        await model.load()
+        api.episodes.append(episode(id: 7144))
+        let entered = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        api.beforeListReply = {
+            entered.continuation.finish()
+            for await _ in release.stream {}
+        }
+        let old = Task { await model.load() }
+        for await _ in entered.stream {}
+        if completedByPlayer {
+            model.progressed(PositionReport(episodeID: 7143, seconds: 3600, completed: true, durationSeconds: 3600))
+        } else {
+            await model.filed(.init(episodeID: 7143, filing: .dismissed))
+        }
+        release.continuation.finish()
+        await old.value
+        #expect(titles(model) == [7144])
+        #expect(cache.load([Episode].self, for: .recentEpisodes)?.map(\.id) == [7144])
+    }
+
+    @Test func repeatedConfirmationOnlyClearsOnce() async {
+        let (model, api) = await makeModel([episode(id: 7142)])
+        let entered = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        api.beforeClearReply = {
+            entered.continuation.finish()
+            for await _ in release.stream {}
+        }
+        let first = Task { await model.clear() }
+        for await _ in entered.stream {}
+        api.beforeClearReply = nil
+        _ = await model.clear()
+        release.continuation.finish()
+        _ = await first.value
+        #expect(api.clearCount == 1)
+    }
+
+    @Test func clearConfirmationCannotCrossAccounts() async {
+        let (model, api) = await makeModel([episode(id: 7145)])
+        let originalScope = HearfulAPI.$tokenProvider.withValue({ "first-test-token" }) { ShortcutScope.current }
+        await HearfulAPI.$tokenProvider.withValue({ "second-test-token" }) {
+            #expect(await model.clear(expectedScope: originalScope) == nil)
+        }
+        #expect(api.clearCount == 0)
+        #expect(titles(model) == [7145])
     }
 
     @Test func aFailedClearKeepsEveryRow() async {

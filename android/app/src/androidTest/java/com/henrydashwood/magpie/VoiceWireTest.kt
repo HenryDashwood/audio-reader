@@ -94,7 +94,11 @@ class VoiceWireTest {
     @Test fun cancellationDisconnectsABlockedReaderAndDoesNotEmitASuccess() = runBlocking {
         val reading = CountDownLatch(1); val closed = CountDownLatch(1)
         val input = object : InputStream() {
-            override fun read(): Int { reading.countDown(); closed.await(10, TimeUnit.SECONDS); return -1 }
+            override fun read(): Int {
+                reading.countDown()
+                check(closed.await(10, TimeUnit.SECONDS)) { "Cancellation did not close the reader" }
+                return -1
+            }
             override fun close() { closed.countDown() }
         }
         lateinit var connection: Connection
@@ -147,7 +151,11 @@ class VoiceWireTest {
     @Test fun cancellingTypedFilingDisconnectsItsReaderAndUsesTheOriginalRequestForCancellation() = runBlocking {
         val reading = CountDownLatch(1); val closed = CountDownLatch(1)
         val input = object : InputStream() {
-            override fun read(): Int { reading.countDown(); closed.await(10, TimeUnit.SECONDS); return -1 }
+            override fun read(): Int {
+                reading.countDown()
+                check(closed.await(10, TimeUnit.SECONDS)) { "Cancellation did not close the reader" }
+                return -1
+            }
             override fun close() { closed.countDown() }
         }
         val connections = mutableListOf<Connection>()

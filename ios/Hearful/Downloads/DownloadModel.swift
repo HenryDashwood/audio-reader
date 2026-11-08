@@ -72,6 +72,8 @@ nonisolated struct DownloadRecord: Codable, Equatable, Identifiable, Sendable {
     /// A copy of the episode as it was when requested, so the download can be
     /// listed and played with no connection and no other cache.
     var episode: Episode
+    /// Absent on transfers queued by older versions.
+    var attemptID: UUID?
     var origin: DownloadOrigin
     var status: DownloadStatus
     /// Relative to the downloads directory, once the audio has arrived.

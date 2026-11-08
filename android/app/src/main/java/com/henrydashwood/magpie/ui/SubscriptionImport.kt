@@ -33,31 +33,31 @@ fun SubscriptionImportDialog(model: MagpieModel, onFollowing: () -> Unit) {
     val state by controller.state.collectAsStateWithLifecycle()
     val library by model.libraryState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var query by remember { mutableStateOf("") }
-    var help by remember { mutableStateOf(false) }
-    var fileOwner by remember { mutableStateOf<Pair<String?, Int>?>(null) }
-    var reading by remember { mutableStateOf(false) }
     DisposableEffect(library.owner, library.revision) { onDispose { controller.invalidate() } }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            reading = true
-            try {
-                val bytes = withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { it.readBytesBounded(5 * 1024 * 1024) }
-                        ?: error("No file")
-                }
-                val current = model.libraryState.value
-                if (fileOwner == (current.owner to current.revision)) controller.preview(bytes)
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) {
-                val current = model.libraryState.value
-                if (fileOwner == (current.owner to current.revision)) controller.fileError()
-            } finally { reading = false }
+    if (!state.showing || !library.live) return
+    val fileOwner = library.owner to library.revision
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val scope = key(fileOwner) { rememberCoroutineScope() }
+    var query by remember(fileOwner) { mutableStateOf("") }
+    var help by remember(fileOwner) { mutableStateOf(false) }
+    var reading by remember(fileOwner) { mutableStateOf(false) }
+    fun current() = controller.state.value.showing && model.libraryState.value.let { (it.owner to it.revision) == fileOwner }
+    val picker = key(fileOwner) {
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null && current()) scope.launch {
+                reading = true
+                try {
+                    val bytes = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { it.readBytesBounded(5 * 1024 * 1024) }
+                            ?: error("No file")
+                    }
+                    if (current()) controller.preview(bytes)
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { if (current()) controller.fileError() }
+                finally { reading = false }
+            }
         }
     }
-    if (!state.showing || !library.live) return
     val job = state.job
     LaunchedEffect(state.showing, job?.id, job?.active) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -69,8 +69,7 @@ fun SubscriptionImportDialog(model: MagpieModel, onFollowing: () -> Unit) {
         }
     }
     fun chooseFile() {
-        fileOwner = library.owner to library.revision
-        picker.launch(arrayOf("*/*"))
+        if (current()) picker.launch(arrayOf("*/*"))
     }
     Dialog(onDismissRequest = controller::close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Scaffold(topBar = { TopAppBar(title = { Text(job?.title ?: "Import subscriptions") },

@@ -10,15 +10,16 @@ struct SignInMethodsView: View {
             Section {
                 Text("Connect Apple and Google to use either to sign in. If both already have Magpie accounts, connecting combines their subscriptions, saved articles, and listening progress.")
             }
-            if let providers = auth.linkedProviders {
+            if let providers = auth.linkedProviders, let owner = auth.sessionOwner {
                 Section("Apple") {
                     if providers.contains("apple") {
                         Label("Connected", systemImage: "checkmark.circle")
                     } else {
                         Text("Connect your Apple account")
                         SignInWithAppleButton(.continue) { $0.requestedScopes = [.email] } onCompletion: { result in
-                            Task { await auth.linkApple(result: result) }
+                            Task { await auth.linkApple(result: result, for: owner) }
                         }
+                        .id(owner)
                         .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
                         .frame(height: 56)
                         .disabled(auth.isAuthenticating)
@@ -29,7 +30,7 @@ struct SignInMethodsView: View {
                         Label("Connected", systemImage: "checkmark.circle")
                     } else {
                         Text("Connect your Google account")
-                        GoogleAuthenticationButton(title: "Continue with Google") { Task { await auth.linkGoogle() } }
+                        GoogleAuthenticationButton(title: "Continue with Google") { Task { await auth.linkGoogle(for: owner) } }
                             .disabled(auth.isAuthenticating || !auth.googleIsConfigured)
                         if !auth.googleIsConfigured {
                             Text("Google sign-in is not available in this build yet.").font(.footnote)
@@ -52,6 +53,6 @@ struct SignInMethodsView: View {
             }
         }
         .navigationTitle("Sign-in Methods")
-        .task { await auth.refreshLinkedProviders() }
+        .task(id: auth.sessionOwner) { await auth.refreshLinkedProviders() }
     }
 }

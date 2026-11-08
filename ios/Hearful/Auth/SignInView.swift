@@ -42,18 +42,20 @@ struct SignInView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 32)
             }
+            let attempt = auth.signInAttempt
             SignInWithAppleButton(.signIn) { request in
                 request.requestedScopes = [.fullName, .email]
             } onCompletion: { result in
-                Task { await auth.completeSignIn(result: result) }
+                Task { await auth.completeSignIn(result: result, for: attempt) }
             }
+            .id(attempt)
             .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
             .frame(height: 56)
             .padding(.horizontal, 32)
 
             .disabled(auth.isAuthenticating)
             GoogleAuthenticationButton {
-                Task { await auth.signInWithGoogle() }
+                Task { await auth.signInWithGoogle(for: attempt) }
             }
             .padding(.horizontal, 32)
             .disabled(auth.isAuthenticating || !auth.googleIsConfigured)

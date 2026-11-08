@@ -6,6 +6,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.IntentSenderRequest
 import com.google.android.gms.tasks.Task
 import com.google.android.play.core.assetpacks.AssetPackException
+import com.google.android.play.core.assetpacks.AssetPackManager
 import com.google.android.play.core.assetpacks.AssetPackManagerFactory
 import com.google.android.play.core.assetpacks.AssetPackState
 import com.google.android.play.core.assetpacks.AssetPackStateUpdateListener
@@ -20,7 +21,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 
 /** The one download of the natural voice, for Settings to show and drive, through Play's on-demand asset pack.
  *  Process-wide, so leaving and reopening Settings shows the same transfer rather than starting another. */
-class NaturalVoiceDownload private constructor(private val context: Context) {
+class NaturalVoiceDownload internal constructor(
+    private val context: Context,
+    private val manager: AssetPackManager = AssetPackManagerFactory.getInstance(context),
+    private val installedFolder: () -> java.io.File? = { NaturalVoiceStore.folder(context) },
+) {
     sealed interface State {
         data object Checking : State
         data class NotInstalled(val bytes: Long?) : State
@@ -35,12 +40,30 @@ class NaturalVoiceDownload private constructor(private val context: Context) {
         data class Failed(val message: String) : State
     }
 
-    private val manager = AssetPackManagerFactory.getInstance(context)
     private val mutableState = MutableStateFlow<State>(State.Checking)
     val state = mutableState.asStateFlow()
     private var active = false
 
-    private val listener = AssetPackStateUpdateListener { update -> if (update.name() == NaturalVoiceStore.PACK) apply(update) }
+    private var attempt = 0L
+    private var updateRevision = 0L
+    private var hasCancelledDownload = false
+
+    private val listener = AssetPackStateUpdateListener { update ->
+        if (update.name() != NaturalVoiceStore.PACK) return@AssetPackStateUpdateListener
+        if (hasCancelledDownload && !active) return@AssetPackStateUpdateListener
+        val revision = ++updateRevision
+        if (hasCancelledDownload && update.status() in transferStatuses) {
+            // Play identifies broadcasts by pack name. Even a newly registered listener can
+            // receive progress or a Wi-Fi wait from the previous fetch of the same pack.
+            manager.getPackStates(listOf(NaturalVoiceStore.PACK)).addOnSuccessListener { states ->
+                if (active && revision == updateRevision) {
+                    states.packStates()[NaturalVoiceStore.PACK]?.takeIf { it.status() in transferStatuses }?.let(::apply)
+                }
+            }
+        } else {
+            apply(update)
+        }
+    }
     init { manager.registerListener(listener) }
 
     suspend fun refresh() {
@@ -50,25 +73,34 @@ class NaturalVoiceDownload private constructor(private val context: Context) {
             mutableState.value = State.Unavailable("The natural voice needs a 64-bit phone.")
             return
         }
-        mutableState.value = try {
+        val revision = updateRevision
+        val refreshed = try {
             val pack = manager.getPackStates(listOf(NaturalVoiceStore.PACK)).await().packStates()[NaturalVoiceStore.PACK]
+            if (revision != updateRevision) return
             if (pack?.status() == AssetPackStatus.COMPLETED) usable() else State.NotInstalled(pack?.totalBytesToDownload()?.takeIf { it > 0 })
         } catch (error: Exception) { failure(error) }
+        if (revision == updateRevision) mutableState.value = refreshed
     }
 
     suspend fun download() {
         if (active) return
+        val currentAttempt = ++attempt
+        updateRevision++
         active = true
         mutableState.value = State.Waiting
         try {
             manager.fetch(listOf(NaturalVoiceStore.PACK)).await()
         } catch (error: Exception) {
+            if (!active || attempt != currentAttempt) return
             active = false
             mutableState.value = failure(error)
         }
     }
 
-    fun cancel() { manager.cancel(listOf(NaturalVoiceStore.PACK)) }
+    fun cancel() {
+        if (active) hasCancelledDownload = true
+        manager.cancel(listOf(NaturalVoiceStore.PACK))
+    }
 
     /** Play's own dialog for a download over mobile data. */
     fun confirm(launcher: ActivityResultLauncher<IntentSenderRequest>) { manager.showConfirmationDialog(launcher) }
@@ -96,13 +128,17 @@ class NaturalVoiceDownload private constructor(private val context: Context) {
             AssetPackStatus.REQUIRES_USER_CONFIRMATION -> mutableState.value = State.NeedsConfirmation
             AssetPackStatus.WAITING_FOR_WIFI -> mutableState.value = State.WaitingForWifi
             AssetPackStatus.COMPLETED -> { active = false; mutableState.value = usable() }
-            AssetPackStatus.CANCELED -> { active = false; mutableState.value = State.NotInstalled(update.totalBytesToDownload().takeIf { it > 0 }) }
+            AssetPackStatus.CANCELED -> {
+                hasCancelledDownload = true
+                active = false
+                mutableState.value = State.NotInstalled(update.totalBytesToDownload().takeIf { it > 0 })
+            }
             AssetPackStatus.FAILED -> { active = false; mutableState.value = State.Failed(message(update.errorCode())) }
             else -> Unit
         }
     }
 
-    private fun installed() = NaturalVoiceStore.folder(context)?.let { State.Installed(NaturalVoiceStore.voices(it)) }
+    private fun installed() = installedFolder()?.let { State.Installed(NaturalVoiceStore.voices(it)) }
 
     private fun usable(): State = installed() ?: run {
         Log.e(TAG, "Downloaded voice unusable at ${manager.getPackLocation(NaturalVoiceStore.PACK)?.assetsPath()}")
@@ -125,6 +161,9 @@ class NaturalVoiceDownload private constructor(private val context: Context) {
         fun get(context: Context) = shared ?: synchronized(this) {
             shared ?: NaturalVoiceDownload(context.applicationContext).also { shared = it }
         }
+
+        private val transferStatuses = setOf(AssetPackStatus.PENDING, AssetPackStatus.DOWNLOADING,
+            AssetPackStatus.TRANSFERRING, AssetPackStatus.REQUIRES_USER_CONFIRMATION, AssetPackStatus.WAITING_FOR_WIFI)
 
         private val unavailable = setOf(AssetPackErrorCode.APP_UNAVAILABLE, AssetPackErrorCode.PACK_UNAVAILABLE,
             AssetPackErrorCode.INVALID_REQUEST, AssetPackErrorCode.API_NOT_AVAILABLE, AssetPackErrorCode.UNRECOGNIZED_INSTALLATION,

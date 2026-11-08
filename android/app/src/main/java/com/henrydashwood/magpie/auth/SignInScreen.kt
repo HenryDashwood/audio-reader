@@ -28,8 +28,9 @@ import com.henrydashwood.magpie.R
 fun SignInScreen(model: AccountModel = viewModel()) {
     val state by model.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val attempt = state.appleAttempt
     // A browser return from Apple sign-in resumes here; the proof is retained across process death.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { if (state.applePending) model.resumeApple() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { attempt?.let(model::resumeApple) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -44,7 +45,7 @@ fun SignInScreen(model: AccountModel = viewModel()) {
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
             Column(Modifier.widthIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                AppleSignInButton(model.appleConfigured && !state.busy && !state.applePending) { model.apple(context, false) }
+                AppleSignInButton(model.appleConfigured && !state.busy && !state.applePending) { model.apple(context, null) }
                 OutlinedButton(onClick = { model.signIn(context) }, enabled = model.configured && !state.busy && !state.applePending,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                     Image(painterResource(R.drawable.google_g), null, Modifier.size(20.dp)); Spacer(Modifier.width(12.dp)); Text("Sign in with Google")
@@ -52,10 +53,10 @@ fun SignInScreen(model: AccountModel = viewModel()) {
             }
             if (!model.appleConfigured) Text("Apple sign-in is not available in this build yet.", textAlign = TextAlign.Center)
             if (!model.configured) Text("Google sign-in is not available in this build yet.", textAlign = TextAlign.Center)
-            if (state.applePending) {
+            if (attempt != null) key(attempt) {
                 Text("Finish signing in with Apple in your browser, then return to Magpie.", textAlign = TextAlign.Center)
-                TextButton(onClick = { model.reopenApple(context) }) { Text("Open Apple sign-in") }
-                TextButton(onClick = model::cancelApple) { Text("Cancel Apple sign-in") }
+                TextButton(onClick = { model.reopenApple(context, attempt) }) { Text("Open Apple sign-in") }
+                TextButton(onClick = { model.cancelApple(attempt) }) { Text("Cancel Apple sign-in") }
             }
             if (state.busy) Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(24.dp)); Text("Signing in…", Modifier.semantics { liveRegion = LiveRegionMode.Polite })

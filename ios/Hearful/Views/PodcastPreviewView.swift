@@ -4,11 +4,16 @@ import SwiftUI
 /// subscribing is one tap — previewing already put the feed in the catalog.
 struct PodcastPreviewView: View {
     let podcast: PodcastResult
-    @StateObject private var model = PodcastPreviewModel()
+    @StateObject private var model: PodcastPreviewModel
     @ObservedObject private var player = PlaybackCoordinator.shared
     /// The article whose text is open, if any. Reading one does not need a
     /// subscription, any more than playing one does.
     @State private var openEpisode: Episode?
+
+    init(podcast: PodcastResult, model: @autoclosure @escaping () -> PodcastPreviewModel = PodcastPreviewModel()) {
+        self.podcast = podcast
+        _model = StateObject(wrappedValue: model())
+    }
 
     var body: some View {
         Group {
@@ -64,6 +69,8 @@ struct PodcastPreviewView: View {
                 model.learnedWordCount(wordCount, for: episode.id)
             }
         }
+        .onAppear { model.isVisible = true }
+        .onDisappear { model.isVisible = false }
         .task { await model.load(url: podcast.feedURL) }
     }
 
@@ -112,9 +119,18 @@ final class PodcastPreviewModel: ObservableObject {
     @Published private(set) var subscribed = false
     @Published private(set) var subscribing = false
     @Published private(set) var subscribeError: String?
+    var isVisible = false
+    private let notifications: NotificationCenter
+    private let announce: (String) -> Void
     private let api: HearfulAPIProtocol
 
-    init(api: HearfulAPIProtocol = HearfulAPI()) {
+    init(
+        api: HearfulAPIProtocol = HearfulAPI(),
+        notifications: NotificationCenter = .default,
+        announce: @escaping (String) -> Void = { AccessibilityNotification.Announcement($0).post() }
+    ) {
+        self.notifications = notifications
+        self.announce = announce
         self.api = api
     }
 
@@ -149,9 +165,7 @@ final class PodcastPreviewModel: ObservableObject {
         defer { subscribing = false }
         do {
             _ = try await api.subscribe(feedURL: url)
-            subscribed = true
-            NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
-            AccessibilityNotification.Announcement("Subscribed to \(title)").post()
+            subscriptionChanged(to: true, title: title)
         } catch let error as APIError {
             subscribeError = error.spokenResponse
         } catch {
@@ -166,13 +180,19 @@ final class PodcastPreviewModel: ObservableObject {
         defer { subscribing = false }
         do {
             try await api.unsubscribe(showID: preview.show.id)
-            subscribed = false
-            NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
-            AccessibilityNotification.Announcement("Unsubscribed from \(title)").post()
+            subscriptionChanged(to: false, title: title)
         } catch let error as APIError {
             subscribeError = error.spokenResponse
         } catch {
             subscribeError = "Something went wrong."
+        }
+    }
+
+    private func subscriptionChanged(to following: Bool, title: String) {
+        subscribed = following
+        notifications.post(name: .hearfulSubscriptionsChanged, object: nil)
+        if isVisible {
+            announce(following ? "Subscribed to \(title)" : "Unsubscribed from \(title)")
         }
     }
 }

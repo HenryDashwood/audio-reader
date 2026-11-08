@@ -2,8 +2,19 @@ import SwiftUI
 import RevenueCat
 
 struct PlusView: View {
+    @EnvironmentObject private var auth: AuthController
+
+    var body: some View {
+        let session = CaptureSessionStore.read()
+        let scope = session.flatMap { ShortcutScope.forToken($0.token, server: $0.account.server) }
+        PlusAccountView(session: scope == ShortcutScope.current ? session : nil)
+            .id(auth.sessionOwner)
+    }
+}
+
+private struct PlusAccountView: View {
     @ObservedObject private var purchases = PlusStore.shared
-    @State private var session = CaptureSessionStore.read()
+    let session: CaptureSessionStore.Session?
     @State private var status: PlusStatus?
     @State private var package: Package?
     @State private var error: String?
@@ -53,8 +64,14 @@ struct PlusView: View {
             }
         }
         .navigationTitle("Magpie Plus")
-        .task { await load() }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await load() } } }
+        .task(id: StatusCheck(session: session, phase: scenePhase)) {
+            if scenePhase == .active { await load() }
+        }
+    }
+
+    private struct StatusCheck: Equatable {
+        let session: CaptureSessionStore.Session?
+        let phase: ScenePhase
     }
 
     private func renewalDate(_ text: String?) -> Date? {
@@ -65,9 +82,10 @@ struct PlusView: View {
     }
 
     private func load(restore: Bool = false, purchase: Package? = nil, refresh: Bool = false) async {
-        guard !purchases.busy else { return }
+        let userAction = restore || purchase != nil || refresh
+        if purchases.busy && (userAction || status != nil) { return }
         error = nil
-        message = nil
+        if userAction { message = nil }
         do {
             guard let session else { throw CaptureUploader.Failure.signIn }
             let result = try await purchases.perform(session: session, restore: restore, purchase: purchase, refresh: refresh)
@@ -75,6 +93,11 @@ struct PlusView: View {
             package = result.1
             if restore { message = result.0.active ? "Purchases restored." : "No active Magpie Plus subscription was found for this store account." }
             if purchase != nil, result.0.active { message = "Magpie Plus is ready. You can import PDFs now." }
-        } catch { self.error = error.localizedDescription }
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled, session == CaptureSessionStore.read() else { return }
+            self.error = error.localizedDescription
+        }
     }
 }

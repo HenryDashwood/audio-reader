@@ -25,7 +25,8 @@ interface SourceManagementRepository {
 }
 data class ManagementState(val feed: LibraryFeed? = null, val sessionRevision: Int = 0, val showing: Boolean = false,
     val busy: Boolean = false, val loaded: Boolean = false, val sources: List<FeedSource> = emptyList(),
-    val available: List<LibraryFeed> = emptyList(), val error: String? = null, val notice: String? = null)
+    val available: List<LibraryFeed> = emptyList(), val error: String? = null, val notice: String? = null,
+    val pendingRefreshNotice: String? = null)
 
 class SourceManager(private val scope: CoroutineScope, private val repository: SourceManagementRepository,
     private val announce: (String) -> Unit = {}) {
@@ -40,10 +41,13 @@ class SourceManager(private val scope: CoroutineScope, private val repository: S
         reset(); mutable.value = ManagementState(feed, sessionRevision, showing = true)
         reload()
     }
-    fun reload() = run {
-        val feed = state.value.feed ?: return@run
+    fun reload() = run { refreshSources() }
+
+    private suspend fun Request.refreshSources() {
+        val feed = state.value.feed ?: return
         val group = repository.sourceGroup(feed.id, state.value.sessionRevision)
-        update { it.copy(sources = group.sources, available = group.available, loaded = true) }
+        update { it.copy(sources = group.sources, available = group.available, loaded = true,
+            notice = it.pendingRefreshNotice, pendingRefreshNotice = null) }
     }
     fun combine(other: LibraryFeed) {
         if (state.value.available.none { it.id == other.id }) return
@@ -62,6 +66,7 @@ class SourceManager(private val scope: CoroutineScope, private val repository: S
     private fun change(sourceId: String?, change: SourceChange) = run {
         val feed = state.value.feed ?: return@run
         val revision = state.value.sessionRevision
+        update { it.copy(notice = null) }
         repository.changeSourceGroup(feed.id, sourceId, change, revision)
         if (!active()) return@run
         val message = when (change) {
@@ -70,12 +75,12 @@ class SourceManager(private val scope: CoroutineScope, private val repository: S
             SourceChange.Unsubscribe -> if (feed.forwarded) "Unsubscribed from ${feed.title}. To stop forwarded emails, remove the forwarding rule in your email account." else "Unsubscribed from ${feed.title}"
         }
         // The open dialog announces its notice; unsubscribe closes it and uses the app notice.
-        if (change == SourceChange.Unsubscribe) announce(message)
-        update { it.copy(notice = message, sources = emptyList(), available = emptyList(), loaded = false,
-            showing = change != SourceChange.Unsubscribe) }
-        if (change != SourceChange.Unsubscribe) {
-            val group = repository.sourceGroup(feed.id, revision)
-            update { it.copy(sources = group.sources, available = group.available, loaded = true) }
+        if (change == SourceChange.Unsubscribe) {
+            announce(message)
+            update { it.copy(notice = message, showing = false) }
+        } else {
+            update { it.copy(pendingRefreshNotice = message, sources = emptyList(), available = emptyList(), loaded = false) }
+            refreshSources()
         }
     }
     private inner class Request(val version: Int) {
@@ -89,7 +94,14 @@ class SourceManager(private val scope: CoroutineScope, private val repository: S
         job = scope.launch {
             try { request.work() }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { request.update { it.copy(error = AccountLibrary.message(failure)) } }
+            catch (failure: Exception) {
+                request.update { state ->
+                    val error = state.pendingRefreshNotice?.let {
+                        "$it. The source list couldn’t be refreshed. Tap Try again to refresh Manage Sources and Following."
+                    } ?: AccountLibrary.message(failure)
+                    state.copy(error = error)
+                }
+            }
             finally { request.update { it.copy(busy = false) } }
         }
     }

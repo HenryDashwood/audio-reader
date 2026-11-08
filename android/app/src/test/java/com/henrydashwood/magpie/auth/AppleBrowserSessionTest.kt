@@ -50,7 +50,7 @@ class AppleBrowserSessionTest {
         val api = Api(); val store = Store(); val pending = MemoryApplePendingStore()
         val session = AccountSession(api, store, pending)
         var opened = false
-        session.signInApple(false) { url ->
+        session.signInApple(null) { url ->
             opened = true
             assertTrue(AppleBrowserProof.isAuthorizationUrl(url))
             assertEquals(api.challenge, AppleBrowserProof.challenge(pending.read()!!.verifier))
@@ -65,16 +65,31 @@ class AppleBrowserSessionTest {
     @Test fun linkingUsesTheExistingSessionWithoutReplacingIt() = runTest {
         val api = Api().apply { result = AppleBrowserResult("complete", providers = setOf("apple", "google")) }
         val store = Store("google-session"); val session = AccountSession(api, store)
-        session.signInApple(true) {}
+        session.signInApple(requireNotNull(session.state.value.sessionId)) {}
         assertEquals("google-session", api.startSession)
         assertEquals("google-session", api.finishSession)
         assertEquals("google-session", store.token)
         assertEquals(setOf("apple", "google"), session.state.value.providers)
     }
+    @Test fun oldAppleLinkButtonCannotOpenAnAuthorizationForTheReplacement() = runTest {
+        val api = Api()
+        val session = AccountSession(api, Store("first"))
+        val original = requireNotNull(session.state.value.sessionId)
+        session.signOut(session.state.value.sessionId)
+        session.signInGoogle { "second-proof" }
+        session.signInApple(original) { fail("Old Apple authorization opened") }
+        assertNull(api.challenge)
+        assertEquals(0, api.finishCount)
+        api.result = AppleBrowserResult("complete", providers = setOf("apple", "google"))
+        session.signInApple(requireNotNull(session.state.value.sessionId)) {}
+        assertEquals("apple-session", api.startSession)
+        assertEquals(1, api.finishCount)
+    }
+
     @Test fun linkConflictPreservesTheOriginalAccount() = runTest {
         val api = Api().apply { fail = true }; val store = Store("google-session")
         val session = AccountSession(api, store)
-        session.signInApple(true) {}
+        session.signInApple(requireNotNull(session.state.value.sessionId)) {}
         assertEquals("google-session", store.token)
         assertTrue(session.state.value.signedIn)
         assertFalse(session.state.value.applePending)
@@ -83,7 +98,7 @@ class AppleBrowserSessionTest {
     @Test fun providerCancellationCreatesNoSession() = runTest {
         val api = Api().apply { result = AppleBrowserResult("cancelled") }
         val store = Store(); val session = AccountSession(api, store)
-        session.signInApple(false) {}
+        session.signInApple(null) {}
         assertNull(store.token)
         assertNull(session.state.value.error)
         assertFalse(session.state.value.applePending)
@@ -91,9 +106,9 @@ class AppleBrowserSessionTest {
     @Test fun cancellationPreventsALateCompletionRestoringASession() = runTest {
         val api = Api().apply { gate = CompletableDeferred() }; val store = Store()
         val pending = MemoryApplePendingStore(); val session = AccountSession(api, store, pending)
-        val task = launch { session.signInApple(false) {} }; runCurrent()
+        val task = launch { session.signInApple(null) {} }; runCurrent()
         assertTrue(session.state.value.applePending)
-        session.cancelApple(); api.gate!!.complete(Unit); task.join()
+        session.cancelApple(requireNotNull(session.state.value.appleAttempt)); api.gate!!.complete(Unit); task.join()
         assertNull(store.token)
         assertNull(pending.read())
         assertFalse(session.state.value.signedIn)
@@ -105,7 +120,7 @@ class AppleBrowserSessionTest {
         pending.write(ApplePending("s".repeat(43), "v".repeat(43), "https://appleid.apple.com/auth/authorize", 1000, null))
         val restored = AccountSession(api, store, pending, now = { 0 })
         assertTrue(restored.state.value.applePending)
-        restored.resumeApple()
+        restored.resumeApple(requireNotNull(restored.state.value.appleAttempt))
         assertEquals("apple-session", store.token)
         assertNull(pending.read())
     }
@@ -114,26 +129,58 @@ class AppleBrowserSessionTest {
         val store = Store(); val pending = MemoryApplePendingStore()
         val session = AccountSession(api, store, pending)
         var browserOpens = 0
-        session.signInApple(false) { browserOpens++ }
+        session.signInApple(null) { browserOpens++ }
         val proof = pending.read()
         assertNotNull(proof)
         assertFalse(session.state.value.busy)
         assertTrue(session.state.value.applePending)
         assertEquals("Could not connect to Magpie. Check your connection, then try again.", session.state.value.error)
         api.connectionFailure = false
-        session.resumeApple()
+        session.resumeApple(requireNotNull(session.state.value.appleAttempt))
         assertEquals(1, browserOpens)
         assertEquals(2, api.finishCount)
         assertEquals("apple-session", store.token)
         assertNull(pending.read())
         assertNull(session.state.value.error)
     }
+    @Test fun cancelledAttemptsControlsCannotOpenCheckOrCancelTheReplacement() = runTest {
+        val api = Api().apply { connectionFailure = true }
+        val store = Store()
+        val pending = MemoryApplePendingStore()
+        val session = AccountSession(api, store, pending)
+        session.signInApple(null) {}
+        var reopened = 0
+        val first = requireNotNull(session.state.value.appleAttempt)
+        val staleOpen = { session.reopenApple(first) { reopened++ } }
+        val staleCheck: suspend () -> Unit = { session.resumeApple(first) }
+        val staleCancel: suspend () -> Unit = { session.cancelApple(first) }
+        staleCancel()
+        session.signInApple(null) {}
+        val replacement = requireNotNull(pending.read())
+        api.cancelled = false
+        val attempts = api.finishCount
+        staleOpen()
+        staleCheck()
+        staleCancel()
+        assertEquals(0, reopened)
+        assertEquals(attempts, api.finishCount)
+        assertFalse(api.cancelled)
+        assertEquals(replacement, pending.read())
+        val restored = AccountSession(api, store, pending)
+        restored.reopenApple(replacement.attemptId) { reopened++ }
+        api.connectionFailure = false
+        restored.resumeApple(requireNotNull(restored.state.value.appleAttempt))
+        assertEquals(1, reopened)
+        assertEquals(attempts + 1, api.finishCount)
+        assertEquals("apple-session", store.token)
+    }
+
     @Test fun restoredLinkCannotAttachToADifferentSession() = runTest {
         val api = Api(); val pending = MemoryApplePendingStore()
         pending.write(ApplePending("s".repeat(43), "v".repeat(43), "https://appleid.apple.com/auth/authorize", 1000,
             AppleBrowserProof.challenge("old-session")))
         val store = Store("new-session"); val session = AccountSession(api, store, pending, now = { 0 })
-        session.resumeApple()
+        session.resumeApple(requireNotNull(session.state.value.appleAttempt))
         assertEquals(0, api.finishCount)
         assertEquals("new-session", store.token)
         assertNull(pending.read())
@@ -143,7 +190,7 @@ class AppleBrowserSessionTest {
         val api = Api(); val pending = MemoryApplePendingStore()
         pending.write(ApplePending("s".repeat(43), "v".repeat(43), "https://appleid.apple.com/auth/authorize", 1000, null))
         val session = AccountSession(api, Store(), pending, now = { 1001 })
-        session.resumeApple()
+        session.resumeApple(requireNotNull(session.state.value.appleAttempt))
         assertEquals(0, api.finishCount)
         assertFalse(session.state.value.applePending)
         assertNotNull(session.state.value.error)

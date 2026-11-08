@@ -9,12 +9,14 @@ import SwiftUI
 /// has to discover that the buttons exist by scrolling through legal copy.
 struct AIDataSharingConsentView: View {
     @EnvironmentObject private var auth: AuthController
+    let owner: AuthController.SessionOwner
     let onAllowed: () -> Void
     let onNotNow: () -> Void
     @State private var saving = false
     @State private var error: String?
 
-    init(onAllowed: @escaping () -> Void = {}, onNotNow: @escaping () -> Void) {
+    init(owner: AuthController.SessionOwner, onAllowed: @escaping () -> Void = {}, onNotNow: @escaping () -> Void) {
+        self.owner = owner
         self.onAllowed = onAllowed
         self.onNotNow = onNotNow
     }
@@ -127,12 +129,15 @@ struct AIDataSharingConsentView: View {
     }
 
     private func allow() async {
+        guard !saving else { return }
         saving = true
         error = nil
         defer { saving = false }
         do {
-            try await auth.setAIDataSharing(granted: true)
+            try await auth.setAIDataSharing(granted: true, confirmedFor: owner)
             onAllowed()
+        } catch is CancellationError {
+            return
         } catch let apiError as APIError {
             self.error = apiError.spokenResponse
             AccessibilityNotification.Announcement(apiError.spokenResponse).post()

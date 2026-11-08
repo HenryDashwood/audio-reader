@@ -43,13 +43,19 @@ final class AuthController: ObservableObject {
         }
     }
 
-    @Published private(set) var isAuthenticating = false
+    @Published private(set) var signInAttempt = UUID()
+    @Published private var signingIn: UUID?
+    @Published private var linkingOwner: SessionOwner?
+    var isAuthenticating: Bool { signingIn == signInAttempt || (linkingOwner != nil && linkingOwner == sessionOwner) }
     @Published private(set) var linkedProviders: [String]?
     @Published private(set) var linkingError: String?
     var googleIsConfigured: Bool { google.isConfigured }
 
     private let google: any GoogleAuthorizing
     private var sessionGeneration = 0
+    private var userRevision = 0
+    private var sharingRequest: UUID?
+    private var providersRevision = 0
     private let api: HearfulAPIProtocol
     private let notificationCenter: NotificationCenter
     private let readToken: () -> String?
@@ -68,9 +74,10 @@ final class AuthController: ObservableObject {
         self.writeToken = writeToken
         authRequiredObserver = notificationCenter.addObserver(
             forName: .hearfulAuthRequired, object: nil, queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] note in
+            guard let rejected = note.object as? RejectedSession else { return }
             MainActor.assumeIsolated {
-                self?.sessionDied()
+                self?.sessionDied(rejected)
             }
         }
     }
@@ -95,9 +102,12 @@ final class AuthController: ObservableObject {
 
     func refreshUser() async {
         let generation = sessionGeneration
+        let token = readToken()
+        userRevision += 1
+        let revision = userRevision
         do {
             let refreshed = try await api.me()
-            guard generation == sessionGeneration, state == .signedIn else { return }
+            guard generation == sessionGeneration, revision == userRevision, token == readToken(), state == .signedIn else { return }
             user = refreshed
         } catch let error as APIError where error.isAuthFailure {
             // The API client has already posted hearfulAuthRequired.
@@ -107,19 +117,24 @@ final class AuthController: ObservableObject {
         }
     }
 
-    /// Handed the result of the native Sign in with Apple sheet.
-    func completeSignIn(result: Result<ASAuthorization, Error>) async {
-        guard !isAuthenticating, state == .signedOut else { return }
-        isAuthenticating = true
-        defer { isAuthenticating = false }
-        let generation = sessionGeneration
+    private func canFinishSignIn(_ attempt: UUID) -> Bool {
+        state == .signedOut && attempt == signInAttempt
+    }
+
+    private func finishSignIn(_ attempt: UUID) {
+        if signingIn == attempt { signingIn = nil }
+        if signInAttempt == attempt { signInAttempt = UUID() }
+    }
+
+    /// The result belongs to the button that opened the native authorization sheet.
+    func completeSignIn(result: Result<ASAuthorization, Error>, for attempt: UUID) async {
+        guard canFinishSignIn(attempt), !isAuthenticating else { return }
+        signingIn = attempt
+        defer { finishSignIn(attempt) }
         signInError = nil
         switch result {
         case .failure(let error):
-            // Cancelling the sheet is not an error worth announcing.
-            if let authError = error as? ASAuthorizationError, authError.code == .canceled {
-                return
-            }
+            if let authError = error as? ASAuthorizationError, authError.code == .canceled { return }
             signInError = "Sign in did not work. Please try again."
         case .success(let authorization):
             guard
@@ -130,104 +145,98 @@ final class AuthController: ObservableObject {
                 signInError = "Sign in did not work. Please try again."
                 return
             }
-            // Sent so the backend can obtain something to revoke with Apple
-            // when she deletes her account. Single-use and short-lived, so it
-            // is now or not at all — but not fatal if it is missing: the
-            // backend treats it as optional, and sign-in matters more.
-            let authorizationCode = credential.authorizationCode
-                .flatMap { String(data: $0, encoding: .utf8) }
+            // Apple supplies a single-use code for revocation when the account is deleted.
+            let authorizationCode = credential.authorizationCode.flatMap { String(data: $0, encoding: .utf8) }
             do {
-                let response = try await api.login(
-                    appleIdentityToken: identityToken, authorizationCode: authorizationCode)
-                guard generation == sessionGeneration else { return }
+                let response = try await api.login(appleIdentityToken: identityToken, authorizationCode: authorizationCode)
+                guard canFinishSignIn(attempt) else { return }
                 accept(response)
-            } catch let error as APIError {
-                signInError = error.spokenResponse
             } catch {
-                signInError = APIError.genericSpokenResponse
+                guard canFinishSignIn(attempt) else { return }
+                signInError = (error as? APIError)?.spokenResponse ?? APIError.genericSpokenResponse
             }
         }
     }
 
-    func signInWithGoogle() async {
-        guard !isAuthenticating, state == .signedOut else { return }
-        isAuthenticating = true
+    func signInWithGoogle(for attempt: UUID) async {
+        guard canFinishSignIn(attempt), !isAuthenticating else { return }
+        signingIn = attempt
+        defer { finishSignIn(attempt) }
         signInError = nil
-        let generation = sessionGeneration
-        defer { isAuthenticating = false }
         do {
             let token = try await google.identityToken()
-            guard generation == sessionGeneration else { return }
+            guard canFinishSignIn(attempt) else { return }
             let response = try await api.login(googleIdentityToken: token)
-            guard generation == sessionGeneration else { return }
+            guard canFinishSignIn(attempt) else { return }
             accept(response)
         } catch is CancellationError {
         } catch {
-            guard generation == sessionGeneration else { return }
+            guard canFinishSignIn(attempt) else { return }
             signInError = (error as? APIError)?.spokenResponse ?? APIError.genericSpokenResponse
         }
     }
 
     func refreshLinkedProviders() async {
-        guard state == .signedIn else { return }
-        let generation = sessionGeneration
+        guard let owner = sessionOwner else { return }
+        let session = HearfulAPI.RequestSession(token: readToken())
+        providersRevision += 1
+        let revision = providersRevision
         linkingError = nil
         do {
-            let response = try await api.linkedIdentities()
-            guard generation == sessionGeneration else { return }
+            let response = try await session.perform { try await api.linkedIdentities() }
+            guard owner == sessionOwner, revision == providersRevision else { return }
             linkedProviders = response.providers
         } catch {
-            guard generation == sessionGeneration else { return }
+            guard owner == sessionOwner, revision == providersRevision else { return }
             linkingError = (error as? APIError)?.spokenResponse ?? APIError.genericSpokenResponse
         }
     }
 
-    func linkGoogle() async {
-        guard !isAuthenticating, state == .signedIn else { return }
-        isAuthenticating = true
-        linkingError = nil
-        let generation = sessionGeneration
-        defer { isAuthenticating = false }
-        do {
-            let token = try await google.identityToken()
-            guard generation == sessionGeneration, state == .signedIn else { return }
-            let response = try await api.linkIdentity(provider: "google", identityToken: token, authorizationCode: nil)
-            guard generation == sessionGeneration else { return }
-            linkedProviders = response.providers
-            await linkedAccountChanged(generation: generation)
-        } catch is CancellationError {
-        } catch {
-            guard generation == sessionGeneration else { return }
-            linkingError = (error as? APIError)?.spokenResponse ?? APIError.genericSpokenResponse
+    func linkGoogle(for owner: SessionOwner) async {
+        await linkIdentity(provider: "google", for: owner) {
+            (try await self.google.identityToken(), nil)
         }
     }
 
-    func linkApple(result: Result<ASAuthorization, Error>) async {
-        guard !isAuthenticating, state == .signedIn else { return }
-        isAuthenticating = true
-        linkingError = nil
-        let generation = sessionGeneration
-        defer { isAuthenticating = false }
-        do {
+    func linkApple(result: Result<ASAuthorization, Error>, for owner: SessionOwner) async {
+        await linkIdentity(provider: "apple", for: owner) {
             let authorization = try result.get()
             guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
                 let data = credential.identityToken, let token = String(data: data, encoding: .utf8)
             else { throw APIError(spokenResponse: "Apple sign-in did not work. Please try again.", underlying: "Provider authorization failed", statusCode: 0) }
-            let code = credential.authorizationCode.flatMap { String(data: $0, encoding: .utf8) }
-            let response = try await api.linkIdentity(provider: "apple", identityToken: token, authorizationCode: code)
-            guard generation == sessionGeneration else { return }
+            return (token, credential.authorizationCode.flatMap { String(data: $0, encoding: .utf8) })
+        }
+    }
+
+    func linkIdentity(provider: String, for owner: SessionOwner,
+                      credentials: () async throws -> (token: String, code: String?)) async {
+        guard !isAuthenticating, owner == sessionOwner else { return }
+        let session = HearfulAPI.RequestSession(token: readToken())
+        linkingOwner = owner
+        linkingError = nil
+        defer { if linkingOwner == owner { linkingOwner = nil } }
+        do {
+            let credential = try await credentials()
+            guard owner == sessionOwner else { return }
+            let response = try await session.perform {
+                try await api.linkIdentity(provider: provider, identityToken: credential.token, authorizationCode: credential.code)
+            }
+            guard owner == sessionOwner else { return }
+            providersRevision += 1
             linkedProviders = response.providers
-            await linkedAccountChanged(generation: generation)
+            linkingError = nil
+            await session.perform { await linkedAccountChanged(owner: owner) }
+        } catch is CancellationError {
         } catch let error as ASAuthorizationError where error.code == .canceled {
         } catch {
-            guard generation == sessionGeneration else { return }
+            guard owner == sessionOwner else { return }
             linkingError = (error as? APIError)?.spokenResponse ?? APIError.genericSpokenResponse
         }
     }
 
-    private func linkedAccountChanged(generation: Int) async {
+    private func linkedAccountChanged(owner: SessionOwner) async {
         await refreshUser()
-        guard generation == sessionGeneration, state == .signedIn else { return }
+        guard owner == sessionOwner else { return }
         ShortcutLibrary.shared.invalidate()
         HearfulShortcuts.updateAppShortcutParameters()
         notificationCenter.post(name: .hearfulSubscriptionsChanged, object: nil)
@@ -236,6 +245,7 @@ final class AuthController: ObservableObject {
 
     private func accept(_ response: AuthResponse) {
         sessionGeneration += 1
+        sharingRequest = nil
         linkedProviders = nil
         positionReporter?.invalidate()
         positionReporter = nil
@@ -246,35 +256,76 @@ final class AuthController: ObservableObject {
         HearfulShortcuts.updateAppShortcutParameters()
     }
 
-    func signOut() async {
+    func signOut(for owner: SessionOwner) async {
+        let session = HearfulAPI.RequestSession(token: readToken())
+        guard state == .signedIn, owner.generation == sessionGeneration, owner.scope == session.scope else { return }
         sessionGeneration += 1
+        let generation = sessionGeneration
         // Best effort: revoking server-side matters less than forgetting the
         // token locally, and must not block signing out while offline.
-        try? await api.logout()
+        try? await session.perform { try await api.logout() }
+        guard generation == sessionGeneration, session.scope == sessionOwner?.scope else { return }
         forgetSession()
+    }
+
+    struct SessionOwner: Hashable, Identifiable {
+        var id: Self { self }
+        fileprivate let scope: String
+        fileprivate let generation: Int
+    }
+
+    var sessionOwner: SessionOwner? {
+        guard state == .signedIn, let scope = HearfulAPI.RequestSession(token: readToken()).scope else { return nil }
+        return SessionOwner(scope: scope, generation: sessionGeneration)
     }
 
     /// Erase the account entirely — App Store guideline 5.1.1(v) requires this
     /// to be reachable from inside the app, and a support email is not that.
     /// Unlike signing out, a failure here matters: pretending it worked would
     /// leave her believing her data is gone when it is not.
-    func deleteAccount() async throws {
-        try await api.deleteAccount()
+    func deleteAccount(confirmedFor owner: SessionOwner) async throws {
+        let session = HearfulAPI.RequestSession(token: readToken())
+        guard state == .signedIn, owner.generation == sessionGeneration, owner.scope == session.scope else {
+            throw CancellationError()
+        }
+        do { try await session.perform { try await api.deleteAccount() } }
+        catch {
+            guard owner == sessionOwner else { throw CancellationError() }
+            throw error
+        }
+        guard owner == sessionOwner else { throw CancellationError() }
         forgetSession()
     }
 
-    func setAIDataSharing(granted: Bool) async throws {
-        user = try await api.setAIDataSharing(granted: granted)
+    func setAIDataSharing(granted: Bool, confirmedFor owner: SessionOwner) async throws {
+        guard owner == sessionOwner, sharingRequest == nil else { throw CancellationError() }
+        let session = HearfulAPI.RequestSession(token: readToken())
+        let request = UUID()
+        sharingRequest = request
+        defer { if sharingRequest == request { sharingRequest = nil } }
+        let updated: UserInfo
+        do { updated = try await session.perform { try await api.setAIDataSharing(granted: granted) } }
+        catch {
+            guard owner == sessionOwner else { throw CancellationError() }
+            throw error
+        }
+        guard owner == sessionOwner,
+              user == nil || user?.id == updated.id else { throw CancellationError() }
+        userRevision += 1
+        user = updated
         if !granted { TelemetryReporter.clearStoredQueues() }
     }
 
-    private func sessionDied() {
-        guard state == .signedIn else { return }
+    private func sessionDied(_ rejected: RejectedSession) {
+        guard state == .signedIn, rejected.matches(token: readToken(), server: AppConfiguration.apiBaseURL) else { return }
         forgetSession()
     }
 
     private func forgetSession() {
+        signInAttempt = UUID()
+        signInError = nil
         sessionGeneration += 1
+        sharingRequest = nil
         positionReporter?.invalidate()
         positionReporter = nil
         try? FileArticleProgressStorage.shared.clearAll()

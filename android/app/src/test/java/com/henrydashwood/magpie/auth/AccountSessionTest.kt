@@ -1,7 +1,9 @@
 package com.henrydashwood.magpie.auth
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
@@ -21,6 +23,9 @@ class AccountSessionTest {
         var loginCount = 0
         var linkCount = 0
         val loggedOut = mutableListOf<String>()
+        val deletions = mutableListOf<String>()
+        var logoutGate: CompletableDeferred<Unit>? = null
+        var deleteGate: CompletableDeferred<Unit>? = null
         var loginGate: CompletableDeferred<Unit>? = null
         override suspend fun loginGoogle(identityToken: String): AccountLogin {
             loginCount++
@@ -33,8 +38,8 @@ class AccountSessionTest {
         override suspend fun linkGoogle(token: String, identityToken: String): Set<String> {
             linkCount++; failure?.let { throw it }; return linked
         }
-        override suspend fun logout(token: String) { loggedOut += token }
-        override suspend fun delete(token: String) { failure?.let { throw it } }
+        override suspend fun logout(token: String) { loggedOut += token; logoutGate?.await() }
+        override suspend fun delete(token: String) { deletions += token; deleteGate?.await(); failure?.let { throw it } }
     }
     @Test fun flagsFollowTheAccountRefreshAndAreClearedOnSignOut() = runTest {
         val api = Api()
@@ -47,7 +52,7 @@ class AccountSessionTest {
         api.user = AccountUser("same-account", null, mapOf("experiment" to false))
         session.refresh()
         assertFalse(session.state.value.user!!.isFeatureEnabled("experiment"))
-        session.signOut()
+        session.signOut(session.state.value.sessionId)
         assertNull(session.state.value.user)
         // A different/older server response cannot inherit the previous grants.
         api.user = AccountUser("other-account", null)
@@ -78,13 +83,13 @@ class AccountSessionTest {
         val api = Api(); val store = Store("original"); val session = AccountSession(api, store)
         api.linked = setOf("apple"); session.refresh()
         api.failure = AccountFailure(409, "Already linked to another account")
-        session.linkGoogle { "proof" }
+        session.linkGoogle(requireNotNull(session.state.value.sessionId)) { "proof" }
         assertTrue(session.state.value.signedIn)
         assertEquals("original", store.token)
         assertEquals(setOf("apple"), session.state.value.providers)
         assertEquals("Already linked to another account", session.state.value.error)
         assertEquals(0, session.state.value.libraryRevision)
-        api.failure = null; api.linked = setOf("apple", "google"); session.linkGoogle { "proof" }
+        api.failure = null; api.linked = setOf("apple", "google"); session.linkGoogle(requireNotNull(session.state.value.sessionId)) { "proof" }
         assertEquals(setOf("apple", "google"), session.state.value.providers)
         assertEquals("original", store.token)
         assertEquals(0, api.loginCount)
@@ -104,7 +109,7 @@ class AccountSessionTest {
         val api = Api(); val session = AccountSession(api, Store())
         val gate = CompletableDeferred<String>(); val started = CompletableDeferred<Unit>()
         val pending = launch { session.signInGoogle { started.complete(Unit); gate.await() } }
-        started.await(); session.signOut(); gate.complete("proof"); pending.join()
+        started.await(); session.signOut(session.state.value.sessionId); gate.complete("proof"); pending.join()
         assertEquals(0, api.loginCount)
         assertFalse(session.state.value.signedIn)
     }
@@ -112,7 +117,7 @@ class AccountSessionTest {
         val api = Api(); val store = Store(); val session = AccountSession(api, store)
         val started = CompletableDeferred<Unit>(); api.loginGate = CompletableDeferred()
         val pending = launch { session.signInGoogle { started.complete(Unit); "proof" } }
-        started.await(); session.signOut(); api.loginGate!!.complete(Unit); pending.join()
+        started.await(); session.signOut(session.state.value.sessionId); api.loginGate!!.complete(Unit); pending.join()
         assertFalse(session.state.value.signedIn)
         assertNull(store.token)
         assertEquals(listOf("session"), api.loggedOut)
@@ -120,8 +125,8 @@ class AccountSessionTest {
     @Test fun signOutDuringGoogleLinkCannotAttachCredentialsToAnotherSession() = runTest {
         val api = Api(); val session = AccountSession(api, Store("original"))
         val gate = CompletableDeferred<String>(); val started = CompletableDeferred<Unit>()
-        val pending = launch { session.linkGoogle { started.complete(Unit); gate.await() } }
-        started.await(); session.signOut(); gate.complete("proof"); pending.join()
+        val pending = launch { session.linkGoogle(requireNotNull(session.state.value.sessionId)) { started.complete(Unit); gate.await() } }
+        started.await(); session.signOut(session.state.value.sessionId); gate.complete("proof"); pending.join()
         assertEquals(0, api.linkCount)
         assertFalse(session.state.value.signedIn)
     }
@@ -136,13 +141,85 @@ class AccountSessionTest {
     }
     @Test fun deletionFailurePreservesAccountAndSuccessClearsIt() = runTest {
         val api = Api(); val store = Store("session"); val session = AccountSession(api, store)
-        api.failure = AccountFailure(503, "Try again"); session.delete()
+        api.failure = AccountFailure(503, "Try again"); session.delete(requireNotNull(session.state.value.sessionId))
         assertTrue(session.state.value.signedIn)
         assertEquals("session", store.token)
-        api.failure = null; session.delete()
+        api.failure = null; session.delete(requireNotNull(session.state.value.sessionId))
         assertFalse(session.state.value.signedIn)
         assertNull(store.token)
     }
+    @Test fun oldSignOutCannotRevokeTheReplacementOrClearItsGoogleCredentialState() = runTest {
+        val api = Api()
+        val session = AccountSession(api, Store("first-token"))
+        val first = requireNotNull(session.state.value.sessionId)
+        val gate = CompletableDeferred<Unit>()
+        api.logoutGate = gate
+        val firstExit = async(start = CoroutineStart.UNDISPATCHED) { session.signOut(first) }
+        session.signInGoogle { "second-proof" }
+        assertFalse(session.signOut(first))
+        gate.complete(Unit)
+        assertFalse(firstExit.await())
+        assertEquals(listOf("first-token"), api.loggedOut)
+        assertTrue(session.state.value.signedIn)
+        assertTrue(session.signOut(requireNotNull(session.state.value.sessionId)))
+        assertEquals(listOf("first-token", "session"), api.loggedOut)
+    }
+
+    @Test fun staleDeletionConfirmationCannotDeleteTheReplacementAccount() = runTest {
+        val api = Api()
+        val store = Store("first-token")
+        val session = AccountSession(api, store)
+        val original = requireNotNull(session.state.value.sessionId)
+        session.signOut(session.state.value.sessionId)
+        api.user = AccountUser("second", null)
+        session.signInGoogle { "second-proof" }
+        session.delete(original)
+        assertTrue(api.deletions.isEmpty())
+        assertEquals("session", store.token)
+        val current = requireNotNull(session.state.value.sessionId)
+        session.refresh()
+        session.delete(current)
+        assertEquals(listOf("session"), api.deletions)
+        assertNull(store.token)
+    }
+
+    @Test fun lateDeletionCannotSignOutOrShowAnErrorToTheNextAccount() = runTest {
+        for (error in listOf(null, AccountFailure(401, "Old token expired"))) {
+            val api = Api()
+            val store = Store("first-token")
+            val session = AccountSession(api, store)
+            val gate = CompletableDeferred<Unit>()
+            api.deleteGate = gate
+            val deleting = launch(start = CoroutineStart.UNDISPATCHED) { session.delete(requireNotNull(session.state.value.sessionId)) }
+            session.signOut(session.state.value.sessionId)
+            api.user = AccountUser("second", null)
+            session.signInGoogle { "second-proof" }
+            api.failure = error
+            gate.complete(Unit)
+            deleting.join()
+            assertEquals("session", store.token)
+            assertEquals("second", session.state.value.user?.id)
+            assertNull(session.state.value.error)
+        }
+    }
+    @Test fun oldGoogleLinkCannotAuthorizeOrCompleteForTheReplacement() = runTest {
+        val api = Api()
+        val session = AccountSession(api, Store("first"))
+        val original = requireNotNull(session.state.value.sessionId)
+        val proof = CompletableDeferred<String>()
+        val waiting = launch(start = CoroutineStart.UNDISPATCHED) { session.linkGoogle(original) { proof.await() } }
+        session.signOut(session.state.value.sessionId)
+        session.signInGoogle { "second-proof" }
+        session.linkGoogle(original) { error("Old Google authorization opened") }
+        proof.complete("first-proof")
+        waiting.join()
+        assertEquals(0, api.linkCount)
+        session.linkGoogle(requireNotNull(session.state.value.sessionId)) { "fresh-proof" }
+        assertEquals(1, api.linkCount)
+        assertEquals(1, session.state.value.libraryRevision)
+        assertNull(session.state.value.error)
+    }
+
     @Test fun failedSecureStorageDoesNotClaimSuccessfulLogin() = runTest {
         val api = Api(); val store = Store().apply { failWrites = true }; val session = AccountSession(api, store)
         session.signInGoogle { "proof" }

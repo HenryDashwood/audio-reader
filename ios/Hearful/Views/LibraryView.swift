@@ -60,7 +60,7 @@ struct LibraryView: View {
             if model.needsRetry { Task { await model.load() } }
         }
         .onReceive(NotificationCenter.default.publisher(for: .hearfulSubscriptionsChanged)) { _ in
-            Task { await model.load() }
+            Task { await model.subscriptionsChanged() }
         }
         .sheet(isPresented: $addingSources) {
             AddSourcesView(shows: model.availableShows)
@@ -117,20 +117,30 @@ struct LibraryView: View {
 }
 
 /// A dedicated discovery sheet keeps adding sources explicit, like adding a saved link.
-private struct AddSourcesView: View {
+struct AddSourcesView: View {
     let shows: [Show]
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var auth: AuthController
-    @StateObject private var searchModel = PodcastSearchModel()
+    @StateObject private var searchModel: PodcastSearchModel
     @ObservedObject private var player = PlaybackCoordinator.shared
     @State private var searchText = ""
     @State private var searchScope: LibrarySearchScope = .all
-    @State private var showingAIConsent = false
+    @State private var showingAIConsent: AuthController.SessionOwner?
     @State private var openEpisode: Episode?
     /// Result groups she has folded away. Kept while the sheet is open, so a
     /// long podcast list stays out of the way as she refines the query.
     @State private var collapsedGroups: Set<String> = []
     @FocusState private var searchFocused: Bool
+
+    init(shows: [Show], searchModel: @autoclosure @escaping () -> PodcastSearchModel = PodcastSearchModel()) {
+        self.shows = shows
+        _searchModel = StateObject(wrappedValue: searchModel())
+    }
+
+    private func close() {
+        searchModel.clear()
+        dismiss()
+    }
 
     var body: some View {
         NavigationStack {
@@ -142,7 +152,7 @@ private struct AddSourcesView: View {
                         Text("Search for a podcast or publication, or paste a web or feed address.")
                     } actions: {
                         NavigationLink("Import subscriptions") {
-                            SubscriptionImportView(onFollowing: { dismiss() })
+                            SubscriptionImportView(onFollowing: close)
                         }.accessibilityIdentifier("import-subscriptions")
                     }
                 } else {
@@ -160,7 +170,7 @@ private struct AddSourcesView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done", action: close)
                 }
             }
             .searchable(
@@ -189,13 +199,15 @@ private struct AddSourcesView: View {
                 }
             }
         }
-        .sheet(isPresented: $showingAIConsent) {
-            AIDataSharingConsentView(
+        .onDisappear { searchModel.clear() }
+        .onChange(of: auth.sessionOwner) { _, _ in showingAIConsent = nil }
+        .sheet(item: $showingAIConsent) { owner in
+            AIDataSharingConsentView(owner: owner,
                 onAllowed: {
-                    showingAIConsent = false
+                    showingAIConsent = nil
                     searchModel.searchWebNow(for: searchText)
                 },
-                onNotNow: { showingAIConsent = false }
+                onNotNow: { showingAIConsent = nil }
             )
             .presentationDetents([.fraction(0.72), .large])
         }
@@ -415,7 +427,7 @@ private struct AddSourcesView: View {
         if auth.user?.aiDataSharingConsented == true {
             searchModel.searchWebNow(for: searchText)
         } else {
-            showingAIConsent = true
+            showingAIConsent = auth.sessionOwner
         }
     }
 }
@@ -696,10 +708,23 @@ final class LibraryModel: ObservableObject {
         switch state { case .stale, .failed: true; default: false }
     }
     private var loading = false
+    private var reloadRequested = false
+
+    func subscriptionsChanged() async {
+        if loading { reloadRequested = true } else { await load() }
+    }
+
     func load() async {
         guard !loading else { return }
         loading = true
         defer { loading = false }
+        repeat {
+            reloadRequested = false
+            await loadShows()
+        } while reloadRequested && !Task.isCancelled
+    }
+
+    private func loadShows() async {
         let scope = ShortcutScope.current
         if case .loading = state, let cached = cache.load([Show].self, for: .shows) {
             state = cached.isEmpty ? .empty : .loaded(cached)
@@ -740,19 +765,22 @@ final class PodcastSearchModel: ObservableObject {
     @Published private(set) var webMessage: String?
     @Published private(set) var isSearchingWeb = false
     private let api: HearfulAPIProtocol
+    private let announce: (String) -> Void
     private let debounce: Duration
     private var pending: Task<Void, Never>?
-    private var webPending: Task<Void, Never>?
+    private(set) var webPending: Task<Void, Never>?
     private var activeQuery = ""
 
     /// One pause produces one pair of requests: a cached public-directory
     /// lookup and a search of the user's full stored episode library.
     init(
         api: HearfulAPIProtocol = HearfulAPI(),
-        debounce: Duration = .milliseconds(350)
+        debounce: Duration = .milliseconds(350),
+        announce: @escaping (String) -> Void = { AccessibilityNotification.Announcement($0).post() }
     ) {
         self.api = api
         self.debounce = debounce
+        self.announce = announce
     }
 
     func queryChanged(_ query: String) {
@@ -851,9 +879,9 @@ final class PodcastSearchModel: ObservableObject {
             noticeMessage = uniqueFailures.first
             state = .loaded
             let count = podcasts.count + episodes.count
-            AccessibilityNotification.Announcement(
+            announce(
                 count == 0 ? "No search results" : "\(count) search results"
-            ).post()
+            )
         }
     }
 
@@ -863,14 +891,14 @@ final class PodcastSearchModel: ObservableObject {
             guard !Task.isCancelled, activeQuery == query else { return }
             webPublication = result
             webMessage = result == nil ? "No matching publication was found on the web." : nil
-            AccessibilityNotification.Announcement(
+            announce(
                 result.map { "Found \($0.title) on the web" }
                     ?? "No matching publication was found on the web"
-            ).post()
+            )
         } catch {
             guard !Task.isCancelled, activeQuery == query else { return }
             webMessage = searchMessage(for: error)
-            AccessibilityNotification.Announcement(webMessage ?? "Web search failed").post()
+            announce(webMessage ?? "Web search failed")
         }
         isSearchingWeb = false
     }

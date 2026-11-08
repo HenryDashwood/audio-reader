@@ -4,14 +4,16 @@ import UniformTypeIdentifiers
 @MainActor
 final class SubscriptionImportModel: ObservableObject {
     @Published private(set) var job: SubscriptionImportJob?
-    @Published private(set) var busy = false
+    var busy: Bool { operation != nil }
     @Published private(set) var error: String?
     @Published var selected: Set<Int> = []
     private let api: any SubscriptionImportAPI
     private let validSession: () async -> Bool
+    private enum Operation { case status, preview, change }
+    @Published private var operation: Operation?
     private var generation = 0
     private var pendingStart: (id: String, entries: [Int], request: String)?
-    private var pendingRetry: (id: String, request: String)?
+    private var retryRequestID: String?
     var uncertainStart: Bool { pendingStart != nil }
 
     init(api: any SubscriptionImportAPI, validSession: @escaping () async -> Bool = { true }) {
@@ -20,11 +22,11 @@ final class SubscriptionImportModel: ObservableObject {
     }
     func invalidate() {
         generation += 1
+        operation = nil
         job = nil
         selected = []
         pendingStart = nil
-        pendingRetry = nil
-        busy = false
+        retryRequestID = nil
         error = nil
     }
     private func accept(_ value: SubscriptionImportJob?) {
@@ -32,6 +34,8 @@ final class SubscriptionImportModel: ObservableObject {
         let previousAdded = job?.added ?? 0
         job = value
         if changed {
+            // A successful retry creates a new job, whether discovered by Retry or Check import status.
+            retryRequestID = nil
             selected = Set(value?.items.filter { $0.status == "ready" }.map(\.id) ?? [])
         }
         if value == nil || changed || value?.draft == false { pendingStart = nil }
@@ -39,12 +43,13 @@ final class SubscriptionImportModel: ObservableObject {
             NotificationCenter.default.post(name: .hearfulSubscriptionsChanged, object: nil)
         }
     }
-    private func perform(_ work: () async throws -> SubscriptionImportJob?) async {
-        guard !busy else { return }
-        busy = true
+    private func perform(_ next: Operation = .change, _ work: () async throws -> SubscriptionImportJob?) async {
+        guard !busy || (operation == .status && next == .preview) else { return }
+        generation += 1
+        operation = next
         error = nil
         let ticket = generation
-        defer { if ticket == generation { busy = false } }
+        defer { if ticket == generation { operation = nil } }
         guard await validSession(), ticket == generation, !Task.isCancelled else { return }
         do {
             let value = try await work()
@@ -56,13 +61,13 @@ final class SubscriptionImportModel: ObservableObject {
             self.error = (error as? APIError)?.spokenResponse ?? "The import couldn't connect. Please try again."
         }
     }
-    func load() async { await perform { try await api.current() } }
+    func load() async { await perform(.status) { try await api.current() } }
     func preview(_ data: Data) async {
         guard pendingStart == nil else { return }
-        await perform { try await api.preview(data) }
+        await perform(.preview) { try await api.preview(data) }
     }
     func start() async {
-        guard let job, job.draft, !selected.isEmpty else { return }
+        guard !busy, let job, job.draft, !selected.isEmpty else { return }
         if pendingStart == nil { pendingStart = (job.id, selected.sorted(), UUID().uuidString) }
         guard let pendingStart else { return }
         await perform { try await api.start(id: pendingStart.id, entries: pendingStart.entries, requestID: pendingStart.request) }
@@ -72,14 +77,28 @@ final class SubscriptionImportModel: ObservableObject {
         await perform { try await api.stop(id: job.id) }
     }
     func retry() async {
-        guard let job else { return }
-        if pendingRetry == nil { pendingRetry = (job.id, UUID().uuidString) }
-        guard let attempt = pendingRetry else { return }
-        await perform { try await api.retry(id: attempt.id, requestID: attempt.request) }
-        if self.job?.id != attempt.id { pendingRetry = nil }
+        guard !busy, let job else { return }
+        let requestID = retryRequestID ?? UUID().uuidString
+        retryRequestID = requestID
+        await perform { try await api.retry(id: job.id, requestID: requestID) }
     }
     func chooseAnother() { guard !busy, pendingStart == nil else { return }; job = nil; selected = [] }
-    func fileError() { error = "This file couldn't be opened. Choose an OPML file smaller than 5 MiB." }
+    func previewFile(
+        _ selection: Result<[URL], Error>,
+        read: (URL) async throws -> Data = SubscriptionImportView.readFile
+    ) async {
+        do {
+            guard let url = try selection.get().first, !Task.isCancelled else { return }
+            let data = try await read(url)
+            guard !Task.isCancelled else { return }
+            await preview(data)
+        } catch is CancellationError {
+        } catch let error as CocoaError where error.code == .userCancelled {
+        } catch {
+            guard await validSession(), !Task.isCancelled else { return }
+            self.error = "This file couldn't be opened. Choose an OPML file smaller than 5 MiB."
+        }
+    }
 }
 
 struct SubscriptionImportView: View {
@@ -109,7 +128,13 @@ private struct SubscriptionImportSessionView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model: SubscriptionImportModel
+    private struct FileSelection: Identifiable {
+        let id = UUID()
+        let result: Result<[URL], Error>
+    }
+
     @State private var choosingFile = false
+    @State private var fileSelection: FileSelection?
     @State private var query = ""
     private let onFollowing: () -> Void
     private let session: SubscriptionSession
@@ -156,14 +181,14 @@ private struct SubscriptionImportSessionView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.xml, .data], allowsMultipleSelection: false) { result in
-            Task {
-                do {
-                    guard let url = try result.get().first else { return }
-                    let data = try await SubscriptionImportView.readFile(url)
-                    await model.preview(data)
-                } catch { model.fileError() }
-            }
+            fileSelection = FileSelection(result: result)
         }
+        .task(id: fileSelection?.id) {
+            guard let selection = fileSelection else { return }
+            await model.previewFile(selection.result)
+            if fileSelection?.id == selection.id { fileSelection = nil }
+        }
+        .onDisappear { fileSelection = nil }
         .task(id: "\(model.job?.id ?? "none")-\(model.job?.active == true)-\(scenePhase == .active)") {
             guard scenePhase == .active else { return }
             while model.job?.active == true && !Task.isCancelled {

@@ -3,17 +3,27 @@ import OSLog
 
 private nonisolated let log = Logger(subsystem: "com.henrydashwood.hearful", category: "downloads")
 
+nonisolated struct DownloadTaskID: Hashable, Sendable {
+    let episodeID: Int
+    let epoch: UUID
+    let attemptID: UUID?
+
+    var taskDescription: String {
+        let prefix = "\(epoch.uuidString) \(episodeID)"
+        return attemptID.map { prefix + " " + $0.uuidString } ?? prefix
+    }
+}
+
 nonisolated enum DownloadEvent: Sendable {
-    case progress(episodeID: Int, epoch: UUID, fraction: Double)
+    case progress(DownloadTaskID, fraction: Double)
     /// The file has already been moved out of URLSession's temporary location.
-    case finished(episodeID: Int, epoch: UUID, file: URL)
-    case failed(episodeID: Int, epoch: UUID, message: String)
+    case finished(DownloadTaskID, file: URL)
+    case failed(DownloadTaskID, message: String)
 }
 
 nonisolated struct DownloadTaskRequest: Sendable {
-    let episodeID: Int
+    let id: DownloadTaskID
     let url: URL
-    let epoch: UUID
     let allowsCellular: Bool
     let expectedBytes: Int64
     let lowPriority: Bool
@@ -23,10 +33,10 @@ nonisolated struct DownloadTaskRequest: Sendable {
 protocol DownloadTransport: AnyObject {
     var onEvent: (@MainActor (DownloadEvent) -> Void)? { get set }
     func start(_ request: DownloadTaskRequest)
-    func cancel(episodeID: Int)
-    func cancelAll()
+    func cancel(_ id: DownloadTaskID)
+    func cancelAll(epoch: UUID)
     /// Episode IDs and epochs with a transfer still in the system's hands.
-    func activeTasks() async -> [(episodeID: Int, epoch: UUID)]
+    func activeTasks() async -> [DownloadTaskID]
     /// Returns once the system has delivered every event it woke the app for.
     func finishBackgroundEvents() async
 }
@@ -63,23 +73,25 @@ final class BackgroundDownloadTransport: DownloadTransport {
         urlRequest.allowsExpensiveNetworkAccess = request.allowsCellular
         urlRequest.allowsConstrainedNetworkAccess = request.allowsCellular
         let task = session.downloadTask(with: urlRequest)
-        task.taskDescription = "\(request.epoch.uuidString) \(request.episodeID)"
+        task.taskDescription = request.id.taskDescription
         task.countOfBytesClientExpectsToReceive = request.expectedBytes
         task.priority = request.lowPriority ? URLSessionTask.lowPriority : URLSessionTask.highPriority
         task.resume()
     }
 
-    func cancel(episodeID: Int) {
+    func cancel(_ id: DownloadTaskID) {
         session.getAllTasks { tasks in
-            for task in tasks where Self.parse(task.taskDescription)?.episodeID == episodeID { task.cancel() }
+            for task in tasks where Self.parse(task.taskDescription) == id { task.cancel() }
         }
     }
 
-    func cancelAll() {
-        session.getAllTasks { tasks in tasks.forEach { $0.cancel() } }
+    func cancelAll(epoch: UUID) {
+        session.getAllTasks { tasks in
+            for task in tasks where Self.parse(task.taskDescription)?.epoch == epoch { task.cancel() }
+        }
     }
 
-    func activeTasks() async -> [(episodeID: Int, epoch: UUID)] {
+    func activeTasks() async -> [DownloadTaskID] {
         await session.allTasks.filter { $0.state == .running || $0.state == .suspended }
             .compactMap { Self.parse($0.taskDescription) }
     }
@@ -88,12 +100,14 @@ final class BackgroundDownloadTransport: DownloadTransport {
         await relay.finishBackgroundEvents()
     }
 
-    nonisolated static func parse(_ description: String?) -> (episodeID: Int, epoch: UUID)? {
+    nonisolated static func parse(_ description: String?) -> DownloadTaskID? {
         let parts = description?.split(separator: " ") ?? []
-        guard parts.count == 2, let epoch = UUID(uuidString: String(parts[0])), let id = Int(parts[1]) else {
+        guard (2...3).contains(parts.count), let epoch = UUID(uuidString: String(parts[0])), let id = Int(parts[1]) else {
             return nil
         }
-        return (id, epoch)
+        let attempt = parts.count == 3 ? UUID(uuidString: String(parts[2])) : nil
+        guard parts.count == 2 || attempt != nil else { return nil }
+        return DownloadTaskID(episodeID: id, epoch: epoch, attemptID: attempt)
     }
 }
 
@@ -144,15 +158,15 @@ private nonisolated final class DownloadSessionDelegate: NSObject, URLSessionDow
     func urlSession(
         _ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL
     ) {
-        guard let (id, epoch) = BackgroundDownloadTransport.parse(downloadTask.taskDescription) else { return }
+        guard let id = BackgroundDownloadTransport.parse(downloadTask.taskDescription) else { return }
         let response = downloadTask.response as? HTTPURLResponse
         guard let response, (200..<300).contains(response.statusCode) else {
-            send(.failed(episodeID: id, epoch: epoch,
+            send(.failed(id,
                          message: "The podcast’s server would not send this episode."))
             return
         }
         if response.mimeType?.hasPrefix("text/") == true {
-            send(.failed(episodeID: id, epoch: epoch, message: "The podcast’s server sent a web page instead of audio."))
+            send(.failed(id, message: "The podcast’s server sent a web page instead of audio."))
             return
         }
         // The temporary file is deleted as soon as this method returns, so it
@@ -162,10 +176,10 @@ private nonisolated final class DownloadSessionDelegate: NSObject, URLSessionDow
         do {
             try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
             try FileManager.default.moveItem(at: location, to: destination)
-            send(.finished(episodeID: id, epoch: epoch, file: destination))
+            send(.finished(id, file: destination))
         } catch {
-            log.error("could not keep download \(id): \(error.localizedDescription)")
-            send(.failed(episodeID: id, epoch: epoch, message: "The episode could not be saved on this iPhone."))
+            log.error("could not keep download \(id.episodeID): \(error.localizedDescription)")
+            send(.failed(id, message: "The episode could not be saved on this iPhone."))
         }
     }
 
@@ -173,19 +187,19 @@ private nonisolated final class DownloadSessionDelegate: NSObject, URLSessionDow
         _ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
         totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64
     ) {
-        guard let (id, epoch) = BackgroundDownloadTransport.parse(downloadTask.taskDescription) else { return }
+        guard let id = BackgroundDownloadTransport.parse(downloadTask.taskDescription) else { return }
         let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : downloadTask.countOfBytesClientExpectsToReceive
         let fraction = expected > 0 ? min(Double(totalBytesWritten) / Double(expected), 1) : 0
-        send(.progress(episodeID: id, epoch: epoch, fraction: fraction))
+        send(.progress(id, fraction: fraction))
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        guard let error, let (id, epoch) = BackgroundDownloadTransport.parse(task.taskDescription) else { return }
+        guard let error, let id = BackgroundDownloadTransport.parse(task.taskDescription) else { return }
         // Cancellation is always ours: a removal or sign-out already updated
         // the manifest.
         if (error as? URLError)?.code == .cancelled { return }
-        log.notice("download \(id) failed: \(error.localizedDescription)")
-        send(.failed(episodeID: id, epoch: epoch, message: Self.explain(error)))
+        log.notice("download \(id.episodeID) failed: \(error.localizedDescription)")
+        send(.failed(id, message: Self.explain(error)))
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {

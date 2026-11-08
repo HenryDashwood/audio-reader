@@ -1,18 +1,60 @@
 import Foundation
 import MediaPlayer
 import Testing
+import UIKit
 
 @testable import Hearful
 
 @Suite("System playback metadata")
 @MainActor
 struct NowPlayingTests {
-    private func episode(_ id: Int, article: Bool) -> Episode {
+    private func episode(_ id: Int, article: Bool, imageURL: URL? = nil) -> Episode {
         Episode(
             id: id, title: article ? "An article" : "A podcast", description: nil,
             audioURL: article ? nil : URL(filePath: "/not-a-real-podcast.caf"),
             durationSeconds: article ? nil : 1_800, publishedAt: nil, link: nil,
-            imageURL: nil, positionSeconds: nil, completed: nil, hasText: article)
+            imageURL: imageURL, positionSeconds: nil, completed: nil, hasText: article)
+    }
+
+    @Test(arguments: [false, true])
+    func lateArtworkCannotRepublishAfterReplacementOrClear(clear: Bool) async throws {
+        let a = URL(filePath: "/a.png")
+        let b = URL(filePath: "/b.png")
+        let first = episode(1, article: false, imageURL: a)
+        let second = episode(2, article: true, imageURL: b)
+        let cover = UIGraphicsImageRenderer(size: CGSize(width: 12, height: 12)).pngData { context in
+            UIColor.blue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 12, height: 12))
+        }
+        var releaseFirst: CheckedContinuation<Data, Never>?
+        var publications: [[String: Any]?] = []
+        let publisher = NowPlayingPublisher(publish: { publications.append($0) }, loadArtwork: { url in
+            if url == a {
+                return await withCheckedContinuation { releaseFirst = $0 }
+            }
+            #expect(url == b)
+            return cover
+        })
+        publisher.update(episode: first, isPlaying: true, elapsed: 10, duration: 100, rate: 1)
+        let pending = try #require(publisher.artworkTask)
+        for _ in 0..<100 where releaseFirst == nil { try await Task.sleep(for: .milliseconds(5)) }
+        let firstRequest = try #require(releaseFirst)
+        publisher.update(episode: second, isPlaying: true, elapsed: 20, duration: 200, rate: 1)
+        await publisher.artworkTask?.value
+        publisher.update(episode: second, isPlaying: false, elapsed: 23, duration: 200, rate: 1)
+        let paused = try #require(publications.last ?? nil)
+        #expect(paused[MPMediaItemPropertyArtwork] is MPMediaItemArtwork)
+        #expect(paused[MPMediaItemPropertyTitle] as? String == second.title)
+        #expect(paused[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 23)
+        #expect(paused[MPNowPlayingInfoPropertyPlaybackRate] as? Double == 0)
+        if clear {
+            publisher.update(episode: nil, isPlaying: false, elapsed: 0, duration: 0, rate: 1)
+            #expect((publications.last ?? nil) == nil)
+        }
+        let count = publications.count
+        firstRequest.resume(returning: cover)
+        await pending.value
+        #expect(publications.count == count)
     }
 
     @Test func inactivePodcastCannotChangeNarrationMetadata() async throws {

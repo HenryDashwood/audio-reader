@@ -1,6 +1,13 @@
 package com.henrydashwood.magpie
 
+import android.app.Activity
+import android.net.Uri
 import android.content.Intent
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.activity.result.ActivityResultRegistry
+import androidx.activity.result.ActivityResultRegistryOwner
+import androidx.activity.result.contract.ActivityResultContract
+import androidx.core.app.ActivityOptionsCompat
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
@@ -16,7 +23,10 @@ import com.henrydashwood.magpie.auth.AccountFailure
 import com.henrydashwood.magpie.playback.PlaybackService
 import com.henrydashwood.magpie.ui.MagpieApp
 import com.henrydashwood.magpie.ui.MagpieTheme
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.*
@@ -32,15 +42,41 @@ class SubscriptionImportUiTest {
     private class Api : LibraryApi, SubscriptionImportApi, SubscriptionExportApi {
         var exportXML: String? = null
         override suspend fun exportSubscriptions(token: String): String = exportXML ?: throw AccountFailure(409, "There are no podcast or RSS subscriptions to export yet.")
+        data class Retry(val jobId: String, val requestId: String)
+        val retries = mutableListOf<Retry>()
         var mutations = 0
+        val previews = mutableListOf<Pair<String, String>>()
         var job: ImportJob? = null
         val review = ImportJob("review", "draft", 1, true, 0, 0, 0, 0, 0, 0,
             listOf(ImportItem(7, "Fixture podcast", "example.org", "ready", null, false, false),
                 ImportItem(8, "Already here", "example.org", "already_following", null, false, false)))
-        override suspend fun currentImport(token: String) = job
-        override suspend fun previewImport(token: String, bytes: ByteArray): ImportJob { job = review; return review }
+        var statusGate: CompletableDeferred<Unit>? = null
+        override suspend fun currentImport(token: String): ImportJob? {
+            val snapshot = job
+            val gate = statusGate
+            if (gate != null) {
+                statusGate = null
+                withContext(NonCancellable) { gate.await() }
+            }
+            return snapshot
+        }
+        override suspend fun previewImport(token: String, bytes: ByteArray): ImportJob {
+            previews += token to bytes.decodeToString()
+            job = review
+            return review
+        }
         override suspend fun mutateImport(token: String, id: String, action: String, requestId: String?, entries: Set<Int>?): ImportJob {
             mutations++
+            if (action == "retry") {
+                retries += Retry(id, requireNotNull(requestId))
+                if (retries.size == 1) throw java.io.IOException("Retry response lost")
+                val source = checkNotNull(job)
+                check(source.id == id)
+                val pending = source.items.filter { it.retryable && it.status == "failed" }
+                    .map { it.copy(status = "pending", retryable = false) }
+                return source.copy(id = "next", status = "queued", total = pending.size, finished = 0,
+                    added = 0, failed = 0, items = pending).also { job = it }
+            }
             job = review.copy(status = if (action == "stop") "stopped" else "running", total = 1,
                 items = review.items.map { it.copy(status = if (action == "stop") "stopped" else "processing", selected = true) })
             return job!!
@@ -87,6 +123,69 @@ class SubscriptionImportUiTest {
         compose.onNodeWithText("This imports subscriptions. Reading and listening history aren’t included.").assertIsDisplayed()
         assertEquals(0, api.mutations)
     }
+    @Test fun previousAccountsPickerCannotImportItsFileForTheNextAccount() = checkLatePicker(true)
+    @Test fun dismissedPickerCannotImportItsFileIntoAReopenedDialog() = checkLatePicker(false)
+
+    private fun checkLatePicker(switchAccount: Boolean) {
+        val requests = mutableListOf<Int>()
+        val registry = object : ActivityResultRegistry() {
+            override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?) {
+                assertEquals(Intent.ACTION_OPEN_DOCUMENT, contract.createIntent(app, input).action)
+                requests += requestCode
+            }
+        }
+        val registryOwner = object : ActivityResultRegistryOwner { override val activityResultRegistry = registry }
+        lateinit var model: MagpieModel
+        scenario!!.onActivity { activity ->
+            model = ViewModelProvider(activity)[MagpieModel::class.java]
+            activity.setContent { CompositionLocalProvider(LocalActivityResultRegistryOwner provides registryOwner) {
+                MagpieTheme { MagpieApp(model) }
+            } }
+        }
+        val first = File.createTempFile("first", ".opml", app.cacheDir)
+        val second = File.createTempFile("second", ".opml", app.cacheDir)
+        try {
+            first.writeText("<opml><body>Private first feed</body></opml>")
+            second.writeText("<opml><body>Second feed</body></opml>")
+            open()
+            compose.onNodeWithTag("choose-opml").performClick()
+            if (switchAccount) runBlocking(Dispatchers.Main) { library.changeSession("second-token") }
+            else compose.onNodeWithText("Done").performClick()
+            compose.onNodeWithTag("choose-opml").assertDoesNotExist()
+            compose.runOnUiThread { model.subscriptionImport.open() }
+            compose.onNodeWithTag("choose-opml").performClick()
+            fun deliver(index: Int, file: File) = compose.runOnUiThread {
+                registry.dispatchResult(requests[index], Activity.RESULT_OK, Intent().setData(Uri.fromFile(file)))
+            }
+            compose.runOnIdle { assertEquals(2, requests.size) }
+            deliver(0, first)
+            compose.waitForIdle()
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithContentDescription("Updating import").fetchSemanticsNodes().isEmpty()
+            }
+            compose.runOnIdle { assertEquals(emptyList<Pair<String, String>>(), api.previews) }
+            // Returning from Files can start a foreground status check before the file is read.
+            val gate = CompletableDeferred<Unit>()
+            compose.runOnUiThread {
+                api.statusGate = gate
+                model.subscriptionImport.refresh()
+            }
+            try {
+                deliver(1, second)
+                compose.waitUntil(10_000) { model.subscriptionImport.state.value.job?.draft == true }
+            } finally {
+                gate.complete(Unit)
+            }
+            compose.onNodeWithText("Fixture podcast").assertIsDisplayed()
+            compose.runOnIdle {
+                val token = if (switchAccount) "second-token" else "fixture-token"
+                assertNotEquals(requests.first(), requests.last())
+                assertEquals(listOf(token to second.readText()), api.previews)
+                assertEquals(0, api.mutations)
+            }
+        } finally { first.delete(); second.delete() }
+    }
+
     @Test fun pendingExportSurvivesRecreationButNotAnAccountChange() {
         api.exportXML = "<opml><body>private</body></opml>"
         compose.onNodeWithText("Settings").performClick()
@@ -124,6 +223,62 @@ class SubscriptionImportUiTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithText("Import stopped").fetchSemanticsNodes().isNotEmpty() }
         assertEquals(2, api.mutations)
     }
+    private fun retryWithLostResponse(): ImportJob {
+        val items = listOf("Podcast", "Publication").mapIndexed { index, title ->
+            ImportItem(index, title, "example.org", "failed", "Try again later.", selected = true, retryable = true)
+        }
+        val original = api.review.copy(id = "original", status = "completed", total = 2,
+            finished = 2, failed = 2, items = items)
+        api.job = original
+        open()
+        tapImportAction("Retry failed")
+        compose.onNodeWithText("Check import status").assertIsEnabled()
+        return original
+    }
+
+    private fun tapImportAction(label: String) {
+        compose.onNodeWithTag("subscription-import").performScrollToNode(hasText(label))
+        compose.onNodeWithText(label).assertIsEnabled().performClick()
+    }
+
+    @Test fun statusFindsAcceptedRetryAndNextRetryTargetsOnlyRemainingFailure() {
+        val original = retryWithLostResponse()
+        val accepted = original.copy(id = "accepted", status = "queued", finished = 0, failed = 0,
+            items = original.items.map { it.copy(status = "pending", retryable = false) })
+        compose.runOnIdle { api.job = accepted }
+        tapImportAction("Check import status")
+        compose.onNodeWithText("0 of 2 subscriptions checked").assertIsDisplayed()
+
+        compose.runOnIdle {
+            api.job = accepted.copy(status = "completed", finished = 2, added = 1, failed = 1,
+                items = listOf(accepted.items.first().copy(status = "added"), original.items.last()))
+        }
+        // The open progress screen polls until this retry finishes.
+        compose.waitUntil(15_000) { compose.onAllNodesWithText("Retry failed").fetchSemanticsNodes().isNotEmpty() }
+        tapImportAction("Retry failed")
+        compose.onNodeWithText("0 of 1 subscriptions checked").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(listOf("original", "accepted"), api.retries.map { it.jobId })
+            assertNotEquals(api.retries.first().requestId, api.retries.last().requestId)
+            assertEquals(listOf("Publication"), api.job!!.items.map { it.title })
+        }
+    }
+
+    @Test fun statusStillShowsOriginalJobAndRetryReusesUnconfirmedRequest() {
+        val original = retryWithLostResponse()
+        tapImportAction("Check import status")
+        compose.onNodeWithText("Check import status").assertDoesNotExist()
+        tapImportAction("Retry failed")
+        compose.onNodeWithText("0 of 2 subscriptions checked").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(2, api.retries.size)
+            val (first, second) = api.retries
+            assertEquals(original.id, first.jobId)
+            assertTrue(first.requestId.isNotBlank())
+            assertEquals(first, second)
+        }
+    }
+
     @Test fun reviewRemainsUsableAtLargeTextInDarkMode() {
         api.job = api.review
         scenario!!.onActivity { activity ->

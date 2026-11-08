@@ -34,12 +34,14 @@ interface VoiceHost {
     suspend fun apply(response: VoiceResponse, token: String, revision: Int): Boolean
 }
 enum class VoicePhase { Idle, Preparing, Listening, Thinking, Speaking, Consent }
+data class VoiceConsent(val transcript: String, val sessionRevision: Int, val turn: Int)
+
 data class VoiceSessionState(val visible: Boolean = false, val phase: VoicePhase = VoicePhase.Idle,
     val turns: List<ConversationTurn> = emptyList(), val heard: String = "", val reply: String = "",
     val error: String? = null, val recoverable: Boolean = false, val launchListening: String? = null,
     val recoveryRequests: List<VoiceRequest> = emptyList(), val clarification: VoiceClarification? = null,
     /** Opened to review unfinished requests, rather than to speak. Only then are they listed. */
-    val reviewing: Boolean = false) {
+    val reviewing: Boolean = false, val consentPrompt: VoiceConsent? = null) {
     val busy: Boolean get() = phase in setOf(VoicePhase.Preparing, VoicePhase.Listening, VoicePhase.Thinking, VoicePhase.Speaking)
 }
 
@@ -57,7 +59,6 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
     private var version = 0
     private var accountKey: String? = null
     private var viewedId: Int? = null
-    private var deferredTranscript: String? = null
     private data class Turn(val token: String, val version: Int, var acquired: Boolean = false,
         var resume: Boolean = true, var safeToResume: Boolean = true, var operation: VoiceOperation? = null)
     private var turn: Turn? = null
@@ -67,7 +68,7 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         val key = "${account.revision}:${account.owner}:${account.live}"
         if (key == accountKey) return
         close(resume = false)
-        accountKey = key; conversation.activate(key); deferredTranscript = null
+        accountKey = key; conversation.activate(key)
         mutable.value = VoiceSessionState()
     }
     /** Opening to speak is itself the request to listen, as on iOS. Reviewing unfinished requests is a
@@ -123,10 +124,15 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
     fun retry() = start("try again", autoFollowUp = false)
     fun retryRequest(id: String) = start("try again", autoFollowUp = false, recoveryId = id)
     fun dismissRequest(id: String) = start("dismiss request", autoFollowUp = false, dismissId = id)
-    fun allowAI() { deferredTranscript?.let { start(it, autoFollowUp = false, allowConsent = true) } }
-    fun declineAI() {
-        deferredTranscript = null
-        mutable.update { it.copy(phase = VoicePhase.Idle, heard = "", error = "AI data sharing is off. Playback and sleep commands still work on this device.") }
+    private fun currentConsent(prompt: VoiceConsent) = state.value.phase == VoicePhase.Consent &&
+        state.value.consentPrompt == prompt && prompt.turn == version && prompt.sessionRevision == host.account().revision
+
+    fun allowAI(prompt: VoiceConsent) {
+        if (currentConsent(prompt)) start(prompt.transcript, autoFollowUp = false, consent = prompt)
+    }
+    fun declineAI(prompt: VoiceConsent) {
+        if (!currentConsent(prompt)) return
+        mutable.update { it.copy(phase = VoicePhase.Idle, consentPrompt = null, heard = "", error = "AI data sharing is off. Playback and sleep commands still work on this device.") }
     }
     fun playbackChanged(token: String?) {
         val active = turn ?: return
@@ -149,7 +155,7 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         mutable.update { it.copy(visible = false, phase = VoicePhase.Idle, heard = "", reply = "", launchListening = null) }
     }
 
-    private fun start(text: String?, autoFollowUp: Boolean, accessible: Boolean = false, allowConsent: Boolean = false, offerConsent: Boolean = false, recoveryId: String? = null, dismissId: String? = null, selectedOptionId: String? = null) {
+    private fun start(text: String?, autoFollowUp: Boolean, accessible: Boolean = false, consent: VoiceConsent? = null, offerConsent: Boolean = false, recoveryId: String? = null, dismissId: String? = null, selectedOptionId: String? = null) {
         if (!state.value.visible) return
         if (text != null && text.length > 2_000) {
             mutable.update { it.copy(error = "Please ask in a shorter sentence.") }; return
@@ -159,11 +165,12 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
         turn?.operation?.let { operation -> scope.launch { runCatching { operation.cancel() } } }
         previous?.cancel()
         val id = ++version
-        mutable.update { it.copy(phase = VoicePhase.Preparing, error = null, heard = "", reply = "", launchListening = null) }
+        mutable.update { it.copy(phase = VoicePhase.Preparing, consentPrompt = null, error = null, heard = "", reply = "", launchListening = null) }
         job = scope.launch {
             previous?.join()
             if (id != version) return@launch
             val account = host.account()
+            if (consent != null && consent.sessionRevision != account.revision) { activate(); return@launch }
             val active = Turn(UUID.randomUUID().toString(), id)
             fun beginAttempt() = runCatching { telemetry.begin(account, accessible, conversation.turns.size) }.getOrNull()
             var attempt = if (text == null) beginAttempt() else null
@@ -174,7 +181,7 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
             try {
                 check(conversation.acquire(active.token)) { "Magpie is already handling a request. Let it finish and try again." }
                 host.begin(active.token, account.revision); active.acquired = true; checkTurn()
-                if (allowConsent) { host.allowAI(); checkTurn(); deferredTranscript = null }
+                if (consent != null) { host.allowAI(); checkTurn() }
                 if (dismissId != null) {
                     val owner = checkNotNull(account.owner)
                     conversation.restore(owner); checkTurn()
@@ -251,8 +258,7 @@ class VoiceSession(private val scope: CoroutineScope, private val host: VoiceHos
                             checkTurn()
                             attempt?.outcome = VoiceOutcome.ConsentRequired
                             if (offerConsent) {
-                                deferredTranscript = heard
-                                mutable.update { it.copy(phase = VoicePhase.Consent) }; break
+                                mutable.update { it.copy(phase = VoicePhase.Consent, consentPrompt = VoiceConsent(heard, account.revision, id)) }; break
                             }
                             // As on iOS: say why, without interrupting with a permission prompt; the
                             // sheet offers "Enable other voice requests".

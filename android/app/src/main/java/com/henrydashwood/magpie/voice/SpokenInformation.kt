@@ -30,7 +30,10 @@ class SpokenInformation(private val scope: CoroutineScope, private val host: Voi
                 if (!host.valid(id, account.revision)) throw CancellationException("Playback changed")
                 output.speak(text)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { report(failure.message ?: "The address could not be read aloud. Please try again.") }
+            catch (failure: Exception) {
+                if (isActive && host.account().revision == account.revision)
+                    report(failure.message ?: "The address could not be read aloud. Please try again.")
+            }
             finally {
                 if (acquired) withContext(NonCancellable) { withTimeoutOrNull(5_000) { runCatching { host.end(id, resume) } } }
                 conversation.release(id)
@@ -38,6 +41,14 @@ class SpokenInformation(private val scope: CoroutineScope, private val host: Voi
             }
         }
     }
-    fun stop(resume: Boolean = true) { this.resume = resume; job?.cancel() }
+    fun stop(resume: Boolean = true) {
+        this.resume = this.resume && resume
+        job?.cancel()
+        if (!acquired) {
+            // Cancellation before launch never enters the coroutine's finally block.
+            token = null
+            mutable.value = false
+        }
+    }
     fun playbackChanged(held: String?) { if (acquired && token != held) stop(resume = false) }
 }

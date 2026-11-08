@@ -668,6 +668,69 @@ struct ArticleDocumentTests {
         #expect(scrollWidth ?? .infinity <= clientWidth ?? 0)
     }
 
+    @Test(arguments: [false, true])
+    func readingCollapsedDetailsRevealsTheSpokenText(nested: Bool) async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 700), configuration: configuration)
+        let passage = "<p>We subtract publication from expiration.</p>"
+        let inner = nested ? "<details><summary>Method</summary>\(passage)</details>" : passage
+        let waiter = ArticleWebViewLoadWaiter()
+        await waiter.load(ArticleDocument.page(body: ArticleDocument.articleBody(
+            "<p>Opening prose.</p><details><summary>How we calculate these durations</summary>"
+                + inner + "</details><p>Following prose.</p>"), pointSize: 20), in: webView)
+        try await ArticleReadingMarkerScript.install(in: webView)
+        let speech = "Opening prose. How we calculate these durations "
+            + (nested ? "Method " : "") + "We subtract publication from expiration. Following prose."
+        _ = try await webView.callAsyncJavaScript(
+            "return globalThis.hearfulArticleMarker.configure(text);",
+            arguments: ["text": speech], in: nil, contentWorld: ArticleReadingMarkerScript.world)
+
+        // Reading the summary should preserve the listener's collapsed section.
+        let summary = (speech as NSString).range(of: "calculate")
+        _ = try await webView.callAsyncJavaScript(
+            "return globalThis.hearfulArticleMarker.rectForRange(location, length);",
+            arguments: ["location": summary.location, "length": summary.length],
+            in: nil, contentWorld: ArticleReadingMarkerScript.world)
+        let initiallyClosed = try await webView.callAsyncJavaScript(
+            "return !document.querySelector('details').open;", arguments: [:],
+            in: nil, contentWorld: ArticleReadingMarkerScript.world)
+        #expect(initiallyClosed as? Bool == true)
+
+        let word = (speech as NSString).range(of: "publication")
+        let result = try await webView.callAsyncJavaScript(
+            """
+            const marker = globalThis.hearfulArticleMarker.rectForRange(location, length);
+            return { marker, open: Array.from(document.querySelectorAll('details')).every(d => d.open),
+              paragraphTop: document.querySelector('details p').getBoundingClientRect().top };
+            """,
+            arguments: ["location": word.location, "length": word.length],
+            in: nil, contentWorld: ArticleReadingMarkerScript.world) as? [String: Any]
+        let marker = result?["marker"] as? [String: Any]
+        #expect(result?["open"] as? Bool == true)
+        #expect((marker?["height"] as? NSNumber)?.doubleValue ?? 0 > 0)
+        #expect((marker?["top"] as? NSNumber)?.doubleValue ?? 0 >=
+            (result?["paragraphTop"] as? NSNumber)?.doubleValue ?? .infinity)
+    }
+
+    @Test func theMarkerRejectsTextWithoutVisibleGeometry() async throws {
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let waiter = ArticleWebViewLoadWaiter()
+        await waiter.load(ArticleDocument.page(body: ArticleDocument.articleBody(
+            "<p>Before.</p><p hidden>Invisible passage.</p><p>After.</p>"),
+            pointSize: 20), in: webView)
+        try await ArticleReadingMarkerScript.install(in: webView)
+        _ = try await webView.callAsyncJavaScript(
+            "return globalThis.hearfulArticleMarker.configure(text);",
+            arguments: ["text": "Before. Invisible passage. After."],
+            in: nil, contentWorld: ArticleReadingMarkerScript.world)
+        let isMissing = try await webView.callAsyncJavaScript(
+            "return globalThis.hearfulArticleMarker.rectForRange(8, 9) === null;",
+            arguments: [:], in: nil, contentWorld: ArticleReadingMarkerScript.world)
+        #expect(isMissing as? Bool == true)
+    }
+
     @Test func theIsolatedBridgeFindsAWordWhilePageJavaScriptIsDisabled() async throws {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false

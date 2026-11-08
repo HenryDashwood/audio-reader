@@ -9,6 +9,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.*
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.media3.session.MediaController
@@ -203,6 +204,25 @@ class VoiceConversationTest {
         // As on iOS, the exchange ends but the sheet stays open.
         compose.waitUntil(5_000) { !model.player.value.playing && model.voice.state.value.phase == VoicePhase.Idle }
         assertTrue(api.requests.isEmpty())
+    }
+
+    @Test fun voiceConsentFromThePreviousSessionCannotEnableSharing() {
+        api.allowed = false
+        compose.onNodeWithContentDescription("Ask Magpie").performClick()
+        compose.onNodeWithText("Enable other voice requests").performClick()
+        compose.onNodeWithContentDescription("Allow AI data sharing").performSemanticsAction(SemanticsActions.OnClick) { confirm ->
+            runBlocking { library.changeSession("two") }
+            confirm()
+        }
+        compose.onNodeWithText("Use AI for voice and web search?").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(0, api.grants); assertFalse(api.allowed) }
+        if (!model.voice.state.value.visible) compose.onNodeWithContentDescription("Ask Magpie").performClick()
+        compose.onNodeWithText("Enable other voice requests").performClick()
+        compose.onNodeWithContentDescription("Allow AI data sharing").performSemanticsAction(SemanticsActions.OnClick) { confirm ->
+            confirm(); confirm()
+        }
+        compose.waitUntil(5_000) { api.grants == 1 }
+        compose.runOnIdle { assertTrue(api.allowed); assertEquals(1, api.grants) }
     }
 
     @Test fun explicitConsentAndViewedEpisodeReachTheExistingRequestContract() {

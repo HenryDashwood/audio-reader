@@ -31,6 +31,11 @@ nonisolated struct PDFUploadInbox: Sendable {
         var errorDescription: String? { if case .message(let message) = self { message } else { nil } }
     }
 
+    func save(_ data: Data, filename: String, reviewedBy account: CaptureInbox.Account?,
+              captureInbox: CaptureInbox = .shared) throws -> Pending {
+        try save(data, filename: filename, account: captureInbox.accountForShare(reviewedBy: account))
+    }
+
     func save(_ data: Data, filename: String, account: CaptureInbox.Account) throws -> Pending {
         guard let directory, data.count <= Self.maxBytes else { throw CaptureInbox.InboxError.tooLarge }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -61,8 +66,12 @@ nonisolated struct PDFUploadInbox: Sendable {
         }
     }
 
-    func upload(_ item: Pending) async throws {
-        guard let credentials = CaptureSessionStore.read(), credentials.account == item.account,
+    func upload(
+        _ item: Pending,
+        session: @Sendable () -> CaptureSessionStore.Session? = { CaptureSessionStore.read() },
+        send: CaptureUploader.Transport = CaptureUploader.send
+    ) async throws {
+        guard let credentials = session(), credentials.account == item.account,
               let directory else { throw CaptureUploader.Failure.signIn }
         let data = try Self.readFile(directory.appendingPathComponent("pdf-\(item.id).pdf"))
         var url = URLComponents(url: item.account.server.appendingPathComponent("documents/file"), resolvingAgainstBaseURL: false)!
@@ -73,14 +82,15 @@ nonisolated struct PDFUploadInbox: Sendable {
         request.timeoutInterval = 90
         request.setValue("application/pdf", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(credentials.token)", forHTTPHeaderField: "Authorization")
-        let (body, response) = try await CaptureUploader.send(request)
-        guard CaptureSessionStore.read() == credentials else { throw CaptureUploader.Failure.changedAccount }
+        let (body, response) = try await send(request)
         guard response.statusCode == 202 else {
+            guard session() == credentials else { throw CaptureUploader.Failure.changedAccount }
             let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
             throw Failure.message(object?["detail"] as? String ?? "Could not upload the PDF. It is kept on this device for retry.")
         }
         struct Receipt: Decodable { let document_id: String; let document_status: String }
         _ = try JSONDecoder().decode(Receipt.self, from: body)
+        // This receipt acknowledges the original owner’s queued file, even after an account switch.
         try remove(item)
     }
 }

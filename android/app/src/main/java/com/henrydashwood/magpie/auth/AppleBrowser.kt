@@ -13,7 +13,9 @@ import java.util.Base64
 data class AppleBrowserStart(val state: String, val authorizationUrl: String, val expiresIn: Int)
 data class AppleBrowserResult(val status: String, val auth: AccountLogin? = null, val providers: Set<String>? = null)
 data class ApplePending(val state: String, val verifier: String, val authorizationUrl: String,
-    val expiresAt: Long, val sessionHash: String?)
+    val expiresAt: Long, val sessionHash: String?) {
+    val attemptId: String get() = AppleBrowserProof.challenge(verifier)
+}
 
 interface ApplePendingStore {
     fun read(): ApplePending?

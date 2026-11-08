@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 
@@ -134,6 +135,123 @@ struct SleepTimerTests {
         timer.fire()
 
         #expect(!recorder.events.contains(.cue(.finished)))
+    }
+
+    enum BufferingPoint: CaseIterable { case startup, midEpisode }
+
+    @Test(arguments: BufferingPoint.allCases)
+    func expiryCancelsBufferedPodcastPlayback(at point: BufferingPoint) async throws {
+        let file = try silentAudio(seconds: 90)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let engine = AVPlayer()
+        let audio = AudioPlayer(defaults: .standard, player: engine, activateAudioSession: {}, progressScope: { nil })
+        audio.localFile = { _ in nil }
+        let player = PlaybackCoordinator(audio: audio, article: ArticlePlayer())
+        let recorder = Recorder()
+        let timer = SleepTimer(player: player, feedback: FakeFeedback(recorder))
+        let episode = Episode(id: 8721, title: "Podcast", description: nil, audioURL: file,
+                              durationSeconds: 90, publishedAt: nil, link: nil)
+        defer { player.pause() }
+        timer.start(minutes: 30)
+        try player.play(episode)
+        if point == .midEpisode {
+            try await waitFor("Podcast clock to advance") { player.isPlaying && engine.currentTime().seconds > 0.2 }
+        }
+
+        // Withhold the item to exercise AVPlayer's waiting state without a network server.
+        let item = try #require(engine.currentItem)
+        engine.replaceCurrentItem(with: nil)
+        try await waitFor("Podcast to enter buffering") { engine.timeControlStatus == .waitingToPlayAtSpecifiedRate && !player.isPlaying }
+        timer.fire()
+        engine.replaceCurrentItem(with: item)
+        try await waitFor("Restored item to become ready") { item.status == .readyToPlay }
+
+        #expect(!timer.isRunning)
+        #expect(engine.rate == 0)
+        #expect(engine.timeControlStatus == .paused)
+        #expect(!player.isPlaying)
+        #expect(!recorder.events.contains(.cue(.finished)))
+
+        player.resume()
+        try await waitFor("Podcast to resume after Play") { player.isPlaying }
+    }
+
+    enum ArticlePreparationStage: CaseIterable { case loadingText, renderingFirstSentence }
+
+    @Test(.serialized, arguments: ArticlePreparationStage.allCases)
+    func expiryKeepsArticleAtSavedPassageUntilPlay(during stage: ArticlePreparationStage) async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let api = FakeAPI()
+        let passage = "Saved passage begins here."
+        let text = String(repeating: "earlier words ", count: 12) + "\n\n" + passage
+        api.articleText = text
+        let savedChunk = try #require(ArticleScript(text: text).chunks.last)
+        let gate = ControlledDelay()
+        defer { gate.elapse() }
+        let output = NaturalVoiceAudioOutput()
+        var rendered: [String] = []
+        let synth = NaturalVoiceSynthesizer(
+            folder: directory, voice: NaturalVoice(id: "bf_emma"), output: output,
+            renderSentence: { sentence, offset in
+                if stage == .renderingFirstSentence { try await gate.wait(for: .seconds(30)) }
+                rendered.append(sentence)
+                // Silent audio with two timed words drives the real output clock and reading marker.
+                // Keep the second word playing while a busy simulator schedules assertions.
+                let sampleCount = 24_000 * 60
+                let audio = NaturalVoiceEngine.Sentence(samples: Array(repeating: 0, count: sampleCount), words: [
+                    .init(characters: 0..<5, samples: 0..<12_000),
+                    .init(characters: 6..<13, samples: 12_000..<sampleCount),
+                ])
+                return [(audio, offset)]
+            })
+        let article = ArticlePlayer(
+            api: api, cache: OfflineCache(directory: directory), synthesizer: synth,
+            defaults: try #require(UserDefaults(suiteName: UUID().uuidString)),
+            progressScope: { nil }, activateAudioSession: {})
+        defer { article.clear() }
+        if stage == .loadingText {
+            // The load reconciles pending progress before fetching the article text.
+            article.progressDrain = { try? await gate.wait(for: .seconds(30)) }
+        }
+        let player = PlaybackCoordinator(audio: AudioPlayer(), article: article)
+        let recorder = Recorder()
+        let timer = SleepTimer(player: player, feedback: FakeFeedback(recorder))
+        timer.start(minutes: 30)
+        try player.play(Episode(
+            id: 9785, title: "Article", description: nil, audioURL: nil, durationSeconds: nil,
+            publishedAt: nil, link: nil, positionSeconds: savedChunk.start, hasText: true))
+        try await waitFor("Article preparation to reach the held step") { gate.pendingCount == 1 }
+        let marker = article.spokenLocation?.rangeInArticle
+        #expect(player.currentTime == savedChunk.start)
+        timer.fire()
+        gate.elapse()
+        await article.waitForPendingLoad()
+        if stage == .renderingFirstSentence {
+            try await waitFor("First sentence to finish rendering") { rendered == [passage] }
+            #expect(synth.isPaused)
+        } else {
+            #expect(rendered.isEmpty)
+        }
+        #expect(!timer.isRunning)
+        #expect(recorder.events.contains(.cue(.finished)) == (stage == .renderingFirstSentence))
+        #expect(!player.isPlaying && !output.isExpectingSound)
+        #expect(output.position == 0 && player.currentTime == savedChunk.start)
+        #expect(article.spokenLocation?.rangeInArticle == marker)
+
+        player.toggle()
+        try await waitFor("Narration to reach the second word after Play") { output.position > 12_000 && player.currentTime > savedChunk.start }
+        #expect(player.isPlaying)
+        #expect(rendered == [passage])
+        #expect(article.spokenLocation?.rangeInArticle.location == savedChunk.textRange.location + 6)
+    }
+
+    private func waitFor(_ description: String, _ condition: () -> Bool) async throws {
+        for _ in 0..<250 {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try #require(condition(), "\(description)")
     }
 
     @Test func durationsAreSpokenAsWords() {

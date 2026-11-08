@@ -2,6 +2,8 @@ package com.henrydashwood.magpie.data
 
 import com.henrydashwood.magpie.ui.readBytesBounded
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
@@ -20,8 +22,16 @@ class SubscriptionImportTest {
         var gate: CompletableDeferred<ImportJob>? = null
         var failStart = false
         val calls = mutableListOf<Triple<String, String?, Set<Int>?>>()
-        override suspend fun currentImport() = job
-        override suspend fun previewImport(bytes: ByteArray) = gate?.await() ?: draft()
+        var statusGate: CompletableDeferred<Unit>? = null
+        val previews = mutableListOf<List<Byte>>()
+        override suspend fun currentImport(): ImportJob? {
+            withContext(NonCancellable) { statusGate?.await() }
+            return job
+        }
+        override suspend fun previewImport(bytes: ByteArray): ImportJob {
+            previews += bytes.toList()
+            return gate?.await() ?: draft()
+        }
         override suspend fun mutateImport(id: String, action: String, requestId: String?, entries: Set<Int>?): ImportJob {
             calls += Triple(action, requestId, entries)
             if (failStart) { failStart = false; throw IOException() }
@@ -45,6 +55,23 @@ class SubscriptionImportTest {
         model.start(); runCurrent()
         assertEquals(repo.calls[0], repo.calls[1])
         assertFalse(model.state.value.uncertain)
+    }
+    @Test fun selectedFileIsReviewedWhenForegroundStatusCheckFinishesLate() = runTest {
+        val repo = Repository().apply { job = null }
+        val model = SubscriptionImportController(this, repo)
+        model.open()
+        runCurrent()
+        repo.statusGate = CompletableDeferred()
+        model.refresh()
+        runCurrent()
+        val bytes = "<opml/>".toByteArray()
+        model.preview(bytes)
+        runCurrent()
+        repo.statusGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(listOf(bytes.toList()), repo.previews)
+        assertEquals(draft(), model.state.value.job)
+        assertEquals(setOf(7), model.state.value.selected)
     }
     @Test fun accountChangeDiscardsLateFileResponse() = runTest {
         val gate = CompletableDeferred<ImportJob>()

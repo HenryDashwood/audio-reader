@@ -96,8 +96,10 @@ struct VoiceAttemptTests {
 private final class TelemetryAPI: HearfulAPIProtocol, @unchecked Sendable {
     var sent: [[String: any Sendable]] = []
     var failNext = false
+    var beforeSend: ((String?) async throws -> Void)?
 
     func reportVoiceAttempt(_ event: [String: any Sendable], traceparent: String? = nil) async throws {
+        try await beforeSend?(traceparent)
         if failNext { throw APIError(underlying: "offline") }
         sent.append(event)
     }
@@ -183,6 +185,73 @@ struct TelemetryReporterTests {
 
         // Both the queued one and the new one.
         #expect(api.sent.count == 2)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func overlappingReportersReplayTheOfflineAttemptOnceAndKeepTheLaterFailure() async throws {
+        let api = TelemetryAPI()
+        let file = store()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let first = TelemetryReporter(api: api, store: file)
+        let reopened = TelemetryReporter(api: api, store: file)
+        api.failNext = true
+        first.report(VoiceAttempt())
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: file.path) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(FileManager.default.fileExists(atPath: file.path))
+        api.failNext = false
+        let newer = VoiceAttempt()
+        let newerTrace = newer.traceparent().split(separator: "-")[1]
+        var traces: [Substring] = []
+        var release: CheckedContinuation<Void, Never>?
+        api.beforeSend = { header in
+            let trace = try #require(header?.split(separator: "-")[1])
+            traces.append(trace)
+            if traces.count == 1 { await withCheckedContinuation { release = $0 } }
+            if trace == newerTrace { throw APIError(underlying: "offline") }
+        }
+        first.report(VoiceAttempt())
+        for _ in 0..<100 where release == nil { try await Task.sleep(for: .milliseconds(10)) }
+        let paused = try #require(release)
+        reopened.report(newer)
+        await Task.yield()
+        paused.resume()
+        for _ in 0..<100 where api.sent.count < 2 || !traces.contains(newerTrace) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(traces.count == 3)
+        #expect(Set(traces).count == 3)
+        let data = try Data(contentsOf: file)
+        let queued = try #require(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        #expect(queued.compactMap { ($0["traceparent"] as? String)?.split(separator: "-")[1] } == [newerTrace])
+    }
+
+    @Test func clearingQueueDuringSendDiscardsLateFailureAndWaitingReports() async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "voice-attempts-test.json")
+        let api = TelemetryAPI()
+        let reporter = TelemetryReporter(api: api, store: file)
+        var release: CheckedContinuation<Void, Never>?
+        var calls = 0
+        var returned = false
+        api.beforeSend = { _ in
+            calls += 1
+            if calls == 1 { await withCheckedContinuation { release = $0 } }
+            returned = true
+            throw APIError(underlying: "offline")
+        }
+        reporter.report(VoiceAttempt())
+        for _ in 0..<100 where release == nil { try await Task.sleep(for: .milliseconds(10)) }
+        let paused = try #require(release)
+        reporter.report(VoiceAttempt())
+        TelemetryReporter.clearStoredQueues(in: directory)
+        paused.resume()
+        for _ in 0..<100 where !returned { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(returned)
+        #expect(calls == 1)
         #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 

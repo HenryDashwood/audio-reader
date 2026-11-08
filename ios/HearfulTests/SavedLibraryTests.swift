@@ -18,6 +18,10 @@ private actor SavedLibraryTransport: DataTransport {
 
     init(episode: Episode) { rows = [episode] }
     func setCompleted(_ value: Bool) { rows[0].completed = value }
+    func acceptReplacement(_ updated: Episode) {
+        rows = [updated]
+        replacementSucceeds = true
+    }
     func failDeletion() { rejectDeletion = true }
     func holdReplacement(succeeds: Bool) { suspendReplacement = true; replacementSucceeds = succeeds }
     func releaseReplacement() { replacement?.resume(); replacement = nil }
@@ -52,7 +56,7 @@ private actor SavedLibraryTransport: DataTransport {
             if textOffline { throw URLError(.notConnectedToInternet) }
             status = textStatus
             data = status == 200
-                ? try JSONEncoder().encode(EpisodeText(episodeID: wrongTextVersion ? 99 : 42, title: "Saved article", text: "The complete saved article."))
+                ? try JSONEncoder().encode(EpisodeText(episodeID: wrongTextVersion ? 99 : 42, contentID: rows.first?.contentID, title: "Saved article", text: "The complete saved article."))
                 : Data(#"{"detail":{"spoken_response":"Download unavailable."}}"#.utf8)
         } else {
             data = try JSONEncoder().encode(rows)
@@ -70,13 +74,49 @@ struct SavedLibraryTests {
                 hasText: false, captureError: "The site refused the request.")
     }
 
-    private func setup(_ directory: URL, transport: SavedLibraryTransport) throws -> (SavedLibrary, CaptureInbox, OfflineCache) {
+    private func setup(_ directory: URL, transport: SavedLibraryTransport, announce: @escaping (String) -> Void = { _ in }) throws -> (SavedLibrary, CaptureInbox, OfflineCache) {
         let inbox = CaptureInbox(directory: directory.appending(path: "inbox"))
         try inbox.configure(.init(userID: "first", server: server))
         let cache = OfflineCache(directory: directory.appending(path: "cache"))
         let model = SavedLibrary(api: HearfulAPI(baseURL: server, transport: transport),
-                                 inbox: inbox, cache: cache, isSignedIn: { true })
+                                 inbox: inbox, cache: cache, isSignedIn: { true }, announce: announce)
         return (model, inbox, cache)
+    }
+
+    @Test func closedLinkFormCannotSaveTheReplacementDraft() throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let inbox = CaptureInbox(directory: directory)
+        let first = CaptureInbox.Account(userID: "first", server: URL(string: "https://example.invalid")!)
+        let second = CaptureInbox.Account(userID: "second", server: first.server)
+        try inbox.configure(first)
+        var draft = SavedLinkDraft()
+        draft.open(account: first, scope: "first-session")
+        draft.address = "https://example.invalid/first"
+        let original = try #require(draft.form)
+        draft.form = nil
+        draft.open(account: first, scope: "first-session")
+        #expect(draft.address == "https://example.invalid/first")
+        let closedSave = draft.save(original, scope: "first-session", inbox: inbox)
+        #expect(!closedSave)
+        let reopened = try #require(draft.form)
+
+        try inbox.configure(second)
+        let accountChangedSave = draft.save(reopened, scope: "second-session", inbox: inbox)
+        #expect(!accountChangedSave)
+        draft.open(account: second, scope: "second-session")
+        #expect(draft.address.isEmpty)
+        draft.address = "https://example.invalid/second"
+        let replacement = try #require(draft.form)
+        draft.edit("https://example.invalid/stale", in: reopened, scope: "second-session")
+        let lateSave = draft.save(reopened, scope: "second-session", inbox: inbox)
+        #expect(!lateSave)
+        #expect(inbox.pending(for: first).isEmpty && inbox.pending(for: second).isEmpty)
+        let freshSave = draft.save(replacement, scope: "second-session", inbox: inbox)
+        #expect(freshSave)
+        let duplicateSave = draft.save(replacement, scope: "second-session", inbox: inbox)
+        #expect(!duplicateSave)
+        #expect(inbox.pending(for: second).map(\.url.absoluteString) == ["https://example.invalid/second"])
     }
 
     @Test func refreshMovesBrowserResavedArticleOutOfFinishedEvenWithCachedFinishedCopy() async throws {
@@ -93,6 +133,37 @@ struct SavedLibraryTests {
         #expect(model.episodes.map(\.id) == [finished.id])
         #expect(model.episodes.first?.completed == false)
         #expect(cache.load([Episode].self, for: .savedArticles)?.first?.completed == false)
+    }
+
+    @Test func oldAccountsFailedPDFRetryCannotRestoreItsRowOrErrorAfterSwitch() async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let inbox = CaptureInbox(directory: directory.appending(path: "inbox"))
+        let account = CaptureInbox.Account(userID: "first", server: server)
+        try inbox.configure(account)
+        let pdfInbox = PDFUploadInbox(directory: inbox.directory)
+        let pdf = try pdfInbox.save(Data("%PDF-1.4".utf8), filename: "First account.pdf", account: account)
+        let transport = SavedLibraryTransport(episode: episode)
+        var reply: CheckedContinuation<Void, Never>?
+        let model = SavedLibrary(api: HearfulAPI(baseURL: server, transport: transport), inbox: inbox,
+                                 cache: OfflineCache(directory: directory.appending(path: "cache")),
+                                 isSignedIn: { true }, uploadPDF: { _, _ in
+            await withCheckedContinuation { reply = $0 }
+            throw URLError(.notConnectedToInternet)
+        })
+        let oldLoad = Task { await model.load() }
+        for _ in 0..<1000 where reply == nil { await Task.yield() }
+        let finishUpload = try #require(reply)
+        model.clear()
+        try inbox.configure(.init(userID: "second", server: server))
+        await model.load()
+        let secondAccountRequests = await transport.requests
+        finishUpload.resume()
+        await oldLoad.value
+        #expect(model.pendingPDFs.isEmpty)
+        #expect(model.error == nil)
+        #expect(await transport.requests == secondAccountRequests)
+        #expect(pdfInbox.pending(for: account).map(\.id) == [pdf.id])
     }
 
     @Test func readerLinkIsPersistedBeforeAnyNetworkPreparation() throws {
@@ -277,6 +348,55 @@ extension SavedLibraryTests {
         #expect(!model.needsRetry)
         #expect(cache.article(episodeID: 42)?.text == "The complete saved article.")
         #expect(await transport.requests.filter { $0 == "POST /saved" }.count == 1)
+    }
+
+    @Test func replacingSavedTextRequiresTheOriginalReviewAndAccount() async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transport = SavedLibraryTransport(episode: episode)
+        let (model, inbox, _) = try setup(directory, transport: transport)
+        let cancelled = try #require(model.reviewReplacement(episode))
+        model.cancelReplacement(cancelled)
+        let reopened = try #require(model.reviewReplacement(episode))
+        await model.replace(cancelled)
+        try inbox.configure(.init(userID: "second", server: server))
+        await model.replace(reopened)
+        let fresh = try #require(model.reviewReplacement(episode))
+        model.cancelReplacement(reopened)
+        await model.replace(reopened)
+        #expect(await transport.requests.isEmpty)
+        await model.replace(fresh)
+        await model.replace(fresh)
+        #expect(await transport.requests == ["POST /saved/replace"])
+    }
+
+    @Test func acceptedReplacementWithInterruptedDownloadRetriesOnlyTheNewText() async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var original = episode
+        original.contentID = 10
+        original.hasText = true
+        original.captureError = nil
+        let transport = SavedLibraryTransport(episode: original)
+        var announcements: [String] = []
+        let (model, _, cache) = try setup(directory, transport: transport) { announcements.append($0) }
+        await model.load()
+        #expect(model.availability(original) == .available)
+        var updated = original
+        updated.contentID = 11
+        await transport.acceptReplacement(updated)
+        await transport.setText(offline: true)
+        let review = try #require(model.reviewReplacement(original))
+        await model.replace(review)
+        #expect(model.episodes.first?.contentID == 11)
+        #expect(model.availability(updated) == .waiting)
+        #expect(cache.article(episodeID: 42, contentID: 11) == nil)
+        #expect(announcements == ["Saved text replaced: Saved article. Waiting to download for offline reading."])
+        await transport.setText()
+        await model.download(updated)
+        #expect(model.availability(updated) == .available)
+        #expect(cache.article(episodeID: 42, contentID: 11)?.contentID == 11)
+        #expect(await transport.requests.filter { $0 == "POST /saved/replace" }.count == 1)
     }
 
     @Test(arguments: [403, 404, 422, 200])

@@ -348,6 +348,7 @@ class AccountLibraryTest {
         var saves = 0
         var filings = 0
         var positions = 0
+        var textOffline = false
         var texts = 0
         var latestRows = listOf(RemoteEpisode(1, "Episode", source = "Same title", feedUrl = "https://one.example/feed", audioUrl = "https://one.example/audio.mp3", positionSeconds = 42.5))
         var savedRows = listOf(RemoteEpisode(2, "Saved article", contentId = 7))
@@ -372,6 +373,7 @@ class AccountLibraryTest {
         }
         override suspend fun text(token: String, episodeId: Int, contentId: Int?): RemoteText {
             texts++; requestedContent = contentId
+            if (textOffline) throw IOException()
             val version = this.contentId
             textGate?.await()
             return RemoteText(episodeId, version, "Full saved text", "<p>Full saved text</p>", 3)
@@ -465,6 +467,26 @@ class AccountLibraryTest {
         library.search("1", "")
         assertEquals(8, library.state.value.items.first { it.id == old.id }.contentId)
     }
+    @Test fun offlineReadAfterReplacementRetriesTheNewVersionWithoutReplacingAgain() = runTest {
+        val api = Api()
+        val library = AccountLibrary(api, "server")
+        library.changeSession("alice")
+        val old = library.content(library.state.value.savedIds.single())
+        assertTrue(old.textLoaded)
+        val updated = library.prepareSaved(old, true, library.state.value.revision)
+        api.textOffline = true
+        assertTrue(runCatching { library.content(updated.id) }.exceptionOrNull() is IOException)
+        val offline = library.state.value.items.single { it.id == updated.id }
+        assertEquals(8, offline.contentId)
+        assertFalse(offline.textLoaded)
+        assertTrue(offline.text.isEmpty())
+        api.textOffline = false
+        val recovered = library.content(updated.id)
+        assertEquals(8, api.requestedContent)
+        assertTrue(recovered.textLoaded)
+        assertEquals(8, api.contentId) // Each accepted replacement creates another version.
+    }
+
     @Test fun lateTextReplyCannotRestoreVersionReplacedWhileLoading() = runTest {
         val api = Api(); val library = AccountLibrary(api, "server"); library.changeSession("alice")
         val old = library.state.value.items.first { it.id in library.state.value.savedIds }
@@ -515,7 +537,12 @@ class AccountLibraryTest {
     @Test fun accountsAndServersUseSeparateItemAndBookmarkNamespaces() = runTest {
         val api = Api(); val library = AccountLibrary(api, "one")
         library.changeSession("alice"); val alice = library.state.value.items.first()
+        val firstOwner = library.state.value.owner
+        assertTrue(library.ownsSession(firstOwner, "alice"))
+        assertFalse(library.ownsSession(firstOwner, "bob"))
         library.changeSession("bob")
+        assertFalse(library.ownsSession(firstOwner, "bob"))
+        assertTrue(library.ownsSession(library.state.value.owner, "bob"))
         assertNotEquals(alice.id, library.state.value.items.first().id)
         assertTrue(runCatching { library.save(alice) }.isFailure)
         assertEquals(0, api.saves)
@@ -698,6 +725,33 @@ class AccountLibraryTest {
         library.changeSourceGroup("1", "2", SourceChange.Combine, before.revision)
         assertFalse(library.state.value.feeds.any { it.id == "2" }); assertNotNull(library.state.value.error)
     }
+    @Test fun aLateFullShowResponseCannotReplaceTheCurrentEpisodeSearch() = runTest {
+        for (fail in listOf(false, true)) {
+            val release = CompletableDeferred<Unit>()
+            val api = object : LibraryApi by Api() {
+                override suspend fun episodes(token: String, feedId: String, query: String): List<RemoteEpisode> {
+                    if (query.isNotEmpty()) return listOf(RemoteEpisode(99, "Krakatoa"))
+                    release.await()
+                    if (fail) throw IOException("Offline")
+                    return listOf(RemoteEpisode(1, "Recent episode"))
+                }
+            }
+            val library = AccountLibrary(api, "server")
+            library.changeSession("alice")
+            val initial = launch { library.search("1", "") }
+            runCurrent()
+            library.search("1", "krakatoa")
+            release.complete(Unit)
+            initial.join()
+
+            val state = library.state.value
+            val row = state.items.single { it.id == state.feedResults.single() }
+            assertEquals(99, row.episodeId)
+            assertNull(state.error)
+            assertFalse(state.searching)
+        }
+    }
+
     @Test fun lateSourceWritesCannotRestoreAnOldAccountOrOldSearchResults() = runTest {
         val api = Api().apply { changeGate = CompletableDeferred() }; val library = AccountLibrary(api, "server"); library.changeSession("alice")
         val revision = library.state.value.revision

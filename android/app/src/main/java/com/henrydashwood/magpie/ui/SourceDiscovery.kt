@@ -72,12 +72,13 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, o
                 }
                 if (state.loading || state.following) LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "Loading sources" })
                 LazyColumn(Modifier.fillMaxSize().testTag("source-discovery-list"), contentPadding = PaddingValues(bottom = 24.dp)) {
-                    if (state.error != null && !state.askingConsent) item {
+                    if (state.error != null && state.consentPrompt == null) item {
                         Column(Modifier.padding(16.dp)) {
                             Text(state.error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                             if (!state.following) TextButton(onClick = controller::retry, enabled = !state.loading) { Text("Try again") }
-                            if (SourceDiscovery.isAddress(state.query) && state.selected == null && !state.loading && !state.following)
-                                Button(onClick = controller::signUpByEmail) { Text("Sign up by email") }
+                            val offer = state.signupOffer
+                            if (offer != null && state.selected == null && !state.loading && !state.following)
+                                Button(onClick = { controller.signUpByEmail(offer) }) { Text("Sign up by email") }
                         }
                     }
                     val preview = state.preview
@@ -196,7 +197,9 @@ fun SourceDiscoveryDialog(model: MagpieModel, openItem: (LibraryItem) -> Unit, o
             }
         }
     }
-    if (state.askingConsent) AIConsentDialog(state.loading, state.error, controller::allowAI, controller::declineAI)
+    state.consentPrompt?.let { prompt ->
+        AIConsentDialog(state.loading, state.error, { controller.allowAI(prompt) }, { controller.declineAI(prompt) })
+    }
 }
 
 @Composable
@@ -301,7 +304,9 @@ fun AISharingSettings(model: MagpieModel) {
     var busy by remember(library.revision) { mutableStateOf(false) }
     var showing by remember(library.revision) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val revision = library.revision
     suspend fun load() {
+        if (busy || model.libraryState.value.revision != revision) return
         busy = true
         try { allowed = model.aiConsent(); error = null }
         catch (cancelled: CancellationException) { throw cancelled }
@@ -309,13 +314,20 @@ fun AISharingSettings(model: MagpieModel) {
         finally { busy = false }
     }
     LaunchedEffect(library.revision) { if (library.live) load() }
-    fun save(value: Boolean) { scope.launch {
-        busy = true; error = null
-        try { allowed = model.setAIConsent(value); showing = false }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { error = AccountLibrary.message(failure) }
-        finally { busy = false }
-    } }
+    fun save(value: Boolean) {
+        if (busy || allowed == value || model.libraryState.value.revision != revision) return
+        busy = true
+        error = null
+        scope.launch {
+            try {
+                if (model.libraryState.value.revision != revision) return@launch
+                allowed = model.setAIConsent(value)
+                showing = false
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { error = AccountLibrary.message(failure) }
+            finally { busy = false }
+        }
+    }
     var confirmingOff by remember(library.revision) { mutableStateOf(false) }
     // As on iOS: one action, whichever applies, and turning it off asks first.
     Column {

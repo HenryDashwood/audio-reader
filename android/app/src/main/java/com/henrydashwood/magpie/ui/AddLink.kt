@@ -20,20 +20,20 @@ import java.net.URI
 @Composable
 fun AddLinkButton(model: MagpieModel, onSaved: () -> Unit) {
     val library by model.libraryState.collectAsStateWithLifecycle()
-    val capture by model.linkCapture.collectAsStateWithLifecycle()
+    val capture = model.linkCapture.collectAsStateWithLifecycle().value
     LaunchedEffect(capture.savedUrl) {
         if (capture.savedUrl != null) { onSaved(); model.acknowledgeSavedLink() }
     }
     IconButton(onClick = model::beginLinkCapture) { Icon(Icons.Rounded.Add, "Add link") }
     AddressCaptureDialog(capture, "Add link", "Web address", "https://example.com/article",
         if (library.live) "The link is kept on this device for your account until Magpie can save and prepare it." else "The link is saved in this device’s sample inbox. It is kept separate from account libraries.",
-        model::closeLinkCapture, model::editLink, model::saveLink)
+        { model.closeLinkCapture(capture.form) }, { model.editLink(capture.form, it) }, { model.saveLink(capture.form) })
 }
 
 @Composable
 fun AddSourceButton(model: MagpieModel, openItem: (com.henrydashwood.magpie.data.LibraryItem) -> Unit, openSource: (String) -> Unit = {}, onSaved: () -> Unit) {
     val library by model.libraryState.collectAsStateWithLifecycle()
-    val capture by model.sourceCapture.collectAsStateWithLifecycle()
+    val capture = model.sourceCapture.collectAsStateWithLifecycle().value
     LaunchedEffect(capture.savedUrl) {
         if (capture.savedUrl != null) { onSaved(); model.acknowledgeSavedSource() }
     }
@@ -42,7 +42,7 @@ fun AddSourceButton(model: MagpieModel, openItem: (com.henrydashwood.magpie.data
 
     AddressCaptureDialog(capture, "Add sources", "Feed or website address", "https://example.com/feed.xml",
         "The address is saved on this device. Finding feeds, searching by name, and subscribing will be available when your account is connected.",
-        model::closeSourceCapture, model::editSource, model::saveSource)
+        { model.closeSourceCapture(capture.form) }, { model.editSource(capture.form, it) }, { model.saveSource(capture.form) })
 }
 
 @Composable

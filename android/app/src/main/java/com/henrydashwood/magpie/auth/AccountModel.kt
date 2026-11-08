@@ -17,17 +17,18 @@ class AccountModel(application: Application) : AndroidViewModel(application) {
     private val session = (application as com.henrydashwood.magpie.MagpieApplication).accounts
     val state = session.state
     init { if (appleConfigured) {
-        if (state.value.applePending) resumeApple() else refresh()
+        val attempt = state.value.appleAttempt
+        if (attempt != null) resumeApple(attempt) else refresh()
     } }
-    fun apple(context: Context, link: Boolean) {
-        if (!appleConfigured || state.value.busy) return
+    fun apple(context: Context, expectedSession: String?) {
+        if (!appleConfigured || state.value.busy || expectedSession != state.value.sessionId) return
         appleJob = viewModelScope.launch {
-            session.signInApple(link) { openAppleBrowser(context, it) }
+            session.signInApple(expectedSession) { openAppleBrowser(context, it) }
             if (state.value.signedIn && state.value.error == null) session.refresh()
         }
     }
-    fun resumeApple() {
-        if (!state.value.applePending) return
+    fun resumeApple(attempt: String) {
+        if (attempt != state.value.appleAttempt) return
         val previous = appleJob
         if (state.value.busy && previous?.isActive != true) return
         appleJob = viewModelScope.launch {
@@ -35,15 +36,22 @@ class AccountModel(application: Application) : AndroidViewModel(application) {
             // is still unwinding, recover after it finishes instead of dropping
             // the browser-return event while busy.
             previous?.join()
-            session.resumeApple()
+            if (attempt != state.value.appleAttempt) return@launch
+            session.resumeApple(attempt)
             if (state.value.signedIn && state.value.error == null) session.refresh()
         }
     }
-    fun reopenApple(context: Context) { session.reopenApple { openAppleBrowser(context, it) } }
-    fun cancelApple() { appleJob?.cancel(); viewModelScope.launch { session.cancelApple() } }
+    fun reopenApple(context: Context, attempt: String) { session.reopenApple(attempt) { openAppleBrowser(context, it) } }
+    fun cancelApple(attempt: String) {
+        if (state.value.appleAttempt != attempt) return
+        appleJob?.cancel()
+        viewModelScope.launch { session.cancelApple(attempt) }
+    }
     fun refresh() { viewModelScope.launch { session.refresh() } }
     fun signIn(context: Context) { if (configured) viewModelScope.launch { session.signInGoogle { google.identityToken(context) } } }
-    fun link(context: Context) { if (configured) viewModelScope.launch { session.linkGoogle { google.identityToken(context) } } }
-    fun signOut() { viewModelScope.launch { session.signOut(); google.clear() } }
-    fun delete() { viewModelScope.launch { session.delete(); if (!state.value.signedIn) google.clear() } }
+    fun link(context: Context, expectedSession: String) { if (configured) viewModelScope.launch { session.linkGoogle(expectedSession) { google.identityToken(context) } } }
+    fun signOut(expectedSession: String) {
+        viewModelScope.launch { if (session.signOut(expectedSession)) google.clear() }
+    }
+    fun delete(confirmedSession: String) { viewModelScope.launch { session.delete(confirmedSession); if (!state.value.signedIn) google.clear() } }
 }

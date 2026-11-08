@@ -38,10 +38,12 @@ import com.henrydashwood.magpie.ui.MagpieTheme
 class ShareActivity : ComponentActivity() {
     private val model by lazy { ViewModelProvider(this)[ShareModel::class.java] }
     private var pdfIntent by mutableStateOf<Intent?>(null)
+    private var delivery by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        delivery = savedInstanceState?.getInt("share_delivery") ?: 0
         pdfIntent = intent.takeIf { it.type == "application/pdf" }
         if (pdfIntent == null) model.receive(intent, savedInstanceState?.getBoolean("saved") == true, capture = capturing(intent))
         setContent { MagpieTheme {
@@ -49,7 +51,7 @@ class ShareActivity : ComponentActivity() {
             if (incoming != null) {
                 val uri = androidx.core.content.IntentCompat.getParcelableExtra(incoming, Intent.EXTRA_STREAM, android.net.Uri::class.java)
                     ?: incoming.clipData?.takeIf { it.itemCount == 1 }?.getItemAt(0)?.uri
-                key(incoming) {
+                key(delivery) {
                     com.henrydashwood.magpie.ui.PDFImportDialog(initialUri = uri, onClose = ::finish)
                 }
             } else ShareScreen(model, ::finish, ::openMagpie)
@@ -57,12 +59,14 @@ class ShareActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
+        delivery++
         pdfIntent = intent.takeIf { it.type == "application/pdf" }
         if (pdfIntent == null) model.receive(intent, fresh = true, capture = capturing(intent))
     }
     override fun onSaveInstanceState(outState: Bundle) {
         // Never put page HTML in the activity bundle. After process death, an unconfirmed
         // browser preview returns to the original share for fresh review.
+        outState.putInt("share_delivery", delivery)
         outState.putBoolean("saved", model.state.value.saved)
         super.onSaveInstanceState(outState)
     }

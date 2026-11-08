@@ -10,12 +10,17 @@ import kotlinx.coroutines.launch
 import java.net.URI
 import java.text.Normalizer
 
+data class DiscoveryConsent(val sessionRevision: Int, val request: Int)
+
+data class NewsletterSignupOffer(val url: String, val sessionRevision: Int, val search: Int)
+
 data class DiscoveryState(val showing: Boolean = false, val query: String = "", val searched: Boolean = false,
     val loading: Boolean = false, val following: Boolean = false, val error: String? = null,
     val sources: List<SourceResult> = emptyList(), val itemIds: List<String> = emptyList(),
     val candidates: List<SourceResult>? = null, val selected: SourceResult? = null,
     val preview: SourcePreview? = null, val web: SourceResult? = null, val webMessage: String? = null,
-    val askingConsent: Boolean = false, val signup: NewsletterSignup? = null)
+    val consentPrompt: DiscoveryConsent? = null, val signup: NewsletterSignup? = null,
+    val signupOffer: NewsletterSignupOffer? = null)
 
 /** What typed search lists from the directories, once what she follows or another source listed is gone. */
 data class DirectoryResults(val publications: List<SourceResult> = emptyList(), val podcasts: List<SourceResult> = emptyList(),
@@ -38,7 +43,10 @@ class SourceDiscovery(private val scope: CoroutineScope, private val repository:
         mutable.value = DiscoveryState(showing = true, query = query.take(8192))
         if (query.trim().length >= 2 && !isAddress(query)) search(350)
     }
-    fun submit() { if (isAddress(state.value.query)) findFeeds() else search(0) }
+    fun submit() {
+        if (state.value.following) return
+        if (isAddress(state.value.query)) findFeeds() else search(0)
+    }
     private fun search(debounce: Long) {
         val query = state.value.query.trim().take(200)
         if (query.length < 2) return
@@ -50,9 +58,12 @@ class SourceDiscovery(private val scope: CoroutineScope, private val repository:
         }
     }
     private fun findFeeds() = request {
-        mutable.value = state.value.copy(loading = true, error = null, candidates = null, signup = null)
-        val results = repository.discoverSources(address(state.value.query))
-        update { it.copy(candidates = results, searched = true,
+        mutable.value = state.value.copy(loading = true, error = null, candidates = null, signup = null, signupOffer = null)
+        val url = address(state.value.query)
+        val offer = NewsletterSignupOffer(url, session, version)
+        update { it.copy(signupOffer = offer) }
+        val results = repository.discoverSources(url)
+        update { it.copy(candidates = results, searched = true, signupOffer = offer.takeIf { results.isEmpty() },
             error = if (results.isEmpty()) "Magpie reached that site, but it did not advertise a readable feed." else null) }
         if (results.size == 1 && active()) loadPreview(results.single())
     }
@@ -66,20 +77,22 @@ class SourceDiscovery(private val scope: CoroutineScope, private val repository:
         if (state.value.following) return
         generation++; job?.cancel()
         mutable.value = state.value.copy(selected = null, preview = null, candidates = if (state.value.selected == null) null else state.value.candidates,
-            loading = false, error = null, askingConsent = false)
+            loading = false, error = null, consentPrompt = null)
     }
     fun retry() {
+        if (state.value.following) return
         val selected = state.value.selected
         if (selected != null) select(selected) else submit()
     }
-    fun signUpByEmail() {
-        if (state.value.following || state.value.loading || !isAddress(state.value.query)) return
+    fun signUpByEmail(offer: NewsletterSignupOffer) {
+        val current = state.value
+        if (offer != current.signupOffer || offer.sessionRevision != repository.sessionRevision ||
+            current.following || current.loading || current.error == null) return
         val newsletters = repository as? NewsletterRepository ?: return
-        val url = runCatching { address(state.value.query) }.getOrNull() ?: return
+        mutable.value = current.copy(following = true, error = null)
         request {
-            update { it.copy(following = true, error = null, signup = null) }
-            val result = newsletters.signUpForNewsletter(url)
-            update { it.copy(signup = result, candidates = null, selected = null, preview = null) }
+            val result = newsletters.signUpForNewsletter(offer.url)
+            update { it.copy(signup = result, signupOffer = null, candidates = null, selected = null, preview = null) }
         }
     }
     fun follow() {
@@ -102,30 +115,35 @@ class SourceDiscovery(private val scope: CoroutineScope, private val repository:
     }
     fun searchWeb() = request {
         update { it.copy(loading = true, webMessage = null, error = null) }
-        if (!repository.aiConsent()) update { it.copy(askingConsent = true) }
+        if (!repository.aiConsent()) update { it.copy(consentPrompt = DiscoveryConsent(session, version)) }
         else lookupWeb()
     }
-    fun allowAI() = request {
-        update { it.copy(loading = true, error = null) }
-        check(repository.setAIConsent(true)) { "Your choice could not be saved. Please try again." }
-        update { it.copy(askingConsent = false) }
-        lookupWeb()
+    fun allowAI(prompt: DiscoveryConsent) {
+        if (prompt != state.value.consentPrompt || prompt.sessionRevision != repository.sessionRevision || state.value.loading) return
+        mutable.value = state.value.copy(loading = true, error = null)
+        request {
+            check(repository.setAIConsent(true)) { "Your choice could not be saved. Please try again." }
+            update { it.copy(consentPrompt = null) }
+            lookupWeb()
+        }
     }
-    fun declineAI() { generation++; job?.cancel(); mutable.value = state.value.copy(askingConsent = false, loading = false, error = null) }
+    fun declineAI(prompt: DiscoveryConsent) {
+        if (prompt != state.value.consentPrompt || prompt.sessionRevision != repository.sessionRevision) return
+        generation++; job?.cancel(); mutable.value = state.value.copy(consentPrompt = null, loading = false, error = null) }
     private suspend fun Request.lookupWeb() {
         if (!active()) return
         val result = repository.findPublication(state.value.query.trim().take(200))
         update { it.copy(web = result, webMessage = if (result == null) "No matching publication was found on the web." else null) }
     }
-    private inner class Request(val version: Int) {
-        fun active() = version == generation
+    private inner class Request(val version: Int, val session: Int) {
+        fun active() = version == generation && session == repository.sessionRevision
         fun update(transform: (DiscoveryState) -> DiscoveryState) { if (active()) mutable.value = transform(state.value) }
     }
     private fun request(work: suspend Request.() -> Unit) {
         generation++; job?.cancel()
-        val request = Request(generation)
+        val request = Request(generation, repository.sessionRevision)
         job = scope.launch {
-            try { request.work() }
+            try { if (request.active()) request.work() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { request.update { it.copy(error = AccountLibrary.message(failure)) } }
             finally { request.update { it.copy(loading = false, following = false) } }

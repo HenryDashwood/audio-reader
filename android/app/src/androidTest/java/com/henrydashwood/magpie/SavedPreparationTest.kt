@@ -5,6 +5,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.lifecycle.ViewModelProvider
@@ -35,6 +36,7 @@ class SavedPreparationTest {
         var offline = false
         var unchanged = false
         var writes = 0
+        val capturedLinks = java.util.concurrent.CopyOnWriteArrayList<Pair<String, String>>()
         var row = RemoteEpisode(2, "Saved article", link = "https://example.com/article", contentId = 7, wordCount = 200)
         var rows = listOf(row)
         override suspend fun userId(token: String) = token
@@ -54,6 +56,7 @@ class SavedPreparationTest {
         override suspend fun subscribe(token: String, url: String) = LibraryFeed("1", "Feed", 0, true)
         override suspend fun position(token: String, episodeId: Int, seconds: Double, completed: Boolean) {}
         override suspend fun capture(token: String, article: PendingArticle): RemoteEpisode {
+            capturedLinks += token to article.url
             writes++; if (offline) throw IOException()
             return row.copy(id = 3, title = "Queued article", link = article.url).also { rows = rows + it }
         }
@@ -95,6 +98,31 @@ class SavedPreparationTest {
         compose.onNodeWithText("Replace saved text").performClick()
     }
     private fun awaitIdle() { compose.waitUntil(10_000) { !model.savedPreparation.state.value.busy } }
+    @Test fun savingAnOldLinkAsTheAccountChangesLeavesBothInboxesUntouched() {
+        val firstOwner = checkNotNull(library.state.value.owner)
+        val original = "https://example.org/alice/${UUID.randomUUID()}"
+        val replacement = "https://example.org/robin/${UUID.randomUUID()}"
+        compose.onNodeWithContentDescription("Add link").performClick()
+        compose.onNodeWithText("Web address").performTextInput(original)
+        compose.onNodeWithText("Save").performSemanticsAction(SemanticsActions.OnClick) { click ->
+            runBlocking { library.changeSession("robin") }
+            click()
+        }
+        val secondOwner = checkNotNull(library.state.value.owner)
+        compose.waitUntil(10_000) { model.savedPreparation.state.value.owner == secondOwner && !model.savedPreparation.state.value.busy }
+        compose.onNodeWithText("Web address").assertDoesNotExist()
+        runBlocking {
+            assertTrue(app.articleInbox.pending(firstOwner).none { it.url == original })
+            assertTrue(app.articleInbox.pending(secondOwner).none { it.url == original })
+        }
+        compose.runOnIdle { assertTrue(api.capturedLinks.isEmpty()) }
+        compose.onNodeWithContentDescription("Add link").performClick()
+        compose.onNodeWithText("Web address").performTextInput(replacement)
+        compose.onNodeWithText("Save").performClick()
+        compose.waitUntil(10_000) { api.capturedLinks.any { it.second == replacement } && !model.savedPreparation.state.value.busy }
+        compose.runOnIdle { assertEquals(listOf("robin" to replacement), api.capturedLinks) }
+    }
+
     @Test fun offlineLinkSurvivesRecreationAndSyncsOnlyAfterSuccess() {
         api.offline = true
         compose.onNodeWithContentDescription("Add link").performClick()

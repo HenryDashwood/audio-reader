@@ -16,7 +16,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import com.henrydashwood.magpie.playback.VoiceCatalog
 import com.henrydashwood.magpie.playback.NaturalVoice
-import com.henrydashwood.magpie.playback.NaturalVoiceDownload
 import com.henrydashwood.magpie.playback.NaturalVoicePreview
 import kotlinx.coroutines.Job
 import com.henrydashwood.magpie.data.LibraryItem
@@ -55,7 +54,19 @@ data class PlayerState(
 data class DownloadPrompt(val title: String, val message: String, val confirmation: com.henrydashwood.magpie.data.DownloadConfirmation? = null)
 
 data class ListeningSettings(val podcastSpeed: Float, val articleSpeed: Float, val voiceId: String?, val naturalVoice: String? = null)
-data class LinkCaptureState(val showing: Boolean = false, val url: String = "", val saving: Boolean = false, val error: String? = null, val savedUrl: String? = null)
+// Each opening has its own identity, including two drafts on the same account.
+class AddressForm(val revision: Int)
+
+data class LinkCaptureState(val showing: Boolean = false, val url: String = "", val saving: Boolean = false,
+    val error: String? = null, val savedUrl: String? = null, val form: AddressForm? = null) {
+    fun open(revision: Int): LinkCaptureState {
+        if (showing && form?.revision == revision) return this
+        val draft = if (form?.revision == revision) this else LinkCaptureState()
+        return draft.copy(showing = true, form = AddressForm(revision), error = null)
+    }
+    fun accepts(expected: AddressForm?, revision: Int) =
+        expected != null && expected == form && expected.revision == revision && showing && !saving
+}
 
 class MagpieModel(application: Application) : AndroidViewModel(application) {
     private val repository = (application as MagpieApplication).library
@@ -387,12 +398,13 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         contentJob?.cancel()
         mutableItemError.value = null
         if (!libraryState.value.live || item.textLoaded) { if (play) playReady(item, resumeLoadedArticle = true); return }
+        val playRequestedAtMs = android.os.SystemClock.elapsedRealtime()
         mutableItemLoading.value = item.id
         contentJob = viewModelScope.launch {
             try {
                 if (item.captureError != null && item.id in saved.value) repository.prepareSaved(item, false, libraryState.value.revision)
                 val loaded = repository.content(item.id)
-                if (play) playReady(loaded, resumeLoadedArticle = true)
+                if (play) playReady(loaded, resumeLoadedArticle = true, playRequestedAtMs = playRequestedAtMs)
             }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { mutableItemError.value = com.henrydashwood.magpie.data.AccountLibrary.message(failure) }
@@ -400,7 +412,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun play(item: LibraryItem) = openItem(item, play = true)
-    private fun playReady(item: LibraryItem, resumeLoadedArticle: Boolean = false) {
+    private fun playReady(item: LibraryItem, resumeLoadedArticle: Boolean = false, playRequestedAtMs: Long? = null) {
         if (library.none { it.id == item.id }) return
         voiceCatalog.stop()
         val media = controller
@@ -409,6 +421,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         val result = media.sendCustomCommand(SessionCommand(PlaybackService.PLAY_ITEM, Bundle.EMPTY), Bundle().apply {
             putString("id", item.id)
             putBoolean(PlaybackService.RESUME_LOADED_ARTICLE, resumeLoadedArticle)
+            playRequestedAtMs?.let { putLong(PlaybackService.PLAY_REQUESTED_AT_MS, it) }
         })
         result.addListener({
             try { if (result.get().resultCode < 0) mutableNotice.value = "The player could not open this item. Please try again." }
@@ -455,7 +468,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     fun stopVoicePreview() { voiceCatalog.stop(); naturalPreview.stop(); naturalPreviewJob?.cancel() }
     fun closeVoiceSettings() { voiceRefresh?.cancel(); voiceCatalog.close(); stopVoicePreview() }
 
-    private val naturalDownload = NaturalVoiceDownload.get(application)
+    private val naturalDownload = (application as MagpieApplication).naturalVoiceDownload
     val naturalVoice = naturalDownload.state
     private val naturalPreview = NaturalVoicePreview(application)
     private var naturalPreviewJob: Job? = null
@@ -539,17 +552,17 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     }
     fun dismissNotice() { mutableNotice.value = null }
 
-    fun clearLatest() {
-        if (mutableClearingLatest.value) return
+    fun clearLatest(revision: Int) {
+        if (revision != libraryState.value.revision || mutableClearingLatest.value) return
         mutableClearingLatest.value = true
         mutableClearLatestError.value = null
         val currentIds = library.map { it.id }.toSet()
-        val revision = libraryState.value.revision
         viewModelScope.launch {
             try {
+                if (revision != libraryState.value.revision) return@launch
                 if (libraryState.value.live) repository.clearLatest()
                 else mutableDismissedFromLatest.value = withContext(Dispatchers.IO) { store.dismissFromLatest(currentIds) }
-                mutableNotice.value = "Latest cleared"
+                if (revision == libraryState.value.revision) mutableNotice.value = "Latest cleared"
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { if (revision == libraryState.value.revision) mutableClearLatestError.value = "Latest could not be cleared. Please try again." }
             finally { if (revision == libraryState.value.revision) mutableClearingLatest.value = false }
@@ -557,16 +570,21 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
     }
     fun dismissClearLatestError() { mutableClearLatestError.value = null }
 
-    fun beginLinkCapture() { mutableLinkCapture.update { it.copy(showing = true, error = null) } }
-    fun closeLinkCapture() { mutableLinkCapture.update { if (it.saving) it else it.copy(showing = false) } }
-    fun editLink(url: String) { mutableLinkCapture.update { if (it.saving) it else it.copy(url = url, error = null) } }
+    fun beginLinkCapture() { mutableLinkCapture.update { it.open(libraryState.value.revision) } }
+    fun closeLinkCapture(form: AddressForm? = mutableLinkCapture.value.form) {
+        mutableLinkCapture.update { if (it.accepts(form, libraryState.value.revision)) it.copy(showing = false) else it }
+    }
+    fun editLink(form: AddressForm?, url: String) {
+        mutableLinkCapture.update { if (it.accepts(form, libraryState.value.revision)) it.copy(url = url, error = null) else it }
+    }
     fun acknowledgeSavedLink() { mutableLinkCapture.update { it.copy(savedUrl = null) } }
-    fun saveLink() {
+    fun saveLink(form: AddressForm?) {
         val capture = mutableLinkCapture.value
-        if (capture.saving) return
-        mutableLinkCapture.value = capture.copy(saving = true, error = null)
         val revision = libraryState.value.revision
+        if (!capture.accepts(form, revision)) return
+        mutableLinkCapture.value = capture.copy(saving = true, error = null)
         viewModelScope.launch {
+            if (revision != libraryState.value.revision || mutableLinkCapture.value.form != form) return@launch
             try {
                 if (libraryState.value.live) {
                     savedPreparation.add(capture.url)
@@ -575,6 +593,7 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 val added = withContext(Dispatchers.IO) { inbox.add(capture.url) }
+                if (revision != libraryState.value.revision) return@launch
                 mutablePendingLinks.value = inbox.links()
                 mutableDeviceLinks.value = inbox.links()
                 mutableLinkCapture.value = LinkCaptureState(savedUrl = capture.url)
@@ -637,24 +656,31 @@ class MagpieModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun beginSourceCapture() { mutableSourceCapture.update { it.copy(showing = true, error = null) } }
-    fun closeSourceCapture() { mutableSourceCapture.update { if (it.saving) it else it.copy(showing = false) } }
-    fun editSource(url: String) { mutableSourceCapture.update { if (it.saving) it else it.copy(url = url, error = null) } }
+    fun beginSourceCapture() { mutableSourceCapture.update { it.open(libraryState.value.revision) } }
+    fun closeSourceCapture(form: AddressForm? = mutableSourceCapture.value.form) {
+        mutableSourceCapture.update { if (it.accepts(form, libraryState.value.revision)) it.copy(showing = false) else it }
+    }
+    fun editSource(form: AddressForm?, url: String) {
+        mutableSourceCapture.update { if (it.accepts(form, libraryState.value.revision)) it.copy(url = url, error = null) else it }
+    }
     fun acknowledgeSavedSource() { mutableSourceCapture.update { it.copy(savedUrl = null) } }
-    fun saveSource() {
+    fun saveSource(form: AddressForm?) {
         val capture = mutableSourceCapture.value
-        if (capture.saving) return
-        mutableSourceCapture.value = capture.copy(saving = true, error = null)
         val revision = libraryState.value.revision
+        if (!capture.accepts(form, revision)) return
+        mutableSourceCapture.value = capture.copy(saving = true, error = null)
         viewModelScope.launch {
+            if (revision != libraryState.value.revision || mutableSourceCapture.value.form != form) return@launch
             try {
                 if (libraryState.value.live) {
                     repository.subscribe(capture.url.trim())
+                    if (revision != libraryState.value.revision) return@launch
                     mutableSourceCapture.value = LinkCaptureState(savedUrl = capture.url)
                     mutableNotice.value = "Added to Following"
                     return@launch
                 }
                 val added = withContext(Dispatchers.IO) { sourceInbox.add(capture.url) }
+                if (revision != libraryState.value.revision) return@launch
                 mutablePendingSources.value = sourceInbox.links()
                 mutableSourceCapture.value = LinkCaptureState(savedUrl = capture.url)
                 mutableNotice.value = if (added) "Feed address saved on this device" else "This feed address is already saved on this device"

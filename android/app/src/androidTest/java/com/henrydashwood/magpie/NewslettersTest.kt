@@ -7,6 +7,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.*
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
@@ -131,6 +132,28 @@ class NewslettersTest {
         compose.onNodeWithTag("newsletter-address").assertDoesNotExist()
         assertNull(model.newsletters.state.value.address)
     }
+    @Test fun signupFromTheOldAccountCannotSubmitOrRevealAnAddressForTheNewOne() {
+        fun offer(site: String) {
+            compose.onNodeWithContentDescription("Add sources").performClick()
+            compose.onNodeWithTag("source-query").performTextInput(site)
+            compose.onNodeWithText("Open podcast or feed").performClick()
+            compose.waitUntil(10_000) { model.discovery.state.value.error != null }
+        }
+        offer("https://first.example")
+        compose.onNodeWithText("Sign up by email").performSemanticsAction(SemanticsActions.OnClick) { click ->
+            runBlocking { library.changeSession("robin") }
+            click()
+        }
+        compose.runOnIdle { assertEquals(0, api.signups) }
+        compose.onNodeWithText("Needs signing up by hand").assertDoesNotExist()
+        offer("https://second.example")
+        compose.onNodeWithText("Sign up by email").performSemanticsAction(SemanticsActions.OnClick) { click ->
+            click(); click()
+        }
+        compose.onNodeWithText("quiet-robin@magpie.example").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(1, api.signups) }
+    }
+
     @Test fun failedFeedDiscoveryOffersExplicitEmailSignupAndManualAddressCopy() {
         compose.onNodeWithContentDescription("Add sources").performClick()
         compose.onNodeWithTag("source-query").performTextInput("https://publisher.example")

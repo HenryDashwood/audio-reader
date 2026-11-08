@@ -51,15 +51,17 @@ data class ImportState(val showing: Boolean = false, val busy: Boolean = false, 
 class SubscriptionImportController(private val scope: CoroutineScope, private val repository: SubscriptionImportRepository) {
     private val mutable = MutableStateFlow(ImportState())
     val state = mutable.asStateFlow()
+    private enum class Operation { STATUS, PREVIEW, CHANGE }
+    private var operation: Operation? = null
     private var generation = 0
     private var work: Job? = null
     private var pendingStart: Triple<String, String, Set<Int>>? = null
     private var pendingRetry: Pair<String, String>? = null
-    fun invalidate() { generation++; work?.cancel(); pendingStart = null; pendingRetry = null; mutable.value = ImportState() }
+    fun invalidate() { generation++; work?.cancel(); operation = null; pendingStart = null; pendingRetry = null; mutable.value = ImportState() }
     fun open() { if (repository.importSession == null) return; mutable.value = mutable.value.copy(showing = true); refresh() }
     fun close() { mutable.value = mutable.value.copy(showing = false) }
-    fun refresh() = perform { repository.currentImport() }
-    fun preview(bytes: ByteArray) { if (pendingStart == null) perform { repository.previewImport(bytes) } }
+    fun refresh() = perform(Operation.STATUS) { repository.currentImport() }
+    fun preview(bytes: ByteArray) { if (pendingStart == null) perform(Operation.PREVIEW) { repository.previewImport(bytes) } }
     fun chooseAnother() { if (!state.value.busy && pendingStart == null) mutable.value = ImportState(showing = true) }
     fun fileError() { mutable.value = state.value.copy(error = "This file couldn't be opened. Choose an OPML file smaller than 5 MiB.") }
     fun select(id: Int, selected: Boolean) { if (state.value.busy || state.value.uncertain) return
@@ -81,10 +83,12 @@ class SubscriptionImportController(private val scope: CoroutineScope, private va
         val pending = pendingRetry ?: (job.id to UUID.randomUUID().toString()).also { pendingRetry = it }
         perform { repository.mutateImport(pending.first, "retry", pending.second, null) }
     }
-    private fun perform(action: suspend () -> ImportJob?) {
-        if (state.value.busy) return
+    private fun perform(next: Operation = Operation.CHANGE, action: suspend () -> ImportJob?) {
+        if (state.value.busy && !(operation == Operation.STATUS && next == Operation.PREVIEW)) return
         val session = repository.importSession ?: return
-        val ticket = generation
+        val ticket = ++generation
+        work?.cancel()
+        operation = next
         mutable.value = state.value.copy(busy = true, error = null)
         work = scope.launch {
             try {
@@ -101,7 +105,10 @@ class SubscriptionImportController(private val scope: CoroutineScope, private va
                 if (ticket == generation && session == repository.importSession)
                     mutable.value = state.value.copy(error = AccountLibrary.message(failure))
             } finally {
-                if (ticket == generation && session == repository.importSession) mutable.value = state.value.copy(busy = false)
+                if (ticket == generation && session == repository.importSession) {
+                    operation = null
+                    mutable.value = state.value.copy(busy = false)
+                }
             }
         }
     }

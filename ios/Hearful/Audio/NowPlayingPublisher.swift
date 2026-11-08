@@ -9,13 +9,18 @@ final class NowPlayingPublisher {
     private var episodeID: Int?
     private var imageURL: URL?
     private var artwork: MPMediaItemArtwork?
-    private var artworkTask: Task<Void, Never>?
+    private(set) var artworkTask: Task<Void, Never>?
     private var artworkGeneration = 0
     private var info: [String: Any]?
 
+    private let loadArtwork: (URL) async throws -> Data
+
     init(publish: @escaping ([String: Any]?) -> Void = {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = $0
+    }, loadArtwork: @escaping (URL) async throws -> Data = {
+        try await URLSession.shared.data(from: $0).0
     }) {
+        self.loadArtwork = loadArtwork
         self.publish = publish
     }
 
@@ -47,8 +52,8 @@ final class NowPlayingPublisher {
     }
 
     private func fetchArtwork(_ url: URL, generation: Int) {
-        artworkTask = Task { [weak self] in
-            guard let (data, _) = try? await URLSession.shared.data(from: url),
+        artworkTask = Task { [weak self, loadArtwork] in
+            guard let data = try? await loadArtwork(url),
                 !Task.isCancelled, let image = UIImage(data: data),
                 let self, self.artworkGeneration == generation,
                 var info = self.info

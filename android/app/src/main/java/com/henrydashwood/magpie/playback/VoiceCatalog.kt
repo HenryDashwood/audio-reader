@@ -21,8 +21,20 @@ import kotlinx.coroutines.flow.update
 data class VoiceOption(val id: String, val label: String, val quality: String)
 data class VoiceCatalogState(val loading: Boolean = false, val voices: List<VoiceOption> = emptyList(), val error: String? = null, val previewing: Boolean = false)
 
+internal fun googleVoiceFocusRequest(attributes: AudioAttributes, listener: AudioManager.OnAudioFocusChangeListener): AudioFocusRequest =
+    AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        .setAudioAttributes(attributes)
+        .setOnAudioFocusChangeListener(listener, Handler(Looper.getMainLooper()))
+        .build()
+
 /** A separate, short-lived TTS client for choosing voices; article playback remains in Media3. */
-class VoiceCatalog(private val context: Context) {
+internal class VoiceCatalog(
+    private val context: Context,
+    private val buildFocusRequest: (AudioAttributes, AudioManager.OnAudioFocusChangeListener) -> AudioFocusRequest =
+        ::googleVoiceFocusRequest,
+    private val setProgressListener: (TextToSpeech, UtteranceProgressListener) -> Unit =
+        { tts, listener -> tts.setOnUtteranceProgressListener(listener) },
+) {
     private val mutableState = MutableStateFlow(VoiceCatalogState())
     val state = mutableState.asStateFlow()
     private var engine: TextToSpeech? = null
@@ -64,15 +76,14 @@ class VoiceCatalog(private val context: Context) {
             SpeechVoices.select(tts, selected)
             val attributes = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
             tts.setAudioAttributes(attributes)
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-                .setAudioAttributes(attributes).setOnAudioFocusChangeListener({ change ->
-                    if (change < 0) stop()
-                }, main).build()
+            val id = UUID.randomUUID().toString()
+            val request = buildFocusRequest(attributes) { change ->
+                if (change < 0 && utterance == id) stop()
+            }
             check(audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { "Audio is in use. Try the voice again when it is free." }
             focus = request
-            val id = UUID.randomUUID().toString()
             utterance = id
-            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            setProgressListener(tts, object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) = Unit
                 override fun onDone(utteranceId: String?) { finish(utteranceId, null) }
                 @Deprecated("Android calls either overload depending on the engine")

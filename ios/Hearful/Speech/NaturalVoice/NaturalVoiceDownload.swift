@@ -8,9 +8,11 @@ nonisolated private let log = Logger(subsystem: "com.henrydashwood.hearful", cat
 
 /// What the download needs from Background Assets, so the coordinator can be tested without Apple's servers.
 nonisolated protocol NaturalVoiceInstalling: Sendable {
+    typealias StatusHandler = @MainActor @Sendable (NaturalVoiceInstallStatus) -> Void
+
     /// The voice's folder, if it's here and complete.
     var installedFolder: URL? { get async }
-    func install(status: @escaping @Sendable (NaturalVoiceInstallStatus) -> Void) async throws
+    func install(status: @escaping StatusHandler) async throws
     func cancelInstall() async
     func remove() async throws
 }
@@ -43,7 +45,7 @@ actor BackgroundNaturalVoiceInstaller: NaturalVoiceInstalling {
 
     var installedFolder: URL? { NaturalVoiceStore.folder }
 
-    func install(status: @escaping @Sendable (NaturalVoiceInstallStatus) -> Void) async throws {
+    func install(status: @escaping StatusHandler) async throws {
         cancellationRequested = false
         activeProgress = nil
         let updates = manager.statusUpdates(forAssetPackWithID: NaturalVoiceStore.assetPackID)
@@ -52,14 +54,14 @@ actor BackgroundNaturalVoiceInstaller: NaturalVoiceInstalling {
                 guard !Task.isCancelled else { return }
                 switch update {
                 case .began:
-                    status(.began)
+                    await status(.began)
                 case .paused:
-                    status(.paused)
+                    await status(.paused)
                 case .downloading(_, let progress):
                     self.track(progress)
-                    status(.downloading(progress.fractionCompleted))
+                    await status(.downloading(progress.fractionCompleted))
                 case .finished:
-                    status(.downloading(1))
+                    await status(.downloading(1))
                     return
                 case .failed:
                     return
@@ -93,7 +95,7 @@ actor BackgroundNaturalVoiceInstaller: NaturalVoiceInstalling {
             log.error("Downloaded voice unusable: vocab.json at \(vocab?.path ?? "nowhere", privacy: .public), missing \(missing?.joined(separator: ", ") ?? "everything", privacy: .public)")
             throw NaturalVoiceInstallError.unusableDownload
         }
-        status(.downloading(1))
+        await status(.downloading(1))
     }
 
     func cancelInstall() {
@@ -146,7 +148,7 @@ final class NaturalVoiceDownload: ObservableObject {
     @Published private(set) var state: State = .checking
 
     private let installer: any NaturalVoiceInstalling
-    private var isActive = false
+    private var activeAttempt: UUID?
     private var cancellationRequested = false
     private var latestProgress = 0.0
 
@@ -155,23 +157,24 @@ final class NaturalVoiceDownload: ObservableObject {
     }
 
     func refresh() async {
-        guard !isActive else { return }  // Settings reopened mid-download: keep showing the transfer
+        guard activeAttempt == nil else { return }  // Settings reopened mid-download: keep showing the transfer
         state = await installedState() ?? .notInstalled
     }
 
     func download() async {
-        guard !isActive else { return }
-        isActive = true
+        guard activeAttempt == nil else { return }
+        let attempt = UUID()
+        activeAttempt = attempt
         cancellationRequested = false
         latestProgress = 0
         state = .waiting
         defer {
-            isActive = false
+            activeAttempt = nil
             cancellationRequested = false
         }
         do {
             try await installer.install { [weak self] status in
-                Task { @MainActor in self?.apply(status) }
+                self?.apply(status, for: attempt)
             }
             if let installed = await installedState() {
                 state = installed
@@ -194,14 +197,14 @@ final class NaturalVoiceDownload: ObservableObject {
     }
 
     func cancel() async {
-        guard isActive else { return }
+        guard activeAttempt != nil else { return }
         cancellationRequested = true
         state = .cancelling(latestProgress)
         await installer.cancelInstall()
     }
 
     func remove() async {
-        guard !isActive else { return }
+        guard activeAttempt == nil else { return }
         NaturalVoiceStore.select(nil)
         NaturalVoiceSynthesizer.releaseEngines()
         do {
@@ -217,8 +220,8 @@ final class NaturalVoiceDownload: ObservableObject {
         return .installed(NaturalVoiceStore.voices(in: folder))
     }
 
-    private func apply(_ status: NaturalVoiceInstallStatus) {
-        guard isActive, !cancellationRequested else { return }
+    private func apply(_ status: NaturalVoiceInstallStatus, for attempt: UUID) {
+        guard activeAttempt == attempt, !cancellationRequested else { return }
         switch status {
         case .began:
             state = .waiting

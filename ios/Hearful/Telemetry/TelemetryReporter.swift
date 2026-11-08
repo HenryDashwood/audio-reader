@@ -23,18 +23,27 @@ protocol TelemetryReporting {
 final class TelemetryReporter: TelemetryReporting {
     private let api: HearfulAPIProtocol
     private let store: URL?
+    private let session: HearfulAPI.RequestSession?
+    private final class Writer {
+        var pending: [() async -> Void] = []
+        var task: Task<Void, Never>?
+    }
+    // Reopening the voice sheet creates a new reporter for the same disk queue.
+    private static var writers: [URL?: Writer] = [:]
+
     /// Small on purpose. This is a record of recent behaviour, not an archive,
     /// and an unbounded queue on a phone that has been offline for a week is a
     /// liability rather than an asset.
     private let queueLimit = 50
 
-    init(api: HearfulAPIProtocol, store: URL?) {
+    init(api: HearfulAPIProtocol, store: URL?, session: HearfulAPI.RequestSession? = nil) {
+        self.session = session
         self.api = api
         self.store = store
     }
 
     convenience init(api: HearfulAPIProtocol, accountID: String?) {
-        self.init(api: api, store: Self.defaultStore(accountID: accountID))
+        self.init(api: api, store: Self.defaultStore(accountID: accountID), session: .init())
     }
 
     func report(_ attempt: VoiceAttempt) {
@@ -45,7 +54,19 @@ final class TelemetryReporter: TelemetryReporting {
             "traceparent": attempt.traceparent(),
             "event": attempt.payload(),
         ]
-        Task { await self.send(queued) }
+        let writer = Self.writers[store] ?? Writer()
+        writer.pending.append { await self.send(queued) }
+        if writer.pending.count > queueLimit { writer.pending.removeFirst() }
+        guard writer.task == nil else { return }
+        Self.writers[store] = writer
+        writer.task = Task { [store] in
+            while !Task.isCancelled, !writer.pending.isEmpty {
+                let next = writer.pending.removeFirst()
+                await next()
+            }
+            if Self.writers[store] === writer { Self.writers.removeValue(forKey: store) }
+            writer.task = nil
+        }
     }
 
     private func send(_ payload: [String: any Sendable]) async {
@@ -53,9 +74,15 @@ final class TelemetryReporter: TelemetryReporting {
         pending.append(payload)
         var undelivered: [[String: any Sendable]] = []
         for entry in pending {
+            guard !Task.isCancelled else { return }
             guard let event = entry["event"] as? [String: any Sendable] else { continue }
             do {
-                try await api.reportVoiceAttempt(event, traceparent: entry["traceparent"] as? String)
+                let trace = entry["traceparent"] as? String
+                if let session {
+                    try await session.perform { try await api.reportVoiceAttempt(event, traceparent: trace) }
+                } else {
+                    try await api.reportVoiceAttempt(event, traceparent: trace)
+                }
             } catch {
                 // Keep it for next time rather than retrying now: she may be
                 // mid-request, and this must never be the slow thing.
@@ -63,6 +90,7 @@ final class TelemetryReporter: TelemetryReporting {
                 undelivered.append(entry)
             }
         }
+        guard !Task.isCancelled else { return }
         save(Array(undelivered.suffix(queueLimit)))
     }
 
@@ -83,11 +111,16 @@ final class TelemetryReporter: TelemetryReporting {
         try? FileManager.default.removeItem(at: directory.appendingPathComponent("voice-attempts.json"))
     }
 
-    static func clearStoredQueues() {
-        guard let directory = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first,
-            let files = try? FileManager.default.contentsOfDirectory(
+    static func clearStoredQueues(
+        in directory: URL? = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    ) {
+        guard let directory else { return }
+        for (store, writer) in writers where store == nil || store?.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path {
+            writer.task?.cancel()
+            writer.pending.removeAll()
+            writers.removeValue(forKey: store)
+        }
+        guard let files = try? FileManager.default.contentsOfDirectory(
                 at: directory, includingPropertiesForKeys: nil)
         else { return }
         for file in files where file.lastPathComponent.hasPrefix("voice-attempts")

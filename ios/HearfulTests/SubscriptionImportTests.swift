@@ -11,16 +11,42 @@ nonisolated private func importJob(_ status: String = "draft", id: String = "rev
             message: "Not supported", selected: false, retryable: false, feedID: nil)])
 }
 
+nonisolated private func retryJob(_ id: String, status: String, rows: [(String, String)]) -> SubscriptionImportJob {
+    let items = rows.enumerated().map { index, row in
+        SubscriptionImportItem(id: index, title: row.0, host: "example.org", status: row.1,
+            message: nil, selected: true, retryable: row.1 == "failed", feedID: nil)
+    }
+    return SubscriptionImportJob(id: id, status: status, duplicates: 0, folders: false, total: items.count,
+        finished: items.filter { $0.status != "pending" }.count, added: items.filter { $0.status == "added" }.count,
+        alreadyFollowing: 0, failed: items.filter { $0.status == "failed" }.count, notImported: 0, items: items)
+}
+
 private actor ImportAPI: SubscriptionImportAPI {
     var starts: [(String, [Int], String)] = []
+    var retries: [(job: String, request: String)] = []
+    private var currentJob = importJob()
+    func report(_ job: SubscriptionImportJob) { currentJob = job }
     var failStart = true
     var previewContinuation: CheckedContinuation<SubscriptionImportJob, Never>?
     var holdPreview = false
     func hold() { holdPreview = true }
     func isWaiting() -> Bool { previewContinuation != nil }
     func resume() { previewContinuation?.resume(returning: importJob()); previewContinuation = nil }
-    func current() async throws -> SubscriptionImportJob? { importJob() }
+    var holdStatus = false
+    var statusContinuation: CheckedContinuation<SubscriptionImportJob?, Never>?
+    var previews: [Data] = []
+    func delayStatus() { holdStatus = true }
+    func waitingForStatus() -> Bool { statusContinuation != nil }
+    func releaseStatus(returning job: SubscriptionImportJob? = nil) {
+        statusContinuation?.resume(returning: job)
+        statusContinuation = nil
+    }
+    func current() async throws -> SubscriptionImportJob? {
+        if holdStatus { return await withCheckedContinuation { statusContinuation = $0 } }
+        return currentJob
+    }
     func preview(_ data: Data) async throws -> SubscriptionImportJob {
+        previews.append(data)
         if holdPreview { return await withCheckedContinuation { previewContinuation = $0 } }
         return importJob()
     }
@@ -30,7 +56,13 @@ private actor ImportAPI: SubscriptionImportAPI {
         return importJob("queued")
     }
     func stop(id: String) async throws -> SubscriptionImportJob { importJob("stopped") }
-    func retry(id: String, requestID: String) async throws -> SubscriptionImportJob { importJob("queued", id: "retry") }
+    func retry(id: String, requestID: String) async throws -> SubscriptionImportJob {
+        retries.append((id, requestID))
+        if retries.count == 1 { throw URLError(.networkConnectionLost) }
+        if id != currentJob.id { return currentJob }  // Replay of the request that created this job.
+        let pending = currentJob.items.filter { $0.retryable && $0.status == "failed" }
+        return retryJob("next", status: "queued", rows: pending.map { ($0.title, "pending") })
+    }
 }
 
 @Suite("Subscription import") @MainActor
@@ -63,6 +95,78 @@ struct SubscriptionImportTests {
         #expect(!model.uncertainStart)
     }
 
+    @Test func checkingStatusFindsAcceptedRetryAndNextRetryTargetsItsRemainingFailure() async throws {
+        let api = ImportAPI()
+        let model = SubscriptionImportModel(api: api)
+        await api.report(retryJob("original", status: "completed", rows: [("Podcast", "failed"), ("Publication", "failed")]))
+        await model.load()
+        await model.retry()
+        #expect(model.error != nil)
+
+        // Check import status discovers the accepted retry. The progress poll later sees its result.
+        await api.report(retryJob("accepted", status: "queued", rows: [("Podcast", "pending"), ("Publication", "pending")]))
+        await model.load()
+        #expect(model.job?.active == true && model.error == nil)
+        await api.report(retryJob("accepted", status: "completed", rows: [("Podcast", "added"), ("Publication", "failed")]))
+        await model.load()
+        await model.retry()
+
+        let calls = await api.retries
+        try #require(calls.count == 2)
+        #expect(calls.map(\.job) == ["original", "accepted"])
+        #expect(calls[0].request != calls[1].request)
+        #expect(model.job?.active == true)
+        #expect(model.job?.items.map(\.title) == ["Publication"])
+    }
+
+    @Test func checkingStatusStillShowsOriginalJobSoRetryReusesUnconfirmedRequest() async throws {
+        let api = ImportAPI()
+        let model = SubscriptionImportModel(api: api)
+        await api.report(retryJob("original", status: "completed", rows: [("Publication", "failed")]))
+        await model.load()
+        await model.retry()
+        #expect(model.error != nil)
+        await model.load()
+        #expect(model.job?.id == "original")
+        await model.retry()
+
+        let calls = await api.retries
+        try #require(calls.count == 2)
+        #expect(calls.map(\.job) == ["original", "original"])
+        #expect(calls[0].request == calls[1].request)
+    }
+
+    @Test func selectedFileIsReviewedWhenForegroundStatusCheckFinishesLate() async {
+        let api = ImportAPI()
+        let model = SubscriptionImportModel(api: api)
+        await api.delayStatus()
+        let status = Task { await model.load() }
+        while !(await api.waitingForStatus()) { await Task.yield() }
+        let bytes = Data("<opml/>".utf8)
+        await model.preview(bytes)
+        await api.releaseStatus()
+        await status.value
+        #expect(await api.previews == [bytes])
+        #expect(model.job?.draft == true)
+        #expect(model.selected == [7])
+    }
+
+    @Test func startDuringStatusCheckDoesNotClaimAnUnsentRequest() async {
+        let api = ImportAPI()
+        let model = SubscriptionImportModel(api: api)
+        await model.load()
+        await api.delayStatus()
+        let status = Task { await model.load() }
+        while !(await api.waitingForStatus()) { await Task.yield() }
+        await model.start()
+        await api.releaseStatus(returning: importJob())
+        await status.value
+        #expect(await api.starts.isEmpty)
+        #expect(!model.uncertainStart)
+        model.chooseAnother()
+        #expect(model.job == nil)
+    }
+
     @Test func invalidationDiscardsLateFileResponse() async {
         let api = ImportAPI()
         await api.hold()
@@ -74,6 +178,38 @@ struct SubscriptionImportTests {
         await task.value
         #expect(model.job == nil)
         #expect(!model.busy)
+    }
+
+    @Test(arguments: [false, true])
+    func leavingImportWhileFilesIsReadingDiscardsTheFileAndAnyReadError(fails: Bool) async {
+        let api = ImportAPI()
+        let model = SubscriptionImportModel(api: api)
+        let entered = AsyncStream<Void>.makeStream()
+        let release = AsyncStream<Void>.makeStream()
+        let task = Task {
+            await model.previewFile(.success([URL(fileURLWithPath: "/original.opml")])) { _ in
+                entered.continuation.finish()
+                // File providers can finish their read even after the view task is cancelled.
+                let read = Task { for await _ in release.stream {} }
+                await read.value
+                if fails { throw CocoaError(.fileReadUnknown) }
+                return Data("old file".utf8)
+            }
+        }
+        for await _ in entered.stream {}
+        task.cancel()
+        release.continuation.finish()
+        await task.value
+        #expect(await api.previews.isEmpty)
+        #expect(model.job == nil && model.error == nil)
+    }
+
+    @Test func cancellingFilesKeepsImportQuietButAnUnreadableFileExplainsTheFailure() async {
+        let model = SubscriptionImportModel(api: ImportAPI())
+        await model.previewFile(.failure(CocoaError(.userCancelled)))
+        #expect(model.error == nil)
+        await model.previewFile(.failure(CocoaError(.fileReadUnknown)))
+        #expect(model.error?.contains("couldn't be opened") == true)
     }
 
     @Test func changedAccountDoesNotSendFile() async {

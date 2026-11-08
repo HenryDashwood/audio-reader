@@ -63,6 +63,32 @@ class VoiceSessionTest {
         override suspend fun reconcile(response: VoiceResponse, token: String, revision: Int) { reconciled += response }
     }
 
+    @Test fun oldHandoffConsentCannotSendEitherAccountsWordsOrGrantSharing() = runTest {
+        val host = Host().apply { allowed = false }
+        val session = VoiceSession(this, host, Input(), {}, { ConversationPreferences(false) })
+        fun present(words: String): VoiceConsent {
+            session.continueRequest(VoiceHandoffs.Request(words, false))
+            runCurrent()
+            return requireNotNull(session.state.value.consentPrompt)
+        }
+        val original = present("Find the first show")
+        session.allowAI(original)
+        host.account = host.account.copy(owner = "two", revision = 2)
+        runCurrent()
+        assertEquals(0, host.grants)
+        assertTrue(host.requests.isEmpty())
+        val current = present("Find the second show")
+        session.allowAI(original)
+        session.declineAI(original)
+        assertEquals(current, session.state.value.consentPrompt)
+        session.allowAI(current)
+        session.allowAI(current)
+        runCurrent()
+        assertEquals(1, host.grants)
+        assertEquals("Find the second show", host.requests.single().transcript)
+        session.close(); runCurrent()
+    }
+
     @Test fun telemetryReportsEachSpokenAttemptButNeverItsWordsOrTypedRequests() = runTest {
         val events = mutableListOf<com.henrydashwood.magpie.telemetry.TelemetryEvent>()
         val telemetry = com.henrydashwood.magpie.telemetry.VoiceTelemetry { _, accessible, turns ->
