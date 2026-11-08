@@ -54,14 +54,21 @@ class NaturalVoiceEngine(folder: File, val voice: NaturalVoice, cacheDir: File) 
         source = environment.createSession(File(folder, "source.onnx").path, options)
         val path = File(folder, "body.tflite").path
         val gpu = runCatching {
-            // GPU programs compile on first load; the cache makes later loads quick.
+            // GPU programs compile on first load; the cache makes later loads quick. Every size in the file is prepared
+            // at once, and without constant sharing each keeps its own copy of the weights on the GPU: for six sizes on a
+            // Pixel 10a, 1.14 GB rather than 0.54 GB, at the same speed, and audio no further from the CPU's than fp16
+            // already puts it. Its program cache is 50 MB rather than 700 MB too; any other key's cache, from an earlier
+            // build or download, is deleted. Each size also keeps its own working memory, which is why the pack now
+            // carries three (notebook 107's ANDROID_SIZES): 0.31 GB.
             val cache = File(cacheDir, "natural-voice-gpu").apply { mkdirs() }
+            val key = "body-shared-${File(path).length()}"
+            cache.listFiles { f -> !f.name.startsWith("${key}_") }?.forEach { it.delete() }
             CompiledModel.create(path, CompiledModel.Options(Accelerator.GPU).apply {
-                gpuOptions = CompiledModel.GpuOptions(serializationDir = cache.path, modelCacheKey = "body-${File(path).length()}",
-                    precision = CompiledModel.GpuOptions.Precision.FP16)
+                gpuOptions = CompiledModel.GpuOptions(serializationDir = cache.path, modelCacheKey = key,
+                    precision = CompiledModel.GpuOptions.Precision.FP16, constantTensorSharing = true)
             })
         }.onFailure { Log.i(TAG, "No GPU for the natural voice, so the CPU: ${it.message}") }.getOrNull()
-        // On the CPU, XNNPACK packs the weights for each of the six sizes separately, 1.4 GB in all, unless its weight cache
+        // On the CPU, XNNPACK packs the weights for each size separately, 1.4 GB for six, unless its weight cache
         // (a file: given a directory it silently caches nothing) lets them share one copy. And it keeps each convolution's
         // indirection buffer between runs unless told not to, half a gigabyte more, for a few percent of speed.
         body = gpu ?: CompiledModel.create(path, CompiledModel.Options(Accelerator.CPU).apply {

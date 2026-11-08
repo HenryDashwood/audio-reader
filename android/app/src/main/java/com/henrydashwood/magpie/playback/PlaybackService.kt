@@ -116,6 +116,7 @@ class PlaybackService : MediaLibraryService() {
     private val filedArticleBookmarks = mutableMapOf<String, ArticleBookmark>()
     private val reportLock = Mutex()
     private var sleepJob: Job? = null
+    private val idleRelease = IdleRelease(scope)
     private data class VoiceHold(val token: String, val revision: Int, val item: LibraryItem?, var resume: Boolean,
         val requests: MutableSet<String> = mutableSetOf())
     // A lost receipt may already have filed the item on the server. Keep its old
@@ -161,6 +162,7 @@ class PlaybackService : MediaLibraryService() {
                 override fun onEvents(player: Player, events: Player.Events) { publishReadingPosition() }
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     if (isPlaying) hasPlayed = true
+                    idleRelease.playing(isPlaying)
                     persist()
                 }
                 override fun onPlaybackParametersChanged(parameters: androidx.media3.common.PlaybackParameters) {
@@ -617,6 +619,7 @@ class PlaybackService : MediaLibraryService() {
         val previous = rendering
         previous?.cancel()
         PlaybackStatus.mutable.value = Preparation(item.id, if (item.kind == ContentKind.Article) "Starting the reading voice…" else "Opening audio…")
+        if (item.kind == ContentKind.Article) NaturalVoiceEngines.warmUp(this, NaturalVoiceStore.articleVoice(this, store))
         rendering = scope.launch {
             previous?.join()
             try {
@@ -1156,6 +1159,7 @@ class PlaybackService : MediaLibraryService() {
         feedback.close()
         scope.cancel()
         renderer.close()
+        idleRelease.cancel()
         NaturalVoiceEngines.releaseWhenIdle()  // Hundreds of megabytes, kept only while the player runs
         session.release()
         player.release()

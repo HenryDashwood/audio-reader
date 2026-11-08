@@ -64,6 +64,7 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
             let engine = try await Self.engine(folder: folder, voice: voice).value
             return try await Self.render(text, at: offset, with: engine)
         }
+        Self.instances.add(self)
     }
 
     // MARK: - SpeechSynthesizing
@@ -78,6 +79,7 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         output.onDrained = { [weak self] in self?.finished(id) }
         output.onFailure = { [weak self] in self?.failed(id) }
         startProgressTimer()
+        Self.activityChanged()
 
         let pieces = Self.sentences(in: text)
         let ready = prepared?.text == text ? prepared?.sentences : nil
@@ -171,12 +173,14 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         guard isSpeaking, !isPaused else { return false }
         output.pause()
         isPaused = true
+        Self.activityChanged()
         return true
     }
 
     func continueSpeaking() {
         guard isPaused else { return }
         isPaused = false
+        Self.activityChanged()
         output.resume()  // May report a failure at once if the engine died while paused
     }
 
@@ -195,6 +199,19 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
     /// Lets the models go: the voice was removed, or its files are about to change.
     static func releaseEngines() {
         engines = [:]
+    }
+
+    /// Five minutes without reading anything frees the models; see NaturalVoiceIdleRelease.
+    private static let idleRelease = NaturalVoiceIdleRelease(after: .seconds(300)) {
+        guard !engines.isEmpty else { return }
+        log.info("Natural voice idle; releasing its models")
+        releaseEngines()
+    }
+    private static let instances = NSHashTable<NaturalVoiceSynthesizer>.weakObjects()
+
+    /// Restarts the idle countdown, or stops it while any synthesiser is reading. Paused doesn't count as reading.
+    static func activityChanged() {
+        idleRelease.update(busy: instances.allObjects.contains { $0.isSpeaking && !$0.isPaused })
     }
 
     /// The text's sentences, as UTF-16 offsets into it and the text itself.
@@ -378,6 +395,7 @@ final class NaturalVoiceSynthesizer: SpeechSynthesizing {
         lastPosition = 0
         isSpeaking = false
         isPaused = false
+        Self.activityChanged()
     }
 
     /// The listener's speed multiplier from ArticlePlayer's utterance rate: the inverse of

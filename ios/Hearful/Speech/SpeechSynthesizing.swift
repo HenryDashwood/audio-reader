@@ -52,6 +52,7 @@ enum SpeechSynthesizers {
     static func warmUp() {
         guard !TestEnvironment.isRunningTests, let natural = NaturalVoiceStore.selected() else { return }
         _ = NaturalVoiceSynthesizer.engine(folder: natural.folder, voice: natural.voice)
+        NaturalVoiceSynthesizer.activityChanged()  // Freed later if reading never starts
     }
 
     /// Which synthesiser `make()` would give now. ArticlePlayer compares it before each chunk, so a voice chosen in

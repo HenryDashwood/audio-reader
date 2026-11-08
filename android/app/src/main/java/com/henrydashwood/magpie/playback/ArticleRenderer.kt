@@ -4,6 +4,7 @@ import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import com.henrydashwood.magpie.data.LibraryItem
+import com.henrydashwood.magpie.data.PreviewStore
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -68,7 +69,9 @@ private suspend fun openArticleVoice(context: Context, selected: String?): Artic
     val speaker = selected?.removePrefix(NaturalVoiceStore.PREFIX)?.takeIf { it != selected }
         ?: return OfflineArticleVoice.open(context, selected)
     val folder = NaturalVoiceStore.folder(context) ?: error("The natural voice isn't on this phone. Download it again in Settings.")
-    return NaturalArticleVoice(context, folder, NaturalVoice(speaker))
+    return FallbackArticleVoice(NaturalArticleVoice(context, folder, NaturalVoice(speaker))) {
+        OfflineArticleVoice.open(context, PreviewStore(context).voiceId)
+    }
 }
 
 /** Prepares only the resume passage; Media3 requests subsequent passages on demand. */

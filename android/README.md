@@ -291,12 +291,40 @@ adb shell chmod -R a+rwX /sdcard/Android/data/com.henrydashwood.magpie.dev/files
 memory at every decoder size, and `NaturalVoiceDownloadTest` (opt-in, with
 `-e naturalVoiceDownload true`) downloads the pack; both skip when the voice is
 missing. On the API 36 emulator the decoder runs on the CPU at 2.5–3× real time
-once warm. The app then holds about 0.85 GB after its first sentence and 1.05 GB
-once every size has been used. That needs XNNPACK's weight cache (a file, so the six
-sizes share one packed copy of the weights) and transient indirection buffers;
+once warm. With the six sizes the pack then had, the app held about 0.85 GB after its
+first sentence and 1.05 GB once every size had been used. That needs XNNPACK's weight
+cache (a file, so the sizes share one packed copy of the weights) and transient indirection buffers;
 without them the 2 GB emulator kills it. The 8-bit decoders notebook 106 makes
 would download smaller but need more memory on a CPU, so the pack keeps the 16-bit
-one. No phone has run it yet.
+one.
+
+On a Pixel 10a (Android 17, pack pushed as above) the decoder runs on the GPU, and
+an article reads at 2× without waiting. LiteRT prepares every size in `body.tflite`
+on the GPU at once, each with its own working memory, so the pack carries three
+(128, 256 and 512 frames; notebook 107's `ANDROID_SIZES`), where iOS's carries six
+and loads two. The app holds about 1 GB while reading: 0.31 GB of GPU memory for the
+decoder, then native heap for the phonemizer (85 MB), ONNX Runtime's `tokens`
+(70 MB) and LiteRT's own copy of the decoder. Medium sentences render at 2.8× real
+time or better, short ones at 1.4× or better as with six sizes; with only 192 and
+512, as iOS uses, a medium sentence fell to 1.9×. LiteRT's constant tensor sharing
+keeps one copy of the weights on the GPU for all sizes; without it the six-size
+pack held 1.8 GB and its compiled GPU programs took 700 MB on disk rather than 50 MB.
+
+The service starts loading the models as soon as an article is chosen, alongside
+fetching its text. Each passage is one sentence (or part of a long one), and the
+player asks for the next while the current one plays, so reading starts once the
+first sentence is ready: on the Pixel 10a, 3.7 s after pressing play with the models
+unloaded, almost all of it loading them and rendering that sentence. After five minutes paused the service frees the
+voice (the app drops to about 0.35 GB); resuming plays the audio already rendered
+while the models load again, so on the Pixel 10a it continued without a gap.
+
+If the natural voice fails on a passage, or has nothing after its length in real
+time plus 15 s, that passage is read with the chosen Google voice and the next
+tries the natural voice again, as iOS falls back to the system voice. A hung engine
+can't be interrupted, so it is abandoned and a new one loaded. With failures
+injected on the Pixel, a failed passage switched at once and a hang cost about 15 s
+of silence. The phone's CPU manages only 1–1.2× real time, too slow for 2× if a
+phone's GPU can't run the decoder.
 
 ## Article content
 

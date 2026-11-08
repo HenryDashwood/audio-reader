@@ -54,7 +54,7 @@ class NaturalVoiceTest {
         NaturalVoiceEngines.use(app, folder, NaturalVoice("bf_emma")) { Log.i("NaturalVoiceTest", "decoder on the ${it.accelerator}") }
     }
 
-    /** Logs the process's memory as each body size is first used: short to long sentences, 64 to 512 frames. */
+    /** Logs the process's memory as each body size is first used: short to long sentences, up to 512 frames. */
     @Test fun memoryAcrossEverySize() = runBlocking<Unit>(Dispatchers.Default) {
         val sentences = listOf(
             "Good morning.",
