@@ -10,6 +10,18 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.6.7
+
+Pausing, resuming and skipping are steadier, especially with the natural
+voice. Pausing from your headphones or the lock screen now stops the voice
+straight away. Sentences in the natural voice now have the same short pauses
+between them as Alex.
+
+Your place in an article is kept more reliably when you switch between
+devices, and the Save to Magpie share pane copes better when an upload is
+interrupted. Please check pausing and resuming from your headphones, picking
+up an article where you left off, and saving from Safari.
+
 ## 1.6.6
 
 You can now turn any saved article or newsletter into a PDF. Use Share in the
