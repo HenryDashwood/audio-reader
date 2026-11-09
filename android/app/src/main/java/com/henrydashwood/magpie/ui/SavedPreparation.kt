@@ -22,7 +22,7 @@ import java.net.URI
 @Composable
 fun SavedPreparationStatus(model: MagpieModel) {
     val state by model.savedPreparation.state.collectAsStateWithLifecycle()
-    PDFImportButton()
+    PDFPreparationRefresh()
     val deviceLinks by model.deviceLinks.collectAsStateWithLifecycle()
     val importing by model.importingLinks.collectAsStateWithLifecycle()
     var reviewing by rememberSaveable(state.revision) { mutableStateOf(false) }

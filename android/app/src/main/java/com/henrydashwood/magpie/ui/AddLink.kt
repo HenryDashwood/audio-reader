@@ -7,6 +7,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -24,7 +26,20 @@ fun AddLinkButton(model: MagpieModel, onSaved: () -> Unit) {
     LaunchedEffect(capture.savedUrl) {
         if (capture.savedUrl != null) { onSaved(); model.acknowledgeSavedLink() }
     }
-    IconButton(onClick = model::beginLinkCapture) { Icon(Icons.Rounded.Add, "Add link") }
+    // As on iOS, + holds both ways to add to Saved. Without PDF access a one-item menu would only add a tap.
+    val pdfAvailable = rememberPDFImportAvailable()
+    var menuOpen by remember { mutableStateOf(false) }
+    var importingPDF by remember { mutableStateOf(false) }
+    if (pdfAvailable) Box {
+        IconButton(onClick = { menuOpen = true }) { Icon(Icons.Rounded.Add, "Add to Saved") }
+        DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(text = { Text("Add link") }, leadingIcon = { Icon(Icons.Rounded.Link, null) },
+                onClick = { menuOpen = false; model.beginLinkCapture() })
+            DropdownMenuItem(text = { Text("Import PDF") }, leadingIcon = { Icon(Icons.Rounded.PictureAsPdf, null) },
+                onClick = { menuOpen = false; importingPDF = true })
+        }
+    } else IconButton(onClick = model::beginLinkCapture) { Icon(Icons.Rounded.Add, "Add link") }
+    if (importingPDF) PDFImportDialog(onClose = { importingPDF = false })
     AddressCaptureDialog(capture, "Add link", "Web address", "https://example.com/article",
         if (library.live) "The link is kept on this device for your account until Magpie can save and prepare it." else "The link is saved in this device’s sample inbox. It is kept separate from account libraries.",
         { model.closeLinkCapture(capture.form) }, { model.editLink(capture.form, it) }, { model.saveLink(capture.form) })

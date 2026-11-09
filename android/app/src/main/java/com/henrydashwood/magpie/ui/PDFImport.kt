@@ -24,24 +24,34 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/** Whether Saved's + menu offers Import PDF: the account can import, or can subscribe to. */
 @Composable
-fun PDFImportButton() {
+fun rememberPDFImportAvailable(): Boolean {
     val app = LocalContext.current.applicationContext as MagpieApplication
     val library by app.library.state.collectAsStateWithLifecycle()
     val token by app.accounts.accessToken.collectAsStateWithLifecycle()
     var enabled by remember(library.owner, token) { mutableStateOf(false) }
-    var open by remember(library.owner, token) { mutableStateOf(false) }
     LaunchedEffect(library.owner, token) {
         val credential = token ?: return@LaunchedEffect
         try { enabled = PDFClient(BuildConfig.ACCOUNT_API_URL, credential).capability().let { it.enabled || it.subscriptionAvailable } }
         catch (_: Exception) { }
+    }
+    return enabled
+}
+
+/** Refreshes Saved while imported PDFs are still being prepared. */
+@Composable
+fun PDFPreparationRefresh() {
+    val app = LocalContext.current.applicationContext as MagpieApplication
+    val library by app.library.state.collectAsStateWithLifecycle()
+    val token by app.accounts.accessToken.collectAsStateWithLifecycle()
+    LaunchedEffect(library.owner, token) {
+        if (token == null) return@LaunchedEffect
         while (true) {
             delay(5_000)
             if (app.library.state.value.items.any { it.documentStatus in setOf("queued", "submitting", "processing") }) app.library.refresh()
         }
     }
-    if (enabled) TextButton(onClick = { open = true }) { Text("Import PDF") }
-    if (open) PDFImportDialog(onClose = { open = false })
 }
 
 @Composable
