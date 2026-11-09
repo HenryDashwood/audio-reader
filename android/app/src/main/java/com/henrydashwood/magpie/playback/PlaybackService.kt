@@ -372,7 +372,9 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             while (isActive) { delay(3_000); if (player.isPlaying) persist() }
         }
-        scope.launch { while (isActive) { publishReadingPosition(); delay(100) } }
+        // Wakes when the next word is due rather than on a fixed beat: at 2× words come every 125 ms or so, and a
+        // 100 ms beat showed some late and skipped others.
+        scope.launch { while (isActive) delay(publishReadingPosition()) }
         // A previous session is offered paused. Restoring never unexpectedly starts audio.
         // The app requests paused restoration after connecting. System metadata
         // queries must not prepare audio or open the speech engine.
@@ -796,20 +798,29 @@ class PlaybackService : MediaLibraryService() {
         PlaybackStatus.mutableReadingPosition.value = null
     }
 
-    private fun publishReadingPosition() {
+    private val markerClock = SmoothedPosition()
+
+    /** Publishes the word being read, and returns how long until the marker should next move, in milliseconds. */
+    private fun publishReadingPosition(): Long {
         val item = current
         val audio = rendered
         val active = item != null && audio != null && item.kind == ContentKind.Article &&
             player.currentMediaItem?.mediaId == item.id && player.playbackState != Player.STATE_IDLE &&
             player.playbackState != Player.STATE_ENDED && PlaybackStatus.state.value.message == null
+        var wait = READING_POSITION_POLL_MS
         val range = if (active) {
-            val index = player.currentPeriodIndex.coerceIn(audio.textChunks.indices)
-            val chunk = audio.playerChunk(player.currentTimeline, index)
-            readingRangeAt(listOf(chunk), audio.ranges(index).map { it.copy(startMs = it.startMs + chunk.startMs) }, player.currentPosition)
+            val speed = player.playbackParameters.speed
+            val at = markerClock.position(player.currentPosition, player.isPlaying, speed, SystemClock.elapsedRealtime())
+            var index = player.currentPeriodIndex.coerceIn(audio.textChunks.indices)
+            var chunk = audio.playerChunk(player.currentTimeline, index)
+            val ranges = audio.ranges(index).map { it.copy(startMs = it.startMs + chunk.startMs) }
+            if (player.isPlaying) wait = msUntilNextWord(ranges, chunk, at, speed, READING_POSITION_POLL_MS)
+            readingRangeAt(listOf(chunk), ranges, at)
         } else null
         PlaybackStatus.mutableReadingPosition.value = range?.let {
             ArticleReadingPosition(item!!.id, item.contentVersion, it.startUtf16, it.endUtf16)
         }
+        return wait
     }
 
     private fun invalidateVoice() {
@@ -1170,6 +1181,8 @@ class PlaybackService : MediaLibraryService() {
     }
 
     companion object {
+        /** The longest the reading marker goes unchecked while an article plays or waits. */
+        const val READING_POSITION_POLL_MS = 100L
         const val AUTOMATION_CONTROL = "magpie.automation_control"
         const val BEGIN_VOICE = "magpie.begin_voice"
         const val END_VOICE = "magpie.end_voice"

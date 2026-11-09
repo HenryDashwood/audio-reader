@@ -44,4 +44,27 @@ class ArticleReadingPositionTest {
         assertEquals(7, readingRangeAt(listOf(first, second), listOf(TimedSpeechRange(500, 2, 5)), 1200)!!.startUtf16)
         assertNull(readingRangeAt(emptyList(), emptyList(), 0))
     }
+
+    @Test fun theMarkerWakesWhenTheNextWordIsDue() {
+        val chunk = TimedChunk(TextChunk("one two three", 0, 13), 1_000, 3_000)
+        val ranges = listOf(TimedSpeechRange(1_000, 0, 3), TimedSpeechRange(1_250, 4, 7), TimedSpeechRange(1_500, 8, 13))
+        assertEquals(100, msUntilNextWord(ranges, chunk, 1_000, 2f, 100))  // 125 ms away: capped at 100
+        assertEquals(51, msUntilNextWord(ranges, chunk, 1_150, 2f, 100))  // 100 ms of audio at 2x
+        assertEquals(4, msUntilNextWord(ranges, chunk, 1_249, 2f, 100))  // Due now: the next pass, not a busy loop
+        assertEquals(100, msUntilNextWord(ranges, chunk, 1_600, 1f, 100))  // Only the passage's end left, far off
+        assertEquals(41, msUntilNextWord(ranges, chunk, 2_960, 1f, 100))  // The passage's end
+        assertEquals(100, msUntilNextWord(emptyList(), chunk, 3_500, 1f, 100))
+    }
+
+    @Test fun thePositionRunsOnBetweenThePlayersSteps() {
+        val clock = SmoothedPosition(cap = 400)
+        assertEquals(10_000, clock.position(10_000, true, 2f, 1_000))
+        assertEquals(10_100, clock.position(10_000, true, 2f, 1_050))  // 50 ms later at 2x
+        assertEquals(10_240, clock.position(10_000, true, 2f, 1_120))
+        assertEquals(10_250, clock.position(10_250, true, 2f, 1_125))  // The player's next step resets it
+        assertEquals(10_650, clock.position(10_250, true, 2f, 2_000))  // A late step: no further than the cap
+        assertEquals(10_250, clock.position(10_250, false, 2f, 2_100))  // Paused: what the player says
+        assertEquals(10_250, clock.position(10_250, true, 2f, 2_100))
+        assertEquals(5_000, clock.position(5_000, true, 2f, 2_200))  // A seek back
+    }
 }
