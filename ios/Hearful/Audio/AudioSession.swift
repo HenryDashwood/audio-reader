@@ -16,7 +16,12 @@ enum AudioSession {
         // .playback keeps audio going when the screen locks — paired with the
         // Background Modes → Audio capability, this is what lets her keep
         // listening with the phone in a pocket.
-        try session.setCategory(.playback, mode: .spokenAudio, options: [])
+        // Identify extended listening as long-form media, using the shared
+        // output intended for Music and Podcasts rather than the default
+        // system-audio route. Keep spokenAudio so navigation and Siri can
+        // still interrupt speech appropriately.
+        try session.setCategory(
+            .playback, mode: .spokenAudio, policy: .longFormAudio, options: [])
         try session.setActive(true)
     }
 
@@ -50,7 +55,7 @@ enum AudioSession {
     static func configureForListening() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
-            .playAndRecord, mode: .measurement,
+            .playAndRecord, mode: .measurement, policy: .default,
             options: [.duckOthers, .defaultToSpeaker, .allowBluetoothHFP])
         // The go-ahead fires after capture starts. Recording otherwise
         // suppresses the very haptic and sound that tell her to speak.

@@ -10,6 +10,15 @@ version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that 
 also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
 still at the top fails the release rather than shipping stale notes.
 
+## 1.6.8
+
+Playback is more reliable when you open apps with muted videos, including
+Instagram. Magpie now identifies podcasts and articles read aloud as long-form
+media, while keeping the usual handling of calls, Siri and other audio.
+
+Please try opening Instagram while listening, then unmuting a video. Also check
+pausing and resuming from your headphones and the lock screen.
+
 ## 1.6.7
 
 Pausing, resuming and skipping are steadier, especially with the natural
