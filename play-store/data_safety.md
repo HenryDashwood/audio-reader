@@ -23,7 +23,7 @@ They are collected at the end.
   (`android/app/src/main/AndroidManifest.xml`; the merged copy is
   `android/app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml`).
 - All app traffic goes to `https://audio-reader-production.up.railway.app`
-  (the release default in `docs/android-release.md`), to Google or Apple for
+  (the release default in `docs/mobile-releases.md`), to Google or Apple for
   sign-in, and directly to podcast/article hosts for audio, artwork and
   article images.
 
@@ -32,7 +32,7 @@ They are collected at the end.
 | Question | Answer | Justification |
 | --- | --- | --- |
 | Does your app collect or share any of the required user data types? | **Yes** | Account email and identifiers, library activity, voice-request text, newsletters and diagnostics reach the backend. |
-| Is all of the user data collected by your app encrypted in transit? | **Yes** | Release builds require an HTTPS API origin (`make android-release-check`, `docs/android-release.md`). The capture WebView rejects mixed content and certificate errors (`android/README.md`, "Incoming sharing and browser capture"). Publisher audio/artwork URLs come from feeds and may be `http:`, but that traffic carries no user data to the developer. **Owner decision:** confirm cleartext is disallowed in release (no `usesCleartextTraffic`/network security config appears in the manifest, so the Android 9+ default of HTTPS-only applies to the app's own requests). |
+| Is all of the user data collected by your app encrypted in transit? | **Yes** | Release builds require an HTTPS API origin (`make android-release-check`, `docs/mobile-releases.md`). The capture WebView rejects mixed content and certificate errors (`android/README.md`, "Incoming sharing and browser capture"). Publisher audio/artwork URLs come from feeds and may be `http:`, but that traffic carries no user data to the developer. **Owner decision:** confirm cleartext is disallowed in release (no `usesCleartextTraffic`/network security config appears in the manifest, so the Android 9+ default of HTTPS-only applies to the app's own requests). |
 | Which of the following methods of account creation does your app support? | **OAuth** (Sign in with Google, Sign in with Apple). No username/password. | `android/app/src/main/java/com/henrydashwood/magpie/auth/`; `backend/src/audioreader/auth/service.py` `login()` creates an account on first verified sign-in. |
 | Do you provide a way for users to request that their data is deleted? | **Yes** | In app: Settings → Account → Delete Account (`android/README.md`, "Accounts and linked sign-in"). Server: `delete_user()` in `backend/src/audioreader/auth/service.py`. Web: `https://audio-reader-production.up.railway.app/delete-account` (being added separately; confirm it is live before submission). |
 | Delete account URL | `https://audio-reader-production.up.railway.app/delete-account` | See `app_content.md`, "Data deletion". |

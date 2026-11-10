@@ -75,7 +75,7 @@ def service_account(environ: Mapping[str, str], properties: Path = GRADLE_PROPER
     if not candidate.is_file():
         raise Failure(
             f"no Play service-account key at {candidate}. Set MAGPIE_PLAY_SERVICE_ACCOUNT to its path; "
-            "see docs/android-release.md"
+            "see docs/mobile-releases.md"
         )
     return _key(json.loads(candidate.read_text(encoding="utf-8")), str(candidate))
 

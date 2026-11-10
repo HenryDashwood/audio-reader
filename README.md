@@ -367,127 +367,20 @@ cache transfer time, to measure the benefit.
 The Xcode Cloud **Test** workflow is manual-only so it does not duplicate these
 checks. GitHub Actions also owns TestFlight releases.
 
-### Releasing to TestFlight
+### Mobile releases
 
-`.github/workflows/testflight.yml` runs the tests, archives, and uploads. It
-skips the tests when main CI already passed them on the same iOS sources
-([scripts/ios_ci_coverage.py](scripts/ios_ci_coverage.py)), so tag after main CI
-finishes. It is not on every push to `main` — a build goes out when a `v*` tag
-is pushed, or on demand:
-
-```bash
-git tag v1.1.0 && git push origin v1.1.0
-```
-
-```bash
-gh workflow run testflight.yml --ref main
-# After Apple closes the previous version, use a new internal beta version:
-gh workflow run testflight.yml --ref main -f build_version=1.6.3
-```
-
-Only a tag reaches external testers. A manual run uploads the build, sets its
-release notes, and leaves it with the internal group; pushing a `v*` tag also
-adds it to the **Friends and Family** group and submits it for beta app review.
-Building and distributing are separate jobs, so a build that uploaded but failed
-to distribute can be picked up without rebuilding:
-
-```bash
-gh workflow run testflight.yml --ref main -f distribute_build=56
-```
-
-Approval is Apple's to give and typically takes a day, so a tag starts that
-clock rather than finishing it.
-
-The **What to Test** notes are the topmost `## ` section of
-[docs/CHANGELOG.md](docs/CHANGELOG.md) — append a new section before tagging.
-On a tag the heading must be the tag without its `v` — `v1.1.0` wants
-`## 1.1.0` — so tagging with `## 1.0` still at the top fails the release
-instead of shipping last version's notes to testers.
-
-The tag form also sets `MARKETING_VERSION` from the tag (`v1.1.0` → `1.1.0`);
-the on-demand form leaves whatever the project carries. Either way the build
-number is `git rev-list --count HEAD`, which is unique and always increasing —
-so `CURRENT_PROJECT_VERSION` in the project file no longer needs bumping by
-hand. It still does for an upload archived locally in Xcode, since App Store
-Connect rejects a build number it has already seen.
-
-The workflow needs six repository secrets, and takes six more when they exist:
-
-| Secret | What it is |
-| --- | --- |
-| `APPLE_DISTRIBUTION_CERT_P12` | Apple Distribution certificate + private key, exported from Keychain as `.p12`, then `base64 -i cert.p12 \| pbcopy` |
-| `APPLE_DISTRIBUTION_CERT_PASSWORD` | The password set when exporting that `.p12` |
-| `APP_STORE_CONNECT_KEY_ID` | Key ID of an App Store Connect API key with the App Manager role |
-| `APP_STORE_CONNECT_ISSUER_ID` | Issuer ID from the same Keys page |
-| `APP_STORE_CONNECT_KEY_P8` | The downloaded `AuthKey_*.p8`, base64-encoded |
-| `APPLE_PROVISIONING_PROFILE` | An App Store `.mobileprovision` for `com.henrydashwood.hearful`, base64-encoded |
-| `APP_STORE_CONNECT_INDIVIDUAL_KEY_ID` | Optional. Key ID of an *individual* API key, generated from your own profile in App Store Connect (User profile → Individual API Key). With it, the beta review submission and the listing sync show under your name instead of "API user" |
-| `APP_STORE_CONNECT_INDIVIDUAL_KEY_P8` | Optional. That key's `.p8`, base64-encoded. Individual keys have no issuer ID; the team key above still does the build upload |
-| `ASC_REVIEW_CONTACT_FIRST_NAME`, `..._LAST_NAME`, `..._EMAIL`, `..._PHONE` | Optional, all four together. The review contact Apple asks for. With them, CI writes `app-store/review_notes.txt` and the contact to App Review on a release tag, and to Beta App Review on every distributed build |
-
-Uploading from Xcode does not necessarily leave an Apple Distribution
-certificate on the Mac — Xcode can sign with a cloud-managed identity whose key
-it keeps to itself, and `security find-identity -v -p codesigning` then shows
-only the development certificate. CI needs a real one: Xcode → Settings →
-Accounts → Manage Certificates → **+** → Apple Distribution, then export it
-from Keychain Access as `.p12` (select the certificate *and* its private key).
-
-Signing in CI is **manual**, unlike the project's Automatic setting for local
-builds. Automatic signing does not work here: given an API key and
-`-allowProvisioningUpdates`, Xcode mints an `Apple Development: Created via API`
-certificate, archives with *that*, and then fails at export with `Cloud signing
-permission error` — an API key is not allowed to create a distribution profile
-through cloud signing. So the workflow installs a profile it is given, and
-names it explicitly.
-
-The profile must list the same Apple Distribution certificate as the `.p12`
-secret. Xcode's own `iOS Team Store Provisioning Profile` will not do if the app
-was ever uploaded from Xcode: that profile is built around a *cloud-managed*
-distribution certificate whose private key Apple keeps, so a locally created
-certificate is absent from it and signing fails. Create the profile in the
-developer portal against the certificate you exported, and regenerate it
-whenever that certificate is replaced.
-
-`ios/ExportOptions.plist` uploads straight from `-exportArchive`, so there is no
-separate Transporter step. The workflow rewrites the profile entry in a copy of
-it with the UUID of the installed profile, so renaming the profile in the portal
-cannot break the build.
-
-Distribution happens in a second job, on Linux, because it is only App Store
-Connect API calls and most of its time is spent waiting for Apple to finish
-processing the build — a macOS runner would sit idle for the same twenty
-minutes. [scripts/testflight_distribute.py](scripts/testflight_distribute.py)
-does that work and can be run by hand against an already-uploaded build:
-
-```bash
-ASC_KEY_ID=... ASC_ISSUER_ID=... ASC_KEY_P8_BASE64=... uv run scripts/testflight_distribute.py --build-number 55
-```
+The [mobile release guide](docs/mobile-releases.md) is the canonical procedure
+for TestFlight, App Review, Google Play, signing, version selection, and recovery.
+Agents use the [Magpie release skill](.agents/skills/magpie-release/SKILL.md).
+Backend promotion remains in [backend releases](docs/backend-releases.md).
 
 ### App Store listing
 
-The public description, subtitle, keywords, URLs, review notes and screenshot
-folders live under [app-store](app-store/README.md). `make ios-build` validates
-them offline, and a `v*` release tag synchronises them to the matching editable
-iOS version in App Store Connect before it distributes the TestFlight build.
-The sync creates the version if needed, but deliberately does not submit it for
-review or release it.
+Listing copy, review notes, screenshots, and their authoring instructions live
+under [app-store](app-store/README.md). Run `make app-store-validate` after editing
+them. Publishing and review submission follow the mobile release guide.
 
-Capture the current simulator screen into the correct tracked screenshot set
-with:
-
-```bash
-IOS_SIMULATOR_ID=<udid> make app-store-screenshot \
-  DISPLAY=APP_IPHONE_67 NAME=01-latest
-```
-
-Run `make app-store-validate` after any listing change. See the App Store
-listing README for the accepted phone and iPad sizes, the local sync command,
-and the submission choices that still need a human pass in App Store Connect.
-
-Both the certificate and the provisioning profile expire a year after they were
-made — August 2027 for the current pair. Nothing warns you beforehand; the
-release simply starts failing. Renewing means creating both again and updating
-`APPLE_DISTRIBUTION_CERT_P12` and `APPLE_PROVISIONING_PROFILE`.
+### Voice-flow checks
 
 To exercise the network and playback path without speaking (the simulator has
 no useful microphone), launch with a canned transcript:

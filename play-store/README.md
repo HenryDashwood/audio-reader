@@ -3,14 +3,13 @@
 This directory is the source of truth for Magpie's Google Play listing and
 App content answers. It mirrors [`app-store/`](../app-store/README.md) for iOS.
 
-No upload workflow exists yet. The Play Console account is awaiting identity
-verification. **Every field here is entered by hand in Play Console.** Make lasting
-copy changes here first, then paste them in, so the repository and the Console do
-not drift apart. Nothing in this directory is uploaded, published or submitted
-automatically.
+The release workflow uploads the app bundle, mapping file, and release notes.
+Listing copy and App content answers are maintained here and entered in Play
+Console. Make lasting copy changes here first so the repository and Console do
+not drift apart.
 
-Release preparation and remaining gates are in
-[`docs/android-release.md`](../docs/android-release.md).
+Build, signing, track selection, publishing, and recovery instructions are in
+the canonical [mobile release guide](../docs/mobile-releases.md#android).
 
 ## Files
 

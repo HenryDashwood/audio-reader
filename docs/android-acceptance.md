@@ -47,4 +47,4 @@ Do not mark real-assistant acceptance complete from instrumentation success.
 Record device/OS, app commit, backend deployment, steps and outcome for each open
 row. Never clear an existing account's data or delete it just to run acceptance;
 use disposable staging accounts for destructive flows. Release preparation and
-production promotion are tracked in [android-release.md](android-release.md).
+production promotion are tracked in [mobile release guide](mobile-releases.md#android).

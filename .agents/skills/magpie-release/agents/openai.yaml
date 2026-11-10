@@ -1,0 +1,3 @@
+interface:
+  display_name: "Magpie Release"
+  short_description: "Ship Magpie through TestFlight, App Store, or Play"

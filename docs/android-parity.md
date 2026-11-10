@@ -107,7 +107,7 @@ here; emulator results do not establish physical-device audio or TalkBack qualit
   inputs or a mismatched declared OAuth certificate. This does not register an
   OAuth client or establish Play distribution readiness.
 - [ ] **Acceptance and release gates.** Follow [the acceptance matrix](android-acceptance.md)
-  and [release checklist](android-release.md). Phones/headphones and a Google Play
+  and [release checklist](mobile-releases.md#android). Phones/headphones and a Google Play
   account are unavailable; Gemini integration also needs Google preview access.
   Production promotion must follow the verified staging release workflow.
 

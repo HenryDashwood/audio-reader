@@ -13,6 +13,7 @@
   baseline just to make a backend change pass. For API/compatibility changes, run
   `make backend-compatibility` on macOS as well as `make backend-check`.
 - GitHub Actions owns automatic pull-request and `main` CI. The Xcode Cloud Test workflow is manual-only, and `.github/workflows/testflight.yml` owns releases.
+- For mobile release requests, follow the [Magpie release skill](.agents/skills/magpie-release/SKILL.md).
 
 ## Backend
 

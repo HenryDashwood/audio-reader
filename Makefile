@@ -134,7 +134,7 @@ android-release:
 
 # Uploads the bundle from android-release to Google Play: internal testing unless
 # TRACK=alpha|beta|production (production also needs PLAY_ARGS=--confirm-production).
-# DRAFT=1 leaves the release for review in Play Console. See docs/android-release.md.
+# DRAFT=1 leaves the release for review in Play Console. See docs/mobile-releases.md.
 # Captures the six Play Store phone screenshots on an emulator into play-store/screenshots/phone.
 android-play-screenshots:
 	./scripts/android-dev.sh play-screenshots

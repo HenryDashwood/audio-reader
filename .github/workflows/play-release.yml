@@ -9,7 +9,7 @@ name: Google Play
 # Nothing here can reach production: the track choices stop at closed testing,
 # and the service account is only allowed to release to testing tracks.
 # Google Cloud trusts this repository through workload identity federation, so
-# no Play key is stored anywhere. Setup is in docs/android-release.md.
+# no Play key is stored anywhere. Setup is in docs/mobile-releases.md.
 on:
   push:
     tags:

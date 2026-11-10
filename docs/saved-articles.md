@@ -162,18 +162,9 @@ first. Released client sources under `compatibility/` remain unchanged.
 
 ## Release setup
 
-The new extension target is `HearfulShare`, bundle ID
-`com.henrydashwood.hearful.share`, displayed as Magpie. Before distributing:
-
-1. Register the app group and enable it on both the existing app and share
-   extension App IDs.
-2. Regenerate the app's distribution provisioning profile with the app group.
-3. Create the share extension's distribution profile, and provide it to GitHub
-   Actions as `APPLE_SHARE_PROVISIONING_PROFILE`.
-
-The TestFlight workflow now installs and selects all three profiles (app, controls,
-share extension). No credentials, developer-account configuration, release tags,
-or production services are changed by this implementation.
+Signing, shared app-group profiles, and distribution requirements for the
+HearfulShare extension are maintained in the
+[mobile release guide](mobile-releases.md#signing-and-app-store-credentials).
 
 ## Verification
 

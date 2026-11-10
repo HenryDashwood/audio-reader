@@ -108,82 +108,46 @@ being released.
 
 ## App Store Connect sync
 
-A `v*` release tag validates and uploads the app name, subtitle, privacy URL,
-version description, keywords, promotional text, support URL, copyright, and
-any non-empty screenshot sets, and selects the build it has just distributed.
-It creates the iOS App Store version when it is not already present, or renames
-the one editable draft (never submitted, or sent back by review) to the new
-version. It does **not** submit the version for review on its own: that is a
-manual run of the workflow with **submit_for_review** ticked, alongside the
-build number and version, which sends the version to App Review with the
-repository's notes and contact. The sync applies `releaseType: AFTER_APPROVAL`
-from `config.json`, so Apple automatically releases the version after approval.
+Signing, version selection, listing sync, review contacts, submission, and
+recovery are maintained in the [mobile release guide](../docs/mobile-releases.md#ios).
+That guide also covers Console-owned submission choices; this file covers
+listing assets, authoring, and accessibility evidence.
 
-The same operation can be run locally:
+## Accessibility declaration
 
-```bash
-ASC_KEY_ID=... \
-ASC_ISSUER_ID=... \
-ASC_KEY_P8_BASE64=... \
-  uv run scripts/app_store_sync.py sync --version 1.0
-```
+*App Store Connect → App Accessibility.*
 
-Add `--select-build <number>` to pick a processed build for the version, and
-`--submit` to send it to App Review once everything is in sync. Use `--dry-run`
-with those credentials to inspect the remote plan without writing. To see what App Store Connect itself believes, which the web page
-sometimes puts in friendlier words and occasionally different ones:
+These notes record an earlier source review and outstanding device checks.
+Recheck them on the current build before making store declarations.
 
-```bash
-uv run scripts/app_store_sync.py status
-```
+Worth completing properly rather than skipping — it is how someone searching for
+an accessible player finds this app.
 
-It prints every App Store version with its API state and selected build,
-the review submissions and theirs (a withdrawal shows as `CANCELING` until
-it lands), the newest builds with their beta review state, and each beta
-group with its tester count and the builds it can see. An external group
-sees a build only once beta review has approved it; an internal group set
-to receive every build sees it as soon as processing finishes. Screenshot sets are only replaced when their ordered file names and
-checksums differ. An API key with the App Manager role is required.
+Apple asks you to declare only features supported across the app's *primary*
+functionality, so each of these needs verifying with the feature actually
+switched on. A code audit is not enough: one read of the source turned up a
+mini player whose tap target was invisible to VoiceOver, leaving the entire
+player screen — scrubber, speed, sleep timer — unreachable without sight. That
+bug is fixed, but it is the reason this section waits for a device pass.
 
-Every distributed build, tagged or not, also syncs the TestFlight test
-information: the beta app description, and with the contact set, Beta App
-Review's contact and notes. The same operation is:
+| Feature | Status | Evidence |
+| --- | --- | --- |
+| VoiceOver | **Verify before declaring** | Every control now carries a label or is deliberately hidden. Never tested by ear. |
+| Larger Text | **Likely, verify** | All text uses semantic styles, so it scales. The only fixed sizes are SF Symbols — decorative icons, or the already-large transport glyphs. Check nothing truncates at the largest accessibility sizes. |
+| Differentiate Without Colour Alone | **Satisfied** | Every colour-coded state also carries text or a symbol: "Not updating" has a warning icon and words, the playing episode is bold with a speaker icon, progress is written out as "12 min left". |
+| Sufficient Contrast | **Unverified** | Uses system semantic colours throughout, which are designed to pass, but nothing has been measured. |
+| Captions, Audio Descriptions | **Do not declare** | No video content. Transcripts of episode audio are not offered. |
 
-```bash
-uv run scripts/app_store_sync.py testflight [--review-notes] [--dry-run]
-```
+Things worth listening for during the pass, in order of how badly they would
+undermine a declaration:
 
-Both commands sign with the individual API key in `ASC_INDIVIDUAL_KEY_ID` and
-`ASC_INDIVIDUAL_KEY_P8_BASE64` when those are set, so what they submit shows
-under a person's name in App Store Connect, and fall back to the team key.
-
-Apple's review record also contains a private phone number, so the contact is
-never committed. CI writes the review notes only when the four
-`ASC_REVIEW_CONTACT_*` repository secrets exist; locally, set the same four
-variables and opt in:
-
-```bash
-ASC_REVIEW_CONTACT_FIRST_NAME=... \
-ASC_REVIEW_CONTACT_LAST_NAME=... \
-ASC_REVIEW_CONTACT_EMAIL=... \
-ASC_REVIEW_CONTACT_PHONE=... \
-  uv run scripts/app_store_sync.py sync --version 1.0 --review-notes
-```
-
-## Still completed in App Store Connect
-
-Some submission choices are questionnaires or commercial decisions rather
-than repository copy. Before submitting a version, check these manually:
-
-- primary and secondary categories;
-- age rating and content-rights declarations;
-- app privacy answers against `ios/Hearful/PrivacyInfo.xcprivacy` and the
-  public privacy policy;
-- App Accessibility declarations against the device pass in
-  `docs/store-listing.md`;
-- price, territories, tax and banking agreements;
-- export-compliance answers, the selected build, and release mode;
-- every screenshot on both phone and iPad, at full size.
-
-A successful sync means the listing is in sync, not that the version has been
-submitted: that takes the explicit `submit_for_review` run described above.
+1. **The voice sheet starts listening as it appears.** VoiceOver will be
+   announcing the sheet at the same moment. If they collide, either she talks
+   over VoiceOver or the microphone transcribes VoiceOver's own speech.
+2. The "Open Settings" button in the permission state — that view switches its
+   accessibility grouping so the button is reachable; confirm both it and the
+   tap-anywhere behaviour still work.
+3. Episode rows combine title, date, length and progress into one label. Check
+   it reads as a sentence rather than a run-on.
+4. The offline notice is a list row rather than a banner, specifically so it
+   lands in swipe order. Confirm it does.

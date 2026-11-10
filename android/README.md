@@ -818,9 +818,9 @@ The local debug signing certificate is registered; other machines need their own
 fingerprint added. `MAGPIE_GOOGLE_SERVER_CLIENT_ID` and `MAGPIE_ACCOUNT_API_URL`
 Gradle properties override these defaults, including empty values to disable them.
 Release builds default to production and require private signing inputs and an
-explicit certificate fingerprint before they can build. No release key or Google
-Play app has been created. See [release preparation](../docs/android-release.md)
-and [sign-in acceptance](../docs/sign-in.md); staging verification does not establish
+explicit certificate fingerprint before they can build. Follow the canonical
+[mobile release guide](../docs/mobile-releases.md#android) and
+[sign-in acceptance](../docs/sign-in.md); staging verification does not establish
 production or Play-distributed sign-in.
 Signing in replaces the sample catalogue with the account library. Samples and
 local capture inboxes are never attached automatically. Item/bookmark keys include

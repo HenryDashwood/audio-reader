@@ -1,14 +1,7 @@
 # Changelog
 
-The topmost section is sent to TestFlight as the **What to Test** notes for
-every build, so write it for the person using the app rather than the person who
-wrote the code. Most testers here are using VoiceOver or listening rather than
-reading, so favour plain sentences over terse bullet fragments.
-
-Add a new section at the top before tagging a release. The heading is the
-version **without** the `v` — the tag `v1.1.0` wants `## 1.1.0`, because that is
-also the `MARKETING_VERSION` testers see. Tagging `v1.1.0` while `## 1.0` is
-still at the top fails the release rather than shipping stale notes.
+User-facing iOS release notes. Version selection, note preparation, and
+publishing follow the [mobile release guide](mobile-releases.md#ios).
 
 ## 1.6.8
 

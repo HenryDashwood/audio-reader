@@ -23,11 +23,11 @@ val validateReleaseSetup = tasks.register("validateReleaseSetup") {
     description = "Verify private release signing inputs and the declared OAuth certificate before building."
     doLast {
         val missing = releaseKeys.filter { releaseValues.getValue(it).isBlank() }
-        check(missing.isEmpty()) { "Release setup is incomplete: ${missing.joinToString()}. See docs/android-release.md." }
+        check(missing.isEmpty()) { "Release setup is incomplete: ${missing.joinToString()}. See docs/mobile-releases.md." }
         check(releaseServer.matches(Regex("https://[A-Za-z0-9.-]+(:[0-9]+)?/?"))) { "Supply an HTTPS release API origin." }
         check(releaseGoogleClient.endsWith(".apps.googleusercontent.com")) { "Supply the registered Google server OAuth client ID." }
         val keyFile = file(releaseValues.getValue("MAGPIE_RELEASE_STORE_FILE"))
-        check(keyFile.isFile) { "The release keystore file is unavailable. See docs/android-release.md." }
+        check(keyFile.isFile) { "The release keystore file is unavailable. See docs/mobile-releases.md." }
         val store = KeyStore.getInstance(keyFile, releaseValues.getValue("MAGPIE_RELEASE_STORE_PASSWORD").toCharArray())
         val alias = releaseValues.getValue("MAGPIE_RELEASE_KEY_ALIAS")
         check(store.isKeyEntry(alias)) { "The release alias does not identify a signing key." }

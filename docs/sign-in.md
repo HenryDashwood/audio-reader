@@ -147,7 +147,7 @@ Explicit properties (including empty values) override the debug defaults. Releas
 builds default to production and the shared web/server client ID, but require
 private signing inputs and a matching declared certificate fingerprint before
 building. No release key or Play app exists yet, and registration still needs
-verification with the distributed build. See [Android release preparation](android-release.md)
+verification with the distributed build. See [Android release preparation](mobile-releases.md#android)
 for the signing properties and the distinction between local/upload and Play
 app-signing certificates.
 
