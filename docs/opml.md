@@ -1,7 +1,8 @@
-# OPML subscription import
+# Subscription import and export (OPML)
 
-Updated locally on 18 September 2026 for the backend, iOS, and Android.
-The database migration and application changes have not been deployed.
+Both clients import and export subscriptions through the shared backend.
+Deployment and distribution follow the [backend](backend-releases.md) and
+[mobile](mobile-releases.md) release guides.
 
 ## Scope and flow
 
@@ -152,53 +153,6 @@ NewsBlur, and Readwise Reader. Redact private URLs and record app/version/platfo
 Physical-device Files/provider behaviour and VoiceOver/TalkBack also need a
 release smoke check; simulator/emulator tests do not establish that coverage.
 
-### Local verification on 17 September 2026
-
-- Backend gate: **1,061 backend tests and 98 repository-script tests passed**;
-  Ruff and type checks passed. The new import coverage comprises 30 parser,
-  16 service/API, and one migration test.
-- Frozen released-client compatibility checks passed.
-- iOS build and full iOS 26.5 suite passed. All eight import tests passed on iOS
-  27.0. The final full 27.0 result bundle reports **583 passed, zero failed,
-  one skipped** (the existing recording-replay benchmark).
-- Android gate: **245 unit tests passed**, both debug APKs built, lint completed
-  with **zero errors, 12 existing warnings, and one hint**. No import-file lint
-  warnings. Instrumentation reports separately confirm three import UI tests
-  and two HTTP contract tests passed. Run the two classes separately: the
-  combined class filter used during development only executed the UI class.
-- Visually inspected the iOS review and native Files picker, and Android's
-  review at 2× font scale in dark mode. The screenshots use fictional data.
-
-Xcode stalled while packaging diagnostics after successful full iOS 27 test
-execution. The final full run completed with `-collect-test-diagnostics never`;
-no tests were excluded by that option. It reported 15 missing precompiled-module
-cache warnings, separately from the zero test failures. The ordinary iOS build
-had no compiler warnings. No physical-device or live-account migration was
-performed. No backend or app release was published.
-
-### Private-feed update verified on 18 September 2026
-
-- Backend gate: **1,072 backend tests and 98 repository-script tests passed**,
-  with lint, formatting and type checks passing. Twelve dedicated privacy tests
-  cover synthetic credentials, opaque paths, public publication evidence,
-  redirects, two-account content isolation, polling, article access, shared
-  article identities, private receipts, repeat imports, network guards and
-  refreshing a public archive before setting the Latest watermark.
-- Both migration tests pass. The new migration adds only nullable
-  `feeds.private_fetch_url`; existing shared URLs and subscriptions are preserved.
-- Frozen released-client compatibility passed after the final backend changes.
-- iOS compile and full iOS 26.5 test suite passed, including all eight import
-  tests. The existing recording-replay benchmark was skipped. No compiler
-  warnings were reported by these runs; iOS 27 was not rerun for this update.
-- Android: **245 unit tests, three import UI tests and two HTTP contract tests
-  passed**. Both debug APKs and lint passed. Lint still reports **12 existing
-  warnings and one hint**, separately from the zero test failures.
-- Inspected the updated Android review at 2× text size in dark mode after the
-  dialog transition completed: Import is enabled without a public confirmation.
-- Database error messages hide bound parameter values, including private URLs.
-  All publisher requests in tests were mocked. No live paid-feed credentials,
-  physical-device testing, database rollout, deployment or app release was used.
-
 ## Subscription export
 
 Settings → Library now has **Export subscriptions** directly below Import on
@@ -224,12 +178,3 @@ changes, and use native document pickers. Android retains pending XML only in
 ViewModel memory across activity recreation; it is cleared on account changes
 and is not written to saved app state. Once saved, the file is a normal document
 the user can share or import elsewhere.
-
-Export verification: the backend gate passed (1,075 backend and 98 script tests),
-followed by all four export cases after adding the companion-only variant.
-Released-client compatibility passed. The iOS build and full suite passed,
-including four new export tests; its existing recording benchmark remains skipped.
-Android passed 246 unit tests, five import/export UI tests and three HTTP contract
-tests. Settings placement and the empty-export dialog were visually inspected.
-Android lint retains 12 existing warnings and one hint; the iOS builds reported
-no compiler warnings. These are local checks, not a deployment or app release.

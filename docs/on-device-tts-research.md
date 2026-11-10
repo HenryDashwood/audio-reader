@@ -1,6 +1,9 @@
 # Building a compact, reliable on-device reading voice
 
-Research brief · 15 September 2026
+Research brief · 15 September 2026. This explores future voice development;
+it does not describe the installed natural voice. For the current Kokoro
+implementation, see [Android natural voice](../android/README.md#natural-voice)
+and the shared [phonemizer](../native/g2p/README.md).
 
 ## Conclusion
 

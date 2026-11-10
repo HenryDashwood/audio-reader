@@ -6,7 +6,7 @@ Magpie exposes listening and library actions in Shortcuts, plus ten suggested Ap
 
 | Action | Input | Output / behavior |
 | --- | --- | --- |
-| Ask Magpie | None | Opens the voice sheet. VoiceOver users activate its microphone control after the sheet is announced. |
+| Ask Magpie | None | Opens the voice sheet and starts listening after preparation. With VoiceOver, capture waits for the opening instruction to finish. |
 | Continue Listening | None | Resumes the loaded or remembered item, preserving progress; returns the item. |
 | Play the Latest Item | None | Plays the first playable item from Latest; returns the item. |
 | Play the Latest from a Show | Show | Plays its newest playable item; returns the item. |
@@ -45,19 +45,24 @@ Typed filing and undo use authenticated `POST /actions`, without an AI provider 
 
 The `HearfulControls` WidgetKit extension provides Ask Magpie and Continue Listening controls for Control Center, the Lock Screen, and the Action button. Both open the app to execute; the extension itself contains no credentials, player, or library cache. The matching intent implementations are compiled into both targets so the system routes execution to the app process.
 
-The existing app identifier and signing settings are preserved. The new extension identifier is `com.henrydashwood.hearful.controls`.
+The extension identifier is `com.henrydashwood.hearful.controls`; the app retains
+its existing identifier and signing settings.
 
-Before a distribution build, configure an App Store distribution provisioning profile for that extension using the same distribution certificate/team as the app. Store its base64-encoded profile in the GitHub Actions secret `APPLE_CONTROLS_PROVISIONING_PROFILE`. The release workflow installs it, passes `HEARFUL_CONTROLS_PROFILE_UUID` to the archive, and includes it in the export mapping. No profile or credential is created by these source changes. A missing secret produces an explicit release-workflow error.
+Extension provisioning profiles, credentials and distribution checks are owned
+by the [mobile release guide](../mobile-releases.md#signing-and-app-store-credentials).
 
 ## Optional iOS 27 audio prototype
 
 `NativeSiriAudio.swift` contains an opt-in MediaIntents prototype. Build with Xcode 27 and `HEARFUL_SIRI_AUDIO_FLAGS=HEARFUL_NATIVE_SIRI_AUDIO` to include it. Both SDK import and runtime availability are guarded; ordinary builds retain the established iOS 26 shortcut routing.
 
-Keep standard builds compatible with the Xcode 26 SDK used by CI. Testing on an iOS 26 simulator with Xcode 27 checks runtime behavior, but does not verify that the source compiles with the older SDK.
+Standard builds retain the iOS 26 deployment target. CI uses the Xcode version
+and released iOS 27/iOS 26 runtime matrix in
+[the iOS workflow](../../.github/workflows/ios-tests.yml). SDK compilation and
+runtime compatibility are separate checks.
 
 The prototype supplies podcast show/episode schemas, structured read-only audio search, and the native play schema. It supports known library URLs and unspecified requests that can resume or choose a recent podcast. It does not pretend articles are podcasts or implement a playback queue. Unsupported queue, shuffle, repeat, and warmup requests fail explicitly. The prototype compiles and passes App Intents metadata extraction; enabling it for releases still requires physical-device Siri testing on the final OS.
 
-Content-wide Spotlight indexing, interaction donation, a legacy SiriKit extension, Watch, CarPlay, and arbitrary webpage ingestion are not enabled by this change. They remain separate follow-ups; the current work supplies stable entities and shared operations that those integrations can reuse.
+Content-wide Spotlight indexing, interaction donation, a legacy SiriKit extension, Watch, CarPlay, and arbitrary webpage ingestion remain future work. Those integrations can reuse the existing stable entities and shared operations.
 
 ## Physical-device acceptance
 

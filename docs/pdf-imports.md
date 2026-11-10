@@ -173,66 +173,9 @@ Physical
 browser/file-provider behaviour, VoiceOver/TalkBack and long technical-document
 quality need device validation before wider rollout.
 
-### Local verification record — 26 October 2026
+## Remaining work
 
-- `make backend-check`: 1,228 backend tests and 188 repository-script tests
-  passed; frozen dependency sync, Ruff and type checks passed.
-- `make backend-compatibility`: passed against the frozen released-client
-  contracts, including the macOS Swift contract runner.
-- `make ios-build`: passed without compiler warnings. The full iOS 27 suite
-  passed; final capture acknowledgement tests passed again after receipt
-  validation was tightened.
-- `make ios-test-compatibility` on iOS 26.5: 700 passed, one recording-replay
-  test skipped. The first attempt crashed in the simulator's audio subsystem;
-  a complete rerun passed.
-- `make android-check`: passed, including 294 JVM tests. Lint reports nine
-  warnings in existing dependency, network-configuration and extension-use
-  categories; none points to the new PDF implementation.
-- Android emulator coverage: all three new PDF transport tests and all 27
-  focused sharing/Saved/reader tests passed. The full API 36.1 run executed
-  319 tests: 317 passed and two voice tests failed. Both failures passed on
-  separate isolated reruns: playback startup in
-  `VoiceConversationTest.accountChangeDuringRequestClearsConversationAndCancelsOriginalAccount`
-  and transport cancellation in
-  `VoiceWireTest.cancellingTypedFilingDisconnectsItsReaderAndUsesTheOriginalRequestForCancellation`.
-  The full run is therefore not recorded as a clean pass. XML reports are retained
-  locally under `build/pdf-import-verification/`. An earlier API 36 run was not
-  sufficient for the repository's required assistant-integration coverage.
-- Live Datalab checks: the public W3C PDF converted successfully by URL. A
-  second check exercised local file upload, the durable worker, real Datalab
-  conversion, reader content, original-file download and deletion. Both provider
-  test results were deleted.
-
-These are local checks. No staging/production deployment, app-store upload,
-physical-device installation, or production credential changes were performed.
-
-### Equation follow-up — 26 October 2026
-
-- A live Datalab conversion of page 4 of
-  [Attention Is All You Need, arXiv v7](https://arxiv.org/abs/1706.03762v7)
-  returned 22 LaTeX-bearing math elements. All 22 converted into MathML without
-  a source fallback. The provider result was deleted after the check.
-- The attention equation is retained as a small regression fixture in
-  `backend/tests/fixtures/pdf/attention-datalab.html`. The backend test verifies
-  that both native reader fixtures exactly match its prepared HTML.
-- `make backend-check`: 1,243 backend tests (including 15 PDF maths cases) and
-  188 repository-script tests passed, along with lint, formatting and types.
-  `make backend-compatibility` passed.
-- iOS: 19 rendering tests passed on iOS 27 and iOS 26.5. The equation test
-  checks actual MathML layout (stacked fraction, raised exponent and root),
-  enlarged text and page containment with page JavaScript disabled. The iOS
-  26 run also checks horizontal formula scrolling. No compiler warnings were
-  reported. The separate 14-test reader suite also passed on iOS 27.
-- Android: `make android-check` passed with 294 JVM tests and the same nine
-  existing lint warnings. The formula container now makes span wrappers block
-  elements and keyboard-focusable, allowing wide equations to scroll rather
-  than be clipped.
-- Android API 36.1: all 12 reader instrumentation tests passed, including
-  native fraction/superscript/root layout and horizontal equation scrolling at
-  enlarged text size. The unobstructed screenshot was inspected. Initial
-  attempts encountered an emulator System UI stall and a stuck UI-automation
-  service; restarting the emulator without wiping data cleared them. Final XML
-  and screenshot are in `build/pdf-import-verification/android-maths.*`.
-
-The equation follow-up changes local source only. It does not deploy services,
-change account eligibility, or rewrite existing saved PDF revisions.
+Document-block navigation, source-page mapping and separate semantic narration
+remain future work. The current implementation uses private feeds, bounded
+database storage, prepared reader HTML and faithful speech text. It does not
+require a separate object-storage or conversion deployment.

@@ -47,7 +47,8 @@ EOF
 - Describe only features the Android build ships:
   - TalkBack and large-text support.
   - Android on-device speech recognition.
-  - Installed offline Google voices for narration.
+  - System voices and an optional downloadable natural voice for narration.
+  - Downloaded podcasts and prepared articles for offline listening.
   - Home-screen shortcuts and Quick Settings tiles.
   - Sharing from the browser to Saved.
   - Google or Apple sign-in.
@@ -55,8 +56,9 @@ EOF
   Do not mention Siri, Shortcuts, VoiceOver, Safari or iPhone features.
   Do not claim Gemini or Google Assistant integration: AppFunctions is an
   experimental Google preview that has not been accepted on a phone
-  (`android/README.md`). Do not claim podcast downloads or offline listening,
-  which are not implemented.
+  (see the [acceptance matrix](../docs/android-acceptance.md)). Offline claims
+  must require downloaded audio/text and installed voice assets; discovery,
+  web capture and remote assistant requests still require a connection.
 - Play policy forbids keyword stuffing, ranking or performance claims ("best",
   "#1", "top"), promotional prices, calls to action such as "download now",
   unverified testimonials, and emoji or ALL-CAPS used for attention.
@@ -64,31 +66,21 @@ EOF
   [privacy policy](https://audio-reader-production.up.railway.app/privacy) and
   the Data safety answers. If one changes, update all three.
 
-## Not yet kept here
+## Graphics and Console settings
 
-These are prepared in Play Console directly or remain to be created:
-
-- **Graphics:**
-  - App icon: 512 × 512 PNG, 32-bit, up to 1 MB. Derive it from
-    `app-store/assets/magpie-mark-transparent.png` on the app's `#101317`
-    background.
-  - Feature graphic: 1024 × 500 JPEG or 24-bit PNG with no alpha.
-  - Phone screenshots: 2–8, PNG or JPEG up to 8 MB, exactly 16:9 or 9:16, each
-    side between 320 and 3,840 px (at least 1,080 px for promotion).
-  - Optionally 7- and 10-inch tablet screenshots.
-
-  The six phone screenshots in `screenshots/phone/` show the App Store set's
-  fictional library (`scripts/seed_app_store_screenshots.py`), served by the
-  instrumented test `PlayStoreScreenshots` with no backend or personal data.
-  Recapture them with `ANDROID_AVD=medium_phone_16g make android-emulator`, then
-  `make android-play-screenshots`. The test uses a 9:41 demo status bar, UK
-  dates and a 1080 × 1920 screen (Play Console accepts only 16:9 or 9:16), and restores the emulator
-  afterwards. The 6 GB `medium_phone` emulator is too full to install the tests.
-- **Store settings:**
-  - App category: Music & Audio (confirmed by the owner; see `app_content.md`).
-  - Contact email and website (`https://audio-reader-production.up.railway.app/support`).
-  - Countries, pricing (free), and tags.
-- Reviewer contact details are not committed, just as in `app-store/`.
+- Committed graphics: [app icon](graphics/icon-512.png),
+  [feature graphic](graphics/feature-graphic-1024x500.png), and six
+  [phone screenshots](screenshots/phone/).
+- Screenshots use the App Store set's fictional library
+  (`scripts/seed_app_store_screenshots.py`), served by the instrumented
+  `PlayStoreScreenshots` test without a backend or personal data. Start an AVD
+  with enough space using `make android-emulator`, then run
+  `make android-play-screenshots`. The test uses a 9:41 demo status bar,
+  UK dates and a 1080 × 1920 screen, and restores the emulator afterwards.
+- Console-owned settings include category (Music & Audio), contact email,
+  [support website](https://audio-reader-production.up.railway.app/support),
+  countries, app pricing and tags. See [App content](app_content.md).
+- Reviewer contact details are not committed, as with the iOS listing.
 
 Recheck Play's current field limits and policy wording in the Console before
 submission. They change independently of this repository.

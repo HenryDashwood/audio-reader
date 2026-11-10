@@ -83,5 +83,5 @@ uv run python -m audioreader.admin show-user --email "$VERIFIED_EMAIL"
 The additive migration and command can be run from the new release artifact
 while the old backend still serves traffic. Configure the legacy environment's
 allowlist during any rollback; database grants are not read by older releases.
-Deployment and production assignments are deliberate operator actions, separate
-from implementing this change. See [backend releases](backend-releases.md).
+Apply migrations and production assignments through the
+[backend release workflow](backend-releases.md).

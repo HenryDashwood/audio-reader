@@ -62,12 +62,81 @@ streams have a 30-second read timeout and 60-second total deadline; app tools
 have 30 seconds, and the conversation has 120 seconds. Partial completion is
 reported if later model/tool work fails.
 
+## Clarification and follow-up answers
+
+A question is an explicit `needs_clarification` outcome, with an expiring,
+account-owned server record. It contains the pending action, stable choices and
+any remaining steps. A short answer or a choice button resolves that record;
+it does not need to reconstruct the action from the transcript.
+
+For example: “Unsubscribe from The Rest Is” → a choice of History or Politics →
+“Politics” → unsubscribe from the saved Politics ID. Exact distinguishing words,
+labels and ordinals resolve without a model call. Other wording goes through a
+small classifier that can only choose an offered ID, cancel, identify a new
+request, or leave the question unresolved.
+
+Cancellation leaves the library alone. “Neither” asks for a distinguishing name
+or topic while retaining the request. A new request abandons the old action.
+“Yes” alone does not resolve an either/or question. Compound subscription
+ambiguities are caught before either step executes, and subsequent steps resume
+after the choice. Free-form discovery questions also retain their unfinished
+request, but still require model interpretation of the answer.
+
+Both iOS and Android send the pending question ID and the device timezone. They
+show optional choice buttons that remain usable while listening, retain spoken
+answers and existing follow-up preferences, and isolate context by account. Android retains these fields in its
+unfinished-request journal. Transport commands remain local and clear a pending
+question when the user moves on.
+
+### API and execution boundaries
+
+The additive `/command/stream` request fields are `clarification_id`,
+`selected_option_id` and `timezone` (IANA identifier; UTC for older clients).
+Each answer has a **new** `request_id`; retrying that answer keeps the same ID
+and body. Responses retain all existing action fields and add:
+
+- `status`: `completed`, `needs_clarification`, `not_found`, `unsupported`, or `failed`.
+- `clarification`: `id`, `question`, `choices` containing `id` and `label`, and `expires_at`.
+
+The legacy `/command` endpoint does not accept structured clarification answers;
+clients use the conversation endpoint for them. Old clients can still receive
+and answer spoken questions through their existing text history. Their frozen
+Swift sources are unchanged.
+
+Questions expire after ten minutes. A conditional database update claims the
+record before executing an answer, preventing two devices or different request
+IDs from consuming the same question. Existing command receipts recover an
+answer after a lost connection without executing it again. Default new request
+fields preserve old receipt fingerprints. Targets are revalidated against current
+account access, subscriptions, pending senders and existence. Saved date bounds
+are rechecked if an episode changes before the answer. A crash after claiming can
+require recovery or a fresh request; this is not a claim of exactly-once external
+network effects.
+
+Episode choices with the same title and show include publication dates. If those
+labels still cannot distinguish the options, the server requires an open question.
+
+`play_matching_episode` enforces show, date, kind, unheard, saved-only and maximum
+duration filters before limiting results. Code orders dates and calculates local
+calendar boundaries, including daylight-saving transitions. A bare weekday means
+the most recent occurrence, including today. Unknown dates cannot establish
+latest/oldest, and unknown durations cannot satisfy a maximum. Public shows must
+first be loaded before selection can use them.
+
+Prompts explicitly distinguish episode dismissal from unsubscribing, seeking
+from replaying, unavailable results from ambiguous choices, and a new publication
+from existing subscriptions. The executor rejects adding “today” to a request for
+“latest,” and rejects clarification alternatives outside an explicitly requested
+day. A simple unsupported seek receives an explicit limitation. Question marks
+do not determine whether the microphone should reopen.
+
 ## Request receipts and deployment
 
-Apply Alembic migration `a904b718cf32` before deploying this backend. It adds
-`voice_command_receipts` and `voice_undo`; no production migration is run by
-local verification. Receipt keys belong to a user. Reusing an ID with a
-different payload fails. A disconnect does not cancel a claimed operation.
+The voice protocol uses migrations `a904b718cf32` (receipts and undo) and
+`a13d67b4e921` (clarifications). Apply migrations through the
+[backend release workflow](../backend-releases.md) before distributing clients
+that depend on them. Local verification does not migrate production. Receipt
+keys belong to a user. Reusing an ID with a different payload fails. A disconnect does not cancel a claimed operation.
 Explicit `DELETE /command/{request_id}` cancels future work, including when the
 cancellation arrives before the original request.
 

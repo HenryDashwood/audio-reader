@@ -1,28 +1,18 @@
 # Magpie
 
-**Magpie** is an iOS podcast and RSS reader. It plays audio podcast episodes
-and reads written articles aloud using iOS system voices through a single
-shared audio player. Because both content types use the same player,
-lock-screen controls, headphone controls, playback speed settings, and sleep
-timers function identically for articles and podcast episodes. The entire
-application can be controlled by voice using either an in-app microphone or
-Siri, with an LLM converting spoken requests into application actions. This
-enables complete non-visual operation while retaining full on-screen touch
-functionality. Every ingested article retains a direct link to its original
-source page.
+**Magpie** is a podcast and RSS reader for iOS and Android. It plays podcast
+episodes and reads articles aloud with system voices or an optional downloadable
+natural voice. Both content types share playback controls, speed settings,
+sleep timers and saved progress. Voice commands work alongside the on-screen
+controls; iOS also exposes Siri and Shortcuts actions.
 
-The system consists of a SwiftUI iOS client backed by a FastAPI service. The
-mobile client operates as a thin client, delegating feed ingestion and
-management, search, and the LLM-based voice action processing to the backend.
+The SwiftUI and Kotlin/Compose clients use a shared FastAPI backend for feed
+ingestion, account libraries, discovery and voice-command processing. Downloaded
+podcasts and prepared article text can be used offline.
 
-A native Android preview is being developed in [`android/`](android/README.md).
-It currently runs against an offline sample library with Compose screens and a
-Media3 audio prototype. Open that directory in Android Studio, or use
-`make android-run` with an emulator running. See its README for supported flows,
-verification commands, and the remaining phone checks.
-
-Saved web articles, share-sheet capture, content versions, and release setup are
-documented in [Saved articles](docs/saved-articles.md).
+See the [documentation index](docs/README.md) for feature and operations guides,
+[Saved articles](docs/saved-articles.md) for browser capture, and the
+[Android guide](android/README.md) for development and device acceptance.
 
 ## Backend releases
 
@@ -135,8 +125,8 @@ not included.
 
 ### Optional Xcode tools for the agent
 
-Zed does not use `.cursor/mcp.json` as its native MCP settings. In **Settings →
-AI → MCP Servers**, add these as local servers in **user** settings if wanted:
+In **Settings → AI → MCP Servers**, add these optional local servers in
+**user** settings:
 
 | Server | Command | Arguments | Environment |
 | --- | --- | --- | --- |
@@ -170,13 +160,15 @@ Use `zed: open log` for startup failures. See Zed's documentation for
 
 ## iOS development
 
-Requires Xcode 27 with the released iOS 27.0 simulator runtime, plus a released
-iOS 26 runtime for compatibility checks. Install runtimes in Xcode Settings >
-Components; an installed iOS 27.0 beta does not satisfy the stable default.
+Use a released Xcode compatible with the stable simulator runtime pinned in
+[`scripts/ios-dev.sh`](scripts/ios-dev.sh), plus a released iOS 26 runtime for
+compatibility checks. Run `make ios-doctor` to check the installed toolchain.
+Install missing runtimes in Xcode Settings → Components; a beta does not satisfy
+the stable default.
 
 ```bash
 make ios-doctor       # verify Xcode and choose a compatible simulator
-make ios-build        # compile on the pinned stable iOS 27.0 runtime
+make ios-build        # compile on the pinned stable runtime
 make ios-index        # refresh local SourceKit-LSP build settings
 make ios-test         # run the full Swift test suite there
 make ios-test TEST=VoiceControllerTests # run one suite while iterating
@@ -189,26 +181,18 @@ make ios-phone-debug  # same Release install, pointed at this Mac's local API
 
 The commands choose an available iPhone automatically and keep DerivedData in
 the ignored `build/` directory. Builds, tests, and index refreshes default to
-released iOS 27.0. The stable version is pinned in `scripts/ios-dev.sh` and must
-be advanced deliberately after public releases; installing a newer beta does
-not change the default. If the required runtime is missing, the command fails
+the pinned released runtime. Advance that pin deliberately after public releases;
+installing a newer beta does not change the default. If the required runtime is missing, the command fails
 with installation guidance instead of silently testing a different version.
 
-CI and TestFlight build validation run the complete suite on iOS 27 and on the
-oldest installed released iOS 26 runtime, as separate jobs from the shared
-`.github/workflows/ios-tests.yml`. CI summarises them as one `iOS tests` check.
-The jobs run on the maintainer's Mac, registered as a self-hosted runner with
-the `magpie-ios` label (in `~/actions-runner`, started as a login service), so
-they wait while that Mac is asleep or offline. GitHub's `xcode-27` image has no
-iOS 26 simulator, and a freshly created one starved its three CPUs on first
-boot. Because the runner executes workflow code, pull requests from forks need
-approval before any workflow runs. The jobs require released Xcode 27.1,
-selected through `DEVELOPER_DIR` rather than `xcode-select`, and install released
-iOS 27.0 and 26.5 runtimes through `scripts/prepare-ios-simulators.sh`, which
-takes the versions to prepare as arguments and defaults to both. Setup reuses
-available released runtimes and iPhone simulators, and verifies availability
-after any download, including when Xcode reports a nonzero exit status. Both
-checks must pass. Magpie still supports iOS 26.
+CI and TestFlight build validation run the complete suite on released iOS 27
+and iOS 26 runtimes through [the shared iOS workflow](.github/workflows/ios-tests.yml).
+That workflow owns the exact Xcode and runtime versions. Both checks must pass;
+Magpie still supports iOS 26. Jobs run on the maintainer's Mac with the
+`magpie-ios` runner label, so they wait while it is asleep or offline. Fork pull
+requests require workflow approval because the runner executes their code.
+The workflow selects Xcode through `DEVELOPER_DIR` and prepares simulators using
+`scripts/prepare-ios-simulators.sh`.
 `make ios-test-latest` is optional coverage for the newest installed runtime,
 including betas. Set `IOS_SIMULATOR_ID` to explicitly override runtime selection
 for any local command. Direct `xcodebuild` commands remain useful for one-off
@@ -253,8 +237,8 @@ Day to day, open `ios/Hearful.xcodeproj` and press ⌘R. The app and test target
 use file-system synchronized groups, so files added under `ios/Hearful/` are
 picked up automatically without editing the project file.
 
-The project-level Cursor MCP configuration connects Apple's Xcode tools and
-XcodeBuildMCP. Apple's bridge also requires Xcode to be running with the
+Apple's Xcode tools and XcodeBuildMCP can be configured in the agent's user
+settings. Apple's bridge requires Xcode to be running with the
 Hearful project open and **Xcode > Settings > Intelligence > Model Context
 Protocol > Xcode Tools** enabled for external agents.
 
@@ -351,10 +335,10 @@ to forget it. On an ordinary install that section does not appear.
 ### Continuous integration
 
 `.github/workflows/ci.yml` is the automatic quality gate for every pull request
-and push to `main`. Its Linux job installs the locked backend environment, runs
-Ruff formatting and linting, type-checks with ty, executes the backend and
-repository-script tests, and validates the App Store listing. Its macOS job
-selects Xcode 26 or newer and runs the full iOS simulator test suite.
+and push to `main`. Jobs run when their inputs change. Linux jobs run the
+backend gate, repository-script tests, App Store listing validation and Android
+build/JVM/lint checks. The shared iOS workflow runs the full suite on both
+supported runtime generations, as described above.
 
 The iOS job restores Xcode's compilation cache, scoped to the macOS build,
 runner architecture, and exact Xcode build. Source changes produce a new cache
@@ -828,31 +812,12 @@ evaluation fixtures, both models passed all 43 command cases and all nine
 clarification conversations in the
 [2026-09-22 comparison](docs/gpt-6-luna-evaluation-2026-09-22.md#results-after-the-fixes).
 
-Model choice is checked with `backend/evals`. The historical OpenRouter
-comparison below used the earlier corpus run three times over, alongside the
-cost of one spoken command measured from real token usage. These are GPT-5.6
-Luna results, not measurements of GPT-6 Luna; the optional OpenRouter provider
-retains its evaluated `openai/gpt-5.6-luna` default:
-
-| Model | $ / command | Corpus, 66 runs |
-| --- | --- | --- |
-| `openai/gpt-5.6-luna` | 0.00039 | 66 pass |
-| `deepseek/deepseek-v4-flash` | 0.00023 | 62 pass, 4 fail |
-| `deepseek/deepseek-v4-flash-0731` | 0.00049 | 59 pass, 3 fail, 3 error |
-| `anthropic/claude-opus-5` | 0.03352 | clean, at 85× the price |
-
-DeepSeek V4 Flash held the default until it was measured properly: it returns
-malformed JSON on a few percent of calls, and it misroutes requests for shows
-she does not subscribe to. Luna is the only cheap model to score the corpus
-clean, and it is quicker.
-
-Two things that are easy to get wrong here. **Input price is very nearly the
-only price that matters**: one command is about 3,500 input tokens against 45
-output, so Luna wins on cost despite its output tokens costing twice
-DeepSeek's. And **cost is not really what decides this** — at twenty commands a
-day every cheap option lands between 15p and 30p a month, and even Opus is
-about £16. Treat the choice as one of reliability with a rounding error
-attached.
+Evaluate model changes with the [voice evaluation guide](backend/evals/README.md).
+Its synthetic cases check command and clarification behaviour; live runs incur
+provider charges. Compare complete conversation usage, including tool/search
+calls, rather than extrapolating prices from a single short response.
+The optional OpenRouter provider retains its separately configured
+`openai/gpt-5.6-luna` default.
 
 The `openrouter` client speaks the OpenAI chat-completions format, so pointing
 `AUDIOREADER_OPENROUTER_BASE_URL` elsewhere reaches OpenAI, DeepSeek direct,

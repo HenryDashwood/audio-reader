@@ -1,40 +1,41 @@
 # Play Data safety form: draft answers
 
-Draft for **Policy and programmes → App content → Data safety** in Play Console.
-Nothing here has been submitted. Answers reflect Android release `1.0.0`
-(versionCode 1) and the production backend as read from the code on 25 September
-2026. Re-check them against the code whenever a release adds a network call, SDK,
-or stored field, and keep them consistent with the
-[privacy policy](https://audio-reader-production.up.railway.app/privacy).
+Repository draft for **Policy and programmes → App content → Data safety**.
+Use it alongside the intended release, its merged manifest/SDKs, deployed backend
+configuration and current Play Console questions. The Console owns submitted
+answers; this file does not establish current approval or deployment status.
+Keep it consistent with the [privacy policy](https://audio-reader-production.up.railway.app/privacy),
+whose source is `backend/src/audioreader/static/privacy.html`.
 
 Items marked **Owner decision** are judgement calls or gaps the code cannot settle.
 They are collected at the end.
 
 ## What the app ships with
 
-- No advertising, analytics or crash-reporting SDKs. The only third-party runtime
-  libraries are AndroidX/Jetpack, Media3, AppFunctions, Credential Manager with
-  Google ID, Coil, jsoup and kotlinx-coroutines
-  (`android/app/build.gradle.kts`).
-- The merged release manifest has no `AD_ID` permission. It requests
-  `INTERNET`, `ACCESS_NETWORK_STATE`, `RECORD_AUDIO`, `FOREGROUND_SERVICE`,
-  `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `WAKE_LOCK`, `VIBRATE`, and
-  `USE_BIOMETRIC`/`USE_FINGERPRINT`, which Credential Manager merges in
-  (`android/app/src/main/AndroidManifest.xml`; the merged copy is
-  `android/app/build/intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml`).
-- All app traffic goes to `https://audio-reader-production.up.railway.app`
-  (the release default in `docs/mobile-releases.md`), to Google or Apple for
-  sign-in, and directly to podcast/article hosts for audio, artwork and
-  article images.
+- The dependency list in `android/app/build.gradle.kts` includes AndroidX,
+  Media3, AppFunctions, Credential Manager/Google ID, Coil, jsoup, coroutines,
+  RevenueCat Purchases, ONNX Runtime and LiteRT. Recheck transitive SDK behaviour
+  for the exact release; do not describe this as an app without billing SDKs.
+- Inspect the merged release manifest after dependency changes. The source
+  requests network, microphone, media foreground-service, wake-lock, vibration
+  and background-download permissions; libraries may add others. No advertising
+  identifier is used by Magpie's own code.
+- The release API defaults to `https://audio-reader-production.up.railway.app`.
+  Traffic also reaches sign-in providers, RevenueCat, voice-asset distribution
+  and publisher/media hosts. Backend processing includes AI providers, Datalab
+  for PDFs and the hosting/diagnostic/newsletter processors below.
+- `res/xml/network_security_config.xml` permits HTTP publisher media because
+  some feeds redirect to it. Magpie's account/API clients require HTTPS and
+  capture blocks mixed content. Do not claim app-wide cleartext is disabled.
 
 ## Section 1: Data collection and security
 
 | Question | Answer | Justification |
 | --- | --- | --- |
 | Does your app collect or share any of the required user data types? | **Yes** | Account email and identifiers, library activity, voice-request text, newsletters and diagnostics reach the backend. |
-| Is all of the user data collected by your app encrypted in transit? | **Yes** | Release builds require an HTTPS API origin (`make android-release-check`, `docs/mobile-releases.md`). The capture WebView rejects mixed content and certificate errors (`android/README.md`, "Incoming sharing and browser capture"). Publisher audio/artwork URLs come from feeds and may be `http:`, but that traffic carries no user data to the developer. **Owner decision:** confirm cleartext is disallowed in release (no `usesCleartextTraffic`/network security config appears in the manifest, so the Android 9+ default of HTTPS-only applies to the app's own requests). |
+| Is all of the user data collected by your app encrypted in transit? | **Verify for the intended release** | Account/API clients use HTTPS, as do the configured service-provider endpoints. HTTP publisher media is permitted by the network security configuration; review all release SDK endpoints and the current Console question before finalising this answer. |
 | Which of the following methods of account creation does your app support? | **OAuth** (Sign in with Google, Sign in with Apple). No username/password. | `android/app/src/main/java/com/henrydashwood/magpie/auth/`; `backend/src/audioreader/auth/service.py` `login()` creates an account on first verified sign-in. |
-| Do you provide a way for users to request that their data is deleted? | **Yes** | In app: Settings → Account → Delete Account (`android/README.md`, "Accounts and linked sign-in"). Server: `delete_user()` in `backend/src/audioreader/auth/service.py`. Web: `https://audio-reader-production.up.railway.app/delete-account` (being added separately; confirm it is live before submission). |
+| Do you provide a way for users to request that their data is deleted? | **Yes** | In app: Settings → Account → Delete Account (`android/README.md`, "Accounts and linked sign-in"). Server: `delete_user()` in `backend/src/audioreader/auth/service.py`. Web: `https://audio-reader-production.up.railway.app/delete-account` (implemented in source; verify the deployed page and instructions before submission). |
 | Delete account URL | `https://audio-reader-production.up.railway.app/delete-account` | See `app_content.md`, "Data deletion". |
 
 Play's independent security review badge: **not applicable**; do not claim it.
@@ -51,8 +52,9 @@ not need to be disclosed as sharing, where the provider processes the data on th
 developer's behalf and according to its instructions. Re-read that article before
 submitting in case the wording has changed.
 
-**Decided (owner, 25 September 2026):** these are all treated as service
-providers, so nothing below is marked **Shared**:
+**Existing owner decision:** the processors below are treated as service
+providers, so the draft marks those transfers **not shared**. Recheck the
+current Console definition and agreements before submission:
 
 - **OpenAI** (Responses API): interprets voice-request text and typed "Search the
   web" names on Magpie's behalf. API data is not used for training unless the
@@ -68,6 +70,19 @@ providers, so nothing below is marked **Shared**:
 - **Cloudflare Email Routing** + the `magpie-email-inbound` Worker
   (`cloudflare/email-worker/`): receives newsletter mail and forwards it to the
   backend unaltered.
+
+**Additional processors to include in the release review:**
+
+- **RevenueCat:** pseudonymous account ID and purchase/subscription information;
+  no PDF contents, reading history or email address are intentionally sent by
+  Magpie. Apple/Google handle payment details. See [Magpie Plus](../docs/magpie-plus.md).
+- **Datalab:** the PDF chosen for import, or its source URL, and prepared results.
+  Magpie stores the private document and requests result deletion after preparation
+  or document/account deletion. See [PDF imports](../docs/pdf-imports.md).
+
+The tables' not-shared answers assume service-provider processing; confirm that
+classification and the release SDK data collection for these additions before
+entering final answers. The earlier owner decision predates their integration.
 
 Apple's podcast directory (iTunes Search API) receives search terms from the
 backend, not from the device and without any user identifier
@@ -104,10 +119,17 @@ podcast directory storefront and resolve relative dates such as "today".
   session token and (Apple only) an encrypted refresh token kept for revocation
   (`privacy.html`, "What we collect, and why").
 
-### Financial info, Health and fitness, Contacts, Calendar, Photos and videos, Files and docs
+### Financial info and files/documents
 
-Not collected. The app has no payments, no health data and no access to contacts,
-calendar, media library or files.
+| Data type | Collected | Required / optional | Purposes and handling |
+| --- | --- | --- | --- |
+| Purchase history | **Yes when purchases are used** | **Optional** | App functionality and account management. RevenueCat verifies transactions; Magpie stores entitlement status and PDF page usage. Card/payment credentials stay with Apple or Google. |
+| Files and docs | **Yes when PDF import is used** | **Optional** | App functionality. Selected PDF bytes or source links go to the backend and Datalab; private originals, conversion results and reader content are stored. Deleting an account removes Magpie's records; transaction retention by stores/RevenueCat follows their policies. |
+
+No health, contacts, calendar or general photo/media-library access is requested.
+Selecting a PDF uses the system document picker or an explicit share, not broad
+storage access. Confirm the final Console categories against enabled release
+features and SDK behaviour; do not retain the old “no payments or files” answer.
 
 ### Messages
 
@@ -158,7 +180,7 @@ the user asks for an address.
 | Data type | Collected | Notes |
 | --- | --- | --- |
 | Voice or sound recordings | **No** | Recognition uses `SpeechRecognizer.createOnDeviceSpeechRecognizer` with `EXTRA_PREFER_OFFLINE` and no network fallback (`android/app/src/main/java/com/henrydashwood/magpie/voice/AndroidSpeechInput.kt`; `android/README.md`, "Ask Magpie"). Audio never leaves the device and is not retained, so it is not declared. |
-| Music files, other audio files | No | Podcast audio is streamed from publishers; article narration WAV chunks are generated and kept on device only. |
+| Music files, other audio files | No | Podcast audio is streamed or downloaded from publishers; article narration WAV chunks are generated and kept on device only. |
 
 Declare `RECORD_AUDIO` in the permissions section of `app_content.md` instead.
 
@@ -271,29 +293,26 @@ No advertising ID or Android ID is read.
 - **Encrypted in transit:** yes (HTTPS).
 - **Users can request deletion:** yes. Delete Account removes the account,
   identities, subscriptions, positions, saved articles, newsletter aliases,
-  newsletter feeds, issues, raw emails and sign-up records (`delete_user()` in
+  newsletter feeds, issues, raw emails, sign-up records, PDFs and local
+  subscription/usage records (`delete_user()` in
   `backend/src/audioreader/auth/service.py`, `delete_all_for_user()` in
   `newsletters/service.py`). Logfire request records remain under the random
   diagnostic code, and operational logs (search URLs; a few newsletter and
   rate-limit lines carrying the account UUID) remain until their 30-day expiry;
-  backups last up to 30 days. All disclosed in `privacy.html`.
+  backups last up to 30 days. Deleting Magpie does not cancel a store
+  subscription; stores/RevenueCat may retain transaction records under their
+  policies. See `privacy.html`.
 - **Sold:** no. **Advertising or marketing:** no. **Fraud prevention, security
   and compliance:** not declared. Rate limiting and the OpenAI safety identifier
   are incidental. **Owner decision:** add this purpose if you want to be strict.
 
-## Owner questions
+## Checks before submission
 
-Resolved 25 September 2026: OpenAI and the other processors are service providers
-(not shared); newsletters are now in the policy; search terms are retained in
-Logfire URLs for 30 days (declared, not ephemeral); diagnostics are Optional with
-a default-on Android switch.
-
-Still open:
-
-1. Is the `/delete-account` web page live in production, and does it work
-   without the app?
-2. Confirm production still uses `llm_provider = openai` (Railway variables were
-   not read for this draft).
-3. The remaining inline **Owner decision** notes: cleartext confirmation
-   (Section 1), the voice-transcript category, and the optional fraud/security
-   purpose (Section 3).
+- Verify the deployed `/delete-account` page and instructions work without the app.
+- Check the deployed AI provider and billing/PDF availability for the release.
+- Confirm release SDK collection, RevenueCat/Datalab processor classification,
+  purchase-history and files/documents categories, and the transit-encryption
+  answer against the current form.
+- Resolve the inline voice-transcript category and optional fraud/security purpose.
+- Preserve the existing owner choice to declare diagnostics optional with a
+  default-on Android switch, and verify the release still matches it.

@@ -1,9 +1,9 @@
 # Android parity acceptance
 
-Updated 17 September 2026. The implementation checklist is in
-[android-parity.md](android-parity.md). A checked feature is not proof of release
-acceptance on every device. The owner has no phones/headphones available and no
-Google Play app yet; use the emulator for the checks possible now.
+Use the [Android guide](../android/README.md) for implemented behaviour and
+local verification commands. Automated coverage does not establish acceptance
+on physical devices or through a store-installed build. Record the outstanding
+checks below against the exact build and backend being evaluated.
 
 ## Automated and emulator coverage
 
@@ -32,7 +32,7 @@ Google Play app yet; use the emulator for the checks possible now.
 | Restart/system resumption | Pause a podcast and article, allow ordinary process death (not force-stop), then use system Play and a headset button. Resume the same account/item/bookmark. Dismissed/completed items stay dismissed. Also check reboot metadata and OEM battery restrictions. | Android phone; Pixel then Samsung coverage |
 | Offline speech | Install an offline voice and recognition model, enable airplane mode, narrate a long article, speak a command, interrupt replies and change article speed. No network voice fallback; errors explain unavailable models. | Android phone with voice models |
 | Accessibility | Navigate all core flows with TalkBack and large text: sign-in, capture, filing, player, voice, newsletter and recovery. Check focus, announcements, contrast, touch targets and no essential gesture-only actions. | Android phone and TalkBack |
-| Cross-platform account | Sign in with Apple, link Google, then sign in using either provider on iOS and Android. Verify the same library. Separate pre-existing accounts must produce a conflict rather than merge. | iPhone, Android phone, staging accounts |
+| Cross-platform account | Sign in with Apple, link Google, then sign in using either provider on iOS and Android. Verify the same library. Explicitly link two pre-existing accounts and verify combined content and progress. Matching email alone must not link accounts; invalid proof and concurrent identity changes must fail safely. | iPhone, Android phone, staging accounts |
 | Cross-platform progress | Alternate podcast and article playback between clients, including emoji/non-BMP text, offline progress, completion, unread and Undo. Verify matching text bookmarks and no stale clock overwrites. | Both clients against the same verified staging backend |
 | Publisher capture | Share real public and signed-in publisher pages from Chrome/another browser. Sign in inside Magpie if needed, navigate redirects, capture, inspect the preview, cancel/confirm and retry offline. Capture only the intended visible article; retain no credentials in submitted HTML. | Selected publishers and user-owned logins |
 | Real assistant | Ask the installed assistant to browse, continue listening, play a publication, file/Undo and open the newsletter address. Check consent, cancellation, account changes and no unintended microphone/audio. | Eligible Google Gemini/AppFunctions preview access |

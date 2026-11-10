@@ -4,8 +4,10 @@ A corpus of things she might say, each paired with what should happen. Run it
 against a real model to find out whether a prompt change, a model change or a
 settings change made the app better or worse at understanding her.
 
-Everything except the model call is stubbed, so a run is reproducible, needs no
-database, and never touches a real feed or the podcast directory.
+Library data, feed/directory responses and mutations use synthetic fixtures.
+The conversation pipeline runs against an in-memory database; it does not change
+real accounts or subscriptions. Model calls are live, and provider-hosted web
+search is live when selected. Results can vary between runs.
 
 ```bash
 cd backend
@@ -16,7 +18,7 @@ uv run python -m evals --candidates 200 --repeat 3
 uv run python -m evals --json runs/luna.json
 ```
 
-It costs money — one model call per case, at least. It exits non-zero when
+Live runs incur provider charges, potentially across multiple model and tool calls. It exits non-zero when
 anything fails or errors, so it can gate a release later.
 
 ## What a run tells you
@@ -126,13 +128,12 @@ grader — with no model and no money. That runs in the ordinary suite.
   before assuming the model chose badly — the timings live in
   `ios/Hearful/Speech/ListeningTimeouts.swift`. Mishearings that really are
   mishearings are still worth adding as cases.
-- **Token cost.** Model calls per case are counted; tokens are not. To compare
-  two models on price, send `build_prompt`'s output to each and read `usage`
-  off the response — one command is about 3,500 input tokens against 45
-  output, so the input price is very nearly the only one that matters.
-- **Feed discovery over the open web.** The world is closed, so discovery of a
-  publication by name can only resolve to something defined in `world.py`. The
-  domain-spelling path is covered; open-ended web search is not.
+- **Token cost.** The main runner counts model calls, not complete token or
+  search costs. Use provider usage and the dedicated comparison tools to price
+  a complete conversation, including retries and tool calls.
+- **Feed discovery over the open web.** Library effects are limited to the
+  synthetic world. A provider search can still contact the public web; the corpus
+  does not establish successful real publisher discovery or capture.
 
 ## Streaming pipeline and recordings
 
@@ -216,6 +217,6 @@ The saved results include processing time across all turns, model calls, token
 cost estimates and spoken word count; device speech and user response time are
 not measured. `--modes baseline` omits Jev. Only synthetic data is sent.
 
-See [the implementation and validation report](../../docs/voice-query-reliability.md)
-for protocol details, limits and deployment order. Asking a question is a safe
+See [the voice pipeline](../../docs/voice/pipeline.md#clarification-and-follow-up-answers)
+for the clarification protocol and recovery limits. Asking a question is a safe
 intermediate outcome, not proof that a conversation succeeds.

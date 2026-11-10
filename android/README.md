@@ -452,7 +452,7 @@ request from a signup that needs finishing by hand, with address copy/share for
 the latter. Signup uses the existing backend's sixty-second allowance and needs
 no AI consent. No website signup is submitted just by searching for feeds.
 
-## Deliberate prototype boundaries
+## Account and platform boundaries
 
 Signed-in accounts load real feeds, latest episodes, saved articles, and saved
 podcast positions using the existing API. Podcast playback streams the real
@@ -467,7 +467,8 @@ positions have an account-scoped retry journal. Shared article bookmarks work in
 both native players, and structured assistant requests have durable recovery.
 New saved links and confirmed shared content have their own durable queue. A
 previously identified session can queue captures after an offline restart; a new
-session must identify its account first. Podcast downloading is not implemented.
+session must identify its account first. Podcast audio supports manual and
+automatic downloads; see [podcast downloads](../docs/podcast-downloads.md#android).
 AppFunctions are implemented and tested through the Android platform; full Gemini
 acceptance needs Google preview access. See the [acceptance matrix](../docs/android-acceptance.md). Backups and device transfers of preview preferences are disabled.
 
@@ -711,7 +712,8 @@ in app-private storage outside disposable caches and excluded from backup. A kno
 session restores only its server-bound account snapshot before refreshing. Failed
 refreshes retain the restored content with a retry message; feed browsing and
 search retain previously known matching items. Search while offline covers only
-items this device has already seen. Podcast audio still needs a connection.
+items this device has already seen. Podcast audio needs a connection unless
+the episode is [downloaded](../docs/podcast-downloads.md#android).
 
 Saved article content IDs and text versions survive restart. Confirmed filing,
 removal, replacement and source changes update the snapshot; replacing text cannot
@@ -775,9 +777,9 @@ and the reader; publisher artwork appears in lists, publication headers, both
 players and system media metadata. Optional metadata survives account caches and
 request recovery, with placeholders for missing or unavailable images.
 
-All sixteen functional areas in [the parity checklist](../docs/android-parity.md)
-are implemented. Physical microphone, confirmation, TalkBack, Bluetooth and
-long-session audio acceptance remain separate from emulator verification.
+The [acceptance matrix](../docs/android-acceptance.md) tracks the remaining
+physical microphone, confirmation, TalkBack, Bluetooth and long-session audio
+checks separately from emulator verification.
 Keep AppFunctions an optional adapter over the same action layer.
 
 Following has a leading Add sources action. While signed in, typing searches the
@@ -810,8 +812,10 @@ Services ID is associated with the iOS App ID. Either provider can be connected
 from an existing account on either platform. Android retains encrypted pending
 Apple attempts across process recreation, offers cancellation and retry, and
 rejects expired or mismatched attempts. The browser return carries no credentials.
-Both connected providers are listed on Android. Accounts already created
-separately are not merged; the server returns a conflict without moving data.
+Both connected providers are listed on Android. Explicitly connecting a provider
+that already belongs to another account combines their libraries after verifying
+both identities. Matching email addresses alone never merge accounts. See the
+[account merge contract](../docs/sign-in.md#additive-api-contract).
 
 Debug builds default to the registered Google server client and staging backend.
 The local debug signing certificate is registered; other machines need their own
@@ -825,7 +829,7 @@ production or Play-distributed sign-in.
 Signing in replaces the sample catalogue with the account library. Samples and
 local capture inboxes are never attached automatically. Item/bookmark keys include
 the server and account identity, and late replies cannot repopulate a signed-out
-account. See [account-library implementation](../docs/android-library.md).
+account. See [offline account library](#offline-account-library).
 
 ## Incoming sharing and browser capture
 

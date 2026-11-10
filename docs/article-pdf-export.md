@@ -63,7 +63,7 @@ the export directory through a read-granted FileProvider URI.
 ## Verification and release order
 
 `make backend-check` includes network-free authorization, asset, renderer,
-cache, timeout and conversion tests plus 23 synthetic article fixtures. No
+cache, timeout and conversion tests with synthetic article fixtures. No
 real newsletter/article corpus or benchmark PDFs are committed.
 `make backend-compatibility` checks frozen released clients. The wheel must
 include the template, fonts and licenses, and the backend container must render
@@ -71,6 +71,6 @@ under Linux limits. Use `make ios-build`, `make ios-test`,
 `make ios-test-compatibility`, `make android-check` and emulator
 `make android-test` for the clients.
 
-Ship the backend first through the normal staging/production release process,
-then the clients. An older server returns a readable unavailable message to
-new clients. No production promotion or store upload is part of this change.
+Deploy the backend first through the [backend release workflow](backend-releases.md),
+then distribute clients through the [mobile release workflow](mobile-releases.md).
+An older server returns a readable unavailable message to new clients.

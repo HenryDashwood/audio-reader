@@ -1,8 +1,8 @@
 # Podcast downloads
 
-Episode audio can be kept on the phone so it plays with no connection. Article
-text was already kept offline (see `offline-reliability-investigation.md`);
-this covers podcast audio only. iOS and Android follow the same rules; the
+Episode audio can be kept on the phone so it plays with no connection.
+[Article text](saved-articles.md#offline-availability) is stored separately;
+this guide covers podcast audio only. iOS and Android follow the same rules; the
 Android section below lists where they differ.
 
 ## Behaviour

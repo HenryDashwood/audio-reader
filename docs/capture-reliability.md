@@ -86,7 +86,7 @@ size and sanitisation checks remain in place.
   share lifecycle, queue/account isolation, navigation recovery, late paywalls,
   explicit fallback, sign-in/capture, and large-text presentation.
 - `BrowserCaptureReliabilityTests` and `SafariCaptureTests`: native WebKit
-  extraction, including the shared 65-case corpus in
+  extraction, including the shared corpus in
   `ios/HearfulTests/BrowserCaptureFixtures/capture-policy-cases.json`.
 - `CaptureUploaderTests`: share-pane upload and prepared-text acknowledgement,
   failed/unfinished save retention, cancellation, retry, and account isolation.
@@ -120,201 +120,41 @@ for the main app's existing queue. Retrying in the same pane reuses that capture
 A link-only save cannot report preparation success unless readable text is
 returned. This does not certify that a publisher supplied its full article.
 
-On 12 October 2026, the actual Safari share extension on an iOS 27 simulator
-uploaded a synthetic article to a local test service with Magpie stopped. The
-service received 1,542 bytes of captured HTML and the extension fetched the
-matching prepared-text version before showing success. A simulated HTTP 503
-left one pending capture and displayed Retry; restoring the service and retrying
-reached success and removed the queue entry, without opening Magpie. This checks
-the extension, shared Keychain, upload and acknowledgement path; it is not a
-production-service, physical-device, or authenticated-publisher extraction test.
+## Android website sign-in and article boundaries
 
-The full suite passed 687 tests on iOS 27 before the final two upload regression
-cases were added; all nine upload tests then passed on iOS 27. The final iOS 26.5
-suite passed 689 tests. Each full run skipped the existing recording-replay test
-and reported no warnings. The focused upload build reported 15 expired-module
-cache warnings from Xcode's debug-symbol generation, with no test failures or
-Swift concurrency diagnostics. The app and share extension compile successfully.
+Visible capture uses a full-size WebView so CSS viewport units and sign-in dialogs
+have a real viewport. Client-side history changes update the displayed address
+and invalidate previous extraction work.
 
-## Live observations, 11 October 2026
+One user-initiated child WebView may open while retaining the publisher as its
+opener. Its address is visible, **Close window** returns to the parent, and
+article capture stays disabled until the child closes. The parent retains its
+viewport and JavaScript context while being hidden from accessibility. Disposal
+destroys both views; returning to the parent invalidates old capture work.
+Hidden capture, nested windows and unsolicited popups are rejected. Browser
+origin rules apply without a native bridge, user-agent spoofing or extra cookies.
 
-Anonymous Chromium pages, settled for 2.5 seconds. These are browser extraction
-results, not backend persistence or authenticated account tests. Word counts are
-approximate extracted text counts and may include captions or page furniture.
+This window lifecycle does not guarantee identity-provider support. Some providers
+reject embedded browsers. A Chrome/Custom Tab session has separate cookies and
+cannot establish that the capture WebView is signed in. Test the chosen
+publisher's sign-in and full article on the intended device.
 
-| Site/layout | Observed outcome | Approximate words |
-| --- | --- | ---: |
-| The Nation, WordPress news article | Captured | 6,048 |
-| Wikipedia reference article | Captured | 8,717 |
-| MDN technical documentation | Captured | 1,506 |
-| Python tutorial | Captured | 2,798 |
-| Paul Graham plain HTML essay | Captured | 11,619 |
-| Dan Luu technical blog | Captured | 5,466 |
-| Canary Media split layout | Captured | 759 |
-| Simon Willison short illustrated note | Captured | 37 |
-| Astral Codex Ten custom-domain Substack | Sign-in required | — |
-| J. Sanilac custom-domain Ghost | Sign-in required | — |
+A correct opening preview does not prove a correct full save. For non-semantic
+layouts, the extractor identifies the story around its unique title-matching
+heading and excludes separately headed recommendation branches and outside
+feeds. It retains sibling story sections, quoted headings and ordinary article
+subsections, then compares preserved prose. These rules do not use publisher
+names or article-specific IDs/classes. Shared unknown-domain fixtures cover
+recommendations, split story sections, poetry, images, lists and teasers.
 
-URLs are maintained in `scripts/capture/live-sites.json`. The first live pass
-caught a general completeness false positive caused by an injected donation
-widget on The Nation. A structural regression fixture was added, and the second
-pass captured the page without adding a publisher exception.
+## Device acceptance
 
-## Device and automated verification
-
-On 11 October 2026, the consolidated build was installed on the Pixel 10a as
-Magpie Preview, preserving the account and website cookies. The signed-in Ghost
-and Astral Codex Ten pages above both produced article previews. Their existing
-saved copies were not replaced during those checks. The Nation article was
-captured, queued with 42,231 bytes of article HTML, uploaded, and opened in the
-reader with its illustration and 6,049-word saved count. Its pending queue entry
-was gone afterward. This is an end-to-end save observation for that article;
-the two subscription-page checks establish authenticated preview behavior.
-
-The shared 40-case corpus passed in Chromium and native WebKit on both iOS 26.5
-and iOS 27. The full iOS suite passed 680 tests with one recording-replay test
-skipped; the final capture-focused suites passed 27 tests on each runtime.
-`make backend-check` passed 1,198 backend and 188 repository-script tests.
-`make android-check` passed all 293 JVM tests and compilation, with nine existing
-lint warnings and no compiler warnings. The generated bundle and anonymous
-results are recorded in `build/capture-results/2026-10-11.json` (ignored local
-artifact); its SHA-256 is
-`0d4c49f314cfc2e0a6f996baf164be0e34b1de25d0fac7fd17f1a9988e549160`.
-The final full Android `IncomingSharingTest` run passed all 20 cases, including
-late access gates, explicit fallback, authenticated navigation, account isolation,
-offline queue retention, and the handoff from share confirmation to Saved.
-Its activity-handoff test now waits for the new Compose screen to settle before
-checking the asynchronous queue, rather than timing from the early activity
-creation callback.
-
-## Patreon sign-in follow-up, 11 October 2026
-
-The reported **Join for free** button opened its dialog, but WebView's implicit
-`WRAP_CONTENT` native layout made CSS dynamic viewport height zero. The dialog
-was positioned below the visible screen. Explicit `MATCH_PARENT` width and
-height fix viewport sizing for all capture websites without rewriting their CSS
-or adding host exceptions. A synthetic unknown-domain dialog test reproduced a
-zero-height form before the fix and passed afterward. On the Pixel 10a, the real
-dialog then measured 725 CSS pixels high with its email input on-screen.
-
-Client-side history navigation now updates the capture address and invalidates
-previous extraction work. The real Patreon menu's **Log in or create an account**
-reached `/login`, and Magpie displayed that address. No credentials were entered
-and no account or membership was created. The final installed build also
-returned **Sign in to website** for the reported locked article, without a
-related-post preview or automatic save. At this stage authenticated Patreon
-capture had not been verified; the subsequent Google sign-in check is below.
-
-The access policy also recognizes explicit unlock actions under a matching
-primary heading when article prose uses plain divs. Linked byline headings do
-not end that primary section; section headings still prevent locked related
-posts from gating an unlocked main story. Fixtures cover a locked primary story,
-locked recommendations, ordinary free-follow actions, quoted actions, and
-hidden actions. There is no Patreon hostname, article ID, or creator exception.
-
-The final 45-case corpus passed in Chromium and in the 16-test browser capture
-suite on both iOS 26.5 and iOS 27. The 27-test capture suites also passed on both
-runtimes before the final linked-byline refinement. The eleven-site anonymous
-Chromium pass retained all ten previous outcomes; Patreon returned an HTTP 403
-challenge and was correctly left uncertain with no captured text. That challenge
-result does not verify Patreon article extraction. Its report is
-`build/capture-results/2026-10-11-patreon.json`, with bundle SHA-256
-`e7f0ed8469ca34b2bb1aba3830c33ff19d1cbc3769cbcfa87029abaa57adb2b0`.
-
-`make android-check` passed compilation, 293 JVM tests and lint with the same
-nine existing lint warnings. The 22-case sharing suite passed 21 tests,
-including the new viewport and client-side navigation regressions; the existing
-save-during-load case timed out during a run with substantial emulator frame
-stalls. That case passed unchanged in an isolated rerun on the final bundle.
-`make backend-check` passed 1,198 backend and 188 script tests; the
-bundle consistency test passed again after the final policy refinement.
-
-## Separate sign-in windows
-
-A subsequent Google sign-in attempt reached a completed but empty
-`accounts.google.com/gsi/transform` page on the phone. The live window reported
-`window.opener === window`: with multiple-window support disabled, Android had
-replaced the publisher page with the popup. See
-[Android's documented behavior](https://developer.android.com/reference/android/webkit/WebSettings#setSupportMultipleWindows(boolean)).
-
-Visible capture now hosts one user-initiated child WebView while retaining the
-publisher as its opener. The toolbar shows the child's address, offers **Close
-window**, and disables article capture until the child closes. Cross-origin
-return messages stay inside the browser's existing origin rules. No native
-bridge, user-agent spoofing, extra cookies, or provider-specific URL rewrite is
-introduced. Hidden capture, nested windows, and unsolicited popups are rejected.
-Disposal destroys both views; closing a child invalidates in-flight capture and
-restores the parent's accessibility and address. The covered parent is invisible
-without losing its measured viewport or JavaScript context.
-
-On the Pixel 10a, the updated app opened Google's account chooser in a separate
-window. The user completed sign-in and confirmed the return to Patreon; the app
-returned to the original article URL. **Preview article** then produced the
-article's own opening rather than related posts, with **Save article** available.
-No library save or replacement was performed in this verification.
-
-The complete 24-case Android sharing suite passed after adding the popup
-lifecycle. `make android-check` passed compilation and all 293 JVM tests with
-nine existing lint warnings and no compiler warnings. The popup fixtures use
-different unknown publisher and identity origins: one verifies the return
-message and window close before article review, and the other verifies manual
-cancellation without losing the publisher page or queuing a capture. Both popup
-tests passed again after adding native parent visibility assertions and the
-accessibility adjustment; the standard Android checks also passed again. The final
-phone install preserved the Patreon session: a fresh share of the same URL
-automatically produced its article preview with **Save article** available.
-
-This repairs window lifecycle, not identity-provider support. Google's
-[documented supported environments](https://developers.google.com/identity/gsi/web/guides/supported-browsers)
-exclude Android and iOS WebViews. Publisher email sign-in may work where Google
-sign-in does not. A Chrome or Custom Tab session is separate from capture's
-WebView cookies and cannot be presented as a completed capture sign-in.
-
-## Specific article boundaries
-
-The subsequent full-text audit found that a correct opening preview was not
-sufficient. The phone's saved Patreon copy initially contained 1,480 words of
-related posts rather than the requested article. A new signed-in capture included
-the correct opening but also several complete recommendations; that capture
-reached the backend as an `article` envelope with replacement enabled. The defect
-was therefore in browser selection, not an omitted HTML upload.
-
-The shared extractor now recognizes a separately headed recommendation branch
-beside the page's unique, title-matching heading. For non-semantic layouts it
-limits Readability to that story's enclosing container, retaining sibling story
-sections and comparing retained prose. This prevents a separate feed elsewhere
-on the page from winning the text-length score. It uses no Patreon domain,
-article ID, CSS class, or title exception. Quoted headings, semantic article
-subsections, and branches containing preceding prose are retained.
-
-Seven additional synthetic cases on an unknown publisher cover long
-recommendations, outside feeds, split story sections, poetry/images/lists,
-legitimate similarly named sections, and a short teaser that must not be replaced
-by recommended text. All 52 corpus cases pass in Chromium and within the 16-test
-browser capture suite on iOS 26.5 and iOS 27, with no compiler warnings. The
-11-site anonymous smoke test retained its previous outcomes; its report is
-`build/capture-results/2026-10-11-article-boundaries.json`, bundle SHA-256
-`62ad695ccb6de56beadde6057d0ff5356572d5a8052e557ee3c49cffaf62ae1c`.
-The generated-bundle consistency test passes. Android's standard checks pass
-with the same nine existing lint warnings.
-
-The Android regression also passes through hidden WebView extraction, the
-persisted queue, and `SavedPreparation` upload, checking all 13 synthetic
-paragraphs and excluding both recommendation regions. Its first run differed
-only on expected trailing paragraph whitespace; normalizing that expectation
-made the test pass without a product change. Standard Android checks include
-293 passing JVM tests.
-
-The updated Magpie Preview was installed in place on the Pixel 10a against the
-production API, preserving the website session. A fresh capture's actual queued
-payload contained all 13 paragraphs from the signed-in article, the exact final
-paragraph, no related posts, `content_format=article`, and replacement enabled.
-After upload, the reader fetched the replacement for episode 90187 (content 110,
-1,592 words). Every source paragraph was present after whitespace normalization,
-the saved text ended exactly with the source's final paragraph, and the pending
-queue was empty. The reader opening was inspected visually. This verifies the
-specific article through capture, queue, backend replacement, and reader fetch;
-it does not establish equivalent results for every publisher or physical iOS.
+Use the repeatable checks above for regression coverage. On the intended phone,
+verify website sign-in, navigation, popup return/cancellation, article preview,
+offline queue retention, upload and reader fetch. Compare the complete saved
+body with the source, including the final paragraph, images and captions; do not
+stop after inspecting the opening. Preserve existing accounts and website cookies.
+Test Safari sharing and Android capture separately, including VoiceOver/TalkBack.
 
 ## Remaining limits
 
@@ -326,4 +166,4 @@ finished. JavaScript navigation recovery requires the observed error response;
 other failures remain explicit instead of guessing URL changes. Existing server
 link fetching and physical Safari sharing are separate verification surfaces.
 Do not infer TalkBack, physical Safari, every subscription provider, or complete
-end-to-end save quality from this matrix.
+end-to-end save quality from synthetic regression coverage.

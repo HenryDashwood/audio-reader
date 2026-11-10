@@ -1,24 +1,17 @@
 # Play App content declarations: draft answers
 
-Draft answers for **Policy and programmes → App content** in Play Console, other
-than Data safety (see [`data_safety.md`](data_safety.md)). Nothing here has been
-submitted. Grounded in Android release `1.0.0` (versionCode 1, minSdk 31,
-targetSdk 37) as of 25 September 2026. Items marked **Owner decision** need an
-answer before submission.
+Repository draft for **Policy and programmes → App content** in Play Console.
+Data safety has its own [form guide](data_safety.md). Compare these answers with
+the intended release and live Console before submission; the repository does
+not record which answers have already been submitted. **Owner decision** marks
+judgement calls or checks that source inspection cannot settle.
 
 ## Privacy policy
 
-`https://audio-reader-production.up.railway.app/privacy`
-
-Source: `backend/src/audioreader/static/privacy.html` (last updated 25 September
-2026). It covers iOS and Android: on-device recognition, offline Google voices,
-Credential Manager, TalkBack diagnostics and the default-on Android diagnostics
-switch (iOS has none), OpenAI and the other processors as service providers,
-search terms in 30-day operational logs, deletion without the app, and a
-**Newsletters** section (the magpieinbox.com address, Cloudflare Email Routing,
-what is stored, 7-day raw-email and 30-day pending retention, block/unfollow,
-"sign up for me", and deletion). It must stay consistent with
-[`data_safety.md`](data_safety.md).
+Use `https://audio-reader-production.up.railway.app/privacy`.
+The owning source is `backend/src/audioreader/static/privacy.html`. Keep the
+policy, [Data safety answers](data_safety.md) and listing copy consistent,
+including diagnostics, newsletters, PDF processing and purchase information.
 
 ## App access
 
@@ -58,7 +51,7 @@ Suggested path (about two minutes):
 
 Speech recognition uses Android's on-device recogniser with an English (United Kingdom) model. If the device does not have that model yet, Magpie explains this and offers to download it. Everything also works without voice: Following → Add sources searches the podcast directory, and any episode can be played by tapping it.
 
-Articles and newsletters are read aloud with an installed offline Google text-to-speech voice (Settings → Voice). To test saved articles, share a web page from Chrome to Magpie, confirm the preview, and open Saved.
+Articles and newsletters are read aloud with a system voice or the optional downloaded natural voice (Settings → Voice). To test saved articles, share a web page from Chrome to Magpie, confirm the preview, and open Saved.
 
 Newsletters: Settings → Newsletters shows the account's private inbound address. An email sent there appears under "Waiting for your answer" at the top of Latest, with Follow and Block.
 
@@ -96,7 +89,7 @@ Likely answers:
 | Gambling / simulated gambling | **No** | |
 | Users can interact or exchange content with each other | **No** | Libraries, saved articles and newsletters are private to each account. There is no sharing between users, chat or public posting. |
 | Shares user's current physical location with other users | **No** | |
-| Allows users to purchase digital goods | **No** | No in-app purchases or billing library. |
+| Allows users to purchase digital goods | **Yes when Magpie Plus sales are enabled for the release** | RevenueCat SDK and monthly subscription purchase/restore flows are implemented. Verify store availability and answer for the actual distributed build; see [Magpie Plus](../docs/magpie-plus.md). |
 | Unrestricted internet / web browsing | **Owner decision: likely Yes** | Capture page opens any HTTPS page in an in-app WebView, and articles link to the open web (`android/README.md`, "Incoming sharing and browser capture"). |
 | Content from third parties that is not moderated | **Answer truthfully: user-chosen** | Magpie plays any podcast or RSS feed the user follows. Publishers' content is not moderated. Where the questionnaire asks, describe it as user-selected third-party media, like a podcast app or browser. |
 
@@ -136,7 +129,7 @@ both answers if Magpie ever ships curated or default news feeds.
 | Declaration | Answer |
 | --- | --- |
 | Government app | **No** |
-| Financial features | **No** (no payments, lending, trading, banking or crypto) |
+| Financial features | **No** (no lending, trading, banking or crypto; Magpie Plus is an app subscription) |
 | Health apps | **No** (no health or medical features; accessibility is not a health feature) |
 | COVID-19 contact tracing / status | **No** |
 | Children's apps / Families | Not applicable |
@@ -196,7 +189,7 @@ seconds on a Play internal-test build:
 7. Pause. The notification becomes dismissible, showing the foreground state
    has ended.
 
-**Owner decision:** record this once a Play-signed internal build exists. Do not
+**Owner decision:** record or refresh this with the intended Play-signed internal build. Do not
 show a real personal account's email in the video.
 
 ## Sensitive permissions and justifications
@@ -209,6 +202,7 @@ answers and this text should agree if review asks.
 | --- | --- |
 | `RECORD_AUDIO` | Ask Magpie voice requests. The microphone opens only after the user taps the microphone, uses a trusted home-screen shortcut, or uses the Ask Magpie Quick Settings tile, with the device unlocked and Magpie in the foreground. Recognition runs on the device through Android's on-device `SpeechRecognizer`, with no network fallback. Audio is neither uploaded nor stored (`android/app/src/main/java/com/henrydashwood/magpie/voice/AndroidSpeechInput.kt`; `android/README.md`, "Ask Magpie" and "Home screen shortcuts and Quick Settings"). A denied permission leaves every on-screen feature working and offers Open settings. |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | Background podcast and article playback. See above. |
+| `DOWNLOAD_WITHOUT_NOTIFICATION` | Background podcast downloads; manually requested downloads still show progress. |
 | `WAKE_LOCK` | Keep playback and on-device narration running with the screen off. |
 | `VIBRATE` | Non-visual cues: a strong vibration when the microphone is live and an error vibration (manifest comment; `android/README.md`, "Ask Magpie"). This is an accessibility requirement for blind users. |
 | `INTERNET`, `ACCESS_NETWORK_STATE` | Account library, streaming audio, article images. `ACCESS_NETWORK_STATE` is merged from a library and used to retry queued work after connectivity returns. |
@@ -227,13 +221,16 @@ The `<queries>` entries are limited to TTS and speech-recognition services.
   `AccountActions`; `delete_user()` in `backend/src/audioreader/auth/service.py`).
   If Apple is connected, the backend also revokes the Apple authorisation.
 - **Web (required by Play for apps with accounts):**
-  `https://audio-reader-production.up.railway.app/delete-account`, being added
-  separately. **Owner decision:** confirm it is deployed to production and works
+  `https://audio-reader-production.up.railway.app/delete-account`. Its source is
+  `backend/src/audioreader/static/delete-account.html`. **Owner decision:** verify
+  the deployed page and its instructions work
   for a user who no longer has the app before entering it.
 - **What is deleted:** account, sign-in identities, subscriptions, positions and
   progress, saved articles and captured text, newsletter address, newsletter
   issues, original emails, blocked senders and sign-up records, and
-  voice-request receipts.
+  voice-request receipts, PDF documents and local subscription/usage records.
+  Account deletion does not cancel an Apple/Google subscription; the app directs
+  the user to the originating store.
 - **What is kept, and for how long:** pseudonymous diagnostic and
   request records and operational logs (which can contain typed search terms)
   in Logfire for up to 30 days, and database backups for up to 30 days (policy,

@@ -138,58 +138,6 @@ the guard. Typed requests retain their original action route and target; checkin
 an old Undo receipt never undoes a newer change. They share the same execution
 lease as free-form requests and do not require AI consent.
 
-## Verification
-
-The complete backend gate passed 1,002 tests plus 96 repository-script tests.
-The new cases cover retry acknowledgement after a later filing action, stale
-reports after legacy writes, request-ID conflicts, receipt expiry, account
-isolation/deletion, grouped copies, transaction rollback and migration reversal.
-Account-linking tests also verify receipt retention/removal. These database tests
-use SQLite; production row-lock exclusion relies on PostgreSQL's `FOR UPDATE`.
-
-The frozen released Swift client compatibility gate passes. All 16 current iOS
-`AuthAndPositionTests` pass on the configured iPhone 17 simulator. The build
-reported 15 missing cached precompiled-module warnings; the corrected focused
-execution had no failed or skipped tests. An earlier filename-based filter
-selected zero tests and is not counted as coverage.
-
-The Android gate passes 175 JVM tests, compiles both APKs and reports zero compiler
-warnings or lint errors; eight existing lint warnings and one hint remain.
-Two Android protocol tests check identical retries, authentication, conflict/error
-handling, current versus accepted revisions and old-payload decoding. The cache
-round-trip suite also retains the token across fresh storage instances.
-
-
-Durable-queue verification on 17 September 2026: the final Android gate passes
-189 JVM tests, builds both APKs, and has no compiler warnings or lint errors;
-eight existing lint warnings and one hint remain. Ten queue tests and four
-repository tests cover exact retries, coalescing, completion, lost replies,
-newer canonical state, concurrent local samples, missing caches, account changes,
-recreation, and durable filing guards. Two Android storage tests verify fresh
-journal instances, isolation and corruption handling. Three service tests exercise
-offline pause/retry, natural completion and voice progress drains.
-
-The full emulator suite ran 220 tests: 219 passed and one reader gesture assertion
-failed. It reproduced with Compose's batched synthetic drag; the same bounded drag
-paced through Android's input system passed with the original assertions intact.
-The complete seven-test reader suite then passed, and its reading-marker
-screenshots were visually checked. This was a test-input correction, with no
-reader implementation change. The final three service checks also pass; their
-completion assertion waits for both the disk write and asynchronous library
-update. Across the full run and focused reruns, all 220 emulator cases are covered
-with no skipped cases. Phone, TalkBack and Bluetooth acceptance remain
-separate from these emulator checks.
-
-
-Android article integration verification on 17 September 2026 covers 12 durable
-queue tests, five repository cases, two on-device journal cases, and four service
-cases, including a newer remote bookmark after the text was already cached.
-The full emulator run initially had four article regressions; correcting duplicate
-text loading and preserving older adapters' cached path resolved them with the
-original assertions intact. The full run plus focused reruns cover 241 unique
-cases without remaining failures or skips. The JVM suite passes all 219 tests.
-Swift integration and the final cross-platform checks follow below.
-
 ## Swift integration
 
 Swift explicit Play refreshes the selection and text bookmark after draining any
@@ -218,14 +166,21 @@ Swift does not yet have Android's durable voice/structured-request recovery
 journal. Its confirmed filing notifications block queued bookmarks, while the
 server's revision comparison rejects an old bookmark after a newer mutation.
 
-Final cross-platform verification: both native suites use the same accented/emoji
-text, SHA-256 digest and UTF-16 passage coordinate. Android's differing rendered
-voice durations and Swift's estimated timeline resume that same passage. Ten
-Swift journal tests and five player integration tests cover durable exact retries,
-account invalidation, newer filing, changed text, natural completion and switching
-items. All 575 Swift tests pass, with the existing optional recording benchmark
-skipped. The final iOS build has no warnings; the test build separately reports
-13 missing cached-module warnings. Android's final gate passes 220 JVM tests and
-both APK builds, with no compiler warnings or lint errors (eight existing lint
-warnings and one hint). Native phone audio and a live two-device journey remain
-release acceptance checks; these results use isolated fixtures.
+## Verification
+
+Run `make backend-check`, `make backend-compatibility`, the iOS build/test gates
+including compatibility, and `make android-check`. Use the Android journal,
+protocol and service instrumentation suites for storage/lifecycle changes.
+
+Coverage must include exact retry acknowledgement after later filing, stale
+reports, request-ID conflicts, receipt expiry, account isolation/deletion,
+grouped copies, transaction rollback and migration reversal. The database unit
+tests use SQLite; production row-lock exclusion relies on PostgreSQL's
+`FOR UPDATE` and needs staging concurrency checks.
+
+Both native clients should use the same accented/emoji text, SHA-256 digest and
+UTF-16 passage coordinate. Check offline restarts, lost replies, newer remote
+bookmarks, changed text, completion, account switching and disk failures.
+Different voice durations must still resume the same passage. Physical audio,
+TalkBack/VoiceOver, Bluetooth and a live two-device journey remain separate
+acceptance checks; emulator/simulator fixtures cannot establish them.

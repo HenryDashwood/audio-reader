@@ -9,10 +9,11 @@ reader/player. Finishing an item keeps it in Finished.
 
 The app and share extension share `group.com.henrydashwood.hearful`. Each pending
 capture is an atomic, protected file tagged with the account and backend address.
-No session credential is put in this container. The share sheet confirms local
-storage; opening Magpie syncs captures and downloads prepared text. The inbox
-removes a file only after the server acknowledges it. Original save dates survive
-offline capture. Signing out clears that account's pending captures.
+No session credential is put in this container. The share sheet can upload and
+verify prepared text before confirming **Saved to Magpie**. **Finish later** retains the capture for the main app to
+sync; a local queue acknowledgement alone does not mean the text is prepared.
+The inbox removes a file only after the server acknowledges it. Original save
+dates survive offline capture. Signing out clears that account's pending captures.
 
 Safari preprocessing runs bundled Mozilla Readability on a clone of the loaded
 page. It removes hidden content using Safari's computed styles before discarding
@@ -61,8 +62,9 @@ captures and URL fetches still use server extraction, with explicit hidden-node
 removal and a guard against ambiguous competing articles. A failed extraction
 retains the link with an explicit Retry action.
 Sites requiring login or JavaScript may need a Safari capture; full-text extraction
-cannot be guaranteed for every publisher. PDFs, pasted text, and video transcripts
-are outside this first implementation.
+cannot be guaranteed for every publisher. PDFs use the separate
+[PDF import pipeline](pdf-imports.md). Pasted text and video transcripts are not
+captured by this web-article path.
 
 If a site refuses the backend request (HTTP 401 or 403), Saved directs the user to
 open the page in Safari and use Share → Magpie. Sharing the same URL with its page
@@ -71,13 +73,45 @@ HTTP 429 refusals explain that the site may be limiting requests or requiring a
 browser security check. They suggest trying later or sharing from Safari after
 the full article is visible; Retry alone still performs a server fetch.
 
+## Offline availability
+
+On iOS, the reader and narrator share account-scoped, versioned article content
+and a selected-copy alias. Cached content appears before network refresh; a
+reader can recover when another consumer finishes downloading it. Latest,
+Following, Saved, opened publication lists and last-played metadata survive
+restart. Offline search covers only content already known to the device.
+
+Saved preparation validates the content identity and successful disk write,
+runs at most three downloads concurrently, and exposes failures with Retry.
+Original captures remain queued until prepared text is stored. Text and embedded
+chart data are local; remote article images and provider-hosted videos are not
+included in an offline save.
+
+Podcast progress and modern article bookmarks use durable account-scoped retry
+journals; see [progress synchronisation](progress-sync.md). iOS read/unread and
+dismissal changes also persist before upload, with pending status, retry and
+Undo. `POST /actions/offline` binds each `request_id` to its complete intent;
+Undo identifies the original action through `undo_request_id`, so it cannot undo
+an unrelated change from another device. An older backend leaves the change
+queued with a service-update message. Reconnection, foregrounding and periodic
+retry recover pending work with backoff. Queuing add/remove Saved operations
+remains separate work.
+
+Local voice transport controls require an installed on-device recognizer, and
+narration requires an installed voice. Remote assistant requests still require
+network access and consent. Podcast audio must be
+[downloaded](podcast-downloads.md) for offline playback. Android cache and queue
+behaviour is described in its [offline library guide](../android/README.md#offline-account-library).
+Signing out clears the account's cached data and pending work; late responses
+must never repopulate another account's library.
+
 ## Identity, content, and progress
 
 - `episodes` remains the identity table. `feed_id` is nullable; `canonical_url`
   identifies standalone web saves. Private captured titles and bodies never go
   into the shared episode's metadata fields.
 - `article_contents` stores immutable HTML/text pairs, title, capture source,
-  digest, timestamp, and owner. An absent owner denotes shared content; this first
+  digest, timestamp, and owner. An absent owner denotes shared content; the
   saved-item path conservatively owns each capture by its saving user. Existing
   unsaved feed extraction continues to use the legacy cached article fields.
 - `saved_articles` records each user's selected `content_id`, original save date,
@@ -191,8 +225,7 @@ unsafe-payload rejection and rendering on an emulator. Run `make android-check`
 and the `ArticleReaderTest` instrumentation suite when changing that allowlist.
 
 A physical-device share-sheet check is still required before release, especially
-signed-in Safari capture, offline saving, VoiceOver, and the new provisioning
-profiles.
+signed-in Safari capture, offline saving, VoiceOver and distribution provisioning.
 
 ## Static charts
 

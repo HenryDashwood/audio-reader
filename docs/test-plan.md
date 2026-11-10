@@ -17,7 +17,7 @@ Work through it before a release that matters. Each item is an action and the re
 
 - [ ] Install the build you actually intend to test, and note its version and build number here: `________`
 - [ ] 📱 Download a **Premium or Eloquence** English voice — Settings → Accessibility → Spoken Content → Voices → English. Magpie deliberately hides lower-quality voices.
-- [ ] Know how to reset: **Settings → Delete Account** inside the app gives you a genuinely fresh account. Deleting and reinstalling the app does not, because the account lives on the server.
+- [ ] Use a disposable staging account for deletion/reset checks. Account deletion is in **Settings → Account → Delete Account** and removes server data; reinstalling does not reset an account. Preserve the existing phone installation and real library.
 - [ ] Have a second device or simulator signed into the same account if you want to check positions follow her.
 
 ---
@@ -25,9 +25,9 @@ Work through it before a release that matters. Each item is an action and the re
 ## 1. First run and sign-in
 
 - [ ] Fresh install, first launch → the sign-in screen appears, not a blank library
-- [ ] Sign in with Apple completes → lands on the Shows tab
+- [ ] Sign in with Apple completes → lands on the Following tab
 - [ ] Choose **Hide My Email** on a fresh account → sign-in still works
-- [ ] Empty library shows "No shows yet" with a way forward, not a bare screen
+- [ ] Empty Following offers Add sources and explains how to start a library
 - [ ] Force-quit and reopen → still signed in, no second sign-in prompt
 - [ ] 📱 First tap of the microphone prompts for **microphone** and **speech recognition** permission
 
@@ -43,7 +43,7 @@ Work through it before a release that matters. Each item is an action and the re
 
 The heart of the app. Try each phrasing out loud, not typed.
 
-- [ ] "Subscribe to In Our Time" → finds it, subscribes, confirms aloud, appears in Shows
+- [ ] "Subscribe to In Our Time" → finds it, subscribes, confirms aloud, appears in Following
 - [ ] "Subscribe to Astral Codex Ten" → a blog, not a podcast, still works
 - [ ] "Subscribe to the RSS feed of astralcodexten.com" → resolves the site's own feed
 - [ ] "Play the latest In Our Time" → plays the newest episode **of that show**, not a newer episode of something else
@@ -61,7 +61,7 @@ The heart of the app. Try each phrasing out loud, not typed.
 - [ ] "Subscribe to \<a newsletter site with no feed\> dot com" → signs the address up and says so; the newsletter arrives already followed
 - [ ] Say something meaningless → a short question back, not silence
 - [ ] Say nothing at all → "I did not hear anything", and the app is usable again
-- [ ] ⏱️ Ask something that takes a while → "One moment" fills the silence, then the real answer
+- [ ] ⏱️ Ask something that takes a while → one short working cue sounds after eight seconds, then the real answer
 
 ### Requests that take more than one sentence
 
@@ -73,7 +73,7 @@ The app asks, she answers, and the two are one request. Do these out loud withou
 - [ ] 📱 After it starts something, ask for something completely different → the new request wins. Carrying on with the previous subject is the failure this introduces
 - [ ] 📱 Answer a question with silence → "I did not hear anything", and the microphone **stays shut** rather than asking again
 - [ ] 📱 Let it ask the same thing three or four times over → it eventually stops asking and hands you back the screen, rather than reopening the microphone forever
-- [ ] 📱 An answer that lands after a long wait → "One moment" still fills the gap, and does **not** appear in the transcript
+- [ ] 📱 An answer that lands after a long wait → the working cue sounds once and does **not** appear in the transcript
 - [ ] 📱 Close the sheet while it is asking you something → nothing further is said and the microphone does not reopen
 - [ ] 📱 While an episode is playing, go through a two-sentence request → the episode comes back **once**, at the end, not between the question and your answer
 - [ ] ⏱️ Ask something, wait a few minutes with the sheet open, then tap and ask something unrelated → the old exchange is not read as context for the new one
@@ -222,9 +222,9 @@ in the same evidence directory.
 
 ## 7. Screens and navigation (visual)
 
-- [ ] **Shows**: list shows artwork, title, episode count
+- [ ] **Following**: list shows artwork, title, episode count
 - [ ] Search as you type → subscribed shows, whole-library episodes and public podcasts appear in labelled sections without pressing Search
-- [ ] Switch between **All**, **Shows** and **Episodes** → only the requested result types remain
+- [ ] Switch between **All**, **Sources** and **Episodes** → only the requested result types remain
 - [ ] Search with the podcast directory unavailable → matching subscribed shows and episodes remain usable, with the failure explained separately
 - [ ] Paste a feed URL, bare domain, Apple Podcasts sharing link, `itpc://` URL or `pcast://` URL → "Open podcast or feed" appears immediately and previewing works
 - [ ] Paste a URL while the directory is unavailable → the URL result remains present and usable
@@ -265,7 +265,7 @@ in the same evidence directory.
 
 ## 8. Offline and failures
 
-- [ ] 🌐 Aeroplane mode, open **Shows** → your shows are still listed, with an offline note
+- [ ] 🌐 Aeroplane mode, open **Following** → your shows are still listed, with an offline note
 - [ ] 🌐 Same for **Latest**
 - [ ] 🌐 Open a show → its episodes are still listed, with an offline note
 - [ ] 🌐 Try to play a streamed episode offline → a spoken failure, not silence
@@ -281,7 +281,7 @@ in the same evidence directory.
 Do this with the **screen curtain** on — three-finger triple-tap. If you can see the screen you are not testing what she experiences.
 
 - [ ] Every control announces something meaningful. Nothing reads as "button" alone
-- [ ] Flick through **Shows** → each row reads title and episode count as one sensible phrase
+- [ ] Flick through **Following** → each row reads title and episode count as one sensible phrase
 - [ ] A failing show also announces "not updating"
 - [ ] Flick through **Latest** → rows read title, date, length and progress without running together
 - [ ] The **offline note** is reachable in the swipe order, not skipped

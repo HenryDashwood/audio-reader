@@ -26,7 +26,7 @@ a C interface for Swift (`include/magpie_g2p.h`) and JNI for Kotlin (`com.henryd
 
 ```sh
 scripts/build-g2p.sh ios        # native/g2p/build/MagpieG2P.xcframework
-scripts/build-g2p.sh android    # android/app/src/main/jniLibs (needs the NDK and cargo-ndk)
+scripts/build-g2p.sh android    # native/g2p/build/jniLibs (needs the NDK and cargo-ndk)
 MISAKI_DATA=<voice folder> rustup run 1.97 cargo test --workspace --manifest-path native/g2p/Cargo.toml
 rustup run 1.97 cargo run --release --manifest-path native/g2p/Cargo.toml --example phonemize -- <voice folder> gb < text.txt
 ```
