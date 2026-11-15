@@ -15,6 +15,10 @@
 #   scripts/voice-pack.sh android <voice folder>
 #       Copies the folder voice_folder("android") makes into Android's on-demand asset pack, which app bundles then
 #       carry. Without it, Android builds leave the pack out and the app says the voice isn't available yet.
+#   scripts/voice-pack.sh fetch-android
+#       Downloads the published Android voice (the natural-voice-android-v1 GitHub release), checks its SHA-256, and
+#       installs it as the asset pack. The Google Play workflow runs this, since the files are too large for Git.
+#       A new voice needs a new release, with its tag and checksum updated below.
 #
 # TestFlight and App Store builds download the copy uploaded to App Store Connect, never this one.
 set -euo pipefail
@@ -22,6 +26,8 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/build/voice-pack"
 archive="$out/hearful-natural-voice-v1.aar"
+android_release="natural-voice-android-v1"
+android_sha256="903557cf65d0612131a3e990ba96ab13068b66785c4ad205f6c85d3c1ff9f083"
 
 package() {
   local source="$1"
@@ -39,6 +45,20 @@ android() {
   rm -rf "$assets/NaturalVoice" && mkdir -p "$assets"
   cp -R "$source" "$assets/NaturalVoice"
   du -sh "$assets/NaturalVoice"
+}
+
+fetch_android() {
+  local url="https://github.com/HenryDashwood/audio-reader/releases/download/$android_release/$android_release.tar.gz"
+  local download="$out/$android_release.tar.gz" unpacked="$out/$android_release"
+  mkdir -p "$out"
+  curl --fail --location --silent --show-error --retry 3 --output "$download" "$url"
+  echo "$android_sha256  $download" | shasum -a 256 --check --status || {
+    echo "$download doesn't match the SHA-256 in $0" >&2
+    exit 1
+  }
+  rm -rf "$unpacked" && mkdir -p "$unpacked"
+  tar -xzf "$download" -C "$unpacked"
+  android "$unpacked/NaturalVoice"
 }
 
 tls() {
@@ -76,8 +96,9 @@ point() {
 case "${1:-}" in
   package) package "${2:?voice folder}" ;;
   android) android "${2:?voice folder}" ;;
+  fetch-android) fetch_android ;;
   tls) tls "${2:?simulator udid}" ;;
   serve) serve "${2:-}" ;;
   point) point "${2:?simulator udid}" "${3:-}" ;;
-  *) echo "usage: $0 package <voice folder> | tls <udid> | serve [port] | point <udid> [port] | android <voice folder>" >&2; exit 2 ;;
+  *) echo "usage: $0 package <voice folder> | tls <udid> | serve [port] | point <udid> [port] | android <voice folder> | fetch-android" >&2; exit 2 ;;
 esac

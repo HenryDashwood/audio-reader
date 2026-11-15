@@ -130,6 +130,15 @@ jobs:
           fi
           echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
 
+      # Too large for Git, so it comes from a GitHub release, checked against
+      # the SHA-256 in voice-pack.sh. Without it the bundle would leave out the
+      # natural voice and the app would say it isn't available.
+      - name: Natural voice asset pack
+        run: |
+          set -euo pipefail
+          ./scripts/voice-pack.sh fetch-android
+          test -f android/natural_voice/src/main/assets/NaturalVoice/voice.json
+
       - name: Build the signed bundle
         env:
           ORG_GRADLE_PROJECT_MAGPIE_RELEASE_STORE_FILE: ${{ runner.temp }}/upload.jks
@@ -140,6 +149,15 @@ jobs:
           # No private properties file on a runner; the environment carries everything.
           MAGPIE_RELEASE_PROPERTIES: /nonexistent
         run: ./scripts/android-dev.sh release
+
+      - name: Check the bundle carries the natural voice
+        run: |
+          set -euo pipefail
+          aab=android/app/build/outputs/bundle/release/app-release.aab
+          unzip -l "$aab" | grep -q 'natural_voice/assets/NaturalVoice/voice.json' || {
+            echo "::error::$aab has no natural_voice asset pack."
+            exit 1
+          }
 
       - name: Remove the upload key
         if: always()
