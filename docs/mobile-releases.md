@@ -281,6 +281,14 @@ for UI/service changes, run the applicable `make android-test` checks. Report
 emulator coverage separately from physical-phone, TalkBack, Bluetooth, offline
 voice, and Play-signed acceptance.
 
+The natural voice's on-demand asset pack is too large for Git. The Play workflow
+downloads it from the `natural-voice-android-v1` GitHub release with
+`scripts/voice-pack.sh fetch-android`, checks its SHA-256, and fails if the signed
+bundle lacks the `natural_voice` pack. A new voice needs a new release, tag and
+checksum in that script. iOS's pack lives in App Store Connect instead, and each
+asset pack version needs its own App Review submission (app → Asset Packs);
+until then only TestFlight builds can download it.
+
 Inspect existing `android-v*` tags and recent Google Play runs before choosing
 the version. Update `play-store/release_notes/<language>.txt`; these notes and
 versions are independent of the iOS changelog. The workflow sets `versionCode`
