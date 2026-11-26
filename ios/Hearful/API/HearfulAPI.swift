@@ -869,10 +869,12 @@ nonisolated struct HearfulAPI: HearfulAPIProtocol {
                 isAuthFailure: true, statusCode: 401)
         }
         guard (200..<300).contains(http.statusCode) else {
+            let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap { Int($0) }
             throw APIError(
                 // Prefer the sentence the backend wrote; fall back to a generic one.
                 spokenResponse: Self.spokenResponse(from: data) ?? APIError.genericSpokenResponse,
-                underlying: "HTTP \(http.statusCode)", statusCode: http.statusCode)
+                underlying: "HTTP \(http.statusCode)", statusCode: http.statusCode,
+                retryAfter: retryAfter.flatMap { $0 > 0 ? TimeInterval($0) : nil })
         }
         return data
     }

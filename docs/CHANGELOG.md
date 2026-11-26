@@ -3,6 +3,12 @@
 User-facing iOS release notes. Version selection, note preparation, and
 publishing follow the [mobile release guide](mobile-releases.md#ios).
 
+## 1.6.9
+
+Dismiss several items from Latest in quick succession and Magpie will sync
+the changes automatically. The normal playback speed now stays on one line
+in the podcast player.
+
 ## 1.6.8
 
 Playback is more reliable when you open apps with muted videos, including

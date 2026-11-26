@@ -48,6 +48,7 @@ OUTAGE_RESPONSE = "Sorry, I cannot reach my assistant right now. Please try agai
 
 _burst_limit = SlidingWindow(settings.command_rate_limit_per_minute, window_seconds=60)
 _daily_limit = SlidingWindow(settings.command_rate_limit_per_day, window_seconds=86400)
+_library_action_limit = SlidingWindow(settings.library_action_rate_limit_per_minute, window_seconds=60)
 
 
 def _model_name() -> str:
@@ -65,10 +66,19 @@ def check_rate_limit(user: CurrentUser) -> None:
     used 12 of 12 requests this minute" is not something to hear when what you
     wanted was a podcast.
     """
-    for window, spoken in (
+    _check_rate_limits(
+        user,
         (_burst_limit, "You are asking a bit faster than I can keep up. Please try again shortly."),
         (_daily_limit, "You have asked for a lot today. Please try again tomorrow."),
-    ):
+    )
+
+
+def check_library_action_rate_limit(user: CurrentUser) -> None:
+    _check_rate_limits(user, (_library_action_limit, "Too many library changes at once. Please wait and try again."))
+
+
+def _check_rate_limits(user: User, *limits: tuple[SlidingWindow, str]) -> None:
+    for window, spoken in limits:
         if window.limit <= 0:
             continue
         decision = window.check(str(user.id))
@@ -79,8 +89,8 @@ def check_rate_limit(user: CurrentUser) -> None:
                 detail={"spoken_response": spoken},
                 headers={"Retry-After": str(decision.retry_after)},
             )
-    _burst_limit.prune()
-    _daily_limit.prune()
+    for window, _ in limits:
+        window.prune()
 
 
 @router.post("/command", dependencies=[Depends(check_rate_limit)])
@@ -322,13 +332,13 @@ async def cancel_voice_command(request_id: str, session: Session, user: CurrentU
     return {"status": "cancel_requested"}
 
 
-@router.post("/actions", dependencies=[Depends(check_rate_limit)])
+@router.post("/actions", dependencies=[Depends(check_library_action_rate_limit)])
 async def library_action(body: LibraryActionRequest, session: Session, user: CurrentUser) -> CommandResponse:
     """Typed, model-free actions with the same receipts and undo as voice."""
     return await _library_action(body, session, user)
 
 
-@router.post("/actions/offline", dependencies=[Depends(check_rate_limit)])
+@router.post("/actions/offline", dependencies=[Depends(check_library_action_rate_limit)])
 async def offline_library_action(
     body: OfflineLibraryActionRequest, session: Session, user: CurrentUser
 ) -> CommandResponse:

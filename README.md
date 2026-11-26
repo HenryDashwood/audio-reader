@@ -477,6 +477,8 @@ development needs no configuration.
 - `AUDIOREADER_COMMAND_RATE_LIMIT_PER_MINUTE` / `_PER_DAY` — what one account
   may spend on spoken commands (defaults 12 and 500; 0 disables either).
   In-process, so with several replicas the effective limit multiplies.
+- `AUDIOREADER_LIBRARY_ACTION_RATE_LIMIT_PER_MINUTE` — separate per-account
+  limit for direct library actions, including offline replay (default 120; 0 disables it).
 - `OPENAI_API_KEY` (or `AUDIOREADER_OPENAI_API_KEY`) — calls OpenAI Responses
   for streamed voice understanding. The standard key is never sent to the app.
 - `AUDIOREADER_OPENAI_MODEL` / `_REASONING_EFFORT` — direct Responses model
