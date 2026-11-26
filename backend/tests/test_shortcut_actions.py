@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from audioreader.models import Base, Episode, Feed, Subscription
+from audioreader.ratelimit import SlidingWindow
+from audioreader.routers import commands
 
 
 @pytest.fixture
@@ -57,6 +59,32 @@ async def test_retry_replays_receipt_instead_of_overwriting_undo(client, item):
     assert undone.json()["episode"]["dismissed"] is False
     repeated_undo = await client.post("/actions", json={"action": "undo", "request_id": "undo-repeat"})
     assert repeated_undo.json() == undone.json()
+
+
+async def test_rapid_dismissals_have_a_separate_budget(client, item, session, fake_llm, monkeypatch):
+    monkeypatch.setattr(commands, "_burst_limit", SlidingWindow(limit=2, window_seconds=60))
+    monkeypatch.setattr(commands, "_daily_limit", SlidingWindow(limit=2, window_seconds=86400))
+    monkeypatch.setattr(commands, "_library_action_limit", SlidingWindow(limit=15, window_seconds=60))
+    fake_llm.respond_with({"action": "unknown", "spoken_response": "Which one?"})
+    voice = {"transcript": "hello"}
+    assert (await client.post("/command", json=voice)).status_code == 200
+
+    episodes = [Episode(feed_id=item.feed_id, guid=f"burst-{i}", title=f"Post {i}") for i in range(15)]
+    session.add_all(episodes)
+    await session.commit()
+    for i, episode in enumerate(episodes):
+        route = "/actions/offline" if i % 2 == 0 else "/actions"
+        response = await client.post(route, json={"action": "dismiss", "episode_id": episode.id, "request_id": str(i)})
+        assert response.status_code == 200, response.text
+        assert response.json()["episode"]["dismissed"] is True
+
+    assert (await client.post("/command", json=voice)).status_code == 200
+    assert (await client.post("/command", json=voice)).status_code == 429
+    limited = await client.post(
+        "/actions/offline", json={"action": "dismiss", "episode_id": item.id, "request_id": "limited"}
+    )
+    assert limited.status_code == 429
+    assert int(limited.headers["Retry-After"]) > 0
 
 
 async def test_conflicting_receipt_does_not_execute_other_action(client, item):

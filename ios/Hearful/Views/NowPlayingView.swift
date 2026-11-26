@@ -241,22 +241,28 @@ private struct SpeedMenu: View, Equatable {
     nonisolated static func == (lhs: SpeedMenu, rhs: SpeedMenu) -> Bool { lhs.rate == rhs.rate }
 
     var body: some View {
-        Picker(
-            selection: Binding(get: { rate }, set: setRate),
-            content: {
+        Menu {
+            Picker("Playback speed", selection: Binding(get: { rate }, set: setRate)) {
                 ForEach(AudioPlayer.playbackRates, id: \.self) { rate in
                     Text(Self.label(rate)).tag(rate)
                 }
             }
-        ) {
-            Text(Self.label(rate))
-                .font(.subheadline.weight(.semibold).monospacedDigit())
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .background(.quaternary, in: Capsule())
-                .contentShape(Capsule())
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            HStack(spacing: 8) {
+                Text(Self.label(rate))
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .contentShape(Capsule())
         }
-        .pickerStyle(.menu)
+        .menuIndicator(.hidden)
         .accessibilityLabel("Playback speed")
         .accessibilityValue(rate == 1 ? "Normal speed" : "\(String(format: "%g", rate)) times speed")
         // The new rate is audible only once playback advances far enough to

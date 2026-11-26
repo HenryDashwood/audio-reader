@@ -22,6 +22,7 @@ final class OfflineLibraryActions: ObservableObject {
     private let scope: () -> String?
     private let cache: OfflineCache
     private let blockProgress: (String, Int) throws -> Void
+    private let waitToRetry: (TimeInterval) async throws -> Void
     private var owner: String?
     private var upload: Task<Void, Never>?
     private var subscription: AnyCancellable?
@@ -34,8 +35,10 @@ final class OfflineLibraryActions: ObservableObject {
          blockProgress: @escaping (String, Int) throws -> Void = { owner, id in
              try ArticleProgressJournal.shared.block(owner: owner, episodeIDs: [id])
              try PodcastProgressJournal.shared.block(owner: owner, episodeIDs: [id])
-         }) {
+         },
+         waitToRetry: @escaping (TimeInterval) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) {
         self.api = api; self.directory = directory; self.scope = scope; self.cache = cache; self.blockProgress = blockProgress
+        self.waitToRetry = waitToRetry
         subscription = NotificationCenter.default.publisher(for: .hearfulRetryOffline).sink { [weak self] note in
             MainActor.assumeIsolated { self?.retry(force: note.object as? Bool == true) }
         }
@@ -46,6 +49,7 @@ final class OfflineLibraryActions: ObservableObject {
         if owner != key {
             upload?.cancel(); upload = nil
             pending = []; owner = nil
+            error = nil; schedule.reset()
             let file = directory.appending(path: key + ".json")
             if FileManager.default.fileExists(atPath: file.path) {
                 let saved = try JSONDecoder().decode(Envelope.self, from: Data(contentsOf: file))
@@ -125,11 +129,12 @@ final class OfflineLibraryActions: ObservableObject {
     }
 
     func retry(force: Bool = false) {
+        guard let key = try? activate(), upload == nil, !pending.isEmpty else { return }
         if force { schedule.reset() }
-        guard schedule.isDue, upload == nil, let key = try? activate(), !pending.isEmpty else { return }
+        guard schedule.isDue else { return }
         upload = Task { [weak self] in
             guard let self else { return }
-            defer { if owner == key { upload = nil } }
+            defer { if !Task.isCancelled { upload = nil } }
             do {
                 while scope() == key, !Task.isCancelled, let entry = pending.first {
                     let response: CommandResponse
@@ -137,6 +142,13 @@ final class OfflineLibraryActions: ObservableObject {
                         response = try await api.offlineLibraryAction(entry.action,
                             episodeID: entry.episode.id, contentID: entry.episode.contentID,
                             requestID: entry.requestID, undoRequestID: entry.undoRequestID)
+                    } catch let failure as APIError where failure.statusCode == 429 {
+                        guard scope() == key, !Task.isCancelled else { return }
+                        // Keep the uploader active so enqueuing more changes cannot skip the cooldown.
+                        error = nil
+                        schedule.failed()
+                        try await waitToRetry(failure.retryAfter ?? max(0, schedule.nextAttempt.timeIntervalSinceNow))
+                        continue
                     } catch let failure as APIError where failure.statusCode == 409 {
                         guard scope() == key, !Task.isCancelled else { return }
                         try reject(entry, message: failure.spokenResponse, owner: key)

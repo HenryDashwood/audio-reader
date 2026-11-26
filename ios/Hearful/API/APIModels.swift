@@ -207,6 +207,7 @@ nonisolated struct APIError: Error {
     let isAuthFailure: Bool
     var statusCode: Int? = nil
     let isConnectionFailure: Bool
+    let retryAfter: TimeInterval?
     var isRetryableDownload: Bool {
         isConnectionFailure || statusCode == 408 || statusCode == 429
             || (statusCode.map { (500...599).contains($0) } ?? false)
@@ -218,13 +219,15 @@ nonisolated struct APIError: Error {
     init(
         spokenResponse: String = APIError.genericSpokenResponse,
         underlying: String,
-        isAuthFailure: Bool = false, statusCode: Int? = nil, isConnectionFailure: Bool = false
+        isAuthFailure: Bool = false, statusCode: Int? = nil, isConnectionFailure: Bool = false,
+        retryAfter: TimeInterval? = nil
     ) {
         self.spokenResponse = spokenResponse
         self.underlying = underlying
         self.isAuthFailure = isAuthFailure
         self.statusCode = statusCode
         self.isConnectionFailure = isConnectionFailure
+        self.retryAfter = retryAfter
     }
 }
 
